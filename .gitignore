@@ -1,0 +1,142 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and databases
+*.log
+*.db
+*.db-journal
+*.db-wal
+*.lock
+data/
+
+# Build artifacts
+dist/
+build/
+*.spec
+*.exe
+
+# Backup and local model files
+_backup_localmodel/
+models/
+workspace/
+
+# Config with secrets
+config.json
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# mypy
+.mypy_cache/
+
+# CodeBuddy
+.codebuddy/
+
+# Project specific
+_exe_stderr.txt
+_run_server.py
+_test_pkg.py
+_verify_local.py
+naiba-chat.exe
+build_info.json
+start.bat
+start.ps1
+status.bat
+status.ps1
+stop.bat
+stop.ps1
+setup.bat
+
+# Skills are part of the product. Always track every file under this tree,
+# even when a global ignore rule would normally match its extension or folder.
+!skills/
+!skills/**
+
+# Runtime output inside bundled Skills must never be published.
+skills/**/output/
+skills/**/scripts/_err.txt
+skills/**/__pycache__/
+skills/**/*.py[cod]
+
+# The portable Windows build uses this repository-owned PyInstaller recipe.
+!naiba-chat.spec

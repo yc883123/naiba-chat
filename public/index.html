@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4f5f2">
+  <title>naiba-chat</title>
+  <link rel="stylesheet" href="/styles.css?v=__ASSET_VERSION__">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="对话导航">
+      <div class="brand-row">
+        <div>
+          <strong>naiba-chat</strong>
+          <span class="server-state"><i id="serverDot"></i><span id="serverLabel">连接中</span></span>
+        </div>
+        <button class="icon-button mobile-only" id="closeSidebar" title="关闭导航" aria-label="关闭导航">×</button>
+      </div>
+
+      <button class="new-chat" id="newChatButton"><span>＋</span> 新建对话</button>
+      <nav class="conversation-list" id="conversationList" aria-label="历史对话"></nav>
+      <div class="sidebar-footer">
+        <button class="address-button" id="copyAddress" title="复制手机访问地址">
+          <span class="status-mark"></span>
+          <span><small>手机访问</small><b id="lanAddress">正在获取地址</b></span>
+        </button>
+        <button class="icon-button" id="openSettings" title="设置" aria-label="设置">⚙</button>
+      </div>
+    </aside>
+
+    <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+    <main class="chat-main">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="openSidebar" title="打开导航" aria-label="打开导航">☰</button>
+        <label class="model-control">
+          <span>模型</span>
+          <select id="modelSelect" aria-label="当前模型"></select>
+        </label>
+        <div class="topbar-actions">
+          <button class="control-button" id="openSkills"><span id="skillCount">自动</span> <span class="button-label">Skills</span></button>
+          <button class="mcp-button" id="mcpStatus" title="查看 MCP 状态"><i></i><span>MCP</span></button>
+        </div>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite">
+        <div class="empty-state" id="emptyState">
+          <div class="empty-mark">S</div>
+          <h1>开始新对话</h1>
+          <div class="starter-grid">
+            <button data-prompt="列出当前可用的 Skills，并按用途分类。">整理可用 Skills</button>
+            <button data-prompt="检查 ComfyUI 环境和可用工作流。">检查 ComfyUI</button>
+            <button data-prompt="查看 D:\\skill 目录最近修改的文件。">查看最近文件</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="composer-wrap">
+        <div class="pending-files" id="pendingFiles"></div>
+        <form class="composer" id="composerForm">
+          <input id="fileInput" type="file" multiple hidden>
+          <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">＋</button>
+          <textarea id="messageInput" rows="1" placeholder="输入消息" aria-label="消息"></textarea>
+          <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
+        </form>
+        <div class="composer-meta">
+          <span id="runtimeStatus">就绪</span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="authDialog" class="auth-dialog">
+    <form id="authForm" method="dialog">
+      <div class="dialog-heading">
+        <div class="auth-mark">S</div>
+        <div><h2>连接电脑服务</h2><p>输入电脑启动时显示的访问口令</p></div>
+      </div>
+      <label>访问口令<input id="tokenInput" inputmode="numeric" autocomplete="one-time-code" maxlength="32" required></label>
+      <p class="form-error" id="authError"></p>
+      <button class="primary-button" type="submit">连接</button>
+    </form>
+  </dialog>
+
+  <dialog id="skillsDialog" class="panel-dialog">
+    <div class="dialog-toolbar">
+      <div><h2>Skills</h2><p id="skillsSummary"></p></div>
+      <button class="icon-button" data-close="skillsDialog" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <label class="toggle-row">
+      <span><b>自动选择</b><small>根据当前消息选择相关 Skill</small></span>
+      <input id="autoSkills" type="checkbox">
+    </label>
+    <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
+    <div class="skill-list" id="skillList"></div>
+  </dialog>
+
+
+  <dialog id="conversationSettingsDialog" class="conversation-settings-dialog">
+    <form id="conversationSettingsForm" method="dialog">
+      <div class="dialog-toolbar">
+        <div><h2>对话设置</h2><p id="conversationSettingsTitle">当前对话</p></div>
+        <button class="icon-button" type="button" data-close="conversationSettingsDialog" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <label class="field-wide conversation-prompt-field">
+        系统提示词
+        <textarea id="conversationSystemPrompt" rows="9" maxlength="20000" placeholder="只作用于这个对话的角色、规则和输出要求"></textarea>
+      </label>
+      <label class="toggle-row conversation-stream-toggle">
+        <span><b>流式输出</b><small>模型生成内容时实时显示文本</small></span>
+        <input id="conversationStreamEnabled" type="checkbox">
+      </label>
+      <div class="form-actions">
+        <button class="control-button" type="button" data-close="conversationSettingsDialog">取消</button>
+        <button class="primary-button" id="saveConversationSettings" type="submit">保存对话设置</button>
+      </div>
+    </form>
+  </dialog>
+
+
+
+  <dialog id="settingsDialog" class="settings-dialog">
+    <div class="dialog-toolbar">
+      <div><h2>设置</h2><p>模型与运行参数</p></div>
+      <button class="icon-button" data-close="settingsDialog" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="settings-layout">
+      <nav class="settings-nav">
+        <button class="active" data-settings-tab="models">API 供应商</button>
+        <button data-settings-tab="agent">Agent</button>
+        <button data-settings-tab="runtime">生成参数</button>
+        <button data-settings-tab="connections">连接状态</button>
+        <button data-settings-tab="skills">Skills 管理</button>
+        <button data-settings-tab="updates">软件更新</button>
+      </nav>
+      <div class="settings-content">
+        <section data-settings-panel="models">
+          <form id="providerForm" class="provider-form">
+            <input id="providerId" type="hidden">
+            <div class="provider-current">
+              <label>当前供应商
+                <select id="providerSelect" aria-label="当前供应商"></select>
+              </label>
+              <button class="control-button" id="addProvider" type="button">添加</button>
+              <button class="danger-button" id="deleteProvider" type="button">删除</button>
+            </div>
+            <div class="provider-divider provider-field"></div>
+            <div class="provider-empty" id="providerEmpty" hidden><b>尚未添加 API 供应商</b><span>点击“添加”创建第一个供应商。</span></div>
+            <label class="provider-field">供应商名称<input id="providerName" required placeholder="例如 OpenAI"></label>
+            <label class="provider-field">API URL<input id="providerBaseUrl" required placeholder="https://api.openai.com/v1"></label>
+            <label class="provider-field">API Key
+              <span class="secret-field">
+                <input id="providerApiKey" type="password" autocomplete="new-password" placeholder="留空则保留当前 API Key">
+                <span class="secret-actions"><span id="providerKeyStatus">未配置</span><button id="toggleProviderKey" type="button" title="显示 API Key">显示</button></span>
+              </span>
+            </label>
+            <label class="provider-field">请求格式
+              <select id="providerFormat">
+                <option value="openai_chat">OpenAI Chat /v1/chat/completions</option>
+                <option value="codex_responses">Codex /v1/responses</option>
+                <option value="gemini">Gemini /v1beta/models/模型名:streamGenerateContent</option>
+                <option value="claude">Claude /v1/messages</option>
+                <option value="lm_studio">LM Studio /api/v1/chat</option>
+              </select>
+            </label>
+            <label class="provider-field">模型名称
+              <span class="model-picker">
+                <select id="providerModel" required aria-label="模型名称"></select>
+                <button class="control-button" id="loadProviderModels" type="button">检查模型</button>
+              </span>
+              <input id="providerModelCustom" hidden placeholder="输入模型名称，例如 gpt-5-mini">
+            </label>
+            <p class="form-error provider-field" id="providerError"></p>
+            <div class="form-actions provider-actions provider-field">
+              <button type="button" class="control-button" id="testProvider">测试连接</button>
+              <button type="button" class="control-button" id="cancelProvider" hidden>取消</button>
+              <button type="button" class="primary-button" id="editProvider">编辑</button>
+              <button class="primary-button" id="saveProvider" type="submit" hidden>保存设置</button>
+            </div>
+          </form>
+        </section>
+        <section data-settings-panel="agent" hidden>
+          <div class="agent-heading"><h3>Agent 设置</h3><p>控制 Agent 的行为和可调用工具。</p></div>
+          <label>系统提示词
+            <textarea id="agentSystemPrompt" rows="7" placeholder="补充 Agent 的角色、规则和输出偏好"></textarea>
+          </label>
+          <h3 class="subheading">审批模式</h3>
+          <div class="permission-mode-control" role="radiogroup" aria-label="审批模式">
+            <label class="permission-mode-option">
+              <input type="radio" name="permissionMode" value="confirm">
+              <span><b>请求批准</b><small>敏感操作逐次确认</small></span>
+            </label>
+            <label class="permission-mode-option">
+              <input type="radio" name="permissionMode" value="auto">
+              <span><b>替我审批</b><small>工作区读写自动放行</small></span>
+            </label>
+            <label class="permission-mode-option">
+              <input type="radio" name="permissionMode" value="full">
+              <span><b>完全访问</b><small>工具无需确认或边界限制</small></span>
+            </label>
+          </div>
+          <h3 class="subheading">工具权限</h3>
+          <div class="permission-grid">
+            <label><input type="checkbox" value="read_file,list_directory,search_files" data-agent-tool><span><b>读取文件</b><small>读取和搜索本机文件</small></span></label>
+            <label><input type="checkbox" value="write_file" data-agent-tool><span><b>写入文件</b><small>创建和修改本机文件</small></span></label>
+            <label><input type="checkbox" value="run_command" data-agent-tool><span><b>运行命令</b><small>执行 PowerShell 命令</small></span></label>
+            <label><input type="checkbox" value="http_request" data-agent-tool><span><b>网络请求</b><small>访问 HTTP 与 HTTPS 地址</small></span></label>
+            <label><input type="checkbox" value="run_skill_script" data-agent-tool><span><b>Skill 脚本</b><small>执行已启用 Skill 的脚本</small></span></label>
+            <label><input type="checkbox" value="call_mcp" data-agent-tool><span><b>MCP 工具</b><small>调用已连接的 MCP 服务</small></span></label>
+          </div>
+          <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存 Agent 设置</button></div>
+        </section>
+        <section data-settings-panel="runtime" hidden>
+          <h3>生成参数</h3>
+          <div class="field-grid">
+            <label>温度<input id="temperature" type="number" min="0" max="2" step="0.1"></label>
+            <label>最大输出 Tokens<input id="maxTokens" type="number" min="64" max="32768" step="64"></label>
+            <label>Agent 最大步数<input id="maxAgentSteps" type="number" min="1" max="30" step="1"></label>
+            <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"></label>
+          </div>
+          <div class="form-actions"><button class="primary-button" id="saveRuntime" type="button">保存参数</button></div>
+        </section>
+        <section data-settings-panel="connections" hidden>
+          <h3>MCP 服务</h3>
+          <div id="mcpList" class="connection-list"></div>
+          <h3>服务地址</h3>
+          <div class="connection-address" id="connectionAddress"></div>
+          <h3 class="subheading">访问口令</h3>
+          <div class="field-grid">
+            <label class="field-wide">访问口令（至少 4 位，手机和浏览器都用它登录）
+              <input id="accessTokenInput" type="text" maxlength="64" placeholder="留空则保持当前口令">
+            </label>
+          </div>
+          <div class="form-actions"><button class="primary-button" id="saveToken" type="button">保存口令</button></div>
+          <p class="hint">保存后所有设备需用新口令重新登录。</p>
+        </section>
+        <section data-settings-panel="skills" hidden>
+          <h3>Skill 扫描目录</h3>
+          <p class="hint">配置后才会在对话中加载 Skill。不配置则不会读取任何 Skill。</p>
+          <div id="skillDirList" class="connection-list"></div>
+          <div class="skill-dir-add">
+            <input id="skillDirInput" type="text" placeholder="目录路径，可相对项目（如 skills）或绝对路径">
+            <button class="control-button" id="addSkillDir" type="button">添加目录</button>
+          </div>
+          <h3 class="subheading">安装 Skill</h3>
+          <p class="hint">选择包含 SKILL.md 的 Skill 文件夹，或上传 .zip 压缩包，安装到上方第一个目录（若该目录不存在会自动创建）。</p>
+          <div class="skill-install">
+            <input id="skillFolder" type="file" webkitdirectory hidden>
+            <button class="primary-button" id="installSkillFolder" type="button">选择文件夹安装</button>
+          </div>
+          <div class="skill-install">
+            <input id="skillZip" type="file" accept=".zip,application/zip">
+            <button class="control-button" id="installSkill" type="button">安装 ZIP</button>
+          </div>
+          <h3 class="subheading">已加载 Skill（<span id="installedSkillCount">0</span>）</h3>
+          <div class="form-actions">
+            <button class="control-button" id="refreshSkills" type="button">重新扫描</button>
+          </div>
+          <div class="skill-list" id="installedSkillList"></div>
+        </section>
+        <section data-settings-panel="updates" hidden>
+          <h3>软件更新</h3>
+          <div class="update-status">
+            <div><span>当前版本</span><b id="currentVersion">-</b></div>
+            <div><span>最新版本</span><b id="latestVersion">尚未检查</b></div>
+            <p id="updateMessage">启动后会自动从 GitHub 检查并安装更新。</p>
+          </div>
+          <div class="form-actions update-actions">
+            <button class="control-button" id="checkUpdate" type="button">检查更新</button>
+            <button class="primary-button" id="installUpdate" type="button" hidden>立即更新</button>
+          </div>
+          <p class="hint">更新来自 yc883123/naiba-chat。EXE 会下载并校验新版；源码模式会执行 git pull --ff-only。完成后程序自动重启，聊天记录和设置不会被修改。</p>
+        </section>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/app.js?v=__ASSET_VERSION__"></script>
+</body>
+</html>

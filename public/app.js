@@ -1,0 +1,1500 @@
+const urlToken = new URLSearchParams(location.search).get('token') || '';
+if (urlToken) {
+  localStorage.setItem('naibaChatToken', urlToken);
+  history.replaceState(null, '', location.pathname);
+}
+
+const state = {
+  token: urlToken || localStorage.getItem('naibaChatToken') || localStorage.getItem('lanSkillToken') || '',
+  bootstrap: null,
+  conversations: [],
+  conversationId: '',
+  selectedSkills: JSON.parse(localStorage.getItem('naibaChatSkillIds') || localStorage.getItem('lanSkillIds') || '[]'),
+  autoSkills: (localStorage.getItem('naibaChatAutoSkills') ?? localStorage.getItem('lanAutoSkills')) === 'true',
+  pendingFiles: [],
+  abortController: null,
+  conversationSettingsId: '',
+  providerEditing: false,
+  providerIsNew: false,
+  syncTimer: null,
+  syncInFlight: false,
+  conversationSnapshot: '',
+};
+
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
+
+const emptyStateElement = $('#emptyState');
+
+async function api(path, options = {}) {
+  const headers = { ...(options.headers || {}) };
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  if (options.body && typeof options.body !== 'string') {
+    headers['Content-Type'] = 'application/json';
+    options.body = JSON.stringify(options.body);
+  }
+  const response = await fetch(path, { ...options, headers });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  return payload;
+}
+
+function toast(message) {
+  const element = $('#toast');
+  element.textContent = message;
+  element.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => element.classList.remove('show'), 2200);
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch (_) {
+      // WebView and LAN HTTP pages may not grant the Clipboard API permission.
+    }
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  if (!copied) throw new Error('浏览器未允许访问剪贴板');
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function markdown(text) {
+  const codeBlocks = [];
+  let safe = escapeHtml(text).replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => {
+    const index = codeBlocks.length;
+    codeBlocks.push(`<pre><code data-language="${escapeHtml(language.trim())}">${code}</code></pre>`);
+    return `\n@@CODE_${index}@@\n`;
+  });
+  safe = safe
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+  const blocks = safe.split(/\n{2,}/).map((block) => {
+    const trimmed = block.trim();
+    if (!trimmed) return '';
+    const codeMatch = trimmed.match(/^@@CODE_(\d+)@@$/);
+    if (codeMatch) return codeBlocks[Number(codeMatch[1])];
+    if (/^[-*] /.test(trimmed)) {
+      const items = trimmed.split('\n').map((line) => `<li>${line.replace(/^[-*] /, '')}</li>`).join('');
+      return `<ul>${items}</ul>`;
+    }
+    return `<p>${trimmed.replaceAll('\n', '<br>')}</p>`;
+  });
+  return blocks.join('');
+}
+
+function fileUrl(source) {
+  return `/api/file?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(source)}`;
+}
+
+function mediaMarkup(attachments = []) {
+  if (!attachments.length) return '';
+  const items = attachments.map((attachment) => {
+    const source = attachment.source || attachment.path;
+    const lower = String(source).toLowerCase().split('?')[0];
+    const url = fileUrl(source);
+    if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
+      return `<a href="${url}" target="_blank"><img src="${url}" alt="${escapeHtml(attachment.name || '生成图片')}" loading="lazy"></a>`;
+    }
+    if (/\.(mp4|webm)$/.test(lower)) return `<video src="${url}" controls playsinline></video>`;
+    if (/\.(wav|mp3|m4a)$/.test(lower)) return `<audio src="${url}" controls></audio>`;
+    return `<a class="file-chip" href="${url}" target="_blank">${escapeHtml(attachment.name || '下载文件')}</a>`;
+  }).join('');
+  return `<div class="media-grid">${items}</div>`;
+}
+
+function toolMarkup(runs = []) {
+  if (!runs.length) return '';
+  return `<div class="tool-stack">${runs.map((run) => `
+    <details class="tool-run">
+      <summary>${run.success ? '已执行' : '执行失败'} · ${escapeHtml(run.tool)}${run.reason ? ` · ${escapeHtml(run.reason)}` : ''}</summary>
+      <pre>${escapeHtml(JSON.stringify(run.arguments || {}, null, 2))}\n\n${escapeHtml(run.result || '')}</pre>
+    </details>`).join('')}</div>`;
+}
+
+function reasoningMarkup(reasoning) {
+  const list = Array.isArray(reasoning) ? reasoning.filter(Boolean) : (reasoning ? [reasoning] : []);
+  if (!list.length) return '';
+  const text = list.join('\n\n---\n\n');
+  return `<details class="reasoning-block">
+    <summary>思考过程（${list.length} 段）</summary>
+    <div class="reasoning-content">${markdown(text)}</div>
+  </details>`;
+}
+
+function usageMarkup(usage) {
+  if (!usage || typeof usage !== 'object') return '';
+  const input = Number(usage.input_tokens || 0);
+  const output = Number(usage.output_tokens || 0);
+  const cached = Number(usage.cached_tokens || 0);
+  if (!input && !output) return '';
+  const rate = input ? Number(usage.cache_hit_rate ?? (cached / input * 100)).toFixed(1) : '0.0';
+  const requests = Number(usage.requests || 1);
+  return `<div class="usage-line" title="本轮 ${requests} 次模型请求">输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存 ${cached.toLocaleString()}/${input.toLocaleString()}（${rate}%）</div>`;
+}
+
+function messageElement(message, temporary = false) {
+  const row = document.createElement('article');
+  row.className = `message-row ${message.role}`;
+  row.dataset.messageId = message.id || '';
+  const metadata = message.metadata || {};
+  if (message.role === 'user') {
+    row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${message.id ? `<div class="message-actions"><button data-edit-message title="编辑并从此处重新开始">编辑</button></div>` : ''}</div>`;
+  } else {
+    row.innerHTML = `
+      <div class="message-avatar">AI</div>
+      <div class="message-body">
+        ${reasoningMarkup(metadata.reasoning)}
+        ${toolMarkup(metadata.tool_runs)}
+        <div class="answer-content">${temporary ? '<div class="activity">正在准备</div>' : markdown(message.content)}</div>
+        ${mediaMarkup(metadata.attachments)}
+        ${temporary ? '' : usageMarkup(metadata.usage)}
+        ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
+      </div>`;
+  }
+  return row;
+}
+
+function startEditMessage(row) {
+  if (!row || state.abortController) {
+    if (state.abortController) toast('请先停止当前对话再编辑');
+    return;
+  }
+  const body = row.querySelector('.message-body');
+  if (!body || body.querySelector('textarea[data-edit-input]')) return;
+  // 提取纯文本内容（不含附件标记）
+  const textContent = body.childNodes[0]?.textContent ?? body.textContent;
+  const currentText = row.dataset.rawContent || textContent.trim();
+  row.dataset.rawContent = currentText;
+  body.innerHTML = `
+    <textarea class="edit-input" data-edit-input rows="3">${escapeHtml(currentText)}</textarea>
+    <div class="edit-actions">
+      <button class="primary-button" data-edit-confirm>重新发送</button>
+      <button class="control-button" data-edit-cancel>取消</button>
+    </div>`;
+  const textarea = body.querySelector('[data-edit-input]');
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  body.querySelector('[data-edit-cancel]').addEventListener('click', () => {
+    // 取消：重新渲染当前会话
+    if (state.conversationId) openConversation(state.conversationId);
+  });
+  body.querySelector('[data-edit-confirm]').addEventListener('click', () => {
+    confirmEditMessage(row, textarea.value);
+  });
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmEditMessage(row, textarea.value);
+    if (e.key === 'Escape' && state.conversationId) openConversation(state.conversationId);
+  });
+}
+
+async function confirmEditMessage(row, newText) {
+  const text = newText.trim();
+  if (!text) {
+    toast('内容不能为空');
+    return;
+  }
+  const messageId = row.dataset.messageId;
+  if (!messageId || !state.conversationId) return;
+  try {
+    const result = await api('/api/messages/edit', {
+      method: 'POST',
+      body: { conversation_id: state.conversationId, message_id: messageId },
+    });
+    // 恢复原消息的附件，供重发使用
+    state.pendingFiles = (result.attachments || []).map((f) => ({ name: f.name, path: f.path, size: f.size }));
+    renderPendingFiles();
+    // 截断后重新渲染会话（被编辑的消息已从历史消失）
+    await openConversation(state.conversationId);
+    // 填入新内容并重发
+    const input = $('#messageInput');
+    input.value = text;
+    resizeTextarea();
+    await sendMessage();
+  } catch (error) {
+    toast(`编辑失败：${error.message}`);
+    if (state.conversationId) openConversation(state.conversationId);
+  }
+}
+
+function uploadedFileMarkup(files = []) {
+  if (!files.length) return '';
+  const html = files.map((file) => {
+    const source = file.source || file.path || '';
+    const isImage = /\.(png|jpe?g|gif|webp)$/i.test(source);
+    if (isImage) {
+      const src = fileUrl(source);
+      return `<figure class="attachment attachment-image"><a href="${src}" target="_blank" rel="noreferrer"><img src="${src}" alt="${escapeHtml(file.name || 'image')}" loading="lazy"></a><figcaption>${escapeHtml(file.name || '')}</figcaption></figure>`;
+    }
+    return `<span class="file-chip">${escapeHtml(file.name)}</span>`;
+  }).join('');
+  return `<div class="media-grid">${html}</div>`;
+}
+
+function scrollToBottom() {
+  const messages = $('#messages');
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function renderMessages(messages) {
+  const container = $('#messages');
+  const empty = emptyStateElement;
+  // 诊断日志：定位"消息消失"是数据为空还是渲染崩溃
+  console.log('[naiba] renderMessages 调用, 消息数=', messages.length,
+    'conversationId=', state.conversationId,
+    'roles=', messages.map((m) => m.role).join(','));
+  try {
+    container.replaceChildren();
+    // 始终保留 empty 在容器中，仅切换 hidden；否则它会被移出 DOM，
+    // 导致后续 sendMessage 中 $('#emptyState') 为 null 而崩溃
+    empty.hidden = messages.length > 0;
+    container.append(empty);
+    if (messages.length) {
+      messages.forEach((message) => container.append(messageElement(message)));
+      scrollToBottom();
+    }
+    const lastMessage = messages.at(-1);
+    const choices = lastMessage?.role === 'assistant' ? lastMessage.metadata?.choices : [];
+    const choiceGroups = lastMessage?.role === 'assistant' ? lastMessage.metadata?.choice_groups : [];
+    if ((Array.isArray(choiceGroups) && choiceGroups.length) || (Array.isArray(choices) && choices.length)) {
+      showChoiceButtons(choices, choiceGroups);
+    }
+    else hideChoiceButtons();
+  } catch (error) {
+    console.error('[naiba] renderMessages 渲染崩溃:', error, '消息数=', messages.length);
+  }
+}
+
+async function authenticate(token) {
+  const response = await fetch('/api/auth', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) throw new Error('访问口令不正确');
+  state.token = token;
+  localStorage.setItem('naibaChatToken', token);
+}
+
+async function initialize() {
+  if (!state.token) {
+    $('#authDialog').showModal();
+    return;
+  }
+  try {
+    state.bootstrap = await api('/api/bootstrap');
+  } catch (error) {
+    state.token = '';
+    localStorage.removeItem('naibaChatToken');
+    localStorage.removeItem('lanSkillToken');
+    $('#authDialog').showModal();
+    return;
+  }
+  $('#serverDot').className = 'connected';
+  $('#serverLabel').textContent = '服务已连接';
+  $('#lanAddress').textContent = state.bootstrap.lan_url;
+  $('#connectionAddress').textContent = state.bootstrap.lan_url;
+  $('#autoSkills').checked = state.autoSkills;
+  populateModels();
+  // 恢复模式 Tab 状态
+  $$('.mode-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.mode === state.mode));
+  populateRuntimeSettings();
+  populateAgentSettings();
+  renderSkills();
+  renderProviders();
+  renderMcp();
+  renderUpdateStatus(state.bootstrap.update || {});
+  await loadConversations();
+  startConversationSync();
+}
+
+function renderUpdateStatus(status) {
+  const current = status.current_version || '开发版';
+  const latest = status.latest_version || '尚未检查';
+  $('#currentVersion').textContent = status.current_commit ? `${current} · ${status.current_commit.slice(0, 7)}` : current;
+  $('#latestVersion').textContent = status.latest_commit ? `${latest} · ${status.latest_commit.slice(0, 7)}` : latest;
+  const messages = {
+    idle: '启动后会自动从 GitHub 检查并安装更新。',
+    checking: '正在检查更新…',
+    current: '当前已经是最新版本。',
+    available: '发现新版本，可以立即安装。',
+    downloading: '正在下载并校验更新，请勿关闭程序。',
+    restarting: '更新已准备好，程序即将重启。',
+    error: status.error || '检查更新失败。',
+  };
+  $('#updateMessage').textContent = !status.supported
+    ? '当前运行目录不支持自动更新，请确认它来自受支持的 Git 仓库。'
+    : (messages[status.phase] || messages.idle);
+  if (status.mode === 'source' && status.source_dirty && status.update_available) {
+    $('#updateMessage').textContent = '发现新提交，但工作区有未提交修改；请先提交或清理后再更新。';
+  }
+  $('#installUpdate').hidden = !status.update_available || ['downloading', 'restarting'].includes(status.phase);
+  $('#checkUpdate').disabled = ['checking', 'downloading', 'restarting'].includes(status.phase);
+}
+
+async function checkUpdate() {
+  const button = $('#checkUpdate');
+  button.disabled = true;
+  renderUpdateStatus({ ...(state.bootstrap.update || {}), phase: 'checking' });
+  try {
+    const status = await api('/api/update/check', { method: 'POST', body: {} });
+    state.bootstrap.update = status;
+    renderUpdateStatus(status);
+  } catch (error) {
+    renderUpdateStatus({ ...(state.bootstrap.update || {}), phase: 'error', error: error.message });
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function installUpdate() {
+  const button = $('#installUpdate');
+  button.disabled = true;
+  try {
+    const status = await api('/api/update/install', { method: 'POST', body: {} });
+    state.bootstrap.update = status;
+    renderUpdateStatus(status);
+    toast('正在下载更新，完成后会自动重启');
+  } catch (error) {
+    toast(`更新失败：${error.message}`);
+    button.disabled = false;
+  }
+}
+
+function populateModels() {
+  const select = $('#modelSelect');
+  const previous = select.value;
+  const savedProviderId = String(state.bootstrap.settings?.provider_id || '');
+  const saved = savedProviderId ? `online:${savedProviderId}` : '';
+  select.innerHTML = '';
+
+  const providers = state.bootstrap.providers || [];
+  providers.forEach((provider) => {
+    const option = document.createElement('option');
+    option.value = `online:${provider.id}`;
+    option.textContent = `${provider.name} · ${provider.model}`;
+    select.append(option);
+  });
+  if (!select.options.length) {
+    const opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '请先添加在线供应商';
+    select.append(opt);
+  }
+
+  if ([...select.options].some((o) => o.value === previous)) {
+    select.value = previous;
+  } else if ([...select.options].some((o) => o.value === saved)) {
+    select.value = saved;
+  } else if (select.options.length) {
+    select.selectedIndex = 0;
+  }
+}
+
+async function saveModelSelection() {
+  const value = $('#modelSelect').value;
+  const payload = value.startsWith('online:')
+    ? { provider_id: value.slice(7) }
+    : {};
+  const result = await api('/api/settings', { method: 'POST', body: payload });
+  Object.assign(state.bootstrap.settings, result.settings);
+  populateModels();
+  toast('模型已切换');
+}
+
+async function loadConversations() {
+  const result = await api('/api/conversations');
+  state.conversations = result.conversations;
+  renderConversations();
+  if (!state.conversationId && state.conversations.length) {
+    await openConversation(state.conversations[0].id);
+  } else if (!state.conversations.length) {
+    renderMessages([]);
+  }
+}
+
+function renderConversations() {
+  $('#conversationList').innerHTML = state.conversations.map((conversation) => `
+    <div class="conversation-item ${conversation.id === state.conversationId ? 'active' : ''}" data-conversation-id="${conversation.id}">
+      <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(conversation.title)} 的设置">⚙</button>
+      <button class="conversation-open" title="${escapeHtml(conversation.title)}">${escapeHtml(conversation.title)}</button>
+      <button class="delete-conversation" title="删除对话" aria-label="删除对话">删除</button>
+    </div>`).join('');
+}
+
+async function createConversation() {
+  hideChoiceButtons();
+  const conversation = await api('/api/conversations', { method: 'POST', body: {} });
+  state.conversationId = conversation.id;
+  state.conversations.unshift(conversation);
+  renderConversations();
+  renderMessages([]);
+  closeSidebar();
+  $('#messageInput').focus();
+}
+
+async function openConversation(id) {
+  if (id !== state.conversationId) hideChoiceButtons();
+  const conversation = await api(`/api/conversations/${id}`);
+  state.conversationId = id;
+  const index = state.conversations.findIndex((item) => item.id === id);
+  if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...conversation };
+  state.conversationSnapshot = conversationSnapshot(conversation);
+  console.log('[naiba] openConversation', id.slice(0, 8), '服务器返回消息数=', (conversation.messages || []).length);
+  renderConversations();
+  renderMessages(conversation.messages || []);
+  closeSidebar();
+}
+
+function conversationSnapshot(conversation) {
+  const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+  const last = messages.at(-1);
+  return [conversation?.updated_at || '', messages.length, last?.id || '', last?.role || ''].join('|');
+}
+
+async function syncCurrentConversation() {
+  if (state.syncInFlight || !state.conversationId || state.abortController) return;
+  if (document.visibilityState === 'hidden') return;
+  state.syncInFlight = true;
+  const id = state.conversationId;
+  try {
+    const conversation = await api(`/api/conversations/${id}`);
+    if (state.conversationId !== id || state.abortController) return;
+    const snapshot = conversationSnapshot(conversation);
+    if (snapshot === state.conversationSnapshot) return;
+    const index = state.conversations.findIndex((item) => item.id === id);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...conversation };
+    state.conversationSnapshot = snapshot;
+    renderConversations();
+    renderMessages(conversation.messages || []);
+  } catch (error) {
+    console.debug('[naiba] 对话同步失败:', error.message);
+  } finally {
+    state.syncInFlight = false;
+  }
+}
+
+function startConversationSync() {
+  if (state.syncTimer) return;
+  state.syncTimer = window.setInterval(syncCurrentConversation, 1800);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') syncCurrentConversation();
+  });
+}
+
+function openConversationSettings(id) {
+  const conversation = state.conversations.find((item) => item.id === id);
+  if (!conversation) return;
+  state.conversationSettingsId = id;
+  $('#conversationSettingsTitle').textContent = conversation.title || '当前对话';
+  $('#conversationSystemPrompt').value = conversation.system_prompt || '';
+  $('#conversationStreamEnabled').checked = Number(conversation.stream_enabled ?? 1) !== 0;
+  $('#conversationSettingsDialog').showModal();
+}
+
+async function saveConversationSettings(event) {
+  event.preventDefault();
+  const id = state.conversationSettingsId;
+  if (!id) return;
+  const saveButton = $('#saveConversationSettings');
+  saveButton.disabled = true;
+  try {
+    const updated = await api(`/api/conversations/${id}/settings`, {
+      method: 'POST',
+      body: {
+        system_prompt: $('#conversationSystemPrompt').value,
+        stream_enabled: $('#conversationStreamEnabled').checked,
+      },
+    });
+    const index = state.conversations.findIndex((item) => item.id === id);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    $('#conversationSettingsDialog').close();
+    renderConversations();
+    toast('对话设置已保存');
+  } catch (error) {
+    toast(`保存失败：${error.message}`);
+  } finally {
+    saveButton.disabled = false;
+  }
+}
+
+async function deleteConversation(id) {
+  if (id === state.conversationId && state.abortController) {
+    toast('请先停止当前回复再删除对话');
+    return;
+  }
+  const conversation = state.conversations.find((item) => item.id === id);
+  if (!confirm(`删除对话"${conversation?.title || '新对话'}"？`)) return;
+  await api(`/api/conversations/${id}`, { method: 'DELETE' });
+  state.conversations = state.conversations.filter((item) => item.id !== id);
+  if (state.conversationId === id) state.conversationId = '';
+  renderConversations();
+  if (state.conversations.length) await openConversation(state.conversations[0].id);
+  else renderMessages([]);
+}
+
+function renderSkills(filter = '') {
+  if (!state.bootstrap) return;
+  const query = filter.trim().toLowerCase();
+  const skills = state.bootstrap.skills.filter((skill) =>
+    !query || `${skill.name} ${skill.description}`.toLowerCase().includes(query));
+  $('#skillList').innerHTML = skills.map((skill) => `
+    <label class="skill-item">
+      <input type="checkbox" value="${skill.id}" ${state.selectedSkills.includes(skill.id) ? 'checked' : ''}>
+      <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
+      ${skill.script_count ? `<em>${skill.script_count} 脚本</em>` : ''}
+    </label>`).join('');
+  updateSkillSummary();
+}
+
+function updateSkillSummary() {
+  const selected = state.selectedSkills.length;
+  $('#skillCount').textContent = state.autoSkills ? '自动' : String(selected);
+  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，${selected} 个固定启用`;
+}
+
+function renderProviders() {
+  const providers = state.bootstrap.providers;
+  const select = $('#providerSelect');
+  select.innerHTML = providers.length
+    ? providers.map((provider) => `<option value="${provider.id}">${escapeHtml(provider.name)}</option>`).join('')
+    : '<option value="">尚未添加供应商</option>';
+  const currentId = $('#providerId').value;
+  const current = providers.find((provider) => provider.id === currentId)
+    || providers.find((provider) => provider.id === state.bootstrap.settings.provider_id)
+    || providers[0];
+  showProviderForm(current || {}, { editing: false });
+}
+
+function showProviderForm(provider = {}, { editing = false, isNew = false } = {}) {
+  $('#providerId').value = provider.id || '';
+  if (isNew) {
+    $('#providerSelect').insertAdjacentHTML('beforeend', '<option value="__new__">正在添加新供应商</option>');
+    $('#providerSelect').value = '__new__';
+  } else {
+    $('#providerSelect').value = provider.id || '';
+  }
+  $('#providerName').value = provider.name || '';
+  $('#providerBaseUrl').value = provider.base_url || '';
+  setProviderModelOptions([], provider.model || '');
+  $('#providerFormat').value = provider.request_format || 'openai_chat';
+  $('#providerApiKey').value = '';
+  $('#providerApiKey').type = 'password';
+  $('#toggleProviderKey').textContent = '显示';
+  $('#toggleProviderKey').title = '显示 API Key';
+  $('#providerKeyStatus').textContent = provider.has_api_key ? '已配置' : '未配置';
+  $('#providerError').textContent = '';
+  setProviderEditMode(editing, isNew);
+}
+
+function setProviderEditMode(editing, isNew = false) {
+  state.providerEditing = editing;
+  state.providerIsNew = isNew;
+  const active = Boolean($('#providerId').value) || isNew;
+  $$('.provider-field').forEach((element) => { element.hidden = !active; });
+  $('#providerEmpty').hidden = active;
+  [
+    '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
+    '#providerModel', '#providerModelCustom',
+  ].forEach((selector) => { $(selector).disabled = !editing; });
+  $('#providerSelect').disabled = editing;
+  $('#addProvider').disabled = editing;
+  $('#deleteProvider').disabled = !$('#providerId').value || editing;
+  $('#loadProviderModels').disabled = !editing;
+  $('#testProvider').hidden = !active;
+  $('#editProvider').hidden = !active || editing;
+  $('#cancelProvider').hidden = !editing;
+  $('#saveProvider').hidden = !editing;
+}
+
+function setProviderModelOptions(models = [], current = '') {
+  const select = $('#providerModel');
+  const unique = [];
+  const seen = new Set();
+  models.forEach((model) => {
+    const id = String(model.id || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    unique.push({ id, name: String(model.name || id) });
+  });
+  if (current && !seen.has(current)) unique.unshift({ id: current, name: current });
+  const prompt = unique.length > 1 && !current
+    ? `<option value="">请选择模型（${unique.length} 个可用）</option>`
+    : '';
+  select.innerHTML = unique.length
+    ? prompt + unique.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name)}</option>`).join('')
+    : '<option value="">填写连接信息后自动检查</option>';
+  select.insertAdjacentHTML('beforeend', '<option value="__custom__">手动输入模型名称…</option>');
+  select.value = current || (unique.length === 1 ? unique[0].id : '');
+  $('#providerModelCustom').hidden = true;
+  $('#providerModelCustom').required = false;
+}
+
+function toggleCustomModel() {
+  const custom = $('#providerModel').value === '__custom__';
+  $('#providerModelCustom').hidden = !custom;
+  $('#providerModelCustom').required = custom;
+  if (custom) $('#providerModelCustom').focus();
+}
+
+function providerFormValue() {
+  const selectedModel = $('#providerModel').value;
+  return {
+    id: $('#providerId').value,
+    name: $('#providerName').value.trim(),
+    base_url: $('#providerBaseUrl').value.trim(),
+    model: selectedModel === '__custom__' ? $('#providerModelCustom').value.trim() : selectedModel,
+    api_key: $('#providerApiKey').value.trim(),
+    request_format: $('#providerFormat').value,
+  };
+}
+
+async function loadProviderModels({ automatic = false } = {}) {
+  if (!state.providerEditing) return;
+  const values = providerFormValue();
+  if (!values.base_url || (!values.api_key && !values.id && values.request_format !== 'lm_studio')) {
+    if (!automatic) $('#providerError').textContent = '请先填写 API URL 和 API Key';
+    return;
+  }
+  const button = $('#loadProviderModels');
+  button.disabled = true;
+  button.textContent = '检查中…';
+  if (!automatic) $('#providerError').textContent = '正在获取可用模型…';
+  try {
+    const result = await api('/api/providers/models', { method: 'POST', body: values });
+    if (!result.models?.length) throw new Error('接口没有返回可用模型，请选择"手动输入模型名称"');
+    const current = $('#providerModel').value;
+    setProviderModelOptions(result.models, current && current !== '__custom__' ? current : '');
+    $('#providerError').textContent = '';
+    toast(`已找到 ${result.models.length} 个模型`);
+  } catch (error) {
+    $('#providerError').textContent = `模型检查失败：${error.message}`;
+    if (!$('#providerModel').value) setProviderModelOptions([], '');
+  } finally {
+    button.disabled = false;
+    button.textContent = '检查模型';
+  }
+}
+
+let providerModelCheckTimer;
+function scheduleProviderModelCheck() {
+  clearTimeout(providerModelCheckTimer);
+  providerModelCheckTimer = setTimeout(() => loadProviderModels({ automatic: true }), 350);
+}
+
+async function saveProvider(event) {
+  event.preventDefault();
+  try {
+    const saved = await api('/api/providers', { method: 'POST', body: providerFormValue() });
+    const index = state.bootstrap.providers.findIndex((item) => item.id === saved.id);
+    if (index >= 0) state.bootstrap.providers[index] = saved;
+    else state.bootstrap.providers.push(saved);
+    $('#providerId').value = saved.id;
+    renderProviders();
+    populateModels();
+    toast('API 供应商已保存');
+  } catch (error) {
+    $('#providerError').textContent = error.message;
+  }
+}
+
+function addProvider() {
+  if (state.providerEditing) return;
+  showProviderForm({}, { editing: true, isNew: true });
+  $('#providerName').focus();
+}
+
+function editProvider() {
+  if (!$('#providerId').value) return;
+  setProviderEditMode(true, false);
+  $('#providerName').focus();
+}
+
+function cancelProviderEdit() {
+  clearTimeout(providerModelCheckTimer);
+  renderProviders();
+}
+
+async function testProvider() {
+  $('#providerError').textContent = '正在测试连接…';
+  try {
+    const result = await api('/api/providers/test', { method: 'POST', body: providerFormValue() });
+    $('#providerError').textContent = `连接成功：${result.response}`;
+  } catch (error) {
+    $('#providerError').textContent = error.message;
+  }
+}
+
+async function toggleProviderKey() {
+  const input = $('#providerApiKey');
+  const button = $('#toggleProviderKey');
+  if (input.type === 'text') {
+    input.type = 'password';
+    button.textContent = '显示';
+    button.title = '显示 API Key';
+    return;
+  }
+  try {
+    if (!input.value && $('#providerId').value) {
+      const result = await api(`/api/providers/${$('#providerId').value}/secret`);
+      input.value = result.api_key || '';
+    }
+    input.type = 'text';
+    button.textContent = '隐藏';
+    button.title = '隐藏 API Key';
+  } catch (error) {
+    $('#providerError').textContent = error.message;
+  }
+}
+
+function populateRuntimeSettings() {
+  const settings = state.bootstrap.settings;
+  $('#temperature').value = settings.temperature;
+  $('#maxTokens').value = settings.max_tokens;
+  $('#maxAgentSteps').value = settings.max_agent_steps;
+  $('#commandTimeout').value = settings.command_timeout;
+}
+
+function populateAgentSettings() {
+  const settings = state.bootstrap.settings;
+  $('#agentSystemPrompt').value = settings.agent_system_prompt || '';
+  const permissionMode = settings.permission_mode || 'confirm';
+  const permissionInput = $(`[name="permissionMode"][value="${permissionMode}"]`);
+  if (permissionInput) permissionInput.checked = true;
+  const enabled = new Set(settings.agent_tools || []);
+  $$('[data-agent-tool]').forEach((input) => {
+    input.checked = input.value.split(',').every((tool) => enabled.has(tool));
+  });
+}
+
+async function saveAgentSettings() {
+  const permissionMode = $('[name="permissionMode"]:checked')?.value || 'confirm';
+  if (
+    permissionMode === 'full'
+    && state.bootstrap.settings.permission_mode !== 'full'
+    && !confirm('完全访问会允许 Agent 在当前账户权限范围内操作本机文件、命令、网络和 MCP。确认启用？')
+  ) return;
+  const payload = {
+    agent_system_prompt: $('#agentSystemPrompt').value.trim(),
+    permission_mode: permissionMode,
+    agent_tools: $$('[data-agent-tool]:checked').flatMap((input) => input.value.split(',')),
+  };
+  const result = await api('/api/settings', { method: 'POST', body: payload });
+  Object.assign(state.bootstrap.settings, result.settings);
+  toast('Agent 设置已保存');
+}
+
+async function saveRuntimeSettings() {
+  const payload = {
+    temperature: Number($('#temperature').value),
+    max_tokens: Number($('#maxTokens').value),
+    max_agent_steps: Number($('#maxAgentSteps').value),
+    command_timeout: Number($('#commandTimeout').value),
+  };
+  const result = await api('/api/settings', { method: 'POST', body: payload });
+  Object.assign(state.bootstrap.settings, result.settings);
+  toast('运行参数已保存');
+}
+
+async function saveAccessToken() {
+  const value = $('#accessTokenInput').value.trim();
+  if (!value) {
+    toast('请输入新口令');
+    return;
+  }
+  if (value.length < 4) {
+    toast('口令至少 4 位');
+    return;
+  }
+  const result = await api('/api/settings', { method: 'POST', body: { access_token: value } });
+  Object.assign(state.bootstrap.settings, result.settings);
+  // 更新本会话使用的口令，避免保存后立即失效
+  state.token = value;
+  localStorage.setItem('naibaChatToken', value);
+  $('#accessTokenInput').value = '';
+  $('#accessTokenInput').placeholder = '口令已更新（输入可再次修改）';
+  toast('口令已更新，其他设备需用新口令登录');
+}
+
+function renderMcp() {
+  const servers = state.bootstrap.mcp_servers;
+  const connected = servers.length && servers.every((server) => server.connected);
+  const failed = servers.some((server) => server.status === 'error' || server.error);
+  $('#mcpStatus').classList.toggle('connected', connected);
+  $('#mcpStatus').classList.toggle('error', failed);
+  $('#mcpList').innerHTML = servers.map((server) => `
+    <div class="connection-item">
+      <span><b>${escapeHtml(server.id)} · ${server.connected ? '已连接' : (server.status === 'idle' ? '待机' : '不可用')}</b><small>${server.connected ? `${server.tools.length} 个工具` : (server.status === 'idle' ? '仅在本轮激活的 Skill 需要 MCP 时连接' : escapeHtml(server.error))}</small></span>
+      <span class="status-mark" style="background:${server.connected ? '#3ecf8e' : (server.status === 'idle' ? '#7d867d' : '#e45e55')}"></span>
+    </div>`).join('') || '<p class="activity">没有注册 MCP 服务</p>';
+}
+
+async function uploadFiles(files) {
+  for (const file of files) {
+    const chip = { name: file.name, uploading: true };
+    state.pendingFiles.push(chip);
+    renderPendingFiles();
+    try {
+      const data = await readAsDataUrl(file);
+      const uploaded = await api('/api/uploads', { method: 'POST', body: { name: file.name, data } });
+      Object.assign(chip, uploaded, { uploading: false });
+    } catch (error) {
+      state.pendingFiles = state.pendingFiles.filter((item) => item !== chip);
+      toast(`上传失败：${error.message}`);
+    }
+    renderPendingFiles();
+  }
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderPendingFiles() {
+  $('#pendingFiles').innerHTML = state.pendingFiles.map((file, index) => `
+    <span class="file-chip">${file.uploading ? '上传中 · ' : ''}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除">×</button></span>`).join('');
+}
+
+async function sendMessage(textOverride = '') {
+  const input = $('#messageInput');
+  const text = (textOverride || input.value).trim();
+  if (!text || state.abortController) return;
+  if (state.pendingFiles.some((file) => file.uploading)) {
+    toast('请等待文件上传完成');
+    return;
+  }
+  // 只有消息确定可以发送时，才结束当前选项交互。
+  hideChoiceButtons();
+  if (!state.conversationId) await createConversation();
+  const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
+  state.pendingFiles = [];
+  renderPendingFiles();
+  input.value = '';
+  resizeTextarea();
+  const emptyState = $('#emptyState');
+  if (emptyState) emptyState.hidden = true;
+  const messages = $('#messages');
+  messages.append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
+  const temporary = messageElement({ role: 'assistant', content: '' }, true);
+  messages.append(temporary);
+  scrollToBottom();
+  setBusy(true);
+
+  const controller = new AbortController();
+  state.abortController = controller;
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
+      body: JSON.stringify({
+        conversation_id: state.conversationId,
+        message: text,
+        attachments,
+        model_key: $('#modelSelect').value,
+        auto_skills: state.autoSkills,
+        skill_ids: state.selectedSkills,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        handleChatEvent(JSON.parse(line), temporary);
+      }
+      if (done) break;
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      temporary.querySelector('.answer-content').innerHTML = '<p>已停止等待，电脑端正在结束当前任务。</p>';
+    } else {
+      temporary.querySelector('.answer-content').innerHTML = `<p>请求失败：${escapeHtml(error.message)}</p>`;
+    }
+  } finally {
+    state.abortController = null;
+    setBusy(false);
+    try {
+      await loadConversations();
+      if (state.conversationId) await openConversation(state.conversationId);
+    } catch (error) {
+      console.error('刷新对话失败', error);
+    }
+  }
+}
+
+function handleChatEvent(event, row) {
+  const answer = row.querySelector('.answer-content');
+  if (event.type === 'status') {
+    answer.innerHTML = `<div class="activity">${escapeHtml(event.message)}</div>`;
+    $('#runtimeStatus').textContent = event.message;
+  } else if (event.type === 'skills') {
+    answer.innerHTML = `<div class="activity">已启用 ${event.skills.map((skill) => escapeHtml(skill.name)).join('、')}</div>`;
+  } else if (event.type === 'delta') {
+    const current = answer.dataset.raw || '';
+    const next = current + String(event.content || '');
+    answer.dataset.raw = next;
+    answer.innerHTML = markdown(next);
+  } else if (event.type === 'reasoning') {
+    // 实时显示推理内容到可折叠块
+    let block = row.querySelector('.reasoning-block');
+    if (!block) {
+      block = document.createElement('details');
+      block.className = 'reasoning-block';
+      block.open = true;
+      block.innerHTML = '<summary>思考过程</summary><div class="reasoning-content"></div>';
+      answer.before(block);
+    }
+    const content = block.querySelector('.reasoning-content');
+    content.innerHTML = markdown((content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content);
+    content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
+  } else if (event.type === 'tool_start') {
+    const stack = row.querySelector('.tool-stack') || document.createElement('div');
+    stack.className = 'tool-stack';
+    stack.insertAdjacentHTML('beforeend', `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`);
+    if (!stack.parentNode) answer.before(stack);
+  } else if (event.type === 'tool_result') {
+    const last = row.querySelector('.tool-run:last-child');
+    if (last) last.textContent = `${event.success ? '已完成' : '失败'} · ${event.tool}`;
+  } else if (event.type === 'tool_confirm') {
+    // 需要确认的工具调用
+    const stack = row.querySelector('.tool-stack') || document.createElement('div');
+    stack.className = 'tool-stack';
+    const confirmId = event.confirm_id;
+    const toolName = event.tool_name;
+    const toolDesc = event.tool_desc;
+    const toolArguments = typeof event.arguments === 'string'
+      ? event.arguments
+      : JSON.stringify(event.arguments || {}, null, 2);
+    const confirmMarkup = `
+      <div class="tool-confirm" data-confirm-id="${escapeHtml(confirmId)}">
+        <div class="tool-confirm-header">
+          <span class="tool-confirm-icon">⚠️</span>
+          <span class="tool-confirm-title">需要确认</span>
+        </div>
+        <div class="tool-confirm-body">
+          <div class="tool-confirm-tool">工具：${escapeHtml(toolName)}</div>
+          <div class="tool-confirm-desc">${escapeHtml(toolDesc)}</div>
+          ${toolArguments ? `<div class="tool-confirm-args"><pre>${escapeHtml(toolArguments)}</pre></div>` : ''}
+        </div>
+        <div class="tool-confirm-actions">
+          <button class="tool-confirm-btn tool-confirm-reject" onclick="rejectTool('${escapeHtml(confirmId)}')">拒绝</button>
+          <button class="tool-confirm-btn tool-confirm-approve" onclick="approveTool('${escapeHtml(confirmId)}')">允许执行</button>
+        </div>
+      </div>`;
+    stack.insertAdjacentHTML('beforeend', confirmMarkup);
+    if (!stack.parentNode) answer.before(stack);
+  } else if (event.type === 'choice') {
+    // AI回复包含可选项，显示选择按钮
+    showChoiceButtons(event.choices, event.choice_groups);
+  } else if (event.type === 'done') {
+    try {
+      row.replaceWith(messageElement(event.message));
+    } catch (error) {
+      console.error('[naiba] done 事件渲染崩溃:', error, 'message=', event.message);
+    }
+    $('#runtimeStatus').textContent = '就绪';
+  } else if (event.type === 'error') {
+    answer.innerHTML = `<p>执行失败：${escapeHtml(event.message)}</p>`;
+    $('#runtimeStatus').textContent = '执行失败';
+  }
+  scrollToBottom();
+}
+
+function showChoiceButtons(choices, choiceGroups = []) {
+  hideChoiceButtons();
+  const composerWrap = $('.composer-wrap');
+  const composer = $('#composerForm');
+  const legacyChoices = Array.isArray(choices)
+    ? choices.map((choice) => String(choice).trim()).filter(Boolean)
+    : [];
+  const sourceGroups = Array.isArray(choiceGroups) && choiceGroups.length
+    ? choiceGroups
+    : [{ prompt: '', choices: legacyChoices }];
+  const groups = sourceGroups.map((group) => ({
+    prompt: String(group?.prompt || '').trim(),
+    choices: Array.isArray(group?.choices)
+      ? group.choices.map((choice) => String(choice).trim()).filter(Boolean)
+      : [],
+  })).filter((group) => group.choices.length);
+  if (!composerWrap || !composer || !groups.length) return;
+
+  const container = document.createElement('div');
+  container.className = 'choice-buttons';
+  container.id = 'choiceButtons';
+  container.setAttribute('role', 'group');
+  container.setAttribute('aria-label', '可选回复');
+  composerWrap.insertBefore(container, composer);
+
+  const selected = [];
+  let groupIndex = 0;
+
+  const formatAnswer = (group, choice, index) => {
+    const prompt = group.prompt || `选择 ${index + 1}`;
+    return /[：:？?]$/.test(prompt) ? `${prompt}${choice}` : `${prompt}：${choice}`;
+  };
+
+  const renderGroup = () => {
+    const group = groups[groupIndex];
+    container.replaceChildren();
+    container.setAttribute('aria-label', group.prompt || `第 ${groupIndex + 1} 组选项`);
+
+    const header = document.createElement('div');
+    header.className = 'choice-header';
+    if (groupIndex > 0) {
+      const back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'choice-back';
+      back.textContent = '←';
+      back.title = '返回上一项';
+      back.setAttribute('aria-label', '返回上一项');
+      back.disabled = Boolean(state.abortController);
+      back.addEventListener('click', () => {
+        selected.splice(groupIndex - 1);
+        groupIndex -= 1;
+        renderGroup();
+      });
+      header.appendChild(back);
+    }
+
+    const prompt = document.createElement('strong');
+    prompt.className = 'choice-prompt';
+    prompt.textContent = group.prompt || '请选择';
+    header.appendChild(prompt);
+
+    if (groups.length > 1) {
+      const progress = document.createElement('span');
+      progress.className = 'choice-progress';
+      progress.textContent = `${groupIndex + 1}/${groups.length}`;
+      header.appendChild(progress);
+    }
+    container.appendChild(header);
+
+    if (selected.length) {
+      const summary = document.createElement('div');
+      summary.className = 'choice-selection-summary';
+      summary.textContent = `已选：${selected.join('；')}`;
+      container.appendChild(summary);
+    }
+
+    const options = document.createElement('div');
+    options.className = 'choice-options';
+    group.choices.forEach((choice) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'choice-btn';
+      btn.textContent = choice;
+      btn.disabled = Boolean(state.abortController);
+      btn.addEventListener('click', () => {
+        selected[groupIndex] = choice;
+        if (groupIndex < groups.length - 1) {
+          groupIndex += 1;
+          renderGroup();
+          scrollToBottom();
+          return;
+        }
+        const answer = groups
+          .map((answerGroup, index) => formatAnswer(answerGroup, selected[index], index))
+          .join('\n');
+        hideChoiceButtons();
+        sendMessage(answer);
+      });
+      options.appendChild(btn);
+    });
+    container.appendChild(options);
+  };
+
+  renderGroup();
+  scrollToBottom();
+}
+
+function hideChoiceButtons() {
+  const existing = $('#choiceButtons');
+  if (existing) existing.remove();
+}
+
+async function approveTool(confirmId) {
+  try {
+    const confirmEl = document.querySelector(`[data-confirm-id="${confirmId}"]`);
+    if (confirmEl) {
+      confirmEl.querySelector('.tool-confirm-actions').innerHTML = '<div class="tool-confirm-status">正在执行...</div>';
+    }
+    const response = await api('/api/tool/confirm', { method: 'POST', body: { confirm_id: confirmId } });
+    if (confirmEl) {
+      confirmEl.querySelector('.tool-confirm-status').textContent = response.success ? '已执行' : `执行失败：${response.result}`;
+    }
+  } catch (error) {
+    toast(`确认失败：${error.message}`);
+  }
+}
+
+async function rejectTool(confirmId) {
+  try {
+    const confirmEl = document.querySelector(`[data-confirm-id="${confirmId}"]`);
+    if (confirmEl) {
+      confirmEl.querySelector('.tool-confirm-actions').innerHTML = '<div class="tool-confirm-status">已拒绝</div>';
+    }
+    const response = await api('/api/tool/reject', { method: 'POST', body: { confirm_id: confirmId } });
+    if (confirmEl) confirmEl.querySelector('.tool-confirm-status').textContent = response.result || '已拒绝';
+  } catch (error) {
+    toast(`拒绝失败：${error.message}`);
+  }
+}
+
+function setBusy(busy) {
+  const sendBtn = $('#sendButton');
+  // 对话中：发送键变为"停止"键（可点击中断）；空闲时：恢复为发送键
+  sendBtn.disabled = false;
+  sendBtn.classList.toggle('is-stop', busy);
+  sendBtn.textContent = busy ? '■' : '↑';
+  sendBtn.title = busy ? '停止' : '发送';
+  $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
+  sendBtn.setAttribute('aria-label', busy ? '停止' : '发送');
+  // 输入框：对话中仍可输入（便于编辑下一条），但 Enter 提交会被 sendMessage 的 abortController 拦截
+  $('#messageInput').disabled = false;
+  if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
+}
+
+function resizeTextarea() {
+  const input = $('#messageInput');
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
+}
+
+function openSidebar() {
+  $('#sidebar').classList.add('open');
+  $('#sidebarBackdrop').classList.add('open');
+}
+
+function closeSidebar() {
+  $('#sidebar').classList.remove('open');
+  $('#sidebarBackdrop').classList.remove('open');
+}
+
+function bindEvents() {
+  $('#authForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    try {
+      await authenticate($('#tokenInput').value.trim());
+      $('#authDialog').close();
+      await initialize();
+    } catch (error) {
+      $('#authError').textContent = error.message;
+    }
+  });
+  $('#newChatButton').addEventListener('click', createConversation);
+  $('#conversationList').addEventListener('click', (event) => {
+    const item = event.target.closest('.conversation-item');
+    if (!item) return;
+    if (event.target.closest('.delete-conversation')) deleteConversation(item.dataset.conversationId);
+    else if (event.target.closest('.conversation-settings')) openConversationSettings(item.dataset.conversationId);
+    else openConversation(item.dataset.conversationId);
+  });
+  $('#modelSelect').addEventListener('change', saveModelSelection);
+  $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
+  $('#mcpStatus').addEventListener('click', () => {
+    $('#settingsDialog').showModal();
+    switchSettingsTab('connections');
+  });
+  $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
+  $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
+  $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
+  $('#autoSkills').addEventListener('change', (event) => {
+    state.autoSkills = event.target.checked;
+    localStorage.setItem('naibaChatAutoSkills', String(state.autoSkills));
+    updateSkillSummary();
+  });
+  $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
+  $('#skillList').addEventListener('change', (event) => {
+    if (event.target.type !== 'checkbox') return;
+    state.selectedSkills = event.target.checked
+      ? [...new Set([...state.selectedSkills, event.target.value])]
+      : state.selectedSkills.filter((id) => id !== event.target.value);
+    localStorage.setItem('naibaChatSkillIds', JSON.stringify(state.selectedSkills));
+    updateSkillSummary();
+  });
+  // 发送键：对话中点击 = 中断，否则 = 发送
+  $('#composerForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    if (state.abortController) {
+      state.abortController.abort();
+    } else {
+      sendMessage();
+    }
+  });
+  $('#messageInput').addEventListener('input', resizeTextarea);
+  $('#messageInput').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+      event.preventDefault();
+      sendMessage();
+    }
+  });
+  $('#attachButton').addEventListener('click', () => $('#fileInput').click());
+  $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
+  $('#pendingFiles').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-remove-file]');
+    if (!button) return;
+    state.pendingFiles.splice(Number(button.dataset.removeFile), 1);
+    renderPendingFiles();
+  });
+
+  $('#messages').addEventListener('click', async (event) => {
+    const copyButton = event.target.closest('[data-copy-message]');
+    if (copyButton) {
+      const text = copyButton.closest('.message-body').querySelector('.answer-content').innerText;
+      try {
+        await copyText(text);
+        toast('已复制回复');
+      } catch (error) {
+        toast(`复制失败：${error.message}`);
+      }
+      return;
+    }
+    const editButton = event.target.closest('[data-edit-message]');
+    if (editButton) {
+      startEditMessage(editButton.closest('.message-row'));
+    }
+  });
+  $$('.starter-grid button').forEach((button) => button.addEventListener('click', () => sendMessage(button.dataset.prompt)));
+  $('#copyAddress').addEventListener('click', async () => {
+    if (!state.bootstrap) return;
+    try {
+      await copyText(state.bootstrap.lan_url);
+      toast('手机访问地址已复制');
+    } catch (error) {
+      toast(`复制失败：${error.message}`);
+    }
+  });
+  $('#openSidebar').addEventListener('click', openSidebar);
+  $('#closeSidebar').addEventListener('click', closeSidebar);
+  $('#sidebarBackdrop').addEventListener('click', closeSidebar);
+  $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => switchSettingsTab(button.dataset.settingsTab)));
+  $('#addProvider').addEventListener('click', addProvider);
+  $('#providerSelect').addEventListener('change', (event) => {
+    const provider = state.bootstrap.providers.find((item) => item.id === event.target.value);
+    showProviderForm(provider || {});
+  });
+  $('#providerForm').addEventListener('submit', saveProvider);
+  $('#editProvider').addEventListener('click', editProvider);
+  $('#cancelProvider').addEventListener('click', cancelProviderEdit);
+  $('#testProvider').addEventListener('click', testProvider);
+  $('#loadProviderModels').addEventListener('click', () => loadProviderModels());
+  $('#providerModel').addEventListener('change', toggleCustomModel);
+  $('#providerBaseUrl').addEventListener('change', scheduleProviderModelCheck);
+  $('#providerApiKey').addEventListener('change', scheduleProviderModelCheck);
+  $('#providerFormat').addEventListener('change', scheduleProviderModelCheck);
+  $('#toggleProviderKey').addEventListener('click', toggleProviderKey);
+  $('#providerApiKey').addEventListener('input', (event) => {
+    if (event.target.value) $('#providerKeyStatus').textContent = '待保存';
+  });
+  $('#deleteProvider').addEventListener('click', async () => {
+    const providerId = $('#providerId').value;
+    if (!providerId) return;
+    const provider = state.bootstrap.providers.find((item) => item.id === providerId);
+    if (!confirm(`删除供应商"${provider?.name || ''}"？`)) return;
+    await api(`/api/providers/${providerId}`, { method: 'DELETE' });
+    state.bootstrap.providers = state.bootstrap.providers.filter((item) => item.id !== providerId);
+    $('#providerId').value = '';
+    renderProviders();
+    populateModels();
+    toast('供应商已删除');
+  });
+  $('#saveAgent').addEventListener('click', saveAgentSettings);
+  $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
+  $('#saveToken').addEventListener('click', saveAccessToken);
+  $('#checkUpdate').addEventListener('click', checkUpdate);
+  $('#installUpdate').addEventListener('click', installUpdate);
+  $('#addSkillDir').addEventListener('click', addSkillDir);
+  $('#installSkill').addEventListener('click', installSkill);
+  $('#installSkillFolder').addEventListener('click', () => $('#skillFolder').click());
+  $('#skillFolder').addEventListener('change', installSkillFolder);
+  $('#refreshSkills').addEventListener('click', () => loadInstalledSkills(true));
+}
+
+async function addSkillDir() {
+  const input = $('#skillDirInput');
+  const raw = input.value.trim();
+  if (!raw) return;
+  try {
+    const data = await api('/api/install/dir', { method: 'POST', body: { dir: raw } });
+    input.value = '';
+    renderSkillDirs(data.configured);
+    renderInstalledSkills(data.skills || []);
+    toast('已添加目录并扫描 Skill');
+  } catch (error) {
+    toast(`添加失败：${error.message}`);
+  }
+}
+
+async function installSkill() {
+  const fileInput = $('#skillZip');
+  const file = fileInput.files[0];
+  if (!file) {
+    toast('请先选择要安装的 .zip 文件');
+    return;
+  }
+  try {
+    const data = await readAsDataUrl(file);
+    const result = await api('/api/skills/install', { method: 'POST', body: { name: file.name, data } });
+    fileInput.value = '';
+    renderInstalledSkills(result.skills || []);
+    if (result.configured) renderSkillDirs(result.configured);
+    toast(`已安装到 ${result.dir}`);
+  } catch (error) {
+    toast(`安装失败：${error.message}`);
+  }
+}
+
+async function installSkillFolder(event) {
+  const input = event.target;
+  const files = [...input.files];
+  input.value = '';
+  if (!files.length) return;
+  if (files.length > 2000) {
+    toast('文件夹内文件数量过多（超过 2000）');
+    return;
+  }
+  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
+  if (totalSize > 80 * 1024 * 1024) {
+    toast('文件夹总大小不能超过 80 MB');
+    return;
+  }
+  toast(`正在上传 ${files.length} 个文件…`);
+  try {
+    const payload = [];
+    for (const file of files) {
+      const data = await readAsDataUrl(file);
+      payload.push({ path: file.webkitRelativePath || file.name, data });
+    }
+    const result = await api('/api/skills/install_folder', { method: 'POST', body: { files: payload } });
+    renderInstalledSkills(result.skills || []);
+    if (result.configured) renderSkillDirs(result.configured);
+    toast(`已安装 ${result.files} 个文件到 ${result.dir}`);
+  } catch (error) {
+    toast(`安装失败：${error.message}`);
+  }
+}
+
+async function loadInstalledSkills(showToast) {
+  try {
+    const data = await api('/api/skills/scan', { method: 'POST', body: {} });
+    renderInstalledSkills(data.skills || []);
+    if (showToast) toast('已重新扫描 Skill');
+  } catch (error) {
+    toast(`扫描失败：${error.message}`);
+  }
+}
+
+function renderSkillDirs(configured) {
+  const list = $('#skillDirList');
+  list.innerHTML = '';
+  if (!configured.length) {
+    list.innerHTML = '<div class="connection-item"><small>尚未配置任何 Skill 目录</small></div>';
+    return;
+  }
+  configured.forEach((dir, idx) => {
+    const item = document.createElement('div');
+    item.className = 'connection-item';
+    const info = document.createElement('div');
+    const b = document.createElement('b');
+    b.textContent = dir;
+    const small = document.createElement('small');
+    small.textContent = '扫描目录';
+    info.append(b, small);
+    const remove = document.createElement('button');
+    remove.className = 'danger-button';
+    remove.textContent = '移除';
+    remove.addEventListener('click', async () => {
+      try {
+        const data = await api('/api/install/dir/remove', { method: 'POST', body: { dir } });
+        renderSkillDirs(data.configured || []);
+        renderInstalledSkills(data.skills || []);
+        toast('已移除目录');
+      } catch (error) {
+        toast(`移除失败：${error.message}`);
+      }
+    });
+    item.append(info, remove);
+    list.append(item);
+  });
+}
+
+function renderInstalledSkills(skills) {
+  const list = $('#installedSkillList');
+  list.innerHTML = '';
+  $('#installedSkillCount').textContent = String(skills.length);
+  if (!skills.length) {
+    list.innerHTML = '<div class="connection-item"><small>未加载任何 Skill</small></div>';
+    return;
+  }
+  skills.forEach((skill) => {
+    const item = document.createElement('div');
+    item.className = 'skill-item connection-item';
+    const info = document.createElement('div');
+    const b = document.createElement('b');
+    b.textContent = skill.name;
+    const small = document.createElement('small');
+    small.textContent = skill.description || skill.path;
+    small.className = 'desc';
+    info.append(b, small);
+    item.append(info);
+    list.append(item);
+  });
+}
+
+async function loadSkillDirs() {
+  try {
+    const data = await api('/api/install/dirs');
+    renderSkillDirs(data.configured || []);
+  } catch (error) {
+    toast(`加载目录失败：${error.message}`);
+  }
+  await loadInstalledSkills(false);
+}
+
+function switchSettingsTab(name) {
+  $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsTab === name));
+  $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
+  if (name === 'skills') loadSkillDirs();
+  if (name === 'updates') api('/api/update').then((status) => {
+    state.bootstrap.update = status;
+    renderUpdateStatus(status);
+  }).catch((error) => toast(`读取更新状态失败：${error.message}`));
+}
+
+bindEvents();
+initialize();

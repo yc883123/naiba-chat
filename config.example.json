@@ -1,0 +1,31 @@
+{
+  "host": "0.0.0.0",
+  "port": 8765,
+  "access_token": "change-me",
+  "model_dir": "models",
+  "skills_dirs": [],
+  "workspace_dir": "skills",
+  "local_model": "",
+  "provider_id": "",
+  "model_mode": "local",
+  "temperature": 0.7,
+  "max_tokens": 8192,
+  "context_size": 8192,
+  "gpu_layers": -1,
+  "max_agent_steps": 8,
+  "agent_system_prompt": "",
+  "permission_mode": "confirm",
+  "agent_tools": [
+    "read_file",
+    "write_file",
+    "list_directory",
+    "search_files",
+    "run_command",
+    "run_skill_script",
+    "http_request",
+    "call_mcp"
+  ],
+  "command_timeout": 120,
+  "providers": [],
+  "mcp_servers": []
+}
