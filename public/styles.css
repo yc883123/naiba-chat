@@ -157,6 +157,9 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .conversation-settings-dialog { width: min(620px, calc(100vw - 30px)); max-height: min(700px, calc(100dvh - 30px)); }
 .conversation-settings-dialog form { padding-bottom: 18px; }
 .conversation-prompt-field { display: grid; gap: 7px; padding: 18px; }
+.conversation-title-field { display: grid; gap: 7px; padding: 18px 18px 0; }
+.conversation-title-field input { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; background: var(--surface); color: var(--text); }
+.conversation-title-field input:focus { outline: 2px solid rgba(23, 122, 80, .18); border-color: var(--green); }
 .conversation-prompt-field textarea { width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; background: var(--surface); color: var(--text); line-height: 1.55; }
 .conversation-prompt-field textarea:focus { outline: 2px solid rgba(23, 122, 80, .18); border-color: var(--green); }
 .conversation-stream-toggle { border-top: 1px solid var(--line); }

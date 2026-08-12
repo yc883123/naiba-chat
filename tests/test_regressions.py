@@ -326,6 +326,33 @@ class ConversationSettingsTests(unittest.TestCase):
             del storage
             gc.collect()
 
+    def test_custom_title_is_persisted_and_not_overwritten_by_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = ChatStorage(Path(root) / "chat.db")
+            conversation = storage.create_conversation()
+            updated = storage.update_conversation_settings(conversation["id"], title="我的工作对话")
+
+            self.assertEqual("我的工作对话", updated["title"])
+            self.assertEqual(1, updated["title_customized"])
+            storage.add_message(conversation["id"], "user", "这条消息不应覆盖名称")
+            self.assertEqual("我的工作对话", storage.get_conversation(conversation["id"], False)["title"])
+            del storage
+            gc.collect()
+
+    def test_clearing_title_restores_automatic_naming(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = ChatStorage(Path(root) / "chat.db")
+            conversation = storage.create_conversation()
+            storage.update_conversation_settings(conversation["id"], title="临时名称")
+            reset = storage.update_conversation_settings(conversation["id"], title="")
+
+            self.assertEqual("新对话", reset["title"])
+            self.assertEqual(0, reset["title_customized"])
+            storage.add_message(conversation["id"], "user", "自动命名测试")
+            self.assertEqual("自动命名测试", storage.get_conversation(conversation["id"], False)["title"])
+            del storage
+            gc.collect()
+
 
 class AgentPromptTests(unittest.TestCase):
     def test_video_skill_requires_collecting_all_missing_choices_first(self) -> None:

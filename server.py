@@ -687,8 +687,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(APP.storage.create_conversation(title=title), HTTPStatus.CREATED)
         elif path.startswith("/api/conversations/") and path.endswith("/settings"):
             conversation_id = path.split("/")[-2]
+            title = body.get("title")
             system_prompt = body.get("system_prompt")
             stream_enabled = body.get("stream_enabled")
+            if title is not None and not isinstance(title, str):
+                self._json({"error": "title 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
+            if title is not None and len(title.strip()) > 120:
+                self._json({"error": "对话名称不能超过 120 个字符"}, HTTPStatus.BAD_REQUEST)
+                return
             if system_prompt is not None and not isinstance(system_prompt, str):
                 self._json({"error": "system_prompt 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
@@ -697,6 +704,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
+                title=title,
                 system_prompt=system_prompt,
                 stream_enabled=stream_enabled,
             )

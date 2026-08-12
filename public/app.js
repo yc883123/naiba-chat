@@ -507,6 +507,7 @@ function openConversationSettings(id) {
   if (!conversation) return;
   state.conversationSettingsId = id;
   $('#conversationSettingsTitle').textContent = conversation.title || '当前对话';
+  $('#conversationTitle').value = conversation.title_customized ? (conversation.title || '') : '';
   $('#conversationSystemPrompt').value = conversation.system_prompt || '';
   $('#conversationStreamEnabled').checked = Number(conversation.stream_enabled ?? 1) !== 0;
   $('#conversationSettingsDialog').showModal();
@@ -522,6 +523,7 @@ async function saveConversationSettings(event) {
     const updated = await api(`/api/conversations/${id}/settings`, {
       method: 'POST',
       body: {
+        title: $('#conversationTitle').value,
         system_prompt: $('#conversationSystemPrompt').value,
         stream_enabled: $('#conversationStreamEnabled').checked,
       },

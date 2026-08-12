@@ -103,6 +103,10 @@
         <div><h2>对话设置</h2><p id="conversationSettingsTitle">当前对话</p></div>
         <button class="icon-button" type="button" data-close="conversationSettingsDialog" title="关闭" aria-label="关闭">×</button>
       </div>
+      <label class="field-wide conversation-title-field">
+        对话名称
+        <input id="conversationTitle" type="text" maxlength="120" placeholder="留空则使用首条消息自动命名">
+      </label>
       <label class="field-wide conversation-prompt-field">
         系统提示词
         <textarea id="conversationSystemPrompt" rows="9" maxlength="20000" placeholder="只作用于这个对话的角色、规则和输出要求"></textarea>

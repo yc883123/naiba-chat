@@ -29,6 +29,7 @@ class ChatStorage:
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     mode TEXT NOT NULL DEFAULT 'online',
+                    title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
                     created_at INTEGER NOT NULL,
@@ -63,6 +64,7 @@ class ChatStorage:
             except sqlite3.OperationalError:
                 db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'online'")
             for column, definition in (
+                ("title_customized", "INTEGER NOT NULL DEFAULT 0"),
                 ("system_prompt", "TEXT NOT NULL DEFAULT ''"),
                 ("stream_enabled", "INTEGER NOT NULL DEFAULT 1"),
             ):
@@ -76,9 +78,9 @@ class ChatStorage:
         conversation_id = uuid.uuid4().hex
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, system_prompt, stream_enabled, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (conversation_id, title.strip() or "新对话", "online", "", 1, now, now),
+                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, title.strip() or "新对话", "online", 0, "", 1, now, now),
             )
         return self.get_conversation(conversation_id, include_messages=False)
 
@@ -86,13 +88,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, system_prompt, stream_enabled, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, system_prompt, stream_enabled, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -100,7 +102,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, system_prompt, stream_enabled, created_at, updated_at "
+                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -119,11 +121,16 @@ class ChatStorage:
     def update_conversation_settings(
         self,
         conversation_id: str,
+        title: str | None = None,
         system_prompt: str | None = None,
         stream_enabled: bool | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
+        if title is not None:
+            clean_title = " ".join(str(title).strip().split())[:120]
+            values["title"] = clean_title or "新对话"
+            values["title_customized"] = 1 if clean_title else 0
         if system_prompt is not None:
             values["system_prompt"] = str(system_prompt).strip()[:20000]
         if stream_enabled is not None:
@@ -165,7 +172,10 @@ class ChatStorage:
                 "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
                 (conversation_id,),
             ).fetchone()[0]
-            if role == "user" and message_count <= 2:
+            customized = db.execute(
+                "SELECT title_customized FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()[0]
+            if role == "user" and message_count <= 2 and not customized:
                 title = " ".join(content.strip().split())[:36] or "新对话"
                 db.execute(
                     "UPDATE conversations SET title = ? WHERE id = ?",
