@@ -153,6 +153,12 @@ function usageMarkup(usage) {
   return `<div class="usage-line" title="本轮 ${requests} 次模型请求">输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存 ${cached.toLocaleString()}/${input.toLocaleString()}（${rate}%）</div>`;
 }
 
+function skillMarkup(skills = []) {
+  if (!Array.isArray(skills) || !skills.length) return '';
+  const names = skills.map((skill) => escapeHtml(skill?.name || skill)).filter(Boolean);
+  return names.length ? `<div class="skill-usage">已启用 Skill：${names.join('、')}</div>` : '';
+}
+
 function messageElement(message, temporary = false) {
   const row = document.createElement('article');
   row.className = `message-row ${message.role}`;
@@ -164,6 +170,7 @@ function messageElement(message, temporary = false) {
     row.innerHTML = `
       <div class="message-avatar">AI</div>
       <div class="message-body">
+        ${skillMarkup(metadata.skills)}
         ${reasoningMarkup(metadata.reasoning)}
         ${toolMarkup(metadata.tool_runs)}
         <div class="answer-content">${temporary ? '<div class="activity">正在准备</div>' : markdown(message.content)}</div>
@@ -273,9 +280,9 @@ function renderMessages(messages) {
       messages.forEach((message) => container.append(messageElement(message)));
       scrollToBottom();
     }
-    const lastMessage = messages.at(-1);
-    const choices = lastMessage?.role === 'assistant' ? lastMessage.metadata?.choices : [];
-    const choiceGroups = lastMessage?.role === 'assistant' ? lastMessage.metadata?.choice_groups : [];
+    const choiceMessage = pendingChoiceMessage(messages);
+    const choices = choiceMessage?.metadata?.choices || [];
+    const choiceGroups = choiceMessage?.metadata?.choice_groups || [];
     if ((Array.isArray(choiceGroups) && choiceGroups.length) || (Array.isArray(choices) && choices.length)) {
       showChoiceButtons(choices, choiceGroups);
     }
@@ -283,6 +290,21 @@ function renderMessages(messages) {
   } catch (error) {
     console.error('[naiba] renderMessages 渲染崩溃:', error, '消息数=', messages.length);
   }
+}
+
+function pendingChoiceMessage(messages) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === 'user') return null;
+    const choices = message?.metadata?.choices;
+    const groups = message?.metadata?.choice_groups;
+    if (message?.role === 'assistant'
+      && ((Array.isArray(groups) && groups.length) || (Array.isArray(choices) && choices.length))) {
+      return message;
+    }
+    if (message?.role === 'assistant') return null;
+  }
+  return null;
 }
 
 async function authenticate(token) {

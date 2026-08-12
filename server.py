@@ -1160,9 +1160,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.close_connection = True
 
         client_connected = True
+        enabled_skills: list[dict[str, str]] = []
 
         def event(payload: dict[str, Any]) -> None:
-            nonlocal client_connected
+            nonlocal client_connected, enabled_skills
+            if payload.get("type") == "skills" and isinstance(payload.get("skills"), list):
+                enabled_skills = [
+                    {"id": str(item.get("id") or ""), "name": str(item.get("name") or "")}
+                    for item in payload["skills"]
+                    if isinstance(item, dict) and item.get("name")
+                ]
             if not client_connected:
                 return
             try:
@@ -1208,6 +1215,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             choice_groups = _detect_choice_groups(response)
             choices = choice_groups[0]["choices"] if choice_groups else []
             metadata = {
+                "skills": enabled_skills,
                 "tool_runs": runs,
                 "attachments": attachments,
                 "reasoning": reasonings,
@@ -1227,7 +1235,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     conversation_id,
                     "error",
                     f"请求失败：{error_message}",
-                    {"error": True},
+                    {"error": True, "skills": enabled_skills},
                 )
             except Exception:
                 traceback.print_exc()

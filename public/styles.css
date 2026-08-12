@@ -87,6 +87,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-actions { margin-top: 8px; display: flex; gap: 8px; }
 .message-actions button { border: 0; background: none; color: var(--muted); padding: 2px 5px; font-size: 12px; }
 .usage-line { margin-top: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.skill-usage { margin: 0 0 8px; color: var(--green); font-size: 12px; }
 .reasoning-block { margin: 8px 0 12px; border-left: 2px solid #6c8cd9; background: #f4f6fb; border-radius: 0 var(--radius) var(--radius) 0; padding: 6px 10px; }
 .reasoning-block summary { cursor: pointer; color: #4361a8; font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }

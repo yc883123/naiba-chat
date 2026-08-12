@@ -407,6 +407,23 @@ class ConversationTabLayoutTests(unittest.TestCase):
         self.assertIn(".conversation-open {", styles)
 
 
+class ConversationInteractionHistoryTests(unittest.TestCase):
+    def test_errors_do_not_hide_pending_choice_buttons(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function pendingChoiceMessage(messages)", source)
+        self.assertIn("if (message?.role === 'user') return null", source)
+        self.assertIn("const choiceMessage = pendingChoiceMessage(messages)", source)
+
+    def test_enabled_skills_are_saved_and_rendered_with_messages(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        server_source = Path("server.py").read_text(encoding="utf-8")
+
+        self.assertIn("skillMarkup(metadata.skills)", source)
+        self.assertIn('"skills": enabled_skills', server_source)
+        self.assertIn('{"error": True, "skills": enabled_skills}', server_source)
+
+
 class ModelSelectionTests(unittest.TestCase):
     def test_frontend_restores_the_saved_provider(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
