@@ -2,6 +2,12 @@
 
 Use this reference when the MCP server is not registered, its Python process cannot start, or ComfyUI paths are unknown.
 
+## NaibaChat Automatic Registration
+
+NaibaChat has a native `register_mcp` tool. Run `scripts/install_naiba.ps1` without arguments, then pass its `registration` result to that tool. The script discovers ComfyUI from its running Python process, so launcher-managed installations are supported, and installs the bounded MCP dependency only when it is missing. NaibaChat persists bundled MCP files outside PyInstaller's temporary directory and connects the service immediately.
+
+Do not edit `config.json` directly and do not write another MCP client's settings. Manual configuration below applies only to hosts that do not expose `register_mcp`.
+
 ## Required Values
 
 Collect these values before editing an MCP client configuration:

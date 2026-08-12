@@ -22,6 +22,19 @@ Use this skill to connect an MCP client to ComfyUI's HTTP API and run validated 
 
 ## Environment Setup
 
+### NaibaChat
+
+When the available tools include `register_mcp`, complete setup without asking the user to edit any configuration file:
+
+1. Run `scripts/install_naiba.ps1` with `run_skill_script` and no arguments. It discovers the ComfyUI instance started by the user's normal launcher, validates its HTTP API, installs the bounded MCP dependency only when missing, and prepares the server registration.
+2. Pass the returned `registration` object unchanged to `register_mcp`.
+3. Call `call_mcp` with server `comfyui` and tool `get_environment`, then call `list_workflows`.
+4. Report success only after `get_environment` confirms `comfyui_reachable: true`.
+
+Never inspect or edit Cline, Claude Desktop, Codex, VS Code, or another client's MCP settings when running inside NaibaChat. Never tell a NaibaChat user to merge JSON or restart the client. If automatic registration fails, report the exact script or tool error.
+
+### Other MCP Clients
+
 Never invent, assume, or copy paths from examples.
 
 1. Inspect the current MCP configuration and any paths already supplied by the user.

@@ -23,6 +23,7 @@
     "run_command",
     "run_skill_script",
     "http_request",
+    "register_mcp",
     "call_mcp"
   ],
   "command_timeout": 120,

@@ -31,7 +31,7 @@ a = Analysis(
         (str(root / "skills"), "skills"),
         (str(build_info), "."),
     ],
-    hiddenimports=[],
+    hiddenimports=["mcp", "mcp.client.stdio"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

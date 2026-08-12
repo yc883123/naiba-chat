@@ -126,6 +126,7 @@ class ToolExecutor:
         "run_skill_script": "运行技能脚本",
         "http_request": "发送HTTP请求",
         "call_mcp": "调用MCP工具",
+        "register_mcp": "注册MCP服务",
     }
 
     def __init__(
@@ -135,11 +136,13 @@ class ToolExecutor:
         command_timeout: int,
         mcp_registry: MCPRegistry,
         permission_mode: str = "confirm",
+        mcp_register: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ):
         self.workspace = workspace.resolve()
         self.python_executable = python_executable
         self.command_timeout = command_timeout
         self.mcp_registry = mcp_registry
+        self.mcp_register = mcp_register
         self.permission_mode = "confirm"
         self.set_permission_mode(permission_mode)
         self.pending_confirmation: dict[str, dict[str, Any]] = {}
@@ -438,6 +441,11 @@ class ToolExecutor:
             raise ValueError("server 和 tool 不能为空")
         return self.mcp_registry.call(server, tool, arguments)
 
+    def _tool_register_mcp(self, args: dict[str, Any]) -> str:
+        if not self.mcp_register:
+            raise RuntimeError("当前 NaibaChat 版本不支持自动注册 MCP")
+        return json.dumps(self.mcp_register(args), ensure_ascii=False, indent=2)
+
     def mcp_tool_guide(self) -> str:
         return self.mcp_registry.tool_guide()
 
@@ -452,6 +460,7 @@ class SkillAgent:
 - run_command: {"command":"PowerShell 命令","cwd":"工作目录","timeout":120}
 - run_skill_script: {"skill":"技能名","script":"scripts/example.py","args":[],"timeout":120}
 - http_request: {"url":"https://...","method":"GET","headers":{},"body":null,"timeout":60}
+- register_mcp: {"id":"服务ID","command":"程序路径","args":[],"env":{},"enabled":true}
 - call_mcp: {"server":"服务ID","tool":"工具名","arguments":{}}
 
 只有确实需要调用工具时，才只输出一个 JSON 对象，不要 Markdown。例如：

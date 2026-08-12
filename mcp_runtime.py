@@ -141,12 +141,41 @@ class MCPRegistry:
             command = str(config.get("command") or "").strip()
             if not server_id or not command:
                 continue
-            self.connections[server_id] = MCPServerConnection(
-                server_id,
-                command,
-                [str(item) for item in config.get("args", [])],
-                {str(key): str(value) for key, value in (config.get("env") or {}).items()},
-            )
+            self.connections[server_id] = self._connection(config)
+
+    @staticmethod
+    def _connection(config: dict[str, Any]) -> MCPServerConnection:
+        return MCPServerConnection(
+            str(config["id"]),
+            str(config["command"]),
+            [str(item) for item in config.get("args", [])],
+            {str(key): str(value) for key, value in (config.get("env") or {}).items()},
+        )
+
+    def upsert(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Add or replace one server without interrupting unrelated MCP sessions."""
+        server_id = str(config.get("id") or "").strip()
+        command = str(config.get("command") or "").strip()
+        if not server_id or not command:
+            raise ValueError("MCP server id and command are required")
+        normalized = {
+            "id": server_id,
+            "command": command,
+            "args": [str(item) for item in config.get("args", [])],
+            "env": {str(key): str(value) for key, value in (config.get("env") or {}).items()},
+            "enabled": bool(config.get("enabled", True)),
+        }
+        with self._lock:
+            previous = self.connections.pop(server_id, None)
+            if previous:
+                previous.stop()
+            if not normalized["enabled"]:
+                return {"id": server_id, "status": "disabled", "connected": False, "tools": [], "error": ""}
+            connection = self._connection(normalized)
+            self.connections[server_id] = connection
+            if self._session_count > 0:
+                connection.start()
+            return connection.state()
 
     def start(self) -> None:
         for connection in self.connections.values():

@@ -254,12 +254,12 @@ def default_config() -> dict[str, Any]:
             "run_command",
             "run_skill_script",
             "http_request",
+            "register_mcp",
             "call_mcp",
         ],
         "command_timeout": 120,
         "providers": [],
-        # MCP 服务默认不注册：ComfyUI 生图等能力以"可选 MCP skill"形式按需添加，
-        # 主程序本身不依赖 ComfyUI。需要时在设置中手动添加对应 MCP 服务。
+        # MCP 服务默认不注册；需要 MCP 的 Skill 可通过受控工具自动注册。
         "mcp_servers": [],
     }
 
@@ -277,6 +277,9 @@ class ConfigStore:
             except (OSError, json.JSONDecodeError):
                 pass
         self.data = defaults
+        tools = self.data.get("agent_tools")
+        if isinstance(tools, list) and "call_mcp" in tools and "register_mcp" not in tools:
+            tools.insert(tools.index("call_mcp"), "register_mcp")
         self.save()
 
     def save(self) -> None:
@@ -371,7 +374,7 @@ class ConfigStore:
                     elif key == "agent_tools":
                         valid_tools = {
                             "read_file", "write_file", "list_directory", "search_files",
-                            "run_command", "run_skill_script", "http_request", "call_mcp",
+                            "run_command", "run_skill_script", "http_request", "register_mcp", "call_mcp",
                         }
                         requested = values[key] if isinstance(values[key], list) else []
                         self.data[key] = [tool for tool in requested if tool in valid_tools]
@@ -379,6 +382,34 @@ class ConfigStore:
                         self.data[key] = values[key]
             self.save()
             return self.public()
+
+    def upsert_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
+        server_id = str(values.get("id") or "").strip()
+        command = str(values.get("command") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", server_id):
+            raise ValueError("MCP 服务 ID 只能包含字母、数字、下划线或连字符")
+        if not command:
+            raise ValueError("MCP command 不能为空")
+        args = values.get("args") or []
+        env = values.get("env") or {}
+        if not isinstance(args, list) or not isinstance(env, dict):
+            raise ValueError("MCP args 必须是数组，env 必须是对象")
+        payload = {
+            "id": server_id,
+            "command": command,
+            "args": [str(item) for item in args],
+            "env": {str(key): str(value) for key, value in env.items()},
+            "enabled": bool(values.get("enabled", True)),
+        }
+        with self.lock:
+            servers = self.data.setdefault("mcp_servers", [])
+            index = next((i for i, item in enumerate(servers) if item.get("id") == server_id), None)
+            if index is None:
+                servers.append(payload)
+            else:
+                servers[index] = payload
+            self.save()
+        return payload
 
     def upsert_provider(self, values: dict[str, Any]) -> dict[str, Any]:
         provider_id = str(values.get("id") or uuid.uuid4().hex[:12])
@@ -585,6 +616,7 @@ class NaibaChatApp:
             int(self.config.data.get("command_timeout", 120)),
             self.mcp,
             permission_mode=self.config.data.get("permission_mode", "confirm"),
+            mcp_register=self.register_mcp_server,
         )
         self.agent = SkillAgent(self.catalog, self.executor, self.models.complete)
         self.updater = UpdateManager(APP_DIR, DATA_DIR)
@@ -592,6 +624,33 @@ class NaibaChatApp:
 
     def stop(self) -> None:
         self.mcp.stop()
+
+    def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
+        if str(values.get("id") or "").strip() == "comfyui":
+            values = self._persist_comfyui_mcp(values)
+        config = self.config.upsert_mcp_server(values)
+        return {"saved": True, "server": self.mcp.upsert(config)}
+
+    @staticmethod
+    def _persist_comfyui_mcp(values: dict[str, Any]) -> dict[str, Any]:
+        payload = dict(values)
+        args = [str(item) for item in payload.get("args", [])]
+        env = {str(key): str(value) for key, value in (payload.get("env") or {}).items()}
+        source_script = next((Path(item) for item in args if Path(item).name == "comfyui_mcp_server.py"), None)
+        if not source_script or not source_script.is_file():
+            raise ValueError("找不到 ComfyUI MCP 服务脚本")
+        target_root = DATA_DIR / "mcp" / "comfyui"
+        target_root.mkdir(parents=True, exist_ok=True)
+        target_script = target_root / source_script.name
+        shutil.copy2(source_script, target_script)
+        workflows = Path(env.get("COMFYUI_WORKFLOWS_DIR", ""))
+        if workflows.is_dir():
+            target_workflows = target_root / "workflows"
+            shutil.copytree(workflows, target_workflows, dirs_exist_ok=True)
+            env["COMFYUI_WORKFLOWS_DIR"] = str(target_workflows)
+        payload["args"] = [str(target_script) if Path(item) == source_script else item for item in args]
+        payload["env"] = env
+        return payload
 
     def bootstrap(self) -> dict[str, Any]:
         return {

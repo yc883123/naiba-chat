@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-import json
 import gc
+import json
+import server
 from pathlib import Path
 import sys
 import tempfile
 import unittest
 
 from model_runtime import ModelRuntime
+from mcp_runtime import MCPRegistry
 from server import ConfigStore, _detect_choice_groups, _detect_choices
 from skill_runtime import SkillAgent, SkillCatalog, ToolExecutor
 from storage import ChatStorage
@@ -445,6 +447,13 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
         self.assertIn("skills/**/output/", ignore)
         self.assertIn("skills/**/scripts/_err.txt", ignore)
 
+    def test_release_build_includes_the_mcp_client(self) -> None:
+        workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+        spec = Path("naiba-chat.spec").read_text(encoding="utf-8")
+
+        self.assertIn('"mcp>=1.2.0,<2"', workflow)
+        self.assertIn('"mcp.client.stdio"', spec)
+
 
 class UpdateManifestTests(unittest.TestCase):
     def test_accepts_valid_manifest_shape(self) -> None:
@@ -494,6 +503,81 @@ class SkillIdentityTests(unittest.TestCase):
             second_id = SkillCatalog([Path(second_root)]).scan()[0]["id"]
 
             self.assertEqual(first_id, second_id)
+
+
+class MCPRegistrationTests(unittest.TestCase):
+    def test_existing_config_gains_automatic_mcp_registration_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "config.json"
+            path.write_text(
+                json.dumps({"agent_tools": ["run_skill_script", "call_mcp"]}),
+                encoding="utf-8",
+            )
+
+            config = ConfigStore(path)
+
+            self.assertEqual(
+                ["run_skill_script", "register_mcp", "call_mcp"],
+                config.data["agent_tools"],
+            )
+
+    def test_mcp_server_upsert_preserves_other_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "config.json"
+            path.write_text(json.dumps({"temperature": 0.25}), encoding="utf-8")
+            config = ConfigStore(path)
+
+            saved = config.upsert_mcp_server(
+                {
+                    "id": "comfyui",
+                    "command": "python.exe",
+                    "args": ["server.py"],
+                    "env": {"COMFYUI_URL": "http://127.0.0.1:8188"},
+                }
+            )
+
+            reloaded = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(0.25, reloaded["temperature"])
+            self.assertEqual(saved, reloaded["mcp_servers"][0])
+
+    def test_registry_can_register_disabled_server_incrementally(self) -> None:
+        registry = MCPRegistry([])
+
+        state = registry.upsert(
+            {"id": "comfyui", "command": "python.exe", "enabled": False}
+        )
+
+        self.assertEqual("disabled", state["status"])
+        self.assertNotIn("comfyui", registry.connections)
+
+    def test_comfyui_server_files_are_copied_out_of_the_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            bundle = root_path / "bundle"
+            workflows = bundle / "workflows"
+            workflows.mkdir(parents=True)
+            script = bundle / "comfyui_mcp_server.py"
+            script.write_text("# server", encoding="utf-8")
+            (workflows / "demo.json").write_text("{}", encoding="utf-8")
+            original_data_dir = server.DATA_DIR
+            server.DATA_DIR = root_path / "data"
+            try:
+                persisted = server.NaibaChatApp._persist_comfyui_mcp(
+                    {
+                        "id": "comfyui",
+                        "command": "python.exe",
+                        "args": [str(script)],
+                        "env": {"COMFYUI_WORKFLOWS_DIR": str(workflows)},
+                    }
+                )
+            finally:
+                server.DATA_DIR = original_data_dir
+
+            persisted_script = Path(persisted["args"][0])
+            persisted_workflows = Path(persisted["env"]["COMFYUI_WORKFLOWS_DIR"])
+            self.assertTrue(persisted_script.is_file())
+            self.assertTrue((persisted_workflows / "demo.json").is_file())
+            self.assertNotEqual(script, persisted_script)
 
 
 if __name__ == "__main__":
