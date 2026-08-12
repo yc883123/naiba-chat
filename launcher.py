@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import webbrowser
@@ -21,6 +22,8 @@ class Launcher:
         self.window = None
         self.tray = None
         self.should_quit = False
+        self._exit_complete = threading.Event()
+        self._exit_watchdog_started = False
 
     # ---- HTTP 服务（后台线程） ----
     def _run_server(self, host: str, port: int) -> None:
@@ -41,8 +44,21 @@ class Launcher:
                 pass
 
     # ---- 托盘动作 ----
+    def _force_exit_if_stuck(self) -> None:
+        if self._exit_complete.wait(10):
+            return
+        try:
+            srv.STATUS_PATH.unlink(missing_ok=True)
+        except OSError:
+            pass
+        os._exit(0)
+
     def _quit(self, icon=None, item=None) -> None:
         self.should_quit = True
+        if not self._exit_watchdog_started:
+            self._exit_watchdog_started = True
+            threading.Thread(target=self._force_exit_if_stuck, name="naiba-exit-watchdog", daemon=True).start()
+        self._stop_server()
         if self.tray:
             try:
                 self.tray.stop()
@@ -140,6 +156,7 @@ class Launcher:
             except OSError:
                 pass
             instance_lock.close()
+            self._exit_complete.set()
 
 
 def main() -> None:

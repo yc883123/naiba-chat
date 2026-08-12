@@ -386,6 +386,14 @@ class DesktopLauncherTests(unittest.TestCase):
 
         self.assertIn("text_select=True", source)
 
+    def test_update_quit_stops_the_server_and_has_a_bounded_fallback(self) -> None:
+        source = Path("launcher.py").read_text(encoding="utf-8")
+        quit_block = source[source.index("    def _quit("):source.index("    def _show_window(")]
+
+        self.assertLess(quit_block.index("self._stop_server()"), quit_block.index("self.window.destroy()"))
+        self.assertIn("self._exit_complete.wait(10)", source)
+        self.assertIn("os._exit(0)", source)
+
 
 class MobileConversationSyncTests(unittest.TestCase):
     def test_mobile_client_refreshes_the_open_conversation(self) -> None:
@@ -453,6 +461,12 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
 
         self.assertIn('"mcp>=1.2.0,<2"', workflow)
         self.assertIn('"mcp.client.stdio"', spec)
+
+    def test_update_check_has_timeout_recovery(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("controller.abort(), 15000", source)
+        self.assertIn("const status = await api('/api/update');", source)
 
 
 class UpdateManifestTests(unittest.TestCase):

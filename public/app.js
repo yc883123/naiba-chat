@@ -376,15 +376,26 @@ function renderUpdateStatus(status) {
 
 async function checkUpdate() {
   const button = $('#checkUpdate');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
   button.disabled = true;
   renderUpdateStatus({ ...(state.bootstrap.update || {}), phase: 'checking' });
   try {
-    const status = await api('/api/update/check', { method: 'POST', body: {} });
+    const status = await api('/api/update/check', { method: 'POST', body: {}, signal: controller.signal });
     state.bootstrap.update = status;
     renderUpdateStatus(status);
   } catch (error) {
-    renderUpdateStatus({ ...(state.bootstrap.update || {}), phase: 'error', error: error.message });
+    try {
+      const status = await api('/api/update');
+      state.bootstrap.update = status;
+      renderUpdateStatus(status.phase === 'checking'
+        ? { ...status, phase: 'error', error: '检查更新超时，请稍后重试。' }
+        : status);
+    } catch (_) {
+      renderUpdateStatus({ ...(state.bootstrap.update || {}), phase: 'error', error: error.message });
+    }
   } finally {
+    clearTimeout(timeout);
     button.disabled = false;
   }
 }
