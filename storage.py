@@ -129,7 +129,20 @@ class ChatStorage:
         values: dict[str, Any] = {}
         if title is not None:
             clean_title = " ".join(str(title).strip().split())[:120]
-            values["title"] = clean_title or "新对话"
+            if clean_title:
+                values["title"] = clean_title
+            else:
+                with self._connect() as db:
+                    first_user_message = db.execute(
+                        "SELECT content FROM messages WHERE conversation_id = ? AND role = 'user' "
+                        "ORDER BY created_at, rowid LIMIT 1",
+                        (conversation_id,),
+                    ).fetchone()
+                values["title"] = (
+                    " ".join(str(first_user_message[0]).strip().split())[:36]
+                    if first_user_message and str(first_user_message[0]).strip()
+                    else "新对话"
+                )
             values["title_customized"] = 1 if clean_title else 0
         if system_prompt is not None:
             values["system_prompt"] = str(system_prompt).strip()[:20000]

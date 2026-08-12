@@ -353,6 +353,20 @@ class ConversationSettingsTests(unittest.TestCase):
             del storage
             gc.collect()
 
+    def test_clearing_title_uses_existing_first_message(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = ChatStorage(Path(root) / "chat.db")
+            conversation = storage.create_conversation()
+            storage.add_message(conversation["id"], "user", "首条消息作为恢复后的自动名称")
+            storage.update_conversation_settings(conversation["id"], title="临时名称")
+
+            reset = storage.update_conversation_settings(conversation["id"], title="")
+
+            self.assertEqual("首条消息作为恢复后的自动名称", reset["title"])
+            self.assertEqual(0, reset["title_customized"])
+            del storage
+            gc.collect()
+
 
 class AgentPromptTests(unittest.TestCase):
     def test_video_skill_requires_collecting_all_missing_choices_first(self) -> None:
