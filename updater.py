@@ -275,7 +275,16 @@ while ((Get-Date) -lt $deadline) {
   } catch { Start-Sleep -Milliseconds 500 }
 }
 if (-not $installed) { exit 1 }
-Start-Process -FilePath $Target -WorkingDirectory (Split-Path -Parent $Target) -WindowStyle Hidden
+$env:PYINSTALLER_RESET_ENVIRONMENT = '1'
+Get-ChildItem Env: | Where-Object { $_.Name -like '_PYI_*' } | ForEach-Object {
+  Remove-Item -LiteralPath ("Env:" + $_.Name) -ErrorAction SilentlyContinue
+}
+$started = Start-Process -FilePath $Target -WorkingDirectory (Split-Path -Parent $Target) -WindowStyle Hidden -PassThru
+Start-Sleep -Seconds 3
+if ($started.HasExited) {
+  Start-Sleep -Seconds 2
+  Start-Process -FilePath $Target -WorkingDirectory (Split-Path -Parent $Target) -WindowStyle Hidden
+}
 Remove-Item -LiteralPath $Downloaded -Force -ErrorAction SilentlyContinue
 """,
             encoding="utf-8",

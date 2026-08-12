@@ -456,6 +456,17 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
 
 
 class UpdateManifestTests(unittest.TestCase):
+    def test_frozen_update_restart_resets_pyinstaller_environment(self) -> None:
+        source = Path("updater.py").read_text(encoding="utf-8")
+
+        self.assertIn("PYINSTALLER_RESET_ENVIRONMENT", source)
+        self.assertIn("-like '_PYI_*'", source)
+        self.assertIn("if ($started.HasExited)", source)
+        self.assertLess(
+            source.index("PYINSTALLER_RESET_ENVIRONMENT"),
+            source.index("Start-Process -FilePath $Target"),
+        )
+
     def test_accepts_valid_manifest_shape(self) -> None:
         commit = "a" * 40
         checksum = "b" * 64
