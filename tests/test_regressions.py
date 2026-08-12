@@ -397,6 +397,16 @@ class MobileConversationSyncTests(unittest.TestCase):
         self.assertIn("padding: 8px 2px; animation: none", styles)
 
 
+class ConversationTabLayoutTests(unittest.TestCase):
+    def test_settings_button_does_not_expand_between_icon_and_title(self) -> None:
+        styles = Path("public/styles.css").read_text(encoding="utf-8")
+
+        self.assertNotIn(".conversation-item button:first-child", styles)
+        self.assertIn(".conversation-settings {", styles)
+        self.assertIn("width: 28px; height: 30px; padding: 0; flex: none", styles)
+        self.assertIn(".conversation-open {", styles)
+
+
 class ModelSelectionTests(unittest.TestCase):
     def test_frontend_restores_the_saved_provider(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")

@@ -44,7 +44,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .conversation-list { flex: 1; overflow: auto; padding: 4px 8px 12px; }
 .conversation-item { display: flex; align-items: center; gap: 6px; min-height: 40px; padding-left: 10px; border-radius: var(--radius); color: #d7dcd6; }
 .conversation-item:hover, .conversation-item.active { background: #343934; color: white; }
-.conversation-item button:first-child { border: 0; background: none; color: inherit; padding: 8px 0; text-align: left; min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-item .delete-conversation { opacity: 0; border: 0; background: none; color: #aab1aa; width: 42px; height: 30px; font-size: 11px; flex: none; }
 .conversation-item:hover .delete-conversation { opacity: 1; }
 .sidebar-footer { min-height: 67px; border-top: 1px solid #3b403b; padding: 9px 10px; display: flex; gap: 8px; align-items: center; }
