@@ -65,13 +65,30 @@ class SkillCatalog:
         resolved = self._resolve(directory)
         self.directories = [item for item in self.directories if item != resolved]
 
+    @staticmethod
+    def _iter_skill_files(directory: Path) -> list[Path]:
+        """收集 skill 定义文件：优先 SKILL.md；目录下无 SKILL.md 时回退识别该目录唯一的 .md 文件。"""
+        all_md = [p for p in directory.rglob("*.md") if p.is_file()]
+        skill_md_dirs = {p.parent for p in all_md if p.name == "SKILL.md"}
+        candidates: list[Path] = []
+        for p in all_md:
+            if p.name == "SKILL.md":
+                candidates.append(p)
+                continue
+            if p.parent in skill_md_dirs:
+                continue
+            siblings = [q for q in all_md if q.parent == p.parent]
+            if len(siblings) == 1:
+                candidates.append(p)
+        return candidates
+
     def scan(self) -> list[dict[str, Any]]:
         found: dict[str, dict[str, Any]] = {}
         seen_files: set[str] = set()
         for directory in self.directories:
             if not directory.exists():
                 continue
-            for skill_file in directory.rglob("SKILL.md"):
+            for skill_file in self._iter_skill_files(directory):
                 file_key = os.path.normcase(str(skill_file))
                 if file_key in seen_files:
                     continue
