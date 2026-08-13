@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import gc
 import json
 import server
 from pathlib import Path
 import sys
 import tempfile
+import threading
+import time
+import types
 import unittest
 
 from model_runtime import ModelRuntime
-from mcp_runtime import MCPRegistry
+from mcp_runtime import MCPRegistry, MCPServerConnection
 from server import ConfigStore, _detect_choice_groups, _detect_choices
 from skill_runtime import SkillAgent, SkillCatalog, ToolExecutor
 from storage import ChatStorage
@@ -562,6 +566,126 @@ class SkillIdentityTests(unittest.TestCase):
 
 
 class MCPRegistrationTests(unittest.TestCase):
+    def test_connection_recovers_after_start_timeout(self) -> None:
+        class SlowConnection(MCPServerConnection):
+            async def _connect(inner_self) -> None:
+                await asyncio.sleep(0.03)
+                inner_self._session = object()
+
+        connection = SlowConnection("slow", "python", [], {})
+        connection.start(timeout=0)
+        self.assertIn("启动超过", connection.error)
+
+        self.assertTrue(connection._ready.wait(timeout=1))
+        self.assertEqual("connected", connection.state()["status"])
+        self.assertEqual("", connection.error)
+        connection.stop()
+
+    def test_connection_serializes_calls_and_sets_read_timeout(self) -> None:
+        loop = asyncio.new_event_loop()
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+        active = 0
+        max_active = 0
+        received_timeouts = []
+        guard = threading.Lock()
+
+        class Session:
+            async def call_tool(inner_self, tool_name, arguments, read_timeout_seconds):
+                nonlocal active, max_active
+                received_timeouts.append(read_timeout_seconds)
+                with guard:
+                    active += 1
+                    max_active = max(max_active, active)
+                await asyncio.sleep(0.03)
+                with guard:
+                    active -= 1
+                return types.SimpleNamespace(
+                    content=[types.SimpleNamespace(text=tool_name)],
+                    isError=False,
+                )
+
+        connection = MCPServerConnection("test", "python", [], {})
+        connection._loop = loop
+        connection._session = Session()
+        results = []
+        callers = [
+            threading.Thread(target=lambda name=name: results.append(connection.call(name, {}, timeout=2)))
+            for name in ("first", "second")
+        ]
+        try:
+            for caller in callers:
+                caller.start()
+            for caller in callers:
+                caller.join(timeout=1)
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=1)
+            loop.close()
+
+        self.assertEqual(1, max_active)
+        self.assertCountEqual([(True, "first"), (True, "second")], results)
+        self.assertEqual([2, 2], received_timeouts)
+
+    def test_stop_keeps_live_thread_references(self) -> None:
+        class LiveThread:
+            def join(self, timeout=None):
+                return None
+
+            def is_alive(self):
+                return True
+
+        connection = MCPServerConnection("test", "python", [], {})
+        thread = LiveThread()
+        session = object()
+        connection._thread = thread
+        connection._session = session
+
+        connection.stop()
+
+        self.assertIs(thread, connection._thread)
+        self.assertIs(session, connection._session)
+        self.assertEqual("stopping", connection.state()["status"])
+
+    def test_registry_release_does_not_hold_state_lock_while_stopping(self) -> None:
+        registry = MCPRegistry([])
+        state_was_read = threading.Event()
+
+        class Connection:
+            error = ""
+            tools = []
+
+            def state(inner_self):
+                state_was_read.set()
+                return {"id": "test", "status": "idle"}
+
+            def stop(inner_self):
+                probe = threading.Thread(target=registry.states)
+                probe.start()
+                probe.join(timeout=0.5)
+                self.assertFalse(probe.is_alive())
+
+        registry.connections["test"] = Connection()
+        registry._session_count = 1
+
+        registry.release()
+
+        self.assertTrue(state_was_read.is_set())
+
+    def test_dotted_mcp_tool_routes_directly_to_registry(self) -> None:
+        class Registry:
+            connections = {"comfyui": object()}
+
+            def call(inner_self, server_id, tool_name, arguments):
+                return True, f"{server_id}:{tool_name}:{arguments['value']}"
+
+        with tempfile.TemporaryDirectory() as root:
+            executor = ToolExecutor(Path(root), sys.executable, 10, Registry(), "full")
+
+            result = executor.execute("comfyui.get_environment", {"value": 7}, [])
+
+        self.assertEqual((True, "comfyui:get_environment:7"), result)
+
     def test_existing_config_gains_automatic_mcp_registration_tool(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "config.json"

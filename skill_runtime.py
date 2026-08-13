@@ -19,6 +19,10 @@ from mcp_runtime import MCPRegistry
 
 
 EventCallback = Callable[[dict[str, Any]], None]
+
+
+class TaskCancelled(RuntimeError):
+    pass
 POWERSHELL_UTF8_PREFIX = (
     "$utf8 = [System.Text.UTF8Encoding]::new($false); "
     "[Console]::InputEncoding = $utf8; [Console]::OutputEncoding = $utf8; $OutputEncoding = $utf8;"
@@ -252,7 +256,6 @@ class ToolExecutor:
                 if "." in tool:
                     server_id, mcp_tool = tool.split(".", 1)
                     if server_id in self.mcp_registry.connections:
-                        self._prepare_mcp_call(server_id, mcp_tool)
                         return self.mcp_registry.call(server_id, mcp_tool, arguments)
                 return False, f"未知工具：{tool}"
             if tool == "run_skill_script":
@@ -295,9 +298,21 @@ class ToolExecutor:
             self.confirmation_results[confirm_id] = result
         return result
 
-    def wait_for_confirmation(self, confirm_id: str, timeout: float = 300) -> tuple[bool, str]:
+    def wait_for_confirmation(
+        self,
+        confirm_id: str,
+        timeout: float = 300,
+        cancel_event: threading.Event | None = None,
+    ) -> tuple[bool, str]:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
+            if cancel_event and cancel_event.is_set():
+                with self._confirmation_lock:
+                    pending = self.pending_confirmation.get(confirm_id)
+                    if pending and not pending.get("processing"):
+                        self.pending_confirmation.pop(confirm_id, None)
+                    self.confirmation_results.pop(confirm_id, None)
+                raise TaskCancelled("任务已取消")
             with self._confirmation_lock:
                 result = self.confirmation_results.pop(confirm_id, None)
                 pending = confirm_id in self.pending_confirmation
@@ -505,13 +520,18 @@ class SkillAgent:
         allowed_tools: list[str],
         event: EventCallback,
         tool_logger: Callable[[str, dict[str, Any], str, bool], None],
+        cancel_event: threading.Event | None = None,
     ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, Any]]:
+        if cancel_event and cancel_event.is_set():
+            raise TaskCancelled("任务已取消")
         skills = self.catalog.scan()
         skill_map = {item["id"]: item for item in skills}
         active = [skill_map[skill_id] for skill_id in selected_ids if skill_id in skill_map]
         model_runtime = getattr(self.model_complete, "__self__", None)
         usages: list[dict[str, int]] = []
         if auto_skills:
+            if cancel_event and cancel_event.is_set():
+                raise TaskCancelled("任务已取消")
             try:
                 if model_runtime:
                     model_runtime.last_usage = {}
@@ -545,6 +565,7 @@ class SkillAgent:
                 event,
                 tool_logger,
                 usages,
+                cancel_event,
             )
         finally:
             if needs_mcp:
@@ -563,6 +584,7 @@ class SkillAgent:
         event: EventCallback,
         tool_logger: Callable[[str, dict[str, Any], str, bool], None],
         usages: list[dict[str, int]],
+        cancel_event: threading.Event | None = None,
     ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, Any]]:
 
         skill_prompts = []
@@ -629,8 +651,12 @@ class SkillAgent:
         # model_complete 是 ModelRuntime.complete 的绑定方法，可通过 __self__ 读取 last_reasoning
         model_runtime = getattr(self.model_complete, "__self__", None)
         for step in range(max_steps):
+            if cancel_event and cancel_event.is_set():
+                raise TaskCancelled("任务已取消")
             event({"type": "status", "message": f"正在思考（{step + 1}/{max_steps}）"})
             raw = self.model_complete(profile, messages, options, event)
+            if cancel_event and cancel_event.is_set():
+                raise TaskCancelled("任务已取消")
             reasoning = getattr(model_runtime, "last_reasoning", "") if model_runtime else ""
             usage = getattr(model_runtime, "last_usage", {}) if model_runtime else {}
             if usage:
@@ -646,6 +672,8 @@ class SkillAgent:
             tool = str(action.get("tool") or "")
             arguments = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
             event({"type": "tool_start", "tool": tool, "arguments": arguments, "reason": action.get("reason", "")})
+            if cancel_event and cancel_event.is_set():
+                raise TaskCancelled("任务已取消")
             if tool not in allowed:
                 success, result = False, f"Agent 设置已禁用工具：{tool}"
             else:
@@ -664,7 +692,11 @@ class SkillAgent:
                             "tool_desc": tool_desc,
                             "arguments": arguments,
                         })
-                        success, result = self.executor.wait_for_confirmation(confirm_id, timeout=300)
+                        success, result = self.executor.wait_for_confirmation(
+                            confirm_id,
+                            timeout=300,
+                            cancel_event=cancel_event,
+                        )
             tool_logger(tool, arguments, result, success)
             run = {"tool": tool, "arguments": arguments, "result": result[:4000], "success": success, "reason": str(action.get("reason") or "")}
             runs.append(run)

@@ -465,6 +465,30 @@ class ComfyUIMCPServerTests(unittest.TestCase):
         self.assertIn("API format", result["error"])
         self.assertEqual(self.comfyui.state.requests["/prompt"], 0)
 
+    def test_inline_workflow_requires_saved_prompt_confirmation(self):
+        graph = json.loads((self.workflows_dir / "ready.json").read_text(encoding="utf-8"))
+
+        result = json.loads(self.server.run_workflow(workflow_json=json.dumps(graph)))
+
+        self.assertEqual("needs_user_input", result["status"])
+        self.assertEqual("prompt", result["unconfirmed_defaults"][0]["id"])
+        self.assertEqual(self.comfyui.state.requests["/prompt"], 0)
+        self.assertEqual(self.comfyui.state.submissions, [])
+
+    def test_non_object_extra_inputs_are_rejected_without_submission(self):
+        result = json.loads(
+            self.server.run_workflow(
+                workflow_name="ready",
+                prompt="new prompt",
+                model="model.safetensors",
+                extra_inputs="[]",
+            )
+        )
+
+        self.assertEqual("error", result["status"])
+        self.assertIn("extra_inputs must decode to an object", result["error"])
+        self.assertEqual(self.comfyui.state.requests["/prompt"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

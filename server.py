@@ -41,6 +41,7 @@ if str(APP_DIR) not in sys.path:
 from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
 from skill_runtime import SkillAgent, SkillCatalog, ToolExecutor
+from async_tasks import BackgroundTaskManager
 from storage import ChatStorage
 from updater import UpdateManager
 
@@ -708,6 +709,7 @@ class NaibaChatApp:
             mcp_register=self.register_mcp_server,
         )
         self.agent = SkillAgent(self.catalog, self.executor, self.models.complete)
+        self.tasks = BackgroundTaskManager(self)
         self.updater = UpdateManager(APP_DIR, DATA_DIR)
         self.update_restart_callback = None
 
@@ -788,6 +790,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(APP.updater.status())
         elif path == "/api/agents":
             self._json({"agents": APP.config.public_agents(), "default_agent_id": APP.config.default_agent_id()})
+        elif path == "/api/tasks":
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation_id = query.get("conversation_id", [""])[0]
+            active_only = query.get("active_only", ["0"])[0] == "1"
+            self._json({"tasks": APP.tasks.list(conversation_id, active_only)})
+        elif path.startswith("/api/tasks/"):
+            task_id = path.rsplit("/", 1)[-1]
+            task = APP.storage.get_background_task(task_id)
+            self._json(task or {"error": "任务不存在"}, HTTPStatus.OK if task else HTTPStatus.NOT_FOUND)
         elif path == "/api/conversations":
             query = urllib.parse.parse_qs(parsed.query)
             mode = query.get("mode", [None])[0]
@@ -916,6 +927,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"skills": APP.catalog.scan(), "configured": APP.config.get_skills_dirs()})
         elif path == "/api/chat":
             self._chat(body)
+        elif path == "/api/tasks":
+            try:
+                self._json(APP.tasks.submit(body), HTTPStatus.ACCEPTED)
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except (ValueError, TypeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/tool/confirm":
             self._confirm_tool(body)
         elif path == "/api/tool/reject":
@@ -934,6 +952,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/conversations/"):
             deleted = APP.storage.delete_conversation(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+        elif path.startswith("/api/tasks/") and path.endswith("/cancel"):
+            task_id = path.split("/")[-2]
+            task = APP.tasks.cancel(task_id)
+            self._json(task or {"error": "任务不存在"}, HTTPStatus.OK if task else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/agents/"):
             deleted = APP.config.delete_agent(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)

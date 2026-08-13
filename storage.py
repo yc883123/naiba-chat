@@ -56,6 +56,27 @@ class ChatStorage:
                     created_at INTEGER NOT NULL,
                     FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS background_tasks (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL DEFAULT '',
+                    agent_name TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    snapshot TEXT NOT NULL DEFAULT '{}',
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    error TEXT NOT NULL DEFAULT '',
+                    cancel_requested INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL,
+                    started_at INTEGER,
+                    updated_at INTEGER NOT NULL,
+                    finished_at INTEGER,
+                    FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_background_tasks_status
+                    ON background_tasks(status, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation
+                    ON background_tasks(conversation_id, created_at DESC);
                 """
             )
             # Migration: add mode column to existing tables
@@ -74,6 +95,12 @@ class ChatStorage:
                     db.execute(f"SELECT {column} FROM conversations LIMIT 1")
                 except sqlite3.OperationalError:
                     db.execute(f"ALTER TABLE conversations ADD COLUMN {column} {definition}")
+            now = int(time.time() * 1000)
+            db.execute(
+                "UPDATE background_tasks SET status = 'failed', error = ?, updated_at = ?, finished_at = ? "
+                "WHERE status IN ('queued', 'running', 'waiting', 'cancelling')",
+                ("服务重启，任务已中断", now, now),
+            )
 
     def create_conversation(self, title: str = "新对话", provider_id: str = "", agent_id: str = "") -> dict[str, Any]:
         now = int(time.time() * 1000)
@@ -266,6 +293,101 @@ class ChatStorage:
                 ),
             )
 
+    def create_background_task(
+        self,
+        conversation_id: str,
+        message: str,
+        agent: dict[str, Any],
+        snapshot: dict[str, Any],
+    ) -> dict[str, Any]:
+        now = int(time.time() * 1000)
+        task_id = uuid.uuid4().hex
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO background_tasks(id, conversation_id, agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?)",
+                (
+                    task_id,
+                    conversation_id,
+                    str(agent.get("id") or ""),
+                    str(agent.get("name") or "Agent"),
+                    message,
+                    json.dumps(snapshot, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+        return self.get_background_task(task_id) or {}
+
+    def update_background_task(
+        self,
+        task_id: str,
+        *,
+        status: str | None = None,
+        detail: dict[str, Any] | None = None,
+        error: str | None = None,
+        cancel_requested: bool | None = None,
+        started: bool = False,
+        finished: bool = False,
+    ) -> dict[str, Any] | None:
+        now = int(time.time() * 1000)
+        values: dict[str, Any] = {"updated_at": now}
+        if status is not None:
+            values["status"] = status
+        if detail is not None:
+            values["detail"] = json.dumps(detail, ensure_ascii=False)
+        if error is not None:
+            values["error"] = error[:50000]
+        if cancel_requested is not None:
+            values["cancel_requested"] = 1 if cancel_requested else 0
+        if started:
+            values["started_at"] = now
+        if finished:
+            values["finished_at"] = now
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"UPDATE background_tasks SET {assignments} WHERE id = ?",
+                (*values.values(), task_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_background_task(task_id)
+
+    def get_background_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT id, conversation_id, agent_id, agent_name, status, message, detail, error, "
+                "cancel_requested, created_at, started_at, updated_at, finished_at "
+                "FROM background_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        return self._task_dict(row) if row else None
+
+    def list_background_tasks(
+        self,
+        conversation_id: str = "",
+        active_only: bool = False,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        conditions = []
+        parameters: list[Any] = []
+        if conversation_id:
+            conditions.append("conversation_id = ?")
+            parameters.append(conversation_id)
+        if active_only:
+            conditions.append("status IN ('queued', 'running', 'waiting', 'cancelling')")
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        parameters.append(max(1, min(int(limit), 200)))
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT id, conversation_id, agent_id, agent_name, status, message, detail, error, "
+                "cancel_requested, created_at, started_at, updated_at, finished_at "
+                f"FROM background_tasks {where} ORDER BY created_at DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+        return [self._task_dict(row) for row in rows]
+
     @staticmethod
     def _message_dict(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
@@ -273,4 +395,14 @@ class ChatStorage:
             result["metadata"] = json.loads(result.get("metadata") or "{}")
         except json.JSONDecodeError:
             result["metadata"] = {}
+        return result
+
+    @staticmethod
+    def _task_dict(row: sqlite3.Row) -> dict[str, Any]:
+        result = dict(row)
+        try:
+            result["detail"] = json.loads(result.get("detail") or "{}")
+        except json.JSONDecodeError:
+            result["detail"] = {}
+        result["cancel_requested"] = bool(result.get("cancel_requested"))
         return result

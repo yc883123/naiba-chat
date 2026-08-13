@@ -780,7 +780,7 @@ def run_workflow(
     try:
         if workflow_json:
             graph = _load_inline_workflow(workflow_json)
-            parameter_map: dict[str, list[dict]] = {}
+            parameter_map = _inferred_parameter_map(graph)
             requirements, requirement_errors = _normalize_requirements(graph, None, parameter_map)
             if requirement_errors:
                 raise ValueError("; ".join(requirement_errors))
@@ -802,6 +802,8 @@ def run_workflow(
             "model": model if model else None,
         }
         parsed_extra_inputs = json.loads(extra_inputs) if extra_inputs else {}
+        if not isinstance(parsed_extra_inputs, dict):
+            raise ValueError("extra_inputs must decode to an object")
         parsed_confirmed_default_ids = _parse_confirmed_default_ids(confirmed_default_ids, requirements)
         preflight = _preflight_requirements(
             graph,

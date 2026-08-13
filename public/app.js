@@ -13,6 +13,7 @@ const state = {
   autoSkills: (localStorage.getItem('naibaChatAutoSkills') ?? localStorage.getItem('lanAutoSkills')) === 'true',
   pendingFiles: [],
   abortController: null,
+  taskSubmitting: false,
   conversationSettingsId: '',
   providerEditing: false,
   providerIsNew: false,
@@ -20,6 +21,8 @@ const state = {
   syncInFlight: false,
   conversationSnapshot: '',
   agentFormSkillIds: [],
+  tasks: [],
+  taskTimer: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -83,7 +86,13 @@ function markdown(text) {
   const codeBlocks = [];
   let safe = escapeHtml(text).replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => {
     const index = codeBlocks.length;
-    codeBlocks.push(`<pre><code data-language="${escapeHtml(language.trim())}">${code}</code></pre>`);
+    const lang = escapeHtml(language.trim());
+    codeBlocks.push(
+      `<div class="code-block"><div class="code-block-bar">` +
+      `<span class="code-lang">${lang}</span>` +
+      `<button type="button" class="code-copy" data-copy-code>复制</button>` +
+      `</div><pre><code data-language="${lang}">${code}</code></pre></div>`
+    );
     return `\n@@CODE_${index}@@\n`;
   });
   safe = safe
@@ -350,7 +359,88 @@ async function initialize() {
   renderMcp();
   renderUpdateStatus(state.bootstrap.update || {});
   await loadConversations();
+  await loadTasks();
+  startTaskSync();
   startConversationSync();
+}
+
+const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
+
+async function loadTasks() {
+  try {
+    const result = await api('/api/tasks');
+    const previous = new Map(state.tasks.map((task) => [task.id, task.status]));
+    state.tasks = result.tasks || [];
+    renderTasks();
+    for (const task of state.tasks) {
+      if (previous.has(task.id) && previous.get(task.id) !== task.status && ['completed', 'failed', 'cancelled'].includes(task.status)) {
+        if (task.status === 'completed') toast(`${task.agent_name} 的任务已完成`);
+        if (task.conversation_id === state.conversationId) syncCurrentConversation();
+      }
+    }
+  } catch (error) {
+    console.debug('[naiba] 任务同步失败:', error.message);
+  }
+}
+
+function startTaskSync() {
+  if (state.taskTimer) return;
+  state.taskTimer = window.setInterval(loadTasks, 1500);
+}
+
+function taskStatusLabel(status) {
+  return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消' })[status] || status;
+}
+
+function renderTasks() {
+  const active = state.tasks.filter((task) => activeTaskStatuses.has(task.status));
+  $('#taskCount').textContent = String(active.length);
+  $('#openTasks').classList.toggle('has-active', active.length > 0);
+  const current = active.filter((task) => task.conversation_id === state.conversationId);
+  const bar = $('#activeTaskBar');
+  bar.hidden = current.length === 0;
+  if (current.length) {
+    const names = [...new Set(current.map((task) => task.agent_name))].join('、');
+    bar.innerHTML = `${escapeHtml(names)} 有 ${current.length} 个任务正在后台执行。<button type="button" data-open-tasks>查看</button>`;
+  }
+  const list = $('#taskList');
+  if (!state.tasks.length) {
+    list.innerHTML = '<div class="task-empty">暂无异步任务</div>';
+    return;
+  }
+  list.innerHTML = state.tasks.map((task) => {
+    const conversation = state.conversations.find((item) => item.id === task.conversation_id);
+    const detail = task.error || task.detail?.message || '';
+    const confirm = task.status === 'waiting' && task.detail?.confirm_id
+      ? `<button class="task-confirm" data-confirm-task="${escapeHtml(task.detail.confirm_id)}">确认</button><button class="task-reject" data-reject-task="${escapeHtml(task.detail.confirm_id)}">拒绝</button>`
+      : '';
+    return `<div class="task-item" data-task-id="${task.id}">
+      <div class="task-title">${escapeHtml(task.message)}</div>
+      <div class="task-meta">${escapeHtml(task.agent_name)} · ${escapeHtml(conversation?.title || '原对话')}</div>
+      <div class="task-detail">${escapeHtml(detail)}</div>
+      <div class="task-actions"><span class="task-status ${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span>${confirm}${activeTaskStatuses.has(task.status) ? '<button class="task-cancel" data-cancel-task>取消</button>' : ''}</div>
+    </div>`;
+  }).join('');
+}
+
+async function cancelTask(taskId) {
+  try {
+    await api(`/api/tasks/${taskId}/cancel`, { method: 'DELETE' });
+    await loadTasks();
+  } catch (error) {
+    toast(`取消失败：${error.message}`);
+  }
+}
+
+async function resolveTaskConfirmation(confirmId, approved) {
+  try {
+    await api(approved ? '/api/tool/confirm' : '/api/tool/reject', {
+      method: 'POST', body: { confirm_id: confirmId },
+    });
+    await loadTasks();
+  } catch (error) {
+    toast(`处理确认失败：${error.message}`);
+  }
 }
 
 function renderUpdateStatus(status) {
@@ -1164,7 +1254,7 @@ function renderPendingFiles() {
 async function sendMessage(textOverride = '') {
   const input = $('#messageInput');
   const text = (textOverride || input.value).trim();
-  if (!text || state.abortController) return;
+  if (!text || state.abortController || state.taskSubmitting) return;
   if (state.pendingFiles.some((file) => file.uploading)) {
     toast('请等待文件上传完成');
     return;
@@ -1181,53 +1271,29 @@ async function sendMessage(textOverride = '') {
   if (emptyState) emptyState.hidden = true;
   const messages = $('#messages');
   messages.append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
-  const temporary = messageElement({ role: 'assistant', content: '' }, true);
-  messages.append(temporary);
   scrollToBottom();
+  state.taskSubmitting = true;
   setBusy(true);
 
-  const controller = new AbortController();
-  state.abortController = controller;
   try {
-    const response = await fetch('/api/chat', {
+    const task = await api('/api/tasks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
-      body: JSON.stringify({
+      body: {
         conversation_id: state.conversationId,
         message: text,
         attachments,
         model_key: $('#modelSelect').value,
         auto_skills: state.autoSkills,
         skill_ids: state.selectedSkills,
-      }),
-      signal: controller.signal,
+      },
     });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        handleChatEvent(JSON.parse(line), temporary);
-      }
-      if (done) break;
-    }
+    state.tasks.unshift(task);
+    renderTasks();
+    toast(`${task.agent_name} 已在后台执行`);
   } catch (error) {
-    if (error.name === 'AbortError') {
-      temporary.querySelector('.answer-content').innerHTML = '<p>已停止等待，电脑端正在结束当前任务。</p>';
-    } else {
-      temporary.querySelector('.answer-content').innerHTML = `<p>请求失败：${escapeHtml(error.message)}</p>`;
-    }
+    messages.append(messageElement({ role: 'error', content: `请求失败：${error.message}` }));
   } finally {
-    state.abortController = null;
+    state.taskSubmitting = false;
     setBusy(false);
     try {
       await loadConversations();
@@ -1458,14 +1524,12 @@ async function rejectTool(confirmId) {
 
 function setBusy(busy) {
   const sendBtn = $('#sendButton');
-  // 对话中：发送键变为"停止"键（可点击中断）；空闲时：恢复为发送键
-  sendBtn.disabled = false;
-  sendBtn.classList.toggle('is-stop', busy);
-  sendBtn.textContent = busy ? '■' : '↑';
-  sendBtn.title = busy ? '停止' : '发送';
+  sendBtn.disabled = busy;
+  sendBtn.classList.remove('is-stop');
+  sendBtn.textContent = '↑';
+  sendBtn.title = busy ? '正在提交' : '发送';
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
-  sendBtn.setAttribute('aria-label', busy ? '停止' : '发送');
-  // 输入框：对话中仍可输入（便于编辑下一条），但 Enter 提交会被 sendMessage 的 abortController 拦截
+  sendBtn.setAttribute('aria-label', busy ? '正在提交' : '发送');
   $('#messageInput').disabled = false;
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
 }
@@ -1508,6 +1572,21 @@ function bindEvents() {
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
+  $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());
+  $('#activeTaskBar').addEventListener('click', (event) => {
+    if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
+  });
+  $('#taskList').addEventListener('click', (event) => {
+    const item = event.target.closest('[data-task-id]');
+    if (!item) return;
+    if (event.target.closest('[data-cancel-task]')) cancelTask(item.dataset.taskId);
+    else if (event.target.closest('[data-confirm-task]')) resolveTaskConfirmation(event.target.closest('[data-confirm-task]').dataset.confirmTask, true);
+    else if (event.target.closest('[data-reject-task]')) resolveTaskConfirmation(event.target.closest('[data-reject-task]').dataset.rejectTask, false);
+    else {
+      const task = state.tasks.find((value) => value.id === item.dataset.taskId);
+      if (task) { $('#tasksDialog').close(); openConversation(task.conversation_id); }
+    }
+  });
   $('#mcpStatus').addEventListener('click', () => {
     $('#settingsDialog').showModal();
     switchSettingsTab('connections');
@@ -1529,14 +1608,9 @@ function bindEvents() {
     localStorage.setItem('naibaChatSkillIds', JSON.stringify(state.selectedSkills));
     updateSkillSummary();
   });
-  // 发送键：对话中点击 = 中断，否则 = 发送
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
-    if (state.abortController) {
-      state.abortController.abort();
-    } else {
-      sendMessage();
-    }
+    sendMessage();
   });
   $('#messageInput').addEventListener('input', resizeTextarea);
   $('#messageInput').addEventListener('keydown', (event) => {
@@ -1555,6 +1629,23 @@ function bindEvents() {
   });
 
   $('#messages').addEventListener('click', async (event) => {
+    const codeCopyButton = event.target.closest('[data-copy-code]');
+    if (codeCopyButton) {
+      const code = codeCopyButton.closest('.code-block')?.querySelector('code');
+      if (!code) return;
+      try {
+        await copyText(code.textContent);
+        codeCopyButton.textContent = '已复制';
+        clearTimeout(codeCopyButton.copyResetTimer);
+        codeCopyButton.copyResetTimer = setTimeout(() => {
+          if (codeCopyButton.isConnected) codeCopyButton.textContent = '复制';
+        }, 1500);
+        toast('已复制代码');
+      } catch (error) {
+        toast(`复制失败：${error.message}`);
+      }
+      return;
+    }
     const copyButton = event.target.closest('[data-copy-message]');
     if (copyButton) {
       const text = copyButton.closest('.message-body').querySelector('.answer-content').innerText;

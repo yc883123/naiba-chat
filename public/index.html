@@ -43,6 +43,7 @@
           <select id="agentSelect" aria-label="当前 Agent"></select>
         </label>
         <div class="topbar-actions">
+          <button class="control-button task-button" id="openTasks" title="查看异步任务"><span id="taskCount">0</span> <span class="button-label">任务</span></button>
           <button class="control-button" id="openSkills"><span id="skillCount">自动</span> <span class="button-label">Skills</span></button>
           <button class="mcp-button" id="mcpStatus" title="查看 MCP 状态"><i></i><span>MCP</span></button>
         </div>
@@ -61,6 +62,7 @@
       </section>
 
       <section class="composer-wrap">
+        <div class="active-task-bar" id="activeTaskBar" hidden></div>
         <div class="pending-files" id="pendingFiles"></div>
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
@@ -316,6 +318,14 @@
         </section>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="tasksDialog" class="panel-dialog tasks-dialog">
+    <div class="dialog-toolbar">
+      <div><h2>异步任务</h2></div>
+      <button class="icon-button" data-close="tasksDialog" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="task-list" id="taskList"></div>
   </dialog>
 
   <div class="toast" id="toast" role="status"></div>
