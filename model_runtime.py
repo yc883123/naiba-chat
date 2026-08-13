@@ -416,7 +416,11 @@ class ModelRuntime:
                 probe = "".join(content_parts).lstrip()
                 if not probe:
                     continue
-                visible = not probe.startswith(("{", "["))
+                # Keep JSON/XML agent protocol out of the user-facing answer.
+                visible = not (
+                    probe.startswith(("{", "["))
+                    or re.match(r"<(?:tool_calls|invoke)(?:\s|>)", probe, re.IGNORECASE)
+                )
             if visible and status:
                 status({"type": "delta", "content": text})
         usage = ModelRuntime._online_usage(request_format, chunks)

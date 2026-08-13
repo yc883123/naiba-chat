@@ -116,6 +116,18 @@ class OnlineResponseTests(unittest.TestCase):
         self.assertEqual("你好", text)
         self.assertEqual("分析", reasoning)
 
+    def test_parses_xml_tool_action(self) -> None:
+        raw = """<tool_calls>
+<invoke name="read_file">
+<parameter name="path">D:\\naiba-chat\\skills\\h3-prompt-writing\\references\\base-en.txt</parameter>
+<parameter name="max_chars">1200</parameter>
+</invoke>
+</tool_calls>"""
+        action = SkillAgent._parse_action(raw)
+        self.assertEqual("tool", action["type"])
+        self.assertEqual("read_file", action["tool"])
+        self.assertEqual(1200, action["arguments"]["max_chars"])
+
     def test_extracts_responses_stream_deltas(self) -> None:
         self.assertEqual(
             ("增量", ""),

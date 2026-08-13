@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Callable
 
@@ -779,10 +780,52 @@ class SkillAgent:
 
     @classmethod
     def _parse_action(cls, text: str) -> dict[str, Any]:
+        xml_action = cls._extract_xml_tool_action(text)
+        if xml_action:
+            return xml_action
         parsed = cls._extract_json(text)
         if isinstance(parsed, dict) and parsed.get("type") in {"tool", "final"}:
             return parsed
         return {"type": "final", "content": text.strip()}
+
+    @staticmethod
+    def _extract_xml_tool_action(text: str) -> dict[str, Any] | None:
+        """Accept XML tool-call dialects emitted by some OpenAI-compatible models."""
+        cleaned = str(text or "").strip()
+        if not cleaned or "<invoke" not in cleaned:
+            return None
+        # Models occasionally wrap the protocol in a markdown XML fence.
+        cleaned = re.sub(r"^```(?:xml)?\s*", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+        try:
+            root = ET.fromstring(cleaned)
+        except ET.ParseError:
+            return None
+        invokes = [root] if root.tag.rsplit("}", 1)[-1] == "invoke" else [
+            node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "invoke"
+        ]
+        if len(invokes) != 1:
+            return None
+        invoke = invokes[0]
+        tool = str(invoke.attrib.get("name") or "").strip()
+        if not tool:
+            return None
+        arguments: dict[str, Any] = {}
+        for parameter in invoke:
+            if parameter.tag.rsplit("}", 1)[-1] != "parameter":
+                continue
+            name = str(parameter.attrib.get("name") or "").strip()
+            if not name:
+                continue
+            value = "".join(parameter.itertext()).strip()
+            if value:
+                try:
+                    arguments[name] = json.loads(value)
+                except json.JSONDecodeError:
+                    arguments[name] = value
+            else:
+                arguments[name] = ""
+        return {"type": "tool", "tool": tool, "arguments": arguments}
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any] | None:
