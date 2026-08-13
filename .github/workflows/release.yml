@@ -48,6 +48,12 @@ jobs:
             asset = "naiba-chat.exe"
             sha256 = $hash
             published_at = (Get-Date).ToUniversalTime().ToString("o")
+            release_notes = @(
+              "后端：多 Agent 数据模型、对话绑定、Agent 管理接口与聊天接入已完成。",
+              "前端：新增顶部 Agent 下拉切换，以及设置页 Agent 列表、新增、编辑和删除。",
+              "样式：新增 Agent 控件、列表和表单样式，并适配移动端布局。",
+              "验证：后端 py_compile、现有回归测试 41/41 及 Agent 数据迁移验证全部通过。"
+            )
           }
           $manifest | ConvertTo-Json | Set-Content -Encoding UTF8 naiba-chat-update.json
 

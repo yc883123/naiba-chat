@@ -67,20 +67,22 @@ class ChatStorage:
                 ("title_customized", "INTEGER NOT NULL DEFAULT 0"),
                 ("system_prompt", "TEXT NOT NULL DEFAULT ''"),
                 ("stream_enabled", "INTEGER NOT NULL DEFAULT 1"),
+                ("provider_id", "TEXT NOT NULL DEFAULT ''"),
+                ("agent_id", "TEXT NOT NULL DEFAULT ''"),
             ):
                 try:
                     db.execute(f"SELECT {column} FROM conversations LIMIT 1")
                 except sqlite3.OperationalError:
                     db.execute(f"ALTER TABLE conversations ADD COLUMN {column} {definition}")
 
-    def create_conversation(self, title: str = "新对话") -> dict[str, Any]:
+    def create_conversation(self, title: str = "新对话", provider_id: str = "", agent_id: str = "") -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (conversation_id, title.strip() or "新对话", "online", 0, "", 1, now, now),
+                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, title.strip() or "新对话", "online", 0, "", 1, provider_id or "", agent_id or "", now, now),
             )
         return self.get_conversation(conversation_id, include_messages=False)
 
@@ -88,13 +90,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -102,7 +104,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, created_at, updated_at "
+                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -124,6 +126,8 @@ class ChatStorage:
         title: str | None = None,
         system_prompt: str | None = None,
         stream_enabled: bool | None = None,
+        provider_id: str | None = None,
+        agent_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -148,6 +152,10 @@ class ChatStorage:
             values["system_prompt"] = str(system_prompt).strip()[:20000]
         if stream_enabled is not None:
             values["stream_enabled"] = 1 if bool(stream_enabled) else 0
+        if provider_id is not None:
+            values["provider_id"] = str(provider_id or "")
+        if agent_id is not None:
+            values["agent_id"] = str(agent_id or "")
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)

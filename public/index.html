@@ -38,6 +38,10 @@
           <span>模型</span>
           <select id="modelSelect" aria-label="当前模型"></select>
         </label>
+        <label class="model-control agent-control">
+          <span>Agent</span>
+          <select id="agentSelect" aria-label="当前 Agent"></select>
+        </label>
         <div class="topbar-actions">
           <button class="control-button" id="openSkills"><span id="skillCount">自动</span> <span class="button-label">Skills</span></button>
           <button class="mcp-button" id="mcpStatus" title="查看 MCP 状态"><i></i><span>MCP</span></button>
@@ -185,10 +189,32 @@
           </form>
         </section>
         <section data-settings-panel="agent" hidden>
-          <div class="agent-heading"><h3>Agent 设置</h3><p>控制 Agent 的行为和可调用工具。</p></div>
-          <label>系统提示词
-            <textarea id="agentSystemPrompt" rows="7" placeholder="补充 Agent 的角色、规则和输出偏好"></textarea>
-          </label>
+          <div class="agent-heading"><h3>Agent 管理</h3><p>每个 Agent 拥有独立的预设、规则与固定 Skill，对话可随时切换。</p></div>
+          <div class="agent-manager">
+            <div class="agent-list" id="agentList"></div>
+            <button class="control-button" id="addAgent" type="button">新增 Agent</button>
+            <form id="agentForm" class="agent-form" hidden>
+              <input id="agentFormId" type="hidden">
+              <label>Agent ID
+                <input id="agentId" type="text" placeholder="英文、数字、下划线或连字符">
+              </label>
+              <label>名称
+                <input id="agentName" type="text" placeholder="例如 通用 Agent">
+              </label>
+              <label>系统提示词（预设与规则）
+                <textarea id="agentSystemPromptEdit" rows="5" placeholder="角色、规则和输出偏好"></textarea>
+              </label>
+              <div class="agent-skills">
+                <div class="agent-skills-head"><span><b>固定 Skill</b><small>该 Agent 启用时自动加载</small></span></div>
+                <div class="skill-list" id="agentSkillList"></div>
+              </div>
+              <p class="form-error" id="agentError"></p>
+              <div class="form-actions">
+                <button type="button" class="control-button" id="cancelAgent">取消</button>
+                <button type="button" class="primary-button" id="saveAgentForm">保存 Agent</button>
+              </div>
+            </form>
+          </div>
           <h3 class="subheading">审批模式</h3>
           <div class="permission-mode-control" role="radiogroup" aria-label="审批模式">
             <label class="permission-mode-option">
@@ -214,7 +240,7 @@
             <label><input type="checkbox" value="register_mcp" data-agent-tool><span><b>注册 MCP</b><small>自动保存并连接 Skill 所需服务</small></span></label>
             <label><input type="checkbox" value="call_mcp" data-agent-tool><span><b>MCP 工具</b><small>调用已连接的 MCP 服务</small></span></label>
           </div>
-          <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存 Agent 设置</button></div>
+          <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存全局权限</button></div>
         </section>
         <section data-settings-panel="runtime" hidden>
           <h3>生成参数</h3>
@@ -268,7 +294,18 @@
           <h3>软件更新</h3>
           <div class="update-status">
             <div><span>当前版本</span><b id="currentVersion">-</b></div>
-            <div><span>最新版本</span><b id="latestVersion">尚未检查</b></div>
+            <div class="update-latest-row">
+              <span>最新版本</span>
+              <div class="update-latest-value">
+                <b id="latestVersion">尚未检查</b>
+                <button class="update-notes-toggle" id="updateNotesToggle" type="button" aria-expanded="false" hidden>
+                  <span>详细更新内容</span><span class="update-notes-arrow" aria-hidden="true">⌄</span>
+                </button>
+              </div>
+            </div>
+            <div class="update-notes" id="updateNotes" hidden>
+              <ul id="updateNotesList"></ul>
+            </div>
             <p id="updateMessage">启动后会自动从 GitHub 检查并安装更新。</p>
           </div>
           <div class="form-actions update-actions">

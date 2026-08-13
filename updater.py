@@ -19,6 +19,12 @@ MANIFEST_ASSET = "naiba-chat-update.json"
 EXECUTABLE_ASSET = "naiba-chat.exe"
 LATEST_RELEASE_URL = f"https://github.com/{REPOSITORY}/releases/latest"
 LATEST_DOWNLOAD_URL = f"{LATEST_RELEASE_URL}/download"
+RELEASE_NOTES = [
+    "后端：多 Agent 数据模型、对话绑定、Agent 管理接口与聊天接入已完成。",
+    "前端：新增顶部 Agent 下拉切换，以及设置页 Agent 列表、新增、编辑和删除。",
+    "样式：新增 Agent 控件、列表和表单样式，并适配移动端布局。",
+    "验证：后端 py_compile、现有回归测试 41/41 及 Agent 数据迁移验证全部通过。",
+]
 
 
 def _sha256(path: Path) -> str:
@@ -128,6 +134,7 @@ class UpdateManager:
                 "update_available": update_available,
                 "latest_version": latest.get("version", ""),
                 "latest_commit": latest.get("commit", ""),
+                "release_notes": latest.get("release_notes", []),
                 "published_at": latest.get("published_at", ""),
                 "release_url": latest.get("release_url", ""),
                 "source_dirty": self._source_dirty(),
@@ -150,7 +157,7 @@ class UpdateManager:
         return value
 
     @staticmethod
-    def _validate_manifest(manifest: dict[str, Any]) -> dict[str, str]:
+    def _validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         repository = str(manifest.get("repository") or "")
         commit = str(manifest.get("commit") or "").lower()
         checksum = str(manifest.get("sha256") or "").lower()
@@ -163,12 +170,19 @@ class UpdateManager:
             raise RuntimeError("更新清单的校验值无效")
         if asset != EXECUTABLE_ASSET:
             raise RuntimeError("更新清单的程序文件名无效")
+        release_notes = manifest.get("release_notes", [])
+        if isinstance(release_notes, str):
+            release_notes = [release_notes]
+        if not isinstance(release_notes, list):
+            release_notes = []
+        release_notes = [str(note).strip() for note in release_notes if str(note).strip()][:50]
         return {
             "repository": repository,
             "commit": commit,
             "sha256": checksum,
             "asset": asset,
             "version": str(manifest.get("version") or commit[:7]),
+            "release_notes": release_notes,
         }
 
     def check(self, force: bool = False) -> dict[str, Any]:
@@ -201,6 +215,7 @@ class UpdateManager:
                         "commit": remote_commit,
                         "release_url": f"https://github.com/{REPOSITORY}/commits/master",
                         "update_available": update_available,
+                        "release_notes": list(RELEASE_NOTES),
                     }
                     if divergent:
                         self.phase = "error"

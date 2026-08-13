@@ -19,6 +19,7 @@ const state = {
   syncTimer: null,
   syncInFlight: false,
   conversationSnapshot: '',
+  agentFormSkillIds: [],
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -338,6 +339,8 @@ async function initialize() {
   $('#connectionAddress').textContent = state.bootstrap.lan_url;
   $('#autoSkills').checked = state.autoSkills;
   populateModels();
+  renderAgents();
+  renderAgentManager();
   // 恢复模式 Tab 状态
   $$('.mode-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.mode === state.mode));
   populateRuntimeSettings();
@@ -355,6 +358,20 @@ function renderUpdateStatus(status) {
   const latest = status.latest_version || '尚未检查';
   $('#currentVersion').textContent = status.current_commit ? `${current} · ${status.current_commit.slice(0, 7)}` : current;
   $('#latestVersion').textContent = status.latest_commit ? `${latest} · ${status.latest_commit.slice(0, 7)}` : latest;
+  const notes = Array.isArray(status.release_notes)
+    ? status.release_notes.filter((note) => String(note || '').trim())
+    : (status.release_notes ? [String(status.release_notes)] : []);
+  const notesToggle = $('#updateNotesToggle');
+  const notesPanel = $('#updateNotes');
+  const notesList = $('#updateNotesList');
+  notesList.replaceChildren(...notes.map((note) => {
+    const item = document.createElement('li');
+    item.textContent = note;
+    return item;
+  }));
+  notesToggle.hidden = notes.length === 0;
+  notesPanel.hidden = true;
+  notesToggle.setAttribute('aria-expanded', 'false');
   const messages = {
     idle: '启动后会自动从 GitHub 检查并安装更新。',
     checking: '正在检查更新…',
@@ -372,6 +389,15 @@ function renderUpdateStatus(status) {
   }
   $('#installUpdate').hidden = !status.update_available || ['downloading', 'restarting'].includes(status.phase);
   $('#checkUpdate').disabled = ['checking', 'downloading', 'restarting'].includes(status.phase);
+}
+
+function toggleUpdateNotes() {
+  const toggle = $('#updateNotesToggle');
+  const panel = $('#updateNotes');
+  if (toggle.hidden) return;
+  const expanded = toggle.getAttribute('aria-expanded') === 'true';
+  toggle.setAttribute('aria-expanded', String(!expanded));
+  panel.hidden = expanded;
 }
 
 async function checkUpdate() {
@@ -446,13 +472,105 @@ function populateModels() {
 
 async function saveModelSelection() {
   const value = $('#modelSelect').value;
-  const payload = value.startsWith('online:')
-    ? { provider_id: value.slice(7) }
-    : {};
+  const providerId = value.startsWith('online:') ? value.slice(7) : '';
+  const payload = value.startsWith('online:') ? { provider_id: providerId } : {};
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
+  if (state.conversationId) {
+    try {
+      await api(`/api/conversations/${state.conversationId}/settings`, {
+        method: 'POST',
+        body: { provider_id: providerId },
+      });
+    } catch (error) {
+      console.debug('[naiba] 保存对话模型失败:', error.message);
+    }
+  }
   populateModels();
   toast('模型已切换');
+}
+
+// 根据对话已保存的 provider_id 恢复模型选择；未绑定或已删除时回退到全局默认
+function applyConversationModel(conversation) {
+  const select = $('#modelSelect');
+  if (!select) return;
+  const providerId = String(conversation?.provider_id || '');
+  const target = providerId ? `online:${providerId}` : '';
+  if (target && [...select.options].some((o) => o.value === target)) {
+    select.value = target;
+    return;
+  }
+  const savedProviderId = String(state.bootstrap.settings?.provider_id || '');
+  const fallback = savedProviderId ? `online:${savedProviderId}` : '';
+  if ([...select.options].some((o) => o.value === fallback)) {
+    select.value = fallback;
+  } else if (select.options.length) {
+    select.selectedIndex = 0;
+  }
+}
+
+function renderAgents() {
+  const select = $('#agentSelect');
+  if (!select) return;
+  const agents = state.bootstrap?.agents || [];
+  const previous = select.value;
+  select.innerHTML = '';
+  agents.forEach((agent) => {
+    const option = document.createElement('option');
+    option.value = agent.id;
+    option.textContent = agent.name;
+    select.append(option);
+  });
+  if (!select.options.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = '暂无 Agent';
+    select.append(option);
+  }
+  if ([...select.options].some((o) => o.value === previous)) {
+    select.value = previous;
+  } else {
+    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
+  }
+}
+
+// 根据对话已保存的 agent_id 恢复 Agent 选择；未绑定或已删除时回退到默认 Agent
+function applyConversationAgent(conversation) {
+  const select = $('#agentSelect');
+  if (!select) return;
+  const agents = state.bootstrap?.agents || [];
+  const agentId = String(conversation?.agent_id || '');
+  if (agentId && agents.some((agent) => agent.id === agentId) && [...select.options].some((o) => o.value === agentId)) {
+    select.value = agentId;
+    return;
+  }
+  const fallback = String(state.bootstrap?.default_agent_id || '');
+  if ([...select.options].some((o) => o.value === fallback)) {
+    select.value = fallback;
+  } else if (select.options.length) {
+    select.selectedIndex = 0;
+  }
+}
+
+async function saveAgentSelection() {
+  const value = $('#agentSelect').value;
+  if (!state.conversationId) {
+    toast('请先打开或新建一个对话');
+    return;
+  }
+  try {
+    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
+      method: 'POST',
+      body: { agent_id: value },
+    });
+    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    renderConversations();
+    toast('Agent 已切换');
+  } catch (error) {
+    toast(`切换失败：${error.message}`);
+    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
+  }
 }
 
 async function loadConversations() {
@@ -481,6 +599,8 @@ async function createConversation() {
   state.conversationId = conversation.id;
   state.conversations.unshift(conversation);
   renderConversations();
+  applyConversationModel(conversation);
+  applyConversationAgent(conversation);
   renderMessages([]);
   closeSidebar();
   $('#messageInput').focus();
@@ -495,6 +615,8 @@ async function openConversation(id) {
   state.conversationSnapshot = conversationSnapshot(conversation);
   console.log('[naiba] openConversation', id.slice(0, 8), '服务器返回消息数=', (conversation.messages || []).length);
   renderConversations();
+  applyConversationModel(conversation);
+  applyConversationAgent(conversation);
   renderMessages(conversation.messages || []);
   closeSidebar();
 }
@@ -812,7 +934,6 @@ function populateRuntimeSettings() {
 
 function populateAgentSettings() {
   const settings = state.bootstrap.settings;
-  $('#agentSystemPrompt').value = settings.agent_system_prompt || '';
   const permissionMode = settings.permission_mode || 'confirm';
   const permissionInput = $(`[name="permissionMode"][value="${permissionMode}"]`);
   if (permissionInput) permissionInput.checked = true;
@@ -830,13 +951,105 @@ async function saveAgentSettings() {
     && !confirm('完全访问会允许 Agent 在当前账户权限范围内操作本机文件、命令、网络和 MCP。确认启用？')
   ) return;
   const payload = {
-    agent_system_prompt: $('#agentSystemPrompt').value.trim(),
     permission_mode: permissionMode,
     agent_tools: $$('[data-agent-tool]:checked').flatMap((input) => input.value.split(',')),
   };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
-  toast('Agent 设置已保存');
+  toast('全局权限已保存');
+}
+
+// ---- Agent 管理 ----
+
+async function refreshAgentsFromServer() {
+  const data = await api('/api/agents');
+  state.bootstrap.agents = data.agents || [];
+  state.bootstrap.default_agent_id = data.default_agent_id || 'general';
+}
+
+function renderAgentManager() {
+  const list = $('#agentList');
+  if (!list) return;
+  const agents = state.bootstrap?.agents || [];
+  const defaultId = String(state.bootstrap?.default_agent_id || '');
+  list.innerHTML = agents.map((agent) => `
+    <div class="agent-item ${agent.id === defaultId ? 'default' : ''}">
+      <div class="agent-item-info">
+        <b>${escapeHtml(agent.name)}${agent.id === defaultId ? '<em>默认</em>' : ''}</b>
+        <small>${agent.skill_ids?.length ? `${agent.skill_ids.length} 个固定 Skill` : '无固定 Skill'}</small>
+        ${agent.system_prompt ? `<p>${escapeHtml(agent.system_prompt)}</p>` : ''}
+      </div>
+      <div class="agent-item-actions">
+        <button class="control-button" data-agent-edit="${escapeHtml(agent.id)}" type="button">编辑</button>
+        <button class="danger-button" data-agent-delete="${escapeHtml(agent.id)}" type="button">删除</button>
+      </div>
+    </div>`).join('') || '<p class="activity">尚未添加 Agent，点击下方按钮新增。</p>';
+}
+
+function renderAgentSkillPicker() {
+  const list = $('#agentSkillList');
+  if (!list) return;
+  const skills = state.bootstrap?.skills || [];
+  list.innerHTML = skills.map((skill) => `
+    <label class="skill-item">
+      <input type="checkbox" value="${skill.id}" ${state.agentFormSkillIds.includes(skill.id) ? 'checked' : ''}>
+      <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
+    </label>`).join('') || '<p class="activity">暂无可用 Skill</p>';
+}
+
+function showAgentForm(agent = null) {
+  $('#agentFormId').value = agent?.id || '';
+  $('#agentId').value = agent?.id || '';
+  $('#agentId').disabled = Boolean(agent);
+  $('#agentName').value = agent?.name || '';
+  $('#agentSystemPromptEdit').value = agent?.system_prompt || '';
+  state.agentFormSkillIds = agent?.skill_ids ? [...agent.skill_ids] : [];
+  renderAgentSkillPicker();
+  $('#agentError').textContent = '';
+  $('#addAgent').hidden = true;
+  $('#agentForm').hidden = false;
+  $('#agentName').focus();
+}
+
+function hideAgentForm() {
+  $('#agentForm').hidden = true;
+  $('#addAgent').hidden = false;
+  $('#agentError').textContent = '';
+}
+
+async function saveAgentForm() {
+  const payload = {
+    id: $('#agentId').value.trim(),
+    name: $('#agentName').value.trim(),
+    system_prompt: $('#agentSystemPromptEdit').value,
+    skill_ids: state.agentFormSkillIds,
+  };
+  try {
+    await api('/api/agents', { method: 'POST', body: payload });
+    await refreshAgentsFromServer();
+    hideAgentForm();
+    renderAgents();
+    renderAgentManager();
+    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
+    toast('Agent 已保存');
+  } catch (error) {
+    $('#agentError').textContent = error.message;
+  }
+}
+
+async function deleteAgent(agentId) {
+  const agent = (state.bootstrap?.agents || []).find((item) => item.id === agentId);
+  if (!confirm(`删除 Agent「${agent?.name || agentId}」？引用它的对话将回退到默认 Agent。`)) return;
+  try {
+    await api(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+    await refreshAgentsFromServer();
+    renderAgents();
+    renderAgentManager();
+    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
+    toast('Agent 已删除');
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
 }
 
 async function saveRuntimeSettings() {
@@ -1260,6 +1473,7 @@ function bindEvents() {
     else openConversation(item.dataset.conversationId);
   });
   $('#modelSelect').addEventListener('change', saveModelSelection);
+  $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
   $('#mcpStatus').addEventListener('click', () => {
     $('#settingsDialog').showModal();
@@ -1369,9 +1583,29 @@ function bindEvents() {
     toast('供应商已删除');
   });
   $('#saveAgent').addEventListener('click', saveAgentSettings);
+  $('#addAgent').addEventListener('click', () => showAgentForm(null));
+  $('#agentList').addEventListener('click', (event) => {
+    const editButton = event.target.closest('[data-agent-edit]');
+    if (editButton) {
+      const agent = (state.bootstrap?.agents || []).find((item) => item.id === editButton.dataset.agentEdit);
+      showAgentForm(agent || {});
+      return;
+    }
+    const deleteButton = event.target.closest('[data-agent-delete]');
+    if (deleteButton) deleteAgent(deleteButton.dataset.agentDelete);
+  });
+  $('#agentSkillList').addEventListener('change', (event) => {
+    if (event.target.type !== 'checkbox') return;
+    state.agentFormSkillIds = event.target.checked
+      ? [...new Set([...state.agentFormSkillIds, event.target.value])]
+      : state.agentFormSkillIds.filter((id) => id !== event.target.value);
+  });
+  $('#cancelAgent').addEventListener('click', hideAgentForm);
+  $('#saveAgentForm').addEventListener('click', saveAgentForm);
   $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
   $('#saveToken').addEventListener('click', saveAccessToken);
   $('#checkUpdate').addEventListener('click', checkUpdate);
+  $('#updateNotesToggle').addEventListener('click', toggleUpdateNotes);
   $('#installUpdate').addEventListener('click', installUpdate);
   $('#addSkillDir').addEventListener('click', addSkillDir);
   $('#installSkill').addEventListener('click', installSkill);
@@ -1524,6 +1758,7 @@ async function loadSkillDirs() {
 function switchSettingsTab(name) {
   $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsTab === name));
   $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
+  if (name === 'agent') renderAgentManager();
   if (name === 'skills') loadSkillDirs();
   if (name === 'updates') api('/api/update').then((status) => {
     state.bootstrap.update = status;

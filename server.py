@@ -261,6 +261,23 @@ def default_config() -> dict[str, Any]:
         "providers": [],
         # MCP 服务默认不注册；需要 MCP 的 Skill 可通过受控工具自动注册。
         "mcp_servers": [],
+        # 多 Agent 定义：每个 Agent 有独立的预设/规则（system_prompt）与固定 Skill（skill_ids）。
+        "agents": [
+            {"id": "general", "name": "通用 Agent", "system_prompt": "", "skill_ids": []},
+            {
+                "id": "coding",
+                "name": "编程 Agent",
+                "system_prompt": "你是资深编程助手。先理解需求，再给出可直接运行、结构清晰的代码；涉及文件操作时先说明改动范围。",
+                "skill_ids": [],
+            },
+            {
+                "id": "drama",
+                "name": "短剧 Agent",
+                "system_prompt": "你是短剧创作助手。遵循所选短剧类 Skill 的交互收集流程，逐步确认主题、角色、分镜与风格后再产出内容。",
+                "skill_ids": [],
+            },
+        ],
+        "default_agent_id": "general",
     }
 
 
@@ -479,6 +496,78 @@ class ConfigStore:
                 for key in ("temperature", "max_tokens")
             }
 
+    # ---- Agent 管理 ----
+
+    def public_agents(self) -> list[dict[str, Any]]:
+        with self.lock:
+            return [dict(agent) for agent in self.data.get("agents", [])]
+
+    def default_agent_id(self) -> str:
+        with self.lock:
+            agents = self.data.get("agents", [])
+            configured = str(self.data.get("default_agent_id") or "").strip()
+            if configured and any(agent.get("id") == configured for agent in agents):
+                return configured
+            if agents:
+                return str(agents[0].get("id") or "general")
+            return "general"
+
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        agent_id = str(agent_id or "").strip()
+        with self.lock:
+            agent = next(
+                (item for item in self.data.get("agents", []) if item.get("id") == agent_id),
+                None,
+            )
+            return dict(agent) if agent else None
+
+    def upsert_agent(self, values: dict[str, Any]) -> dict[str, Any]:
+        agent_id = str(values.get("id") or "").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", agent_id):
+            raise ValueError("Agent ID 只能包含字母、数字、下划线或连字符")
+        name = str(values.get("name") or "").strip()
+        if not name:
+            raise ValueError("Agent 名称不能为空")
+        system_prompt = str(values.get("system_prompt") or "")[:12000]
+        raw_skills = values.get("skill_ids") or []
+        if not isinstance(raw_skills, list):
+            raise ValueError("skill_ids 必须是数组")
+        skill_ids = list(dict.fromkeys(str(item) for item in raw_skills if str(item).strip()))
+        payload = {
+            "id": agent_id,
+            "name": name[:80],
+            "system_prompt": system_prompt,
+            "skill_ids": skill_ids,
+        }
+        with self.lock:
+            agents = self.data.setdefault("agents", [])
+            index = next((i for i, item in enumerate(agents) if item.get("id") == agent_id), None)
+            if index is None:
+                agents.append(payload)
+            else:
+                agents[index] = payload
+            if not any(item.get("id") == self.data.get("default_agent_id") for item in agents):
+                self.data["default_agent_id"] = agents[0].get("id", "general") if agents else "general"
+            self.save()
+        return payload
+
+    def delete_agent(self, agent_id: str) -> bool:
+        agent_id = str(agent_id or "").strip()
+        with self.lock:
+            agents = self.data.setdefault("agents", [])
+            before = len(agents)
+            self.data["agents"] = [item for item in agents if item.get("id") != agent_id]
+            if len(self.data["agents"]) == before:
+                return False
+            if self.data.get("default_agent_id") == agent_id:
+                remaining = self.data["agents"]
+                self.data["default_agent_id"] = (
+                    next((item.get("id") for item in remaining if item.get("id") == "general"), None)
+                    or (remaining[0].get("id") if remaining else "general")
+                )
+            self.save()
+            return True
+
 
 def get_lan_ip() -> str:
     candidates: list[str] = []
@@ -658,6 +747,8 @@ class NaibaChatApp:
             "providers": self.config.public_providers(),
             "skills": self.catalog.scan(),
             "mcp_servers": self.mcp.states(),
+            "agents": self.config.public_agents(),
+            "default_agent_id": self.config.default_agent_id(),
             "lan_url": f"http://{get_lan_ip()}:{self.config.data['port']}",
             "update": self.updater.status(),
         }
@@ -695,6 +786,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(APP.bootstrap())
         elif path == "/api/update":
             self._json(APP.updater.status())
+        elif path == "/api/agents":
+            self._json({"agents": APP.config.public_agents(), "default_agent_id": APP.config.default_agent_id()})
         elif path == "/api/conversations":
             query = urllib.parse.parse_qs(parsed.query)
             mode = query.get("mode", [None])[0]
@@ -743,12 +836,16 @@ class RequestHandler(BaseHTTPRequestHandler):
 
         if path == "/api/conversations":
             title = str(body.get("title") or "新对话")
-            self._json(APP.storage.create_conversation(title=title), HTTPStatus.CREATED)
+            provider_id = str(body.get("provider_id") or APP.config.data.get("provider_id") or "")
+            agent_id = str(body.get("agent_id") or APP.config.default_agent_id())
+            self._json(APP.storage.create_conversation(title=title, provider_id=provider_id, agent_id=agent_id), HTTPStatus.CREATED)
         elif path.startswith("/api/conversations/") and path.endswith("/settings"):
             conversation_id = path.split("/")[-2]
             title = body.get("title")
             system_prompt = body.get("system_prompt")
             stream_enabled = body.get("stream_enabled")
+            provider_id = body.get("provider_id")
+            agent_id = body.get("agent_id")
             if title is not None and not isinstance(title, str):
                 self._json({"error": "title 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
@@ -761,13 +858,26 @@ class RequestHandler(BaseHTTPRequestHandler):
             if stream_enabled is not None and not isinstance(stream_enabled, bool):
                 self._json({"error": "stream_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
+            if provider_id is not None and not isinstance(provider_id, str):
+                self._json({"error": "provider_id 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
+            if agent_id is not None and not isinstance(agent_id, str):
+                self._json({"error": "agent_id 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
                 title=title,
                 system_prompt=system_prompt,
                 stream_enabled=stream_enabled,
+                provider_id=provider_id,
+                agent_id=agent_id,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
+        elif path == "/api/agents":
+            try:
+                self._json(APP.config.upsert_agent(body))
+            except (ValueError, TypeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/providers":
             try:
                 self._json(APP.config.upsert_provider(body))
@@ -823,6 +933,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         if path.startswith("/api/conversations/"):
             deleted = APP.storage.delete_conversation(path.rsplit("/", 1)[-1])
+            self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+        elif path.startswith("/api/agents/"):
+            deleted = APP.config.delete_agent(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/providers/"):
             deleted = APP.config.delete_provider(path.rsplit("/", 1)[-1])
@@ -1244,19 +1357,27 @@ class RequestHandler(BaseHTTPRequestHandler):
                 provider_id = model_key[7:]
                 if provider_id and APP.config.data.get("provider_id") != provider_id:
                     APP.config.update_settings({"provider_id": provider_id})
+                if provider_id and conversation.get("provider_id") != provider_id:
+                    APP.storage.update_conversation_settings(conversation_id, provider_id=provider_id)
             options = APP.config.generation_options()
             options["stream"] = bool(conversation.get("stream_enabled", 1))
-            selected_ids = [str(item) for item in body.get("skill_ids", [])]
             auto_skills = bool(body.get("auto_skills", False))
 
             def logger(tool: str, arguments: dict[str, Any], result: str, success: bool) -> None:
                 APP.storage.log_tool_run(conversation_id, tool, arguments, result, success)
 
             allowed_tools = [str(tool) for tool in APP.config.data.get("agent_tools", [])]
-
-            global_prompt = str(APP.config.data.get("agent_system_prompt", ""))
+            # 解析当前对话绑定的 Agent；Agent 缺失时回退到默认 Agent，再回退到旧全局提示词。
+            agent = APP.config.get_agent(str(conversation.get("agent_id") or ""))
+            if agent is None:
+                agent = APP.config.get_agent(APP.config.default_agent_id())
+            agent_skill_ids = [str(item) for item in (agent or {}).get("skill_ids", [])]
+            selected_ids = list(dict.fromkeys(agent_skill_ids + [str(item) for item in body.get("skill_ids", [])]))
+            agent_prompt = str((agent or {}).get("system_prompt") or "").strip() or str(
+                APP.config.data.get("agent_system_prompt", "")
+            )
             conversation_prompt = str(conversation.get("system_prompt") or "").strip()
-            combined_prompt = "\n\n".join(item for item in (global_prompt.strip(), conversation_prompt) if item)
+            combined_prompt = "\n\n".join(item for item in (agent_prompt.strip(), conversation_prompt) if item)
             response, runs, reasonings, usage = APP.agent.run(
                 effective_message,
                 history,

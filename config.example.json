@@ -28,5 +28,21 @@
   ],
   "command_timeout": 120,
   "providers": [],
-  "mcp_servers": []
+  "mcp_servers": [],
+  "agents": [
+    { "id": "general", "name": "通用 Agent", "system_prompt": "", "skill_ids": [] },
+    {
+      "id": "coding",
+      "name": "编程 Agent",
+      "system_prompt": "你是资深编程助手。先理解需求，再给出可直接运行、结构清晰的代码；涉及文件操作时先说明改动范围。",
+      "skill_ids": []
+    },
+    {
+      "id": "drama",
+      "name": "短剧 Agent",
+      "system_prompt": "你是短剧创作助手。遵循所选短剧类 Skill 的交互收集流程，逐步确认主题、角色、分镜与风格后再产出内容。",
+      "skill_ids": []
+    }
+  ],
+  "default_agent_id": "general"
 }

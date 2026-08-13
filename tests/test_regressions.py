@@ -495,6 +495,18 @@ class UpdateManifestTests(unittest.TestCase):
         self.assertEqual(commit, manifest["commit"])
         self.assertEqual(checksum, manifest["sha256"])
 
+    def test_manifest_preserves_release_notes(self) -> None:
+        manifest = UpdateManager._validate_manifest(
+            {
+                "repository": "yc883123/naiba-chat",
+                "commit": "a" * 40,
+                "sha256": "b" * 64,
+                "asset": "naiba-chat.exe",
+                "release_notes": [" Agent 数据模型已完成。 ", "", 123],
+            }
+        )
+        self.assertEqual(["Agent 数据模型已完成。", "123"], manifest["release_notes"])
+
     def test_rejects_manifest_for_another_repository(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "仓库不匹配"):
             UpdateManager._validate_manifest(
