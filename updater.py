@@ -251,6 +251,26 @@ class UpdateManager:
                 self.checked_at = int(time.time())
         return self.status()
 
+    def start_check(self, force: bool = False) -> dict[str, Any]:
+        """Start a non-blocking update check and return the current state."""
+        with self.lock:
+            if self.phase == "checking":
+                return self.status()
+            self.phase = "checking"
+            self.error = ""
+
+        def run() -> None:
+            try:
+                self.check(force=force)
+            except Exception as exc:
+                with self.lock:
+                    self.phase = "error"
+                    self.error = f"检查更新失败：{exc}"
+                    self.checked_at = int(time.time())
+
+        threading.Thread(target=run, name="naiba-update-check", daemon=True).start()
+        return self.status()
+
     def _download(self, latest: dict[str, Any]) -> Path:
         update_dir = self.data_dir / "update"
         update_dir.mkdir(parents=True, exist_ok=True)

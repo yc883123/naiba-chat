@@ -896,7 +896,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             except (OSError, ValueError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/update/check":
-            self._json(APP.updater.check(force=True))
+            self._json(APP.updater.start_check(force=True))
         elif path == "/api/update/install":
             try:
                 self._json(APP.updater.start_install(APP.update_restart_callback))

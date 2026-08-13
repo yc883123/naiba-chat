@@ -467,6 +467,13 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
 
         self.assertIn("controller.abort(), 15000", source)
         self.assertIn("const status = await api('/api/update');", source)
+        self.assertIn("Date.now() - startedAt < 30000", source)
+
+    def test_update_check_is_started_in_background(self) -> None:
+        source = Path("server.py").read_text(encoding="utf-8")
+        updater = Path("updater.py").read_text(encoding="utf-8")
+        self.assertIn("APP.updater.start_check(force=True)", source)
+        self.assertIn("def start_check", updater)
 
 
 class UpdateManifestTests(unittest.TestCase):

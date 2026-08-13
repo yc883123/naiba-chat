@@ -407,9 +407,19 @@ async function checkUpdate() {
   button.disabled = true;
   renderUpdateStatus({ ...(state.bootstrap.update || {}), phase: 'checking' });
   try {
-    const status = await api('/api/update/check', { method: 'POST', body: {}, signal: controller.signal });
+    let status = await api('/api/update/check', { method: 'POST', body: {}, signal: controller.signal });
     state.bootstrap.update = status;
     renderUpdateStatus(status);
+    const startedAt = Date.now();
+    while (status.phase === 'checking' && Date.now() - startedAt < 30000) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      status = await api('/api/update');
+      state.bootstrap.update = status;
+      renderUpdateStatus(status);
+    }
+    if (status.phase === 'checking') {
+      renderUpdateStatus({ ...status, phase: 'error', error: '检查更新超时，请稍后重试。' });
+    }
   } catch (error) {
     try {
       const status = await api('/api/update');
