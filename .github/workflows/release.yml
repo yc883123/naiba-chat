@@ -49,10 +49,9 @@ jobs:
             sha256 = $hash
             published_at = (Get-Date).ToUniversalTime().ToString("o")
             release_notes = @(
-              "后端：多 Agent 数据模型、对话绑定、Agent 管理接口与聊天接入已完成。",
-              "前端：新增顶部 Agent 下拉切换，以及设置页 Agent 列表、新增、编辑和删除。",
-              "样式：新增 Agent 控件、列表和表单样式，并适配移动端布局。",
-              "验证：后端 py_compile、现有回归测试 41/41 及 Agent 数据迁移验证全部通过。"
+              "修复：切换 Agent 后，对话页 Skill 数量与勾选状态未同步显示 Agent 固定 Skill。",
+              "前端：Skill 弹窗与顶部计数现在合并当前 Agent 的固定 Skill，并标记「Agent 固定」且不可取消勾选。",
+              "前端：切换 Agent、新建或打开对话后即时刷新 Skill 显示状态。"
             )
           }
           $manifest | ConvertTo-Json | Set-Content -Encoding UTF8 naiba-chat-update.json

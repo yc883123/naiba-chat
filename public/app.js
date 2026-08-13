@@ -552,14 +552,15 @@ function applyConversationAgent(conversation) {
   const agentId = String(conversation?.agent_id || '');
   if (agentId && agents.some((agent) => agent.id === agentId) && [...select.options].some((o) => o.value === agentId)) {
     select.value = agentId;
-    return;
+  } else {
+    const fallback = String(state.bootstrap?.default_agent_id || '');
+    if ([...select.options].some((o) => o.value === fallback)) {
+      select.value = fallback;
+    } else if (select.options.length) {
+      select.selectedIndex = 0;
+    }
   }
-  const fallback = String(state.bootstrap?.default_agent_id || '');
-  if ([...select.options].some((o) => o.value === fallback)) {
-    select.value = fallback;
-  } else if (select.options.length) {
-    select.selectedIndex = 0;
-  }
+  renderSkills($('#skillSearch')?.value || '');
 }
 
 async function saveAgentSelection() {
@@ -576,6 +577,7 @@ async function saveAgentSelection() {
     const index = state.conversations.findIndex((item) => item.id === state.conversationId);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
     renderConversations();
+    renderSkills($('#skillSearch')?.value || '');
     toast('Agent 已切换');
   } catch (error) {
     toast(`切换失败：${error.message}`);
@@ -720,24 +722,45 @@ async function deleteConversation(id) {
   else renderMessages([]);
 }
 
+// 当前对话绑定的 Agent 的固定 Skill id 列表；未绑定或已删除时回退到默认 Agent
+function currentAgentFixedSkillIds() {
+  const agents = state.bootstrap?.agents || [];
+  const conversation = state.conversations.find((item) => item.id === state.conversationId);
+  let agentId = String(conversation?.agent_id || '');
+  let agent = agents.find((item) => item.id === agentId);
+  if (!agent) {
+    agentId = String(state.bootstrap?.default_agent_id || '');
+    agent = agents.find((item) => item.id === agentId);
+  }
+  return (agent?.skill_ids || []).map(String);
+}
+
+// 有效启用的 Skill = Agent 固定 Skill + 手动勾选 Skill（去重）
+function effectiveSkillIds() {
+  return [...new Set([...currentAgentFixedSkillIds(), ...state.selectedSkills])];
+}
+
 function renderSkills(filter = '') {
   if (!state.bootstrap) return;
   const query = filter.trim().toLowerCase();
+  const fixed = new Set(currentAgentFixedSkillIds());
+  const effective = new Set(effectiveSkillIds());
   const skills = state.bootstrap.skills.filter((skill) =>
     !query || `${skill.name} ${skill.description}`.toLowerCase().includes(query));
   $('#skillList').innerHTML = skills.map((skill) => `
-    <label class="skill-item">
-      <input type="checkbox" value="${skill.id}" ${state.selectedSkills.includes(skill.id) ? 'checked' : ''}>
+    <label class="skill-item${fixed.has(skill.id) ? ' fixed' : ''}">
+      <input type="checkbox" value="${skill.id}" ${effective.has(skill.id) ? 'checked' : ''} ${fixed.has(skill.id) ? 'disabled' : ''}>
       <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
-      ${skill.script_count ? `<em>${skill.script_count} 脚本</em>` : ''}
+      ${fixed.has(skill.id) ? '<em>Agent 固定</em>' : (skill.script_count ? `<em>${skill.script_count} 脚本</em>` : '')}
     </label>`).join('');
   updateSkillSummary();
 }
 
 function updateSkillSummary() {
-  const selected = state.selectedSkills.length;
-  $('#skillCount').textContent = state.autoSkills ? '自动' : String(selected);
-  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，${selected} 个固定启用`;
+  const fixed = currentAgentFixedSkillIds().length;
+  const effective = effectiveSkillIds().length;
+  $('#skillCount').textContent = state.autoSkills ? '自动' : String(effective);
+  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，${effective} 个启用${fixed ? `（含 ${fixed} 个 Agent 固定）` : ''}`;
 }
 
 function renderProviders() {
