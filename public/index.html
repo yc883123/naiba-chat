@@ -178,6 +178,7 @@
                 <option value="ollama">Ollama /api/chat</option>
               </select>
             </label>
+            <p class="provider-format-guide" id="providerFormatGuide" hidden></p>
             <label class="provider-field">模型名称
               <span class="model-picker">
                 <select id="providerModel" required aria-label="模型名称"></select>
@@ -188,6 +189,7 @@
             <p class="form-error provider-field" id="providerError"></p>
             <div class="form-actions provider-actions provider-field">
               <button type="button" class="control-button" id="testProvider">测试连接</button>
+              <button type="button" class="control-button" id="unloadProviderModel" hidden>卸载本地模型</button>
               <button type="button" class="control-button" id="cancelProvider" hidden>取消</button>
               <button type="button" class="primary-button" id="editProvider">编辑</button>
               <button class="primary-button" id="saveProvider" type="submit" hidden>保存设置</button>

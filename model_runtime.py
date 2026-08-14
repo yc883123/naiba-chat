@@ -11,6 +11,9 @@ from typing import Any, Callable
 
 
 StatusCallback = Callable[[dict[str, Any]], None]
+ONLINE_MODEL_TIMEOUT_SECONDS = 180
+LOCAL_MODEL_TIMEOUT_SECONDS = 1800
+PROVIDER_TEST_TIMEOUT_SECONDS = 30
 
 
 class ModelRuntime:
@@ -196,27 +199,30 @@ class ModelRuntime:
         """Ask a supported local model server to unload its active model."""
         base_url = str(profile.get("base_url") or "").rstrip("/")
         model = str(profile.get("model") or "").strip()
+        api_key = str(profile.get("api_key") or "").strip()
+        request_format = str(profile.get("request_format") or "").strip().lower()
         local_kind = str(profile.get("local_kind") or "").strip().lower()
         if not base_url or not model:
             raise ValueError("本地模型需要 Base URL 和模型名称")
 
-        parsed = urllib.parse.urlsplit(base_url)
-        port = parsed.port
-        if local_kind == "ollama" or port == 11434:
+        if request_format == "ollama" or local_kind == "ollama":
             endpoint = ModelRuntime._local_endpoint(base_url, "/api/generate")
             payload = {"model": model, "keep_alive": 0}
             provider_name = "Ollama"
-        elif local_kind == "lm_studio" or port == 1234:
+        elif request_format == "lm_studio" or local_kind == "lm_studio":
             endpoint = ModelRuntime._local_endpoint(base_url, "/api/v1/models/unload")
-            payload = {"model": model}
+            payload = {"instance_id": model}
             provider_name = "LM Studio"
         else:
             raise ValueError("当前供应商不是支持手动卸载的本地模型服务")
 
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers=headers,
             method="POST",
         )
         try:
@@ -227,6 +233,8 @@ class ModelRuntime:
             raise RuntimeError(f"{provider_name} 卸载模型失败 HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"无法连接 {provider_name} 卸载接口：{exc.reason}") from exc
+        except OSError as exc:
+            raise RuntimeError(f"{provider_name} 卸载连接被本机或服务中止：{exc}") from exc
         return {"provider": provider_name, "model": model}
 
     @staticmethod
@@ -358,9 +366,8 @@ class ModelRuntime:
             payload = {
                 "model": model,
                 "messages": ModelRuntime._ollama_messages(messages),
-                "temperature": temperature,
                 "stream": stream_enabled,
-                "options": {"num_predict": max_tokens},
+                "options": {"temperature": temperature, "num_predict": max_tokens},
             }
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
@@ -384,9 +391,17 @@ class ModelRuntime:
             headers=headers,
             method="POST",
         )
-        for attempt in range(3):
+        is_local = request_format in {"ollama", "lm_studio"}
+        connection_test = bool(options.get("connection_test", False))
+        request_timeout = (
+            LOCAL_MODEL_TIMEOUT_SECONDS
+            if is_local
+            else PROVIDER_TEST_TIMEOUT_SECONDS if connection_test else ONLINE_MODEL_TIMEOUT_SECONDS
+        )
+        attempts = 1 if is_local or connection_test else 3
+        for attempt in range(attempts):
             try:
-                with urllib.request.urlopen(request, timeout=180) as response:
+                with urllib.request.urlopen(request, timeout=request_timeout) as response:
                     if stream_enabled and request_format == "ollama":
                         streamed = ModelRuntime._read_ollama_stream(response, status)
                         content = ModelRuntime._clean_content(streamed["content"])
@@ -436,17 +451,23 @@ class ModelRuntime:
                 break
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:2000]
-                if exc.code in {429, 502, 503, 504} and attempt < 2:
+                if not is_local and exc.code in {429, 502, 503, 504} and attempt + 1 < attempts:
                     time.sleep(1.5 * (attempt + 1))
                     continue
-                raise RuntimeError(f"在线模型返回 HTTP {exc.code}: {detail}") from exc
+                target = "本地模型" if is_local else "在线模型"
+                raise RuntimeError(f"{target}返回 HTTP {exc.code}: {detail}") from exc
             except urllib.error.URLError as exc:
-                if attempt < 2:
+                if not is_local and attempt + 1 < attempts:
                     time.sleep(1.5 * (attempt + 1))
                     continue
-                raise RuntimeError(f"无法连接在线模型：{exc.reason}") from exc
+                target = "本地模型" if is_local else "在线模型"
+                if isinstance(exc.reason, TimeoutError):
+                    duration = f"{request_timeout // 60} 分钟" if request_timeout >= 60 else f"{request_timeout} 秒"
+                    raise RuntimeError(f"{target}响应超过 {duration}，已停止等待") from exc
+                raise RuntimeError(f"无法连接{target}：{exc.reason}") from exc
             except OSError as exc:
-                raise RuntimeError(f"模型连接被本机或远端中止：{exc}") from exc
+                target = "本地模型" if is_local else "在线模型"
+                raise RuntimeError(f"{target}连接被本机或远端中止：{exc}") from exc
 
         content, reasoning = ModelRuntime._online_response(request_format, result)
         return content, reasoning, ModelRuntime._online_usage(request_format, result)

@@ -252,22 +252,34 @@ class LocalModelUnloadTests(unittest.TestCase):
 
     def test_unloads_ollama_with_keep_alive_zero(self) -> None:
         self._assert_unload_request(
-            {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen3:8b"},
-            "http://127.0.0.1:11434/api/generate",
+            {
+                "base_url": "http://127.0.0.1:22434/v1",
+                "model": "qwen3:8b",
+                "request_format": "ollama",
+            },
+            "http://127.0.0.1:22434/api/generate",
             {"model": "qwen3:8b", "keep_alive": 0},
         )
 
     def test_unloads_lm_studio_through_model_management_api(self) -> None:
         self._assert_unload_request(
-            {"base_url": "http://127.0.0.1:1234/v1", "model": "local-model"},
-            "http://127.0.0.1:1234/api/v1/models/unload",
-            {"model": "local-model"},
+            {
+                "base_url": "http://127.0.0.1:2234/v1",
+                "model": "local-model",
+                "request_format": "lm_studio",
+            },
+            "http://127.0.0.1:2234/api/v1/models/unload",
+            {"instance_id": "local-model"},
         )
 
-    def test_rejects_remote_provider_unload(self) -> None:
+    def test_rejects_non_local_format_even_on_ollama_default_port(self) -> None:
         with self.assertRaisesRegex(ValueError, "不是支持手动卸载"):
             ModelRuntime.unload_local_model(
-                {"base_url": "https://api.example.com/v1", "model": "remote-model"}
+                {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "remote-model",
+                    "request_format": "openai_chat",
+                }
             )
 
 
@@ -299,17 +311,72 @@ class OllamaFormatTests(unittest.TestCase):
             content, reasoning, usage = ModelRuntime._complete_online(
                 {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen3:8b", "request_format": "ollama"},
                 [{"role": "user", "content": "hello"}],
-                {"temperature": 0, "max_tokens": 64, "stream": False},
+                {"temperature": 0, "max_tokens": 64, "stream": False, "connection_test": True},
             )
 
         self.assertEqual("OK", content)
         self.assertEqual("", reasoning)
         self.assertEqual({"input_tokens": 3, "output_tokens": 2, "total_tokens": 5, "cached_tokens": 0}, usage)
         self.assertEqual("http://127.0.0.1:11434/api/chat", captured["url"])
+        self.assertEqual(model_runtime.LOCAL_MODEL_TIMEOUT_SECONDS, captured["timeout"])
         body = captured["body"]
         self.assertEqual("qwen3:8b", body["model"])
         self.assertEqual(False, body["stream"])
+        self.assertEqual(0, body["options"]["temperature"])
         self.assertEqual(64, body["options"]["num_predict"])
+
+    def test_local_connection_failure_is_not_retried(self) -> None:
+        calls = 0
+
+        def fake_urlopen(_request, timeout):
+            nonlocal calls
+            calls += 1
+            self.assertEqual(model_runtime.LOCAL_MODEL_TIMEOUT_SECONDS, timeout)
+            raise model_runtime.urllib.error.URLError(ConnectionRefusedError("refused"))
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            with self.assertRaisesRegex(RuntimeError, "无法连接本地模型"):
+                ModelRuntime._complete_online(
+                    {
+                        "base_url": "http://127.0.0.1:11434/v1",
+                        "model": "qwen3:8b",
+                        "request_format": "ollama",
+                    },
+                    [{"role": "user", "content": "hello"}],
+                    {"temperature": 0, "max_tokens": 64, "stream": False},
+                )
+
+        self.assertEqual(1, calls)
+
+
+class ProviderConnectionTestTests(unittest.TestCase):
+    def test_online_connection_test_has_short_timeout_and_no_retry(self) -> None:
+        calls = 0
+
+        def fake_urlopen(_request, timeout):
+            nonlocal calls
+            calls += 1
+            self.assertEqual(model_runtime.PROVIDER_TEST_TIMEOUT_SECONDS, timeout)
+            raise model_runtime.urllib.error.URLError(TimeoutError("timed out"))
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            with self.assertRaisesRegex(RuntimeError, "在线模型响应超过 30 秒"):
+                ModelRuntime._complete_online(
+                    {
+                        "base_url": "https://api.example.com/v1",
+                        "model": "remote-model",
+                        "request_format": "openai_chat",
+                    },
+                    [{"role": "user", "content": "hello"}],
+                    {
+                        "temperature": 0,
+                        "max_tokens": 64,
+                        "stream": False,
+                        "connection_test": True,
+                    },
+                )
+
+        self.assertEqual(1, calls)
 
 
 class PermissionTests(unittest.TestCase):
@@ -553,6 +620,16 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn('model_key.startswith("online:")', server_source)
         self.assertIn('update_settings({"provider_id": provider_id})', server_source)
 
+    def test_local_provider_controls_use_the_selected_request_format(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        server_source = Path("server.py").read_text(encoding="utf-8")
+
+        self.assertIn("['ollama', 'lm_studio'].includes(requestFormat)", source)
+        self.assertIn("updateProviderFormatGuide", source)
+        self.assertIn("/api/models/unload", source)
+        self.assertIn('path == "/api/models/unload"', server_source)
+        self.assertNotIn("url.port === '11434'", source)
+
 
 class PublicRepositoryHygieneTests(unittest.TestCase):
     def test_example_config_and_bundled_skills_exclude_private_runtime_data(self) -> None:
@@ -570,6 +647,13 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
 
         self.assertIn('"mcp>=1.2.0,<2"', workflow)
         self.assertIn('"mcp.client.stdio"', spec)
+
+    def test_release_workflow_reads_shared_release_notes(self) -> None:
+        workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+        spec = Path("naiba-chat.spec").read_text(encoding="utf-8")
+
+        self.assertIn("release_notes.json | ConvertFrom-Json", workflow)
+        self.assertIn('root / "release_notes.json"', spec)
 
     def test_update_check_has_timeout_recovery(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
@@ -622,6 +706,17 @@ class UpdateManifestTests(unittest.TestCase):
             }
         )
         self.assertEqual(["Agent 数据模型已完成。", "123"], manifest["release_notes"])
+
+    def test_source_update_notes_are_loaded_from_shared_file(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            app_dir = Path(root)
+            (app_dir / "release_notes.json").write_text(
+                json.dumps(["第一项", "", "第二项"], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            manager = UpdateManager(app_dir, app_dir / "data")
+
+            self.assertEqual(["第一项", "第二项"], manager._read_release_notes())
 
     def test_rejects_manifest_for_another_repository(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "仓库不匹配"):

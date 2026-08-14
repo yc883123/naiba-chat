@@ -211,6 +211,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .provider-current { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 9px; align-items: end; }
 .provider-current .control-button, .provider-current .danger-button { height: 40px; }
 .provider-divider { height: 1px; background: var(--line); margin: 2px 0 4px; }
+.provider-format-guide { margin: -3px 0 1px; padding: 9px 11px; border-left: 3px solid var(--green); background: var(--green-soft); color: var(--text); font-size: 12px; line-height: 1.55; }
+.provider-format-guide[hidden] { display: none; }
 .danger-button { min-height: 36px; padding: 0 13px; border: 1px solid #e0bbb8; border-radius: var(--radius); color: var(--red); background: #fff8f7; }
 .danger-button:hover { background: #fceceb; }
 .secret-field { position: relative; display: block; }

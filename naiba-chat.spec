@@ -30,6 +30,7 @@ a = Analysis(
         (str(root / "public"), "public"),
         (str(root / "skills"), "skills"),
         (str(build_info), "."),
+        (str(root / "release_notes.json"), "."),
     ],
     hiddenimports=["mcp", "mcp.client.stdio"],
     hookspath=[],

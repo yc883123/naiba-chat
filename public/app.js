@@ -579,29 +579,32 @@ function selectedProvider() {
 
 function localProviderKind(provider) {
   if (!provider) return '';
-  const explicit = String(provider.local_kind || '').toLowerCase();
-  if (explicit === 'ollama' || explicit === 'lm_studio') return explicit;
-  try {
-    const url = new URL(provider.base_url || '');
-    if (url.port === '11434') return 'ollama';
-    if (url.port === '1234') return 'lm_studio';
-  } catch (_) {
-    // Invalid provider URLs are reported by the provider form.
-  }
-  return '';
+  const requestFormat = String(provider.request_format || '').toLowerCase();
+  return ['ollama', 'lm_studio'].includes(requestFormat) ? requestFormat : '';
 }
 
 function updateUnloadModelButton() {
-  const button = $('#unloadModel');
-  if (!button) return;
-  const kind = localProviderKind(selectedProvider());
-  button.hidden = !kind;
-  button.disabled = Boolean(state.abortController || state.taskSubmitting);
-  button.title = kind ? `卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 当前模型` : '当前供应商不支持手动卸载';
+  const busy = Boolean(state.abortController || state.taskSubmitting);
+  const topButton = $('#unloadModel');
+  const topKind = localProviderKind(selectedProvider());
+  if (topButton) {
+    topButton.hidden = !topKind;
+    topButton.disabled = busy;
+    topButton.title = topKind ? `卸载${topKind === 'ollama' ? ' Ollama' : ' LM Studio'} 当前模型` : '当前供应商不支持手动卸载';
+  }
+
+  const settingsButton = $('#unloadProviderModel');
+  if (settingsButton) {
+    const providerId = $('#providerId')?.value || '';
+    const provider = (state.bootstrap?.providers || []).find((item) => item.id === providerId);
+    const kind = localProviderKind(provider);
+    settingsButton.hidden = !kind;
+    settingsButton.disabled = busy;
+    settingsButton.title = kind ? `卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 当前模型` : '';
+  }
 }
 
-async function unloadCurrentModel() {
-  const provider = selectedProvider();
+async function unloadProviderModel(provider) {
   const kind = localProviderKind(provider);
   if (!provider || !kind) {
     toast('当前供应商不是支持卸载的本地模型');
@@ -612,10 +615,10 @@ async function unloadCurrentModel() {
     return;
   }
   if (!confirm(`卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 模型“${provider.model}”？`)) return;
-  const button = $('#unloadModel');
-  button.disabled = true;
+  $('#unloadModel').disabled = true;
+  $('#unloadProviderModel').disabled = true;
   try {
-    const result = await api('/api/providers/unload', {
+    const result = await api('/api/models/unload', {
       method: 'POST',
       body: { model_key: `online:${provider.id}` },
     });
@@ -625,6 +628,16 @@ async function unloadCurrentModel() {
   } finally {
     updateUnloadModelButton();
   }
+}
+
+async function unloadCurrentModel() {
+  await unloadProviderModel(selectedProvider());
+}
+
+async function unloadConfiguredProviderModel() {
+  const providerId = $('#providerId').value;
+  const provider = (state.bootstrap?.providers || []).find((item) => item.id === providerId);
+  await unloadProviderModel(provider);
 }
 
 async function saveModelSelection() {
@@ -944,6 +957,19 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   $('#providerKeyStatus').textContent = provider.has_api_key ? '已配置' : '未配置';
   $('#providerError').textContent = '';
   setProviderEditMode(editing, isNew);
+  updateProviderFormatGuide();
+  updateUnloadModelButton();
+}
+
+function updateProviderFormatGuide() {
+  const guide = $('#providerFormatGuide');
+  const format = $('#providerFormat').value;
+  const guides = {
+    ollama: '先启动 Ollama。API URL 通常填写 http://127.0.0.1:11434/v1；API Key 可留空；模型名称可通过 ollama list 查看，然后点击“检查模型”。',
+    lm_studio: '先在 LM Studio 的 Developer / Local Server 页面启动服务并加载模型。API URL 通常填写 http://127.0.0.1:1234/v1；API Key 可留空，然后点击“检查模型”。',
+  };
+  guide.textContent = guides[format] || '';
+  guide.hidden = !guides[format];
 }
 
 function setProviderEditMode(editing, isNew = false) {
@@ -964,6 +990,7 @@ function setProviderEditMode(editing, isNew = false) {
   $('#editProvider').hidden = !active || editing;
   $('#cancelProvider').hidden = !editing;
   $('#saveProvider').hidden = !editing;
+  updateUnloadModelButton();
 }
 
 function setProviderModelOptions(models = [], current = '') {
@@ -1011,7 +1038,8 @@ function providerFormValue() {
 async function loadProviderModels({ automatic = false } = {}) {
   if (!state.providerEditing) return;
   const values = providerFormValue();
-  if (!values.base_url || (!values.api_key && !values.id && values.request_format !== 'lm_studio')) {
+  const localFormat = ['lm_studio', 'ollama'].includes(values.request_format);
+  if (!values.base_url || (!values.api_key && !values.id && !localFormat)) {
     if (!automatic) $('#providerError').textContent = '请先填写 API URL 和 API Key';
     return;
   }
@@ -1747,6 +1775,8 @@ function bindEvents() {
   $('#cancelProvider').addEventListener('click', cancelProviderEdit);
   $('#testProvider').addEventListener('click', testProvider);
   $('#loadProviderModels').addEventListener('click', () => loadProviderModels());
+  $('#unloadProviderModel').addEventListener('click', unloadConfiguredProviderModel);
+  $('#providerFormat').addEventListener('change', updateProviderFormatGuide);
   $('#providerModel').addEventListener('change', toggleCustomModel);
   $('#toggleProviderKey').addEventListener('click', toggleProviderKey);
   $('#providerApiKey').addEventListener('input', (event) => {

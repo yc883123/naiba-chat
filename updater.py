@@ -19,10 +19,11 @@ MANIFEST_ASSET = "naiba-chat-update.json"
 EXECUTABLE_ASSET = "naiba-chat.exe"
 LATEST_RELEASE_URL = f"https://github.com/{REPOSITORY}/releases/latest"
 LATEST_DOWNLOAD_URL = f"{LATEST_RELEASE_URL}/download"
-RELEASE_NOTES = [
-    "修复：切换 Agent 后，对话页 Skill 数量与勾选状态未同步显示 Agent 固定 Skill。",
-    "前端：Skill 弹窗与顶部计数现在合并当前 Agent 的固定 Skill，并标记「Agent 固定」且不可取消勾选。",
-    "前端：切换 Agent、新建或打开对话后即时刷新 Skill 显示状态。",
+DEFAULT_RELEASE_NOTES = [
+    "新增 Ollama 原生 /api/chat 请求格式，并提供配置引导。",
+    "恢复 Ollama 和 LM Studio 的手动模型卸载入口，可释放显存和内存。",
+    "本地模型使用独立的长等待策略，不再受在线 API 的 180 秒超时与重试影响。",
+    "修复更新说明长期显示旧内容的问题，发布流程改为读取统一说明文件。",
 ]
 
 
@@ -95,6 +96,21 @@ class UpdateManager:
         except (OSError, json.JSONDecodeError):
             pass
         return {"version": "dev", "commit": ""}
+
+    def _read_release_notes(self) -> list[str]:
+        resource_dir = Path(getattr(sys, "_MEIPASS", self.app_dir)).resolve()
+        path = resource_dir / "release_notes.json"
+        try:
+            value = json.loads(path.read_text(encoding="utf-8-sig"))
+            if isinstance(value, dict):
+                value = value.get("release_notes", [])
+            if isinstance(value, list):
+                notes = [str(note).strip() for note in value if str(note).strip()][:50]
+                if notes:
+                    return notes
+        except (OSError, json.JSONDecodeError):
+            pass
+        return list(DEFAULT_RELEASE_NOTES)
 
     @property
     def supported(self) -> bool:
@@ -214,7 +230,7 @@ class UpdateManager:
                         "commit": remote_commit,
                         "release_url": f"https://github.com/{REPOSITORY}/commits/master",
                         "update_available": update_available,
-                        "release_notes": list(RELEASE_NOTES),
+                        "release_notes": self._read_release_notes(),
                     }
                     if divergent:
                         self.phase = "error"

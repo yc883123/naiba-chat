@@ -900,6 +900,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._provider_models(body)
         elif path == "/api/providers/unload":
             self._unload_provider(body)
+        elif path == "/api/models/unload":
+            self._unload_provider(body)
         elif path == "/api/settings":
             try:
                 settings = APP.config.update_settings(body)
@@ -1239,7 +1241,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     {"role": "system", "content": "你是连接测试助手。直接回答，不要调用工具。"},
                     {"role": "user", "content": "只回复 OK"},
                 ],
-                {"temperature": 0, "max_tokens": 128, "stream": False},
+                {"temperature": 0, "max_tokens": 128, "stream": False, "connection_test": True},
             )
             self._json({"ok": True, "response": result})
         except Exception as exc:
