@@ -602,6 +602,68 @@ def get_lan_ip() -> str:
     return "127.0.0.1"
 
 
+LOCAL_PROVIDER_PRESETS: list[dict[str, Any]] = [
+    {
+        "kind": "ollama",
+        "name": "Ollama (本地)",
+        "base_url": "http://127.0.0.1:11434/v1",
+        "request_format": "openai_chat",
+        "api_key": "ollama",
+        "host": "127.0.0.1",
+        "port": 11434,
+        "description": "需先安装 Ollama 并拉取模型（ollama pull <模型名>）。",
+        "doc_url": "https://ollama.com",
+    },
+    {
+        "kind": "lm_studio",
+        "name": "LM Studio (本地)",
+        "base_url": "http://127.0.0.1:1234/v1",
+        "request_format": "openai_chat",
+        "api_key": "",
+        "host": "127.0.0.1",
+        "port": 1234,
+        "description": "需先在 LM Studio 加载模型并启动 Local Server。",
+        "doc_url": "https://lmstudio.ai",
+    },
+]
+
+
+def probe_local_provider(kind: str) -> dict[str, Any]:
+    """探测本地 OpenAI 兼容服务是否在线，并尝试拉取可用模型列表。"""
+    preset = next((item for item in LOCAL_PROVIDER_PRESETS if item.get("kind") == kind), None)
+    if not preset:
+        raise ValueError(f"未知的本地预置类型：{kind}")
+    host = str(preset["host"])
+    port = int(preset["port"])
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(1.5)
+    reachable = False
+    try:
+        sock.connect((host, port))
+        reachable = True
+    except OSError:
+        reachable = False
+    finally:
+        sock.close()
+    public_preset = {key: value for key, value in preset.items() if key != "api_key"}
+    result: dict[str, Any] = {"kind": kind, "reachable": reachable, "preset": public_preset}
+    if not reachable:
+        result["error"] = f"无法连接 {host}:{port}，请确认 {preset['name']} 已启动。"
+        result["models"] = []
+        return result
+    try:
+        profile = {
+            "base_url": preset["base_url"],
+            "api_key": preset["api_key"],
+            "request_format": preset["request_format"],
+        }
+        result["models"] = ModelRuntime.list_online_models(profile)
+    except Exception as exc:
+        result["models"] = []
+        result["error"] = f"服务在线但获取模型列表失败：{exc}"
+    return result
+
+
 IMAGE_MEDIA_TYPES = {
     ".png": "image/png",
     ".jpg": "image/jpeg",
@@ -814,6 +876,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                     metadata["choice_groups"] = choice_groups
                     metadata["choices"] = choice_groups[0]["choices"] if choice_groups else []
             self._json(conversation or {"error": "对话不存在"}, HTTPStatus.OK if conversation else HTTPStatus.NOT_FOUND)
+        elif path == "/api/providers/presets":
+            self._json({"presets": [
+                {key: value for key, value in item.items() if key != "api_key"}
+                for item in LOCAL_PROVIDER_PRESETS
+            ]})
         elif path.startswith("/api/providers/") and path.endswith("/secret"):
             provider_id = path.split("/")[-2]
             api_key = APP.config.provider_secret(provider_id)
@@ -898,6 +965,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._test_provider(body)
         elif path == "/api/providers/models":
             self._provider_models(body)
+        elif path == "/api/providers/probe":
+            self._probe_local_provider(body)
         elif path == "/api/settings":
             try:
                 settings = APP.config.update_settings(body)
@@ -1248,6 +1317,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             provider = self._provider_profile(body)
             self._json({"models": APP.models.list_online_models(provider)})
         except Exception as exc:
+            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _probe_local_provider(self, body: dict[str, Any]) -> None:
+        kind = str(body.get("kind") or "").strip()
+        try:
+            self._json(probe_local_provider(kind))
+        except (ValueError, TypeError) as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
     @staticmethod

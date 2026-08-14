@@ -211,6 +211,14 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .provider-current { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 9px; align-items: end; }
 .provider-current .control-button, .provider-current .danger-button { height: 40px; }
 .provider-divider { height: 1px; background: var(--line); margin: 2px 0 4px; }
+.provider-presets { display: grid; gap: 9px; padding-bottom: 11px; border-bottom: 1px dashed var(--line); }
+.provider-presets-head { display: grid; gap: 2px; }
+.provider-presets-head b { font-size: 14px; }
+.provider-presets-head small { color: var(--muted); font-size: 12px; }
+.provider-presets-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+.provider-presets-hint { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.provider-presets-hint.ok { color: var(--green); }
+.provider-presets-hint.warn { color: #b45309; }
 .danger-button { min-height: 36px; padding: 0 13px; border: 1px solid #e0bbb8; border-radius: var(--radius); color: var(--red); background: #fff8f7; }
 .danger-button:hover { background: #fceceb; }
 .secret-field { position: relative; display: block; }
