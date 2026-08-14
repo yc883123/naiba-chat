@@ -88,10 +88,16 @@ class Launcher:
         import pystray
         from PIL import Image, ImageDraw
 
-        image = Image.new("RGB", (64, 64), (18, 100, 64))
-        draw = ImageDraw.Draw(image)
-        draw.ellipse((14, 14, 50, 50), fill=(255, 255, 255))
-        draw.ellipse((22, 22, 42, 42), fill=(18, 100, 64))
+        icon_path = srv.RESOURCE_DIR / "icon.ico"
+        try:
+            image = Image.open(icon_path).convert("RGBA") if icon_path.is_file() else None
+        except (OSError, ValueError):
+            image = None
+        if image is None:
+            image = Image.new("RGB", (64, 64), (18, 100, 64))
+            draw = ImageDraw.Draw(image)
+            draw.ellipse((14, 14, 50, 50), fill=(255, 255, 255))
+            draw.ellipse((22, 22, 42, 42), fill=(18, 100, 64))
 
         menu = pystray.Menu(
             pystray.MenuItem("打开窗口", lambda: self._show_window(), default=True),

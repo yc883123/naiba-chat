@@ -140,3 +140,7 @@ skills/**/*.py[cod]
 
 # The portable Windows build uses this repository-owned PyInstaller recipe.
 !naiba-chat.spec
+
+# Temporary previews used while preparing the application icon.
+icon-source.png
+icon-preview.png

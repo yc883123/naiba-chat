@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 root = Path(SPECPATH).resolve()
+icon_path = root / "icon.ico"
 commit = os.environ.get("NAIBA_BUILD_COMMIT", "").strip()
 if not commit:
     try:
@@ -55,4 +56,5 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
+    icon=str(icon_path) if icon_path.is_file() else None,
 )

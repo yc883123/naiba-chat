@@ -610,6 +610,39 @@ IMAGE_MEDIA_TYPES = {
     ".gif": "image/gif",
 }
 
+MODEL_IMAGE_MAX_EDGE = 1600
+MODEL_IMAGE_TARGET_BYTES = 900 * 1024
+MODEL_IMAGE_HISTORY_LIMIT = 3
+
+
+def _jpeg_for_model(image: Any, target_bytes: int = MODEL_IMAGE_TARGET_BYTES) -> bytes:
+    from PIL import Image
+
+    image.thumbnail((MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE))
+    if image.mode not in {"RGB", "L"}:
+        background = Image.new("RGB", image.size, "white")
+        if "A" in image.getbands():
+            background.paste(image, mask=image.getchannel("A"))
+        else:
+            background.paste(image)
+        image = background
+
+    encoded = b""
+    for quality in (85, 78, 70, 62):
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=quality, optimize=True)
+        encoded = buffer.getvalue()
+        if len(encoded) <= target_bytes:
+            return encoded
+
+    while len(encoded) > target_bytes and max(image.size) > 768:
+        next_size = tuple(max(1, int(value * 0.85)) for value in image.size)
+        image = image.resize(next_size, Image.Resampling.LANCZOS)
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=62, optimize=True)
+        encoded = buffer.getvalue()
+    return encoded
+
 
 def encode_image_for_model(source: str) -> dict[str, str] | None:
     path = Path(source).expanduser().resolve()
@@ -621,20 +654,15 @@ def encode_image_for_model(source: str) -> dict[str, str] | None:
         from PIL import Image, ImageOps
 
         with Image.open(io.BytesIO(raw)) as opened:
-            image = ImageOps.exif_transpose(opened)
-            needs_conversion = max(image.size) > 2048 or len(raw) > 5 * 1024 * 1024 or image.format == "GIF"
+            source_format = opened.format
+            image = ImageOps.exif_transpose(opened).copy()
+            needs_conversion = (
+                max(image.size) > MODEL_IMAGE_MAX_EDGE
+                or len(raw) > MODEL_IMAGE_TARGET_BYTES
+                or source_format == "GIF"
+            )
             if needs_conversion:
-                image.thumbnail((2048, 2048))
-                if image.mode not in {"RGB", "L"}:
-                    background = Image.new("RGB", image.size, "white")
-                    if "A" in image.getbands():
-                        background.paste(image, mask=image.getchannel("A"))
-                    else:
-                        background.paste(image)
-                    image = background
-                buffer = io.BytesIO()
-                image.save(buffer, format="JPEG", quality=85, optimize=True)
-                raw = buffer.getvalue()
+                raw = _jpeg_for_model(image)
                 media_type = "image/jpeg"
     except (ImportError, OSError, ValueError):
         if len(raw) > 8 * 1024 * 1024:
@@ -645,6 +673,55 @@ def encode_image_for_model(source: str) -> dict[str, str] | None:
         "data": base64.b64encode(raw).decode("ascii"),
         "name": path.name,
     }
+
+
+def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build model history while carrying only the most recent image batch."""
+    selected_paths: list[str] = []
+    for item in reversed(conversation_messages[-16:]):
+        if item.get("role") != "user":
+            continue
+        batch = []
+        for attachment in (item.get("metadata") or {}).get("attachments") or []:
+            source = str(attachment.get("path") or "")
+            if Path(source).suffix.lower() in IMAGE_MEDIA_TYPES and source not in batch:
+                batch.append(source)
+        if batch:
+            selected_paths = batch[:MODEL_IMAGE_HISTORY_LIMIT]
+            break
+    selected_images = set(selected_paths)
+
+    history: list[dict[str, Any]] = []
+    for item in conversation_messages:
+        if item.get("role") not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or "")
+        previous_uploads = (item.get("metadata") or {}).get("attachments") or []
+        if item.get("role") == "user" and previous_uploads:
+            paths = [
+                f"[用户上传文件：{upload.get('path')}]"
+                for upload in previous_uploads
+                if upload.get("path")
+            ]
+            if paths:
+                content += "\n" + "\n".join(paths)
+            image_parts = [
+                encoded
+                for upload in previous_uploads
+                if str(upload.get("path") or "") in selected_images
+                for encoded in [encode_image_for_model(str(upload.get("path") or ""))]
+                if encoded
+            ]
+            if image_parts:
+                history.append(
+                    {
+                        "role": item["role"],
+                        "content": [{"type": "text", "text": content}, *image_parts],
+                    }
+                )
+                continue
+        history.append({"role": item["role"], "content": content})
+    return history
 
 
 def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -1318,46 +1395,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             effective_message = message
         APP.storage.add_message(conversation_id, "user", message, {"attachments": uploads})
         conversation_messages = APP.storage.get_conversation(conversation_id)["messages"]
-        recent_image_paths: list[str] = []
-        for item in reversed(conversation_messages[-16:]):
-            if item["role"] != "user":
-                continue
-            for attachment in reversed((item.get("metadata") or {}).get("attachments") or []):
-                source = str(attachment.get("path") or "")
-                if Path(source).suffix.lower() in IMAGE_MEDIA_TYPES and source not in recent_image_paths:
-                    recent_image_paths.append(source)
-                    if len(recent_image_paths) >= 3:
-                        break
-            if len(recent_image_paths) >= 3:
-                break
-        selected_images = set(recent_image_paths)
-
-        history = []
-        for item in conversation_messages:
-            if item["role"] not in {"user", "assistant"}:
-                continue
-            content = item["content"]
-            previous_uploads = (item.get("metadata") or {}).get("attachments") or []
-            if item["role"] == "user" and previous_uploads:
-                paths = [f"[用户上传文件：{upload.get('path')}]" for upload in previous_uploads if upload.get("path")]
-                if paths:
-                    content += "\n" + "\n".join(paths)
-                image_parts = [
-                    encoded
-                    for upload in previous_uploads
-                    if str(upload.get("path") or "") in selected_images
-                    for encoded in [encode_image_for_model(str(upload.get("path") or ""))]
-                    if encoded
-                ]
-                if image_parts:
-                    history.append(
-                        {
-                            "role": item["role"],
-                            "content": [{"type": "text", "text": content}, *image_parts],
-                        }
-                    )
-                    continue
-            history.append({"role": item["role"], "content": content})
+        history = build_model_history(conversation_messages)
 
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")

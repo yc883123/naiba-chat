@@ -16,7 +16,14 @@ from unittest.mock import patch
 import model_runtime
 from model_runtime import ModelRuntime
 from mcp_runtime import MCPRegistry, MCPServerConnection
-from server import ConfigStore, _detect_choice_groups, _detect_choices
+from server import (
+    MODEL_IMAGE_TARGET_BYTES,
+    ConfigStore,
+    _detect_choice_groups,
+    _detect_choices,
+    build_model_history,
+    encode_image_for_model,
+)
 from skill_runtime import SkillAgent, SkillCatalog, ToolExecutor
 from storage import ChatStorage
 from updater import UpdateManager
@@ -166,6 +173,75 @@ class OnlineResponseTests(unittest.TestCase):
 
         self.assertEqual(action, json.loads(content))
         self.assertEqual("", reasoning)
+
+
+class ImageAttachmentTests(unittest.TestCase):
+    @staticmethod
+    def _write_png(path: Path, size: tuple[int, int], color: str) -> None:
+        from PIL import Image
+
+        Image.new("RGB", size, color).save(path, format="PNG")
+
+    def test_large_image_is_resized_and_bounded_for_api_payloads(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            source = Path(root) / "large.png"
+            self._write_png(source, (2200, 1800), "#4f7fbf")
+
+            encoded = encode_image_for_model(str(source))
+
+        self.assertIsNotNone(encoded)
+        self.assertEqual("image/jpeg", encoded["media_type"])
+        import base64
+
+        self.assertLessEqual(len(base64.b64decode(encoded["data"])), MODEL_IMAGE_TARGET_BYTES)
+
+    def test_history_keeps_only_the_latest_multi_image_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            old_image = root_path / "old.png"
+            latest_a = root_path / "latest-a.png"
+            latest_b = root_path / "latest-b.png"
+            self._write_png(old_image, (24, 24), "red")
+            self._write_png(latest_a, (24, 24), "green")
+            self._write_png(latest_b, (24, 24), "blue")
+            messages = [
+                {
+                    "role": "user",
+                    "content": "old",
+                    "metadata": {"attachments": [{"path": str(old_image)}]},
+                },
+                {"role": "assistant", "content": "reply", "metadata": {}},
+                {
+                    "role": "user",
+                    "content": "compare",
+                    "metadata": {
+                        "attachments": [{"path": str(latest_a)}, {"path": str(latest_b)}]
+                    },
+                },
+            ]
+
+            history = build_model_history(messages)
+
+        self.assertIsInstance(history[0]["content"], str)
+        self.assertIsInstance(history[2]["content"], list)
+        image_parts = [part for part in history[2]["content"] if part.get("type") == "image"]
+        self.assertEqual(["latest-a.png", "latest-b.png"], [part["name"] for part in image_parts])
+
+    def test_openai_lm_studio_and_ollama_payloads_keep_both_images(self) -> None:
+        content = [
+            {"type": "text", "text": "compare"},
+            {"type": "image", "media_type": "image/png", "data": "aW1nMQ=="},
+            {"type": "image", "media_type": "image/jpeg", "data": "aW1nMg=="},
+        ]
+        messages = [{"role": "user", "content": content}]
+
+        openai_parts = ModelRuntime._openai_messages(messages)[0]["content"]
+        ollama_message = ModelRuntime._ollama_messages(messages)[0]
+        trimmed = SkillAgent._trim_message_content(content, 12000)
+
+        self.assertEqual(2, sum(part.get("type") == "image_url" for part in openai_parts))
+        self.assertEqual(["aW1nMQ==", "aW1nMg=="], ollama_message["images"])
+        self.assertEqual(2, sum(part.get("type") == "image" for part in trimmed))
 
     def test_rejects_ordinary_reasoning_when_content_is_empty(self) -> None:
         result = {
