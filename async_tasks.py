@@ -116,7 +116,9 @@ class BackgroundTaskManager:
             uploads = snapshot.get("attachments") or []
             extra = [f"[用户上传文件：{x.get('path')}]" for x in uploads if x.get("path")]
             effective = message + (("\n" + "\n".join(extra)) if extra else "")
-            history = [{"role": x["role"], "content": x["content"]} for x in conversation.get("messages", []) if x.get("role") in {"user", "assistant"}]
+            from server import build_model_history
+
+            history = build_model_history(conversation.get("messages", []))
             model_key = str(snapshot.get("model_key") or "")
             if not model_key and snapshot.get("provider_id"):
                 model_key = f"online:{snapshot['provider_id']}"

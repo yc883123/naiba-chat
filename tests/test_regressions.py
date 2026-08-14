@@ -810,6 +810,11 @@ class ModelSelectionTests(unittest.TestCase):
 
 
 class PublicRepositoryHygieneTests(unittest.TestCase):
+    def test_background_tasks_preserve_uploaded_image_metadata(self) -> None:
+        source = Path("async_tasks.py").read_text(encoding="utf-8")
+        self.assertIn("from server import build_model_history", source)
+        self.assertIn("history = build_model_history(conversation.get(\"messages\", []))", source)
+
     def test_example_config_and_bundled_skills_exclude_private_runtime_data(self) -> None:
         example = Path("config.example.json").read_text(encoding="utf-8")
         ignore = Path(".gitignore").read_text(encoding="utf-8")
