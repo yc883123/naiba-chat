@@ -14,6 +14,13 @@ StatusCallback = Callable[[dict[str, Any]], None]
 ONLINE_MODEL_TIMEOUT_SECONDS = 180
 LOCAL_MODEL_TIMEOUT_SECONDS = 1800
 PROVIDER_TEST_TIMEOUT_SECONDS = 30
+FAST_RETRY_NETWORK_ERRORS = {10053, 10054, 10061}
+
+
+def _network_error_code(error: BaseException) -> int | None:
+    reason = error.reason if isinstance(error, urllib.error.URLError) else error
+    value = getattr(reason, "winerror", None) or getattr(reason, "errno", None)
+    return int(value) if isinstance(value, int) else None
 
 
 class ModelRuntime:
@@ -393,12 +400,19 @@ class ModelRuntime:
         )
         is_local = request_format in {"ollama", "lm_studio"}
         connection_test = bool(options.get("connection_test", False))
+        provider_name = str(profile.get("name") or "").strip()
+        parsed_endpoint = urllib.parse.urlsplit(endpoint)
+        endpoint_host = parsed_endpoint.hostname or parsed_endpoint.netloc or endpoint
+        endpoint_port = parsed_endpoint.port or (443 if parsed_endpoint.scheme == "https" else 80)
+        target = "本地模型" if is_local else "在线模型"
+        target_detail = f"{target}“{provider_name}”" if provider_name else target
+        target_detail += f"（{endpoint_host}:{endpoint_port}）"
         request_timeout = (
             LOCAL_MODEL_TIMEOUT_SECONDS
             if is_local
             else PROVIDER_TEST_TIMEOUT_SECONDS if connection_test else ONLINE_MODEL_TIMEOUT_SECONDS
         )
-        attempts = 1 if is_local or connection_test else 3
+        attempts = 1 if is_local else 3
         for attempt in range(attempts):
             try:
                 with urllib.request.urlopen(request, timeout=request_timeout) as response:
@@ -451,26 +465,41 @@ class ModelRuntime:
                 break
             except urllib.error.HTTPError as exc:
                 detail = exc.read().decode("utf-8", errors="replace")[:2000]
-                if not is_local and exc.code in {429, 502, 503, 504} and attempt + 1 < attempts:
+                if (
+                    not is_local
+                    and not connection_test
+                    and exc.code in {429, 502, 503, 504}
+                    and attempt + 1 < attempts
+                ):
                     time.sleep(1.5 * (attempt + 1))
                     continue
-                target = "本地模型" if is_local else "在线模型"
-                raise RuntimeError(f"{target}返回 HTTP {exc.code}: {detail}") from exc
-            except urllib.error.URLError as exc:
-                if not is_local and attempt + 1 < attempts:
-                    time.sleep(1.5 * (attempt + 1))
+                raise RuntimeError(f"{target_detail}返回 HTTP {exc.code}: {detail}") from exc
+            except (urllib.error.URLError, OSError) as exc:
+                reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+                error_code = _network_error_code(exc)
+                retryable_test_error = connection_test and error_code in FAST_RETRY_NETWORK_ERRORS
+                if not is_local and attempt + 1 < attempts and (not connection_test or retryable_test_error):
+                    time.sleep((0.5 if connection_test else 1.5) * (attempt + 1))
                     continue
-                target = "本地模型" if is_local else "在线模型"
-                if isinstance(exc.reason, TimeoutError):
+                if isinstance(reason, TimeoutError):
                     duration = f"{request_timeout // 60} 分钟" if request_timeout >= 60 else f"{request_timeout} 秒"
-                    raise RuntimeError(f"{target}响应超过 {duration}，已停止等待") from exc
-                raise RuntimeError(f"无法连接{target}：{exc.reason}") from exc
-            except OSError as exc:
-                target = "本地模型" if is_local else "在线模型"
-                raise RuntimeError(f"{target}连接被本机或远端中止：{exc}") from exc
+                    raise RuntimeError(f"{target_detail}响应超过 {duration}，已停止等待") from exc
+                hint = ""
+                if error_code == 10061:
+                    hint = "；目标端口拒绝连接，请检查 API URL、代理/TUN 或服务是否已启动"
+                elif error_code in {10053, 10054}:
+                    hint = "；连接被中止，请检查代理/TUN、防火墙或服务状态"
+                raise RuntimeError(f"无法连接{target_detail}：{reason}{hint}") from exc
 
-        content, reasoning = ModelRuntime._online_response(request_format, result)
-        return content, reasoning, ModelRuntime._online_usage(request_format, result)
+        usage = ModelRuntime._online_usage(request_format, result)
+        try:
+            content, reasoning = ModelRuntime._online_response(request_format, result)
+        except RuntimeError:
+            reasoning = ModelRuntime._online_reasoning(request_format, result)
+            if connection_test and reasoning:
+                return "接口已返回有效响应", reasoning, usage
+            raise
+        return content, reasoning, usage
 
     @staticmethod
     def _ollama_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

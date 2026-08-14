@@ -20,6 +20,8 @@ EXECUTABLE_ASSET = "naiba-chat.exe"
 LATEST_RELEASE_URL = f"https://github.com/{REPOSITORY}/releases/latest"
 LATEST_DOWNLOAD_URL = f"{LATEST_RELEASE_URL}/download"
 DEFAULT_RELEASE_NOTES = [
+    "修复 Windows 10053/10054/10061 瞬时连接错误，并在失败时显示供应商主机和排查提示。",
+    "修复推理模型只返回 reasoning 时测试连接被误判失败的问题。",
     "新增 Ollama 原生 /api/chat 请求格式，并提供配置引导。",
     "恢复 Ollama 和 LM Studio 的手动模型卸载入口，可释放显存和内存。",
     "本地模型使用独立的长等待策略，不再受在线 API 的 180 秒超时与重试影响。",

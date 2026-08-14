@@ -360,7 +360,7 @@ class ProviderConnectionTestTests(unittest.TestCase):
             raise model_runtime.urllib.error.URLError(TimeoutError("timed out"))
 
         with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
-            with self.assertRaisesRegex(RuntimeError, "在线模型响应超过 30 秒"):
+            with self.assertRaisesRegex(RuntimeError, "在线模型.*响应超过 30 秒"):
                 ModelRuntime._complete_online(
                     {
                         "base_url": "https://api.example.com/v1",
@@ -377,6 +377,108 @@ class ProviderConnectionTestTests(unittest.TestCase):
                 )
 
         self.assertEqual(1, calls)
+
+    def test_online_connection_test_quickly_retries_windows_connection_errors(self) -> None:
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({"choices": [{"message": {"content": "OK"}}]}).encode("utf-8")
+
+        for error_code in (10053, 10061):
+            with self.subTest(error_code=error_code):
+                calls = 0
+
+                def fake_urlopen(_request, timeout):
+                    nonlocal calls
+                    del timeout
+                    calls += 1
+                    if calls < 3:
+                        raise model_runtime.urllib.error.URLError(OSError(error_code, "network error"))
+                    return Response()
+
+                with (
+                    patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen),
+                    patch.object(model_runtime.time, "sleep"),
+                ):
+                    content, _reasoning, _usage = ModelRuntime._complete_online(
+                        {
+                            "name": "remote",
+                            "base_url": "https://api.example.com/v1",
+                            "model": "remote-model",
+                            "request_format": "openai_chat",
+                        },
+                        [{"role": "user", "content": "hello"}],
+                        {"temperature": 0, "max_tokens": 64, "stream": False, "connection_test": True},
+                    )
+
+                self.assertEqual("OK", content)
+                self.assertEqual(3, calls)
+
+    def test_connection_refused_error_identifies_provider_and_host(self) -> None:
+        def fake_urlopen(_request, timeout):
+            del timeout
+            raise model_runtime.urllib.error.URLError(OSError(10061, "refused"))
+
+        with (
+            patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen),
+            patch.object(model_runtime.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "在线模型“mimo”.*api.example.com:443.*目标端口拒绝连接",
+            ):
+                ModelRuntime._complete_online(
+                    {
+                        "name": "mimo",
+                        "base_url": "https://api.example.com/v1",
+                        "model": "remote-model",
+                        "request_format": "openai_chat",
+                    },
+                    [{"role": "user", "content": "hello"}],
+                    {"temperature": 0, "max_tokens": 64, "stream": False, "connection_test": True},
+                )
+
+    def test_reasoning_only_response_proves_connection_is_working(self) -> None:
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "choices": [
+                            {"message": {"content": "", "reasoning_content": "模型正在推理"}}
+                        ]
+                    },
+                    ensure_ascii=False,
+                ).encode("utf-8")
+
+        with patch.object(model_runtime.urllib.request, "urlopen", lambda *_args, **_kwargs: Response()):
+            content, reasoning, _usage = ModelRuntime._complete_online(
+                {
+                    "name": "reasoning-model",
+                    "base_url": "https://api.example.com/v1",
+                    "model": "remote-model",
+                    "request_format": "openai_chat",
+                },
+                [{"role": "user", "content": "hello"}],
+                {"temperature": 0, "max_tokens": 64, "stream": False, "connection_test": True},
+            )
+
+        self.assertEqual("接口已返回有效响应", content)
+        self.assertEqual("模型正在推理", reasoning)
 
 
 class PermissionTests(unittest.TestCase):
