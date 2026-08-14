@@ -144,3 +144,4 @@ skills/**/*.py[cod]
 # Temporary previews used while preparing the application icon.
 icon-source.png
 icon-preview.png
+exe-icon-preview.png
