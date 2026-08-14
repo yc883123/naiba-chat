@@ -271,6 +271,47 @@ class LocalModelUnloadTests(unittest.TestCase):
             )
 
 
+class OllamaFormatTests(unittest.TestCase):
+    def test_ollama_chat_uses_native_endpoint_and_response(self) -> None:
+        captured: dict[str, object] = {}
+
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {"message": {"content": "OK"}, "prompt_eval_count": 3, "eval_count": 2}
+                ).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            captured["timeout"] = timeout
+            return Response()
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            content, reasoning, usage = ModelRuntime._complete_online(
+                {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen3:8b", "request_format": "ollama"},
+                [{"role": "user", "content": "hello"}],
+                {"temperature": 0, "max_tokens": 64, "stream": False},
+            )
+
+        self.assertEqual("OK", content)
+        self.assertEqual("", reasoning)
+        self.assertEqual({"input_tokens": 3, "output_tokens": 2, "total_tokens": 5, "cached_tokens": 0}, usage)
+        self.assertEqual("http://127.0.0.1:11434/api/chat", captured["url"])
+        body = captured["body"]
+        self.assertEqual("qwen3:8b", body["model"])
+        self.assertEqual(False, body["stream"])
+        self.assertEqual(64, body["options"]["num_predict"])
+
+
 class PermissionTests(unittest.TestCase):
     def executor(self, workspace: Path, mode: str) -> ToolExecutor:
         return ToolExecutor(workspace, sys.executable, 10, DummyMCPRegistry(), mode)

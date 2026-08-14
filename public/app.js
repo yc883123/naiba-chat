@@ -1748,9 +1748,6 @@ function bindEvents() {
   $('#testProvider').addEventListener('click', testProvider);
   $('#loadProviderModels').addEventListener('click', () => loadProviderModels());
   $('#providerModel').addEventListener('change', toggleCustomModel);
-  $('#providerBaseUrl').addEventListener('change', scheduleProviderModelCheck);
-  $('#providerApiKey').addEventListener('change', scheduleProviderModelCheck);
-  $('#providerFormat').addEventListener('change', scheduleProviderModelCheck);
   $('#toggleProviderKey').addEventListener('click', toggleProviderKey);
   $('#providerApiKey').addEventListener('input', (event) => {
     if (event.target.value) $('#providerKeyStatus').textContent = '待保存';

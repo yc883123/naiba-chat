@@ -432,7 +432,7 @@ class ConfigStore:
     def upsert_provider(self, values: dict[str, Any]) -> dict[str, Any]:
         provider_id = str(values.get("id") or uuid.uuid4().hex[:12])
         request_format = str(values.get("request_format") or "openai_chat")
-        valid_formats = {"openai_chat", "codex_responses", "gemini", "claude", "lm_studio"}
+        valid_formats = {"openai_chat", "codex_responses", "gemini", "claude", "lm_studio", "ollama"}
         if request_format not in valid_formats:
             raise ValueError("不支持的请求格式")
         with self.lock:
@@ -1239,7 +1239,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     {"role": "system", "content": "你是连接测试助手。直接回答，不要调用工具。"},
                     {"role": "user", "content": "只回复 OK"},
                 ],
-                {"temperature": 0, "max_tokens": 1024},
+                {"temperature": 0, "max_tokens": 128, "stream": False},
             )
             self._json({"ok": True, "response": result})
         except Exception as exc:
@@ -1380,7 +1380,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             try:
                 self.wfile.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
                 self.wfile.flush()
-            except (BrokenPipeError, ConnectionResetError):
+            except OSError:
                 client_connected = False
 
         try:

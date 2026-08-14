@@ -126,8 +126,12 @@ class ModelRuntime:
             endpoint = ModelRuntime._with_endpoint(base_url, "/v1beta/models")
             if api_key:
                 headers["x-goog-api-key"] = api_key
+        elif request_format == "ollama":
+            endpoint = ModelRuntime._local_endpoint(base_url, "/api/tags")
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
         elif request_format == "lm_studio":
-            endpoint = ModelRuntime._with_endpoint(base_url, "/api/v1/models")
+            endpoint = ModelRuntime._local_endpoint(base_url, "/api/v1/models")
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
         else:
@@ -152,6 +156,8 @@ class ModelRuntime:
             raise RuntimeError(f"模型列表返回 HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"无法连接模型列表接口：{exc.reason}") from exc
+        except OSError as exc:
+            raise RuntimeError(f"模型列表连接被本机或远端中止：{exc}") from exc
 
         items = []
         if isinstance(result, dict):
@@ -167,7 +173,10 @@ class ModelRuntime:
                     methods = item.get("supportedGenerationMethods") or []
                     if methods and not any("generateContent" in str(method) for method in methods):
                         continue
-                model_id = str(item.get("id") or item.get("key") or item.get("name") or "")
+                model_id = str(
+                    item.get("id") or item.get("key") or item.get("name")
+                    or (item.get("model") if request_format == "ollama" else "") or ""
+                )
                 if request_format == "gemini" and model_id.startswith("models/"):
                     model_id = model_id[7:]
                 display_name = str(
@@ -344,8 +353,19 @@ class ModelRuntime:
             if api_key:
                 headers["x-api-key"] = api_key
             headers["anthropic-version"] = "2023-06-01"
+        elif request_format == "ollama":
+            endpoint = ModelRuntime._local_endpoint(base_url, "/api/chat")
+            payload = {
+                "model": model,
+                "messages": ModelRuntime._ollama_messages(messages),
+                "temperature": temperature,
+                "stream": stream_enabled,
+                "options": {"num_predict": max_tokens},
+            }
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
         elif request_format == "lm_studio":
-            endpoint = ModelRuntime._with_endpoint(base_url, "/api/v1/chat")
+            endpoint = ModelRuntime._local_endpoint(base_url, "/api/v1/chat")
             payload = {
                 "model": model,
                 "input": ModelRuntime._openai_messages(messages),
@@ -367,6 +387,17 @@ class ModelRuntime:
         for attempt in range(3):
             try:
                 with urllib.request.urlopen(request, timeout=180) as response:
+                    if stream_enabled and request_format == "ollama":
+                        streamed = ModelRuntime._read_ollama_stream(response, status)
+                        content = ModelRuntime._clean_content(streamed["content"])
+                        reasoning = streamed["reasoning"]
+                        if not content:
+                            content = ModelRuntime._reasoning_action(reasoning)
+                            if content:
+                                reasoning = ""
+                            else:
+                                raise RuntimeError("Ollama 流式响应中没有文本内容")
+                        return content, reasoning, streamed["usage"]
                     if stream_enabled and request_format != "gemini":
                         streamed = ModelRuntime._read_sse_response(response, request_format, status)
                         content = ModelRuntime._clean_content(streamed["content"])
@@ -414,9 +445,71 @@ class ModelRuntime:
                     time.sleep(1.5 * (attempt + 1))
                     continue
                 raise RuntimeError(f"无法连接在线模型：{exc.reason}") from exc
+            except OSError as exc:
+                raise RuntimeError(f"模型连接被本机或远端中止：{exc}") from exc
 
         content, reasoning = ModelRuntime._online_response(request_format, result)
         return content, reasoning, ModelRuntime._online_usage(request_format, result)
+
+    @staticmethod
+    def _ollama_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        converted = []
+        for item in messages:
+            content = item.get("content")
+            message = {
+                "role": item.get("role", "user"),
+                "content": ModelRuntime._content_text(content) if not isinstance(content, str) else content,
+            }
+            images = [
+                str(part.get("data") or "")
+                for part in ModelRuntime._content_parts(content)
+                if part.get("type") == "image" and part.get("data")
+            ]
+            if images:
+                message["images"] = images
+            converted.append(message)
+        return converted
+
+    @staticmethod
+    def _read_ollama_stream(response: Any, status: StatusCallback | None) -> dict[str, Any]:
+        chunks: list[dict[str, Any]] = []
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        visible = None
+        for raw_line in response:
+            try:
+                chunk = json.loads(raw_line.decode("utf-8", errors="replace"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            chunks.append(chunk)
+            text, reasoning = ModelRuntime._ollama_stream_delta(chunk)
+            if reasoning:
+                reasoning_parts.append(reasoning)
+            if not text:
+                continue
+            content_parts.append(text)
+            if visible is None:
+                probe = "".join(content_parts).lstrip()
+                visible = not (
+                    probe.startswith(("{", "["))
+                    or re.match(r"<(?:tool_calls|invoke)(?:\s|>)", probe, re.IGNORECASE)
+                )
+            if visible and status:
+                status({"type": "delta", "content": text})
+        return {
+            "content": "".join(content_parts),
+            "reasoning": "".join(reasoning_parts),
+            "usage": ModelRuntime._online_usage("ollama", chunks),
+        }
+
+    @staticmethod
+    def _ollama_stream_delta(chunk: dict[str, Any]) -> tuple[str, str]:
+        message = chunk.get("message") or {}
+        if not isinstance(message, dict):
+            return "", ""
+        return str(message.get("content") or ""), str(message.get("thinking") or "")
 
     @staticmethod
     def _read_sse_response(
@@ -497,6 +590,10 @@ class ModelRuntime:
             if not isinstance(chunk, dict):
                 continue
             candidate = chunk.get("usage") or chunk.get("usageMetadata")
+            if request_format == "ollama" and any(
+                key in chunk for key in ("prompt_eval_count", "eval_count")
+            ):
+                candidate = chunk
             if isinstance(candidate, dict):
                 usage = candidate
         if not usage:
@@ -512,9 +609,11 @@ class ModelRuntime:
                         continue
             return 0
 
-        input_tokens = number("prompt_tokens", "input_tokens", "promptTokenCount", "inputTokenCount")
+        input_tokens = number(
+            "prompt_tokens", "input_tokens", "promptTokenCount", "inputTokenCount", "prompt_eval_count"
+        )
         output_tokens = number(
-            "completion_tokens", "output_tokens", "candidatesTokenCount", "outputTokenCount"
+            "completion_tokens", "output_tokens", "candidatesTokenCount", "outputTokenCount", "eval_count"
         )
         total_tokens = number("total_tokens", "totalTokenCount") or input_tokens + output_tokens
         cached_tokens = number(
@@ -615,13 +714,17 @@ class ModelRuntime:
         """尽力从响应中提取推理/思考内容（reasoning_content / thinking 等），无则返回空。"""
         if not isinstance(result, dict):
             return ""
-        if request_format == "openai_chat":
+        if request_format in {"openai_chat", "ollama"}:
             choices = result.get("choices") or []
             message = (choices[0].get("message") or {}) if choices else {}
             for key in ("reasoning_content", "reasoning", "thinking", "thought"):
                 value = message.get(key) or result.get(key)
                 if value:
                     return ModelRuntime._text_value(value)
+            if request_format == "ollama":
+                message = result.get("message") or {}
+                if isinstance(message, dict) and message.get("thinking"):
+                    return str(message["thinking"])
         if request_format in ("codex_responses", "lm_studio"):
             for item in result.get("output") or []:
                 if isinstance(item, dict) and item.get("type") == "reasoning":
@@ -641,6 +744,12 @@ class ModelRuntime:
             choice = choices[0] if choices else {}
             message = choice.get("message") or {}
             return ModelRuntime._text_value(message.get("content") or choice.get("text"))
+
+        if request_format == "ollama":
+            if isinstance(result, list):
+                return "".join(ModelRuntime._online_content(request_format, item) for item in result)
+            message = result.get("message") if isinstance(result, dict) else None
+            return ModelRuntime._text_value(message.get("content") if isinstance(message, dict) else "")
 
         if request_format == "codex_responses":
             if not isinstance(result, dict):
