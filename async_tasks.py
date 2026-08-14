@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from model_runtime import ModelRuntime
+from plan_runtime import ASK_MODE_PROMPT, ReadOnlyToolExecutor, resolve_mode_tools
 from skill_runtime import SkillAgent, TaskCancelled
 
 
@@ -39,6 +40,13 @@ class BackgroundTaskManager:
             "system_prompt": str(agent.get("system_prompt") or ""),
             "skill_ids": [str(item) for item in agent.get("skill_ids", [])],
         }
+        # 提交时固化交互模式与计划 ID：运行中切换 UI 不影响已开始的任务
+        interaction_mode = str(conversation.get("interaction_mode") or "craft")
+        if interaction_mode not in ("craft", "plan", "ask"):
+            interaction_mode = "craft"
+        plan_id = ""
+        if interaction_mode == "plan":
+            plan_id = str(self.app.plans.ensure_active_plan(conversation_id, message)["id"])
         snapshot = {
             "agent": agent,
             "conversation_system_prompt": str(conversation.get("system_prompt") or ""),
@@ -48,6 +56,8 @@ class BackgroundTaskManager:
             "auto_skills": bool(body.get("auto_skills", False)),
             "skill_ids": [str(item) for item in body.get("skill_ids", [])],
             "attachments": attachments,
+            "interaction_mode": interaction_mode,
+            "plan_id": plan_id,
         }
         self.app.storage.add_message(conversation_id, "user", message, {
             "attachments": attachments, "background_task": True, "agent_id": agent["id"]
@@ -128,18 +138,31 @@ class BackgroundTaskManager:
             agent = snapshot["agent"]
             selected = list(dict.fromkeys(agent.get("skill_ids", []) + snapshot.get("skill_ids", [])))
             prompt = "\n\n".join(x for x in (agent.get("system_prompt", "").strip(), snapshot.get("conversation_system_prompt", "").strip()) if x)
+            mode = str(snapshot.get("interaction_mode") or "craft")
+            plan_id = str(snapshot.get("plan_id") or "")
+            allowed_tools = resolve_mode_tools(mode, [str(x) for x in self.app.config.data.get("agent_tools", [])])
+            executor = self.app.executor if mode == "craft" else ReadOnlyToolExecutor(self.app.executor)
+            if mode == "ask":
+                prompt = (prompt + "\n\n" + ASK_MODE_PROMPT).strip()
+            elif mode == "plan":
+                plan = self.app.plans.get(plan_id) if plan_id else None
+                prompt = (prompt + "\n\n" + self.app.plans.prepare_prompt(plan)).strip()
             runtime = ModelRuntime()
-            worker = SkillAgent(self.app.catalog, self.app.executor, runtime.complete)
+            worker = SkillAgent(self.app.catalog, executor, runtime.complete)
             response, runs, reasonings, usage = worker.run(
                 effective, history, profile, options, bool(snapshot.get("auto_skills")), selected,
                 int(self.app.config.data.get("max_agent_steps", 8)), prompt,
-                [str(x) for x in self.app.config.data.get("agent_tools", [])], event,
+                allowed_tools, event,
                 lambda tool, args, result, success: self.app.storage.log_tool_run(conversation_id, tool, args, result, success),
                 cancel_event,
             )
             check()
             from server import _detect_choice_groups, extract_attachments
 
+            plan_status = ""
+            if mode == "plan" and plan_id:
+                response, plan = self.app.plans.process_response(plan_id, response)
+                plan_status = str((plan or {}).get("status") or "")
             choice_groups = _detect_choice_groups(response)
             metadata = {
                 "skills": skills,
@@ -152,6 +175,9 @@ class BackgroundTaskManager:
                 "background_task_id": task_id,
                 "agent_id": agent["id"],
                 "agent_name": agent["name"],
+                "interaction_mode": mode,
+                "plan_id": plan_id,
+                "plan_status": plan_status,
             }
             saved = self.app.storage.add_message(conversation_id, "assistant", response, metadata)
             self.app.storage.update_background_task(task_id, status="completed", detail={"message": "任务已完成", "message_id": saved["id"]}, finished=True)

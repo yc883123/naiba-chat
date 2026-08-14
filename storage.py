@@ -77,6 +77,25 @@ class ChatStorage:
                     ON background_tasks(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation
                     ON background_tasks(conversation_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS plans (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    title TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL DEFAULT 'prepare',
+                    question TEXT NOT NULL DEFAULT '',
+                    content TEXT NOT NULL DEFAULT '',
+                    steps TEXT NOT NULL DEFAULT '[]',
+                    error TEXT NOT NULL DEFAULT '',
+                    archive_path TEXT NOT NULL DEFAULT '',
+                    detail TEXT NOT NULL DEFAULT '{}',
+                    created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    started_at INTEGER,
+                    finished_at INTEGER,
+                    FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_plans_conversation
+                    ON plans(conversation_id, created_at DESC);
                 """
             )
             # Migration: add mode column to existing tables
@@ -90,6 +109,7 @@ class ChatStorage:
                 ("stream_enabled", "INTEGER NOT NULL DEFAULT 1"),
                 ("provider_id", "TEXT NOT NULL DEFAULT ''"),
                 ("agent_id", "TEXT NOT NULL DEFAULT ''"),
+                ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
             ):
                 try:
                     db.execute(f"SELECT {column} FROM conversations LIMIT 1")
@@ -101,15 +121,37 @@ class ChatStorage:
                 "WHERE status IN ('queued', 'running', 'waiting', 'cancelling')",
                 ("服务重启，任务已中断", now, now),
             )
+            # 服务重启时，仍在执行的计划标记为已取消，running 步骤回退为 pending
+            stuck_plans = db.execute("SELECT id, steps FROM plans WHERE status = 'building'").fetchall()
+            for plan_row in stuck_plans:
+                try:
+                    steps = json.loads(plan_row["steps"] or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    steps = []
+                for step in steps:
+                    if isinstance(step, dict) and step.get("status") == "running":
+                        step["status"] = "pending"
+                db.execute(
+                    "UPDATE plans SET status = 'cancelled', error = '服务重启，执行已中断', steps = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(steps, ensure_ascii=False), now, plan_row["id"]),
+                )
 
-    def create_conversation(self, title: str = "新对话", provider_id: str = "", agent_id: str = "") -> dict[str, Any]:
+    def create_conversation(
+        self,
+        title: str = "新对话",
+        provider_id: str = "",
+        agent_id: str = "",
+        interaction_mode: str = "craft",
+    ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
+        if interaction_mode not in ("craft", "plan", "ask"):
+            interaction_mode = "craft"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (conversation_id, title.strip() or "新对话", "online", 0, "", 1, provider_id or "", agent_id or "", now, now),
+                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (conversation_id, title.strip() or "新对话", "online", 0, "", 1, provider_id or "", agent_id or "", interaction_mode, now, now),
             )
         return self.get_conversation(conversation_id, include_messages=False)
 
@@ -117,13 +159,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -131,7 +173,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, created_at, updated_at "
+                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -155,6 +197,7 @@ class ChatStorage:
         stream_enabled: bool | None = None,
         provider_id: str | None = None,
         agent_id: str | None = None,
+        interaction_mode: str | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -183,6 +226,10 @@ class ChatStorage:
             values["provider_id"] = str(provider_id or "")
         if agent_id is not None:
             values["agent_id"] = str(agent_id or "")
+        if interaction_mode is not None:
+            if interaction_mode not in ("craft", "plan", "ask"):
+                raise ValueError("interaction_mode 必须是 craft / plan / ask")
+            values["interaction_mode"] = interaction_mode
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
@@ -387,6 +434,106 @@ class ChatStorage:
                 parameters,
             ).fetchall()
         return [self._task_dict(row) for row in rows]
+
+    # ---- 计划（Plan 模式） ----
+    def create_plan(self, conversation_id: str, question: str) -> dict[str, Any]:
+        now = int(time.time() * 1000)
+        plan_id = uuid.uuid4().hex
+        with self._connect() as db:
+            db.execute(
+                "INSERT INTO plans(id, conversation_id, title, status, question, content, steps, created_at, updated_at) "
+                "VALUES (?, ?, '', 'prepare', ?, '', '[]', ?, ?)",
+                (plan_id, conversation_id, (question or "")[:20000], now, now),
+            )
+        return self.get_plan(plan_id) or {}
+
+    def get_plan(self, plan_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT id, conversation_id, title, status, question, content, steps, error, archive_path, detail, "
+                "created_at, updated_at, started_at, finished_at FROM plans WHERE id = ?",
+                (plan_id,),
+            ).fetchone()
+        return self._plan_dict(row) if row else None
+
+    def latest_plan(self, conversation_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT id, conversation_id, title, status, question, content, steps, error, archive_path, detail, "
+                "created_at, updated_at, started_at, finished_at FROM plans "
+                "WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return self._plan_dict(row) if row else None
+
+    def list_plans(self, conversation_id: str, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT id, conversation_id, title, status, question, content, steps, error, archive_path, detail, "
+                "created_at, updated_at, started_at, finished_at FROM plans "
+                "WHERE conversation_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                (conversation_id, max(1, min(int(limit), 200))),
+            ).fetchall()
+        return [self._plan_dict(row) for row in rows]
+
+    def update_plan(
+        self,
+        plan_id: str,
+        *,
+        title: str | None = None,
+        status: str | None = None,
+        question: str | None = None,
+        content: str | None = None,
+        steps: list[dict[str, Any]] | None = None,
+        error: str | None = None,
+        archive_path: str | None = None,
+        detail: dict[str, Any] | None = None,
+        started: bool = False,
+        finished: bool = False,
+    ) -> dict[str, Any] | None:
+        now = int(time.time() * 1000)
+        values: dict[str, Any] = {"updated_at": now}
+        if title is not None:
+            values["title"] = str(title).strip()[:200]
+        if status is not None:
+            if status not in ("prepare", "ready", "building", "finished", "failed", "cancelled"):
+                raise ValueError("非法的计划状态")
+            values["status"] = status
+        if question is not None:
+            values["question"] = str(question)[:20000]
+        if content is not None:
+            values["content"] = str(content)[:100000]
+        if steps is not None:
+            values["steps"] = json.dumps(steps, ensure_ascii=False)
+        if error is not None:
+            values["error"] = str(error)[:20000]
+        if archive_path is not None:
+            values["archive_path"] = str(archive_path)[:2000]
+        if detail is not None:
+            values["detail"] = json.dumps(detail, ensure_ascii=False)
+        if started:
+            values["started_at"] = now
+        if finished:
+            values["finished_at"] = now
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"UPDATE plans SET {assignments} WHERE id = ?",
+                (*values.values(), plan_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_plan(plan_id)
+
+    @staticmethod
+    def _plan_dict(row: sqlite3.Row) -> dict[str, Any]:
+        result = dict(row)
+        for key in ("steps", "detail"):
+            try:
+                result[key] = json.loads(result.get(key) or ("[]" if key == "steps" else "{}"))
+            except (json.JSONDecodeError, TypeError):
+                result[key] = [] if key == "steps" else {}
+        return result
 
     @staticmethod
     def _message_dict(row: sqlite3.Row) -> dict[str, Any]:

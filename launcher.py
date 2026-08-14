@@ -6,8 +6,10 @@
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
+import sys
 import threading
 import time
 import webbrowser
@@ -120,6 +122,13 @@ class Launcher:
     def run(self) -> None:
         import webview
 
+        if sys.platform == "win32":
+            try:
+                # 让任务栏使用本进程（EXE）图标，而不是 Python 默认图标
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("naiba.chat")
+            except Exception:
+                pass
+
         instance_lock = srv.acquire_instance_lock()
         srv.APP = srv.NaibaChatApp()
         srv.APP.update_restart_callback = self._quit
@@ -152,8 +161,12 @@ class Launcher:
         )
         self.window.events.closing += self._on_window_closing
         srv.APP.updater.start_auto_update(self._quit)
+        icon_path = srv.RESOURCE_DIR / "icon.ico"
+        start_kwargs = {}
+        if icon_path.is_file():
+            start_kwargs["icon"] = str(icon_path)
         try:
-            webview.start()
+            webview.start(**start_kwargs)
         finally:
             self._stop_server()
             srv.APP.stop()

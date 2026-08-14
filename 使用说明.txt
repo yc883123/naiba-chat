@@ -1,0 +1,16 @@
+naiba-chat build-24
+
+1. 解压整个 ZIP 后运行 naiba-chat.exe。
+2. 首次运行会在 EXE 同目录创建 config.json 和 data 目录。
+3. 输入框下方可切换三种交互模式：Craft 直接执行，Plan 先生成计划再执行，Ask 仅进行只读问答。
+4. Plan 模式会先澄清需求并生成可编辑的实施步骤；点击“开始执行”后才会调用写入类工具。执行期间可查看进度、处理权限确认或取消计划。
+5. 取消或失败的计划可编辑后继续执行；已完成的计划会在 workspace/plans 目录生成 Markdown 归档。
+6. Ask 模式不会执行修改文件、安装依赖等写入操作，适合代码阅读、分析和答疑。
+7. 在线模型和本地模型使用独立的请求格式与超时策略；Ollama 使用 /api/chat，LM Studio 使用 /api/v1/chat。
+8. 对话框支持上传多张图片。图片会在发送给模型前自动压缩，并保留最近一轮图片组，降低请求过大导致失败的概率。
+9. Ollama 和 LM Studio 可在对话框中手动卸载当前模型，以释放显存和内存。
+10. 后续更新通过 GitHub Releases 自动下载、校验并安装；设置页会显示本次版本说明。
+11. 请勿把 config.json 对外分享，其中可能包含 API Key。
+
+项目地址：https://github.com/yc883123/naiba-chat
+版本：build-24

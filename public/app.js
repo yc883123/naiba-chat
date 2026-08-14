@@ -23,6 +23,9 @@ const state = {
   agentFormSkillIds: [],
   tasks: [],
   taskTimer: null,
+  plans: [],
+  interactionMode: localStorage.getItem('naibaChatInteractionMode') || 'craft',
+  planEditingId: '',
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -184,6 +187,7 @@ function messageElement(message, temporary = false) {
         ${reasoningMarkup(metadata.reasoning)}
         ${toolMarkup(metadata.tool_runs)}
         <div class="answer-content">${temporary ? '<div class="activity">正在准备</div>' : markdown(message.content)}</div>
+        ${metadata.plan_id ? `<div class="plan-card" data-plan-card="${escapeHtml(metadata.plan_id)}"></div>` : ''}
         ${mediaMarkup(metadata.attachments)}
         ${temporary ? '' : usageMarkup(metadata.usage)}
         ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
@@ -297,6 +301,7 @@ function renderMessages(messages) {
       showChoiceButtons(choices, choiceGroups);
     }
     else hideChoiceButtons();
+    fillPlanCards();
   } catch (error) {
     console.error('[naiba] renderMessages 渲染崩溃:', error, '消息数=', messages.length);
   }
@@ -357,6 +362,7 @@ async function initialize() {
   renderSkills();
   renderProviders();
   renderMcp();
+  renderModeSwitch();
   renderUpdateStatus(state.bootstrap.update || {});
   await loadConversations();
   await loadTasks();
@@ -440,6 +446,230 @@ async function resolveTaskConfirmation(confirmId, approved) {
     await loadTasks();
   } catch (error) {
     toast(`处理确认失败：${error.message}`);
+  }
+}
+
+// ---- 交互模式（Craft / Plan / Ask） ----
+
+function currentInteractionMode() {
+  const conversation = state.conversations.find((item) => item.id === state.conversationId);
+  const mode = conversation?.interaction_mode || state.interactionMode || 'craft';
+  return ['craft', 'plan', 'ask'].includes(mode) ? mode : 'craft';
+}
+
+function renderModeSwitch() {
+  const mode = currentInteractionMode();
+  $$('#modeSwitch [data-mode]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.mode === mode);
+  });
+  const input = $('#messageInput');
+  if (input) {
+    const hints = {
+      craft: '输入消息',
+      plan: '描述需求，先只读澄清并生成计划，确认后逐步执行',
+      ask: '输入问题，只读探索，不做任何修改',
+    };
+    input.placeholder = hints[mode] || '输入消息';
+  }
+}
+
+async function switchInteractionMode(mode) {
+  if (!['craft', 'plan', 'ask'].includes(mode) || mode === currentInteractionMode()) return;
+  if (!state.conversationId) {
+    state.interactionMode = mode;
+    localStorage.setItem('naibaChatInteractionMode', mode);
+    renderModeSwitch();
+    return;
+  }
+  try {
+    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
+      method: 'POST',
+      body: { interaction_mode: mode },
+    });
+    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    state.interactionMode = mode;
+    localStorage.setItem('naibaChatInteractionMode', mode);
+    renderModeSwitch();
+    renderPlanBar();
+    const names = { craft: 'Craft（直接执行）', plan: 'Plan（先出计划）', ask: 'Ask（只读问答）' };
+    toast(`已切换到 ${names[mode]} 模式`);
+  } catch (error) {
+    toast(`切换模式失败：${error.message}`);
+  }
+}
+
+// ---- 计划（Plan 模式） ----
+
+function planStatusLabel(status) {
+  return ({ prepare: '准备中', ready: '待确认', building: '执行中', finished: '已完成', failed: '执行失败', cancelled: '已取消' })[status] || status;
+}
+
+async function loadPlans() {
+  if (!state.conversationId) {
+    state.plans = [];
+    renderPlanBar();
+    return;
+  }
+  try {
+    const result = await api(`/api/plans?conversation_id=${encodeURIComponent(state.conversationId)}`);
+    state.plans = result.plans || [];
+  } catch (error) {
+    console.debug('[naiba] 计划同步失败:', error.message);
+  }
+  renderPlanBar();
+  fillPlanCards();
+}
+
+function activePlan() {
+  return state.plans.find((plan) => ['prepare', 'ready', 'building', 'failed', 'cancelled'].includes(plan.status)) || null;
+}
+
+function renderPlanBar() {
+  const bar = $('#planBar');
+  if (!bar) return;
+  const plan = activePlan();
+  if (!plan || !state.conversationId) {
+    bar.hidden = true;
+    bar.innerHTML = '';
+    return;
+  }
+  bar.hidden = false;
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const done = steps.filter((step) => step.status === 'done').length;
+  const planId = escapeHtml(plan.id);
+  let text = '';
+  let actions = '';
+  if (plan.status === 'prepare') {
+    text = '计划准备中：正在澄清需求或生成方案，请直接回复我的问题';
+    actions = `<button type="button" data-plan-action="cancel" data-plan-id="${planId}">取消计划</button>`;
+  } else if (plan.status === 'ready') {
+    text = `方案已就绪：《${escapeHtml(plan.title || '实施计划')}》（${steps.length} 步），确认后开始执行`;
+    actions = `<button type="button" data-plan-action="edit" data-plan-id="${planId}">编辑计划</button>`
+      + `<button type="button" class="plan-primary" data-plan-action="execute" data-plan-id="${planId}">开始执行</button>`
+      + `<button type="button" data-plan-action="cancel" data-plan-id="${planId}">取消</button>`;
+  } else if (plan.status === 'building') {
+    const current = steps.find((step) => step.status === 'running');
+    text = `正在执行《${escapeHtml(plan.title || '实施计划')}》 ${done}/${steps.length} 步`
+      + (current ? `：${escapeHtml(current.title)}` : '')
+      + (plan.detail?.message ? ` · ${escapeHtml(plan.detail.message)}` : '');
+    if (plan.detail?.confirm_id) {
+      const confirmId = escapeHtml(plan.detail.confirm_id);
+      actions = `<button type="button" data-plan-action="reject" data-confirm-id="${confirmId}">拒绝</button>`
+        + `<button type="button" class="plan-primary" data-plan-action="confirm" data-confirm-id="${confirmId}">确认执行</button>`;
+    }
+    actions += `<button type="button" data-plan-action="cancel" data-plan-id="${planId}">取消</button>`;
+  } else if (plan.status === 'failed') {
+    text = `《${escapeHtml(plan.title || '实施计划')}》执行失败（${done}/${steps.length} 步已完成）：${escapeHtml(plan.error || '未知错误')}`;
+    actions = `<button type="button" data-plan-action="edit" data-plan-id="${planId}">编辑计划</button>`
+      + `<button type="button" class="plan-primary" data-plan-action="execute" data-plan-id="${planId}">继续执行</button>`
+      + `<button type="button" data-plan-action="cancel" data-plan-id="${planId}">取消</button>`;
+  } else if (plan.status === 'cancelled') {
+    text = `计划已取消：《${escapeHtml(plan.title || '实施计划')}》（${done}/${steps.length} 步已完成）`;
+    actions = `<button type="button" data-plan-action="edit" data-plan-id="${planId}">编辑计划</button>`
+      + `<button type="button" class="plan-primary" data-plan-action="execute" data-plan-id="${planId}">继续执行</button>`;
+  }
+  bar.innerHTML = `<span class="plan-bar-status plan-status-${escapeHtml(plan.status)}">${planStatusLabel(plan.status)}</span>`
+    + `<span class="plan-bar-text">${text}</span>`
+    + `<span class="plan-bar-actions">${actions}</span>`;
+}
+
+function fillPlanCards() {
+  $$('[data-plan-card]').forEach((slot) => {
+    const plan = state.plans.find((item) => item.id === slot.dataset.planCard);
+    slot.innerHTML = plan ? planCardMarkup(plan) : '';
+  });
+}
+
+function planCardMarkup(plan) {
+  const steps = Array.isArray(plan.steps) ? plan.steps : [];
+  const done = steps.filter((step) => step.status === 'done').length;
+  const stepIcons = { pending: '○', running: '◌', done: '✓', failed: '✗' };
+  const stepsHtml = steps.length
+    ? `<ol class="plan-steps">${steps.map((step) => `
+      <li class="plan-step plan-step-${escapeHtml(step.status)}">
+        <span class="plan-step-icon">${stepIcons[step.status] || '○'}</span>
+        <span class="plan-step-title">${escapeHtml(step.title)}</span>
+        ${step.summary ? `<span class="plan-step-summary">${escapeHtml(step.summary)}</span>` : ''}
+      </li>`).join('')}</ol>`
+    : '';
+  const contentHtml = plan.content
+    ? `<details class="plan-content"><summary>方案详情</summary><div class="plan-content-body">${markdown(plan.content)}</div></details>`
+    : '';
+  const archive = plan.archive_path
+    ? `<a class="plan-archive" href="${fileUrl(plan.archive_path)}" target="_blank" rel="noreferrer">归档</a>`
+    : '';
+  return `<div class="plan-card-inner">
+    <div class="plan-card-head">
+      <span class="plan-card-badge plan-status-${escapeHtml(plan.status)}">${planStatusLabel(plan.status)}</span>
+      <b class="plan-card-title">${escapeHtml(plan.title || '实施计划')}</b>
+      ${steps.length ? `<span class="plan-card-progress">${done}/${steps.length}</span>` : ''}
+      ${archive}
+    </div>
+    ${stepsHtml}
+    ${contentHtml}
+    ${plan.error ? `<div class="plan-card-error">${escapeHtml(plan.error)}</div>` : ''}
+  </div>`;
+}
+
+async function executePlan(planId) {
+  try {
+    await api(`/api/plans/${planId}/execute`, { method: 'POST', body: {} });
+    toast('计划已开始执行');
+  } catch (error) {
+    toast(`执行失败：${error.message}`);
+  }
+  await loadPlans();
+}
+
+async function cancelPlan(planId) {
+  try {
+    await api(`/api/plans/${planId}/cancel`, { method: 'POST', body: {} });
+  } catch (error) {
+    toast(`取消失败：${error.message}`);
+  }
+  await loadPlans();
+}
+
+async function resolvePlanConfirmation(confirmId, approved) {
+  try {
+    await api(approved ? '/api/tool/confirm' : '/api/tool/reject', {
+      method: 'POST', body: { confirm_id: confirmId },
+    });
+  } catch (error) {
+    toast(`处理确认失败：${error.message}`);
+  }
+  await loadPlans();
+}
+
+function openPlanEditor(planId) {
+  const plan = state.plans.find((item) => item.id === planId);
+  if (!plan) return;
+  state.planEditingId = planId;
+  $('#planEditTitle').value = plan.title || '';
+  $('#planEditContent').value = plan.content || '';
+  $('#planEditError').textContent = '';
+  $('#planEditDialog').showModal();
+}
+
+async function savePlanEdit(event) {
+  event.preventDefault();
+  const planId = state.planEditingId;
+  if (!planId) return;
+  const button = $('#savePlanEdit');
+  button.disabled = true;
+  try {
+    await api(`/api/plans/${planId}`, {
+      method: 'PUT',
+      body: { title: $('#planEditTitle').value, content: $('#planEditContent').value },
+    });
+    $('#planEditDialog').close();
+    toast('计划已保存');
+    await loadPlans();
+  } catch (error) {
+    $('#planEditError').textContent = error.message;
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -769,13 +999,19 @@ function renderConversations() {
 
 async function createConversation() {
   hideChoiceButtons();
-  const conversation = await api('/api/conversations', { method: 'POST', body: {} });
+  const conversation = await api('/api/conversations', {
+    method: 'POST',
+    body: { interaction_mode: state.interactionMode },
+  });
   state.conversationId = conversation.id;
   state.conversations.unshift(conversation);
+  state.plans = [];
   renderConversations();
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
   renderMessages([]);
+  renderModeSwitch();
+  renderPlanBar();
   closeSidebar();
   $('#messageInput').focus();
 }
@@ -792,6 +1028,8 @@ async function openConversation(id) {
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
   renderMessages(conversation.messages || []);
+  renderModeSwitch();
+  loadPlans();
   closeSidebar();
 }
 
@@ -820,6 +1058,7 @@ async function syncCurrentConversation() {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
     state.syncInFlight = false;
+    loadPlans();
   }
 }
 
@@ -878,10 +1117,17 @@ async function deleteConversation(id) {
   if (!confirm(`删除对话"${conversation?.title || '新对话'}"？`)) return;
   await api(`/api/conversations/${id}`, { method: 'DELETE' });
   state.conversations = state.conversations.filter((item) => item.id !== id);
-  if (state.conversationId === id) state.conversationId = '';
+  if (state.conversationId === id) {
+    state.conversationId = '';
+    state.plans = [];
+  }
   renderConversations();
   if (state.conversations.length) await openConversation(state.conversations[0].id);
-  else renderMessages([]);
+  else {
+    renderMessages([]);
+    renderModeSwitch();
+    renderPlanBar();
+  }
 }
 
 // 当前对话绑定的 Agent 的固定 Skill id 列表；未绑定或已删除时回退到默认 Agent
@@ -1665,6 +1911,21 @@ function bindEvents() {
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
   });
+  $('#modeSwitch').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-mode]');
+    if (button) switchInteractionMode(button.dataset.mode);
+  });
+  $('#planBar').addEventListener('click', (event) => {
+    const action = event.target.closest('[data-plan-action]');
+    if (!action) return;
+    const type = action.dataset.planAction;
+    if (type === 'confirm') resolvePlanConfirmation(action.dataset.confirmId, true);
+    else if (type === 'reject') resolvePlanConfirmation(action.dataset.confirmId, false);
+    else if (type === 'execute') executePlan(action.dataset.planId);
+    else if (type === 'cancel') cancelPlan(action.dataset.planId);
+    else if (type === 'edit') openPlanEditor(action.dataset.planId);
+  });
+  $('#planEditForm').addEventListener('submit', savePlanEdit);
   $('#taskList').addEventListener('click', (event) => {
     const item = event.target.closest('[data-task-id]');
     if (!item) return;

@@ -143,7 +143,48 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .send-button:hover { background: #126440; }
 .send-button.is-stop { background: var(--red); font-size: 15px; }
 .send-button.is-stop:hover { background: #a02820; }
-.composer-meta { min-height: 22px; display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; }
+.composer-meta { min-height: 22px; display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; gap: 10px; }
+.mode-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.mode-switch button { border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; padding: 2px 12px; border-radius: 4px; min-height: 20px; }
+.mode-switch button:hover { color: var(--text); }
+.mode-switch button.active { background: var(--surface); color: var(--green); box-shadow: 0 1px 3px rgba(22, 31, 23, .15); }
+.plan-bar { margin: 0 0 7px; padding: 7px 9px; border-left: 2px solid var(--amber); background: var(--amber-soft); color: var(--text); font-size: 12px; line-height: 1.4; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.plan-bar[hidden] { display: none; }
+.plan-bar-text { flex: 1; min-width: 200px; }
+.plan-bar-status { flex: none; font-weight: 700; font-size: 11px; padding: 1px 7px; border-radius: 8px; background: var(--surface); }
+.plan-bar-actions { display: inline-flex; gap: 6px; flex: none; }
+.plan-bar-actions button { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 3px 10px; font-size: 12px; font-weight: 600; }
+.plan-bar-actions button:hover { background: var(--surface-2); border-color: var(--line-strong); }
+.plan-bar-actions button.plan-primary { background: var(--green); border-color: var(--green); color: #fff; }
+.plan-bar-actions button.plan-primary:hover { background: #126440; }
+.plan-status-prepare { color: var(--amber); }
+.plan-status-ready { color: var(--green); }
+.plan-status-building { color: #4361a8; }
+.plan-status-finished { color: var(--green); }
+.plan-status-failed { color: var(--red); }
+.plan-status-cancelled { color: var(--muted); }
+.plan-card { margin: 10px 0; }
+.plan-card-inner { border: 1px solid var(--line); border-left: 3px solid var(--amber); border-radius: var(--radius); background: var(--surface); padding: 10px 12px; }
+.plan-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.plan-card-badge { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 8px; background: var(--surface-2); }
+.plan-card-title { font-size: 14px; }
+.plan-card-progress { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.plan-archive { color: var(--green); font-size: 12px; }
+.plan-steps { margin: 8px 0 0; padding: 0; list-style: none; counter-reset: plan-step; }
+.plan-step { display: flex; align-items: baseline; gap: 7px; padding: 3px 0; font-size: 13px; counter-increment: plan-step; }
+.plan-step-icon { flex: none; width: 15px; text-align: center; font-weight: 700; }
+.plan-step-pending .plan-step-icon { color: var(--muted); }
+.plan-step-running .plan-step-icon { color: #4361a8; animation: pulse 1s infinite alternate; }
+.plan-step-done .plan-step-icon { color: var(--green); }
+.plan-step-failed .plan-step-icon { color: var(--red); }
+.plan-step-summary { color: var(--muted); font-size: 12px; }
+.plan-content { margin-top: 8px; }
+.plan-content summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.plan-content-body { margin-top: 6px; font-size: 13px; line-height: 1.6; }
+.plan-card-error { margin-top: 8px; color: var(--red); font-size: 12px; }
+.plan-edit-dialog textarea { width: 100%; font-family: "Cascadia Code", Consolas, monospace; font-size: 12.5px; line-height: 1.55; }
+.plan-edit-dialog .field-wide { display: block; margin: 10px 0; }
+.plan-edit-dialog .field-wide input { width: 100%; }
 .text-button { border: 0; min-height: 20px; color: var(--red); background: none; }
 .pending-files { display: flex; gap: 6px; overflow-x: auto; }
 .pending-files .file-chip { margin-bottom: 6px; white-space: nowrap; }

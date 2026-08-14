@@ -66,6 +66,7 @@
 
       <section class="composer-wrap">
         <div class="active-task-bar" id="activeTaskBar" hidden></div>
+        <div class="plan-bar" id="planBar" hidden></div>
         <div class="pending-files" id="pendingFiles"></div>
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
@@ -74,6 +75,11 @@
           <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
         </form>
         <div class="composer-meta">
+          <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="交互模式">
+            <button type="button" data-mode="craft" class="active" role="tab" title="Craft：直接执行，可用全部已启用工具">Craft</button>
+            <button type="button" data-mode="plan" role="tab" title="Plan：先只读澄清需求并生成计划，确认后逐步执行">Plan</button>
+            <button type="button" data-mode="ask" role="tab" title="Ask：只读问答，不做任何修改">Ask</button>
+          </div>
           <span id="runtimeStatus">就绪</span>
         </div>
       </section>
@@ -324,6 +330,28 @@
         </section>
       </div>
     </div>
+  </dialog>
+
+  <dialog id="planEditDialog" class="panel-dialog plan-edit-dialog">
+    <form id="planEditForm" method="dialog">
+      <div class="dialog-toolbar">
+        <div><h2>编辑计划</h2><p>修改方案内容，步骤进度会按标题保留</p></div>
+        <button class="icon-button" type="button" data-close="planEditDialog" title="关闭" aria-label="关闭">×</button>
+      </div>
+      <label class="field-wide">
+        计划标题
+        <input id="planEditTitle" type="text" maxlength="200" placeholder="计划标题">
+      </label>
+      <label class="field-wide plan-edit-content-field">
+        方案内容（Markdown，编号行会被识别为实施步骤）
+        <textarea id="planEditContent" rows="14" maxlength="100000" placeholder="# 计划标题&#10;## 方案概述&#10;……&#10;## 实施步骤&#10;1. 步骤一：……&#10;2. 步骤二：……"></textarea>
+      </label>
+      <p class="form-error" id="planEditError"></p>
+      <div class="form-actions">
+        <button class="control-button" type="button" data-close="planEditDialog">取消</button>
+        <button class="primary-button" id="savePlanEdit" type="submit">保存计划</button>
+      </div>
+    </form>
   </dialog>
 
   <dialog id="tasksDialog" class="panel-dialog tasks-dialog">

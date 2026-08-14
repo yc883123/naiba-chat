@@ -40,6 +40,7 @@ if str(APP_DIR) not in sys.path:
 
 from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
+from plan_runtime import ASK_MODE_PROMPT, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
 from skill_runtime import SkillAgent, SkillCatalog, ToolExecutor
 from async_tasks import BackgroundTaskManager
 from storage import ChatStorage
@@ -787,10 +788,12 @@ class NaibaChatApp:
         )
         self.agent = SkillAgent(self.catalog, self.executor, self.models.complete)
         self.tasks = BackgroundTaskManager(self)
+        self.plans = PlanManager(self)
         self.updater = UpdateManager(APP_DIR, DATA_DIR)
         self.update_restart_callback = None
 
     def stop(self) -> None:
+        self.plans.shutdown()
         self.mcp.stop()
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
@@ -891,6 +894,17 @@ class RequestHandler(BaseHTTPRequestHandler):
                     metadata["choice_groups"] = choice_groups
                     metadata["choices"] = choice_groups[0]["choices"] if choice_groups else []
             self._json(conversation or {"error": "对话不存在"}, HTTPStatus.OK if conversation else HTTPStatus.NOT_FOUND)
+        elif path == "/api/plans":
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation_id = query.get("conversation_id", [""])[0]
+            if not conversation_id:
+                self._json({"error": "conversation_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"plans": APP.storage.list_plans(conversation_id)})
+        elif path.startswith("/api/plans/"):
+            plan_id = path.rsplit("/", 1)[-1]
+            plan = APP.storage.get_plan(plan_id)
+            self._json(plan or {"error": "计划不存在"}, HTTPStatus.OK if plan else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/providers/") and path.endswith("/secret"):
             provider_id = path.split("/")[-2]
             api_key = APP.config.provider_secret(provider_id)
@@ -926,7 +940,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             title = str(body.get("title") or "新对话")
             provider_id = str(body.get("provider_id") or APP.config.data.get("provider_id") or "")
             agent_id = str(body.get("agent_id") or APP.config.default_agent_id())
-            self._json(APP.storage.create_conversation(title=title, provider_id=provider_id, agent_id=agent_id), HTTPStatus.CREATED)
+            interaction_mode = str(body.get("interaction_mode") or "craft")
+            if interaction_mode not in ("craft", "plan", "ask"):
+                self._json({"error": "interaction_mode 必须是 craft / plan / ask"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json(
+                APP.storage.create_conversation(
+                    title=title, provider_id=provider_id, agent_id=agent_id, interaction_mode=interaction_mode
+                ),
+                HTTPStatus.CREATED,
+            )
         elif path.startswith("/api/conversations/") and path.endswith("/settings"):
             conversation_id = path.split("/")[-2]
             title = body.get("title")
@@ -952,6 +975,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             if agent_id is not None and not isinstance(agent_id, str):
                 self._json({"error": "agent_id 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
+            interaction_mode = body.get("interaction_mode")
+            if interaction_mode is not None:
+                if not isinstance(interaction_mode, str) or interaction_mode not in ("craft", "plan", "ask"):
+                    self._json({"error": "interaction_mode 必须是 craft / plan / ask"}, HTTPStatus.BAD_REQUEST)
+                    return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
                 title=title,
@@ -959,6 +987,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 stream_enabled=stream_enabled,
                 provider_id=provider_id,
                 agent_id=agent_id,
+                interaction_mode=interaction_mode,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
         elif path == "/api/agents":
@@ -1019,10 +1048,52 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._confirm_tool(body)
         elif path == "/api/tool/reject":
             self._reject_tool(body)
+        elif path.startswith("/api/plans/") and path.endswith("/execute"):
+            plan_id = path.split("/")[-2]
+            try:
+                self._json(APP.plans.execute(plan_id))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path.startswith("/api/plans/") and path.endswith("/cancel"):
+            plan_id = path.split("/")[-2]
+            try:
+                self._json(APP.plans.cancel(plan_id))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/messages/edit":
             self._edit_message(body)
         else:
             self._json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self) -> None:
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        body = self._read_json()
+        if body is None:
+            return
+        if not self._authorized(parsed):
+            self._json({"error": "访问口令无效"}, HTTPStatus.UNAUTHORIZED)
+            return
+        if path.startswith("/api/plans/"):
+            plan_id = path.rsplit("/", 1)[-1]
+            try:
+                self._json(
+                    APP.plans.edit_plan(
+                        plan_id,
+                        title=body.get("title"),
+                        content=body.get("content"),
+                    )
+                )
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        self._json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
 
     def do_DELETE(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
@@ -1439,7 +1510,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             def logger(tool: str, arguments: dict[str, Any], result: str, success: bool) -> None:
                 APP.storage.log_tool_run(conversation_id, tool, arguments, result, success)
 
-            allowed_tools = [str(tool) for tool in APP.config.data.get("agent_tools", [])]
+            # 交互模式：craft 全量工具；ask 只读；plan 准备阶段只读、确认后由计划执行器运行
+            interaction_mode = str(conversation.get("interaction_mode") or "craft")
+            if interaction_mode not in ("craft", "plan", "ask"):
+                interaction_mode = "craft"
+            allowed_tools = resolve_mode_tools(
+                interaction_mode, [str(tool) for tool in APP.config.data.get("agent_tools", [])]
+            )
             # 解析当前对话绑定的 Agent；Agent 缺失时回退到默认 Agent，再回退到旧全局提示词。
             agent = APP.config.get_agent(str(conversation.get("agent_id") or ""))
             if agent is None:
@@ -1451,7 +1528,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             )
             conversation_prompt = str(conversation.get("system_prompt") or "").strip()
             combined_prompt = "\n\n".join(item for item in (agent_prompt.strip(), conversation_prompt) if item)
-            response, runs, reasonings, usage = APP.agent.run(
+            plan_id = ""
+            if interaction_mode == "ask":
+                combined_prompt = (combined_prompt + "\n\n" + ASK_MODE_PROMPT).strip()
+            elif interaction_mode == "plan":
+                plan_id = str(APP.plans.ensure_active_plan(conversation_id, message)["id"])
+                combined_prompt = (combined_prompt + "\n\n" + APP.plans.prepare_prompt(APP.plans.get(plan_id))).strip()
+            chat_agent = (
+                APP.agent
+                if interaction_mode == "craft"
+                else SkillAgent(APP.catalog, ReadOnlyToolExecutor(APP.executor), APP.models.complete)
+            )
+            response, runs, reasonings, usage = chat_agent.run(
                 effective_message,
                 history,
                 profile,
@@ -1464,6 +1552,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 event,
                 logger,
             )
+            plan_status = ""
+            if interaction_mode == "plan" and plan_id:
+                response, plan = APP.plans.process_response(plan_id, response)
+                plan_status = str((plan or {}).get("status") or "")
             attachments = extract_attachments(runs)
             choice_groups = _detect_choice_groups(response)
             choices = choice_groups[0]["choices"] if choice_groups else []
@@ -1475,6 +1567,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "usage": usage,
                 "choices": choices,
                 "choice_groups": choice_groups,
+                "interaction_mode": interaction_mode,
+                "plan_id": plan_id,
+                "plan_status": plan_status,
             }
             saved = APP.storage.add_message(conversation_id, "assistant", response, metadata)
             if choices:
