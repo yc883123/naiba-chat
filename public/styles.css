@@ -355,6 +355,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .mcp-button { min-width: 34px; padding: 0 12px; }
   .topbar-actions { position: absolute; right: 8px; top: 10px; gap: 4px; z-index: 3; }
   .control-button { padding: 0 8px; }
+  .unload-model-button .button-label { display: none; }
+  .unload-model-button { min-width: 38px; }
   #openSkills .button-label { display: none; }
   #openSkills, #openTasks { min-width: 38px; }
   #openTasks .button-label { display: none; }

@@ -11,7 +11,9 @@ import threading
 import time
 import types
 import unittest
+from unittest.mock import patch
 
+import model_runtime
 from model_runtime import ModelRuntime
 from mcp_runtime import MCPRegistry, MCPServerConnection
 from server import ConfigStore, _detect_choice_groups, _detect_choices
@@ -132,6 +134,7 @@ class OnlineResponseTests(unittest.TestCase):
         self.assertEqual("read_file", action["tool"])
         self.assertEqual(1200, action["arguments"]["max_chars"])
 
+
     def test_extracts_responses_stream_deltas(self) -> None:
         self.assertEqual(
             ("增量", ""),
@@ -217,6 +220,55 @@ class OnlineResponseTests(unittest.TestCase):
         self.assertEqual(2, summary["requests"])
         self.assertEqual(200, summary["cached_tokens"])
         self.assertEqual(50.0, summary["cache_hit_rate"])
+
+
+class LocalModelUnloadTests(unittest.TestCase):
+    def _assert_unload_request(self, profile: dict[str, str], endpoint: str, payload: dict[str, object]) -> None:
+        captured: dict[str, object] = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        def fake_urlopen(request, timeout):
+            captured["url"] = request.full_url
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            captured["timeout"] = timeout
+            return Response()
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            result = ModelRuntime.unload_local_model(profile)
+
+        self.assertEqual(endpoint, captured["url"])
+        self.assertEqual(payload, captured["body"])
+        self.assertEqual(15, captured["timeout"])
+        self.assertEqual(profile["model"], result["model"])
+
+    def test_unloads_ollama_with_keep_alive_zero(self) -> None:
+        self._assert_unload_request(
+            {"base_url": "http://127.0.0.1:11434/v1", "model": "qwen3:8b"},
+            "http://127.0.0.1:11434/api/generate",
+            {"model": "qwen3:8b", "keep_alive": 0},
+        )
+
+    def test_unloads_lm_studio_through_model_management_api(self) -> None:
+        self._assert_unload_request(
+            {"base_url": "http://127.0.0.1:1234/v1", "model": "local-model"},
+            "http://127.0.0.1:1234/api/v1/models/unload",
+            {"model": "local-model"},
+        )
+
+    def test_rejects_remote_provider_unload(self) -> None:
+        with self.assertRaisesRegex(ValueError, "不是支持手动卸载"):
+            ModelRuntime.unload_local_model(
+                {"base_url": "https://api.example.com/v1", "model": "remote-model"}
+            )
 
 
 class PermissionTests(unittest.TestCase):

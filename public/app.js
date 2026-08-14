@@ -568,6 +568,63 @@ function populateModels() {
   } else if (select.options.length) {
     select.selectedIndex = 0;
   }
+  updateUnloadModelButton();
+}
+
+function selectedProvider() {
+  const value = $('#modelSelect')?.value || '';
+  if (!value.startsWith('online:')) return null;
+  return (state.bootstrap?.providers || []).find((provider) => provider.id === value.slice(7)) || null;
+}
+
+function localProviderKind(provider) {
+  if (!provider) return '';
+  const explicit = String(provider.local_kind || '').toLowerCase();
+  if (explicit === 'ollama' || explicit === 'lm_studio') return explicit;
+  try {
+    const url = new URL(provider.base_url || '');
+    if (url.port === '11434') return 'ollama';
+    if (url.port === '1234') return 'lm_studio';
+  } catch (_) {
+    // Invalid provider URLs are reported by the provider form.
+  }
+  return '';
+}
+
+function updateUnloadModelButton() {
+  const button = $('#unloadModel');
+  if (!button) return;
+  const kind = localProviderKind(selectedProvider());
+  button.hidden = !kind;
+  button.disabled = Boolean(state.abortController || state.taskSubmitting);
+  button.title = kind ? `卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 当前模型` : '当前供应商不支持手动卸载';
+}
+
+async function unloadCurrentModel() {
+  const provider = selectedProvider();
+  const kind = localProviderKind(provider);
+  if (!provider || !kind) {
+    toast('当前供应商不是支持卸载的本地模型');
+    return;
+  }
+  if (state.abortController || state.taskSubmitting) {
+    toast('请先等待当前对话结束');
+    return;
+  }
+  if (!confirm(`卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 模型“${provider.model}”？`)) return;
+  const button = $('#unloadModel');
+  button.disabled = true;
+  try {
+    const result = await api('/api/providers/unload', {
+      method: 'POST',
+      body: { model_key: `online:${provider.id}` },
+    });
+    toast(`${result.provider} 模型已卸载，显存和内存将被回收`);
+  } catch (error) {
+    toast(`卸载失败：${error.message}`);
+  } finally {
+    updateUnloadModelButton();
+  }
 }
 
 async function saveModelSelection() {
@@ -598,6 +655,7 @@ function applyConversationModel(conversation) {
   const target = providerId ? `online:${providerId}` : '';
   if (target && [...select.options].some((o) => o.value === target)) {
     select.value = target;
+    updateUnloadModelButton();
     return;
   }
   const savedProviderId = String(state.bootstrap.settings?.provider_id || '');
@@ -607,6 +665,7 @@ function applyConversationModel(conversation) {
   } else if (select.options.length) {
     select.selectedIndex = 0;
   }
+  updateUnloadModelButton();
 }
 
 function renderAgents() {
@@ -1571,6 +1630,7 @@ function setBusy(busy) {
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
   sendBtn.setAttribute('aria-label', busy ? '正在提交' : '发送');
   $('#messageInput').disabled = false;
+  updateUnloadModelButton();
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
 }
 
@@ -1610,6 +1670,7 @@ function bindEvents() {
     else openConversation(item.dataset.conversationId);
   });
   $('#modelSelect').addEventListener('change', saveModelSelection);
+  $('#unloadModel').addEventListener('click', unloadCurrentModel);
   $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
   $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());

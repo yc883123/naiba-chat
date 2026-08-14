@@ -183,6 +183,44 @@ class ModelRuntime:
         return models[:500]
 
     @staticmethod
+    def unload_local_model(profile: dict[str, Any]) -> dict[str, str]:
+        """Ask a supported local model server to unload its active model."""
+        base_url = str(profile.get("base_url") or "").rstrip("/")
+        model = str(profile.get("model") or "").strip()
+        local_kind = str(profile.get("local_kind") or "").strip().lower()
+        if not base_url or not model:
+            raise ValueError("本地模型需要 Base URL 和模型名称")
+
+        parsed = urllib.parse.urlsplit(base_url)
+        port = parsed.port
+        if local_kind == "ollama" or port == 11434:
+            endpoint = ModelRuntime._local_endpoint(base_url, "/api/generate")
+            payload = {"model": model, "keep_alive": 0}
+            provider_name = "Ollama"
+        elif local_kind == "lm_studio" or port == 1234:
+            endpoint = ModelRuntime._local_endpoint(base_url, "/api/v1/models/unload")
+            payload = {"model": model}
+            provider_name = "LM Studio"
+        else:
+            raise ValueError("当前供应商不是支持手动卸载的本地模型服务")
+
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=15) as response:
+                response.read()
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")[:1000]
+            raise RuntimeError(f"{provider_name} 卸载模型失败 HTTP {exc.code}: {detail}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"无法连接 {provider_name} 卸载接口：{exc.reason}") from exc
+        return {"provider": provider_name, "model": model}
+
+    @staticmethod
     def _complete_online(
         profile: dict[str, Any],
         messages: list[dict[str, Any]],
@@ -560,6 +598,17 @@ class ModelRuntime:
         if not path:
             path = base_path + target_path
         return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
+
+    @staticmethod
+    def _local_endpoint(base_url: str, path: str) -> str:
+        parsed = urllib.parse.urlsplit(base_url)
+        base_path = parsed.path.rstrip("/")
+        if base_path.endswith("/v1"):
+            base_path = base_path[:-3]
+        target_path = f"{base_path}{path}" if base_path else path
+        return urllib.parse.urlunsplit(
+            (parsed.scheme, parsed.netloc, target_path, parsed.query, parsed.fragment)
+        )
 
     @staticmethod
     def _online_reasoning(request_format: str, result: Any) -> str:

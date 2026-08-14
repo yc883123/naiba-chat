@@ -43,6 +43,9 @@
           <select id="agentSelect" aria-label="当前 Agent"></select>
         </label>
         <div class="topbar-actions">
+          <button class="control-button unload-model-button" id="unloadModel" type="button" hidden title="卸载当前本地模型">
+            <span aria-hidden="true">↓</span><span class="button-label">卸载模型</span>
+          </button>
           <button class="control-button task-button" id="openTasks" title="查看异步任务"><span id="taskCount">0</span> <span class="button-label">任务</span></button>
           <button class="control-button" id="openSkills"><span id="skillCount">自动</span> <span class="button-label">Skills</span></button>
           <button class="mcp-button" id="mcpStatus" title="查看 MCP 状态"><i></i><span>MCP</span></button>

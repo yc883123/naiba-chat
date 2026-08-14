@@ -965,6 +965,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._test_provider(body)
         elif path == "/api/providers/models":
             self._provider_models(body)
+        elif path == "/api/providers/unload":
+            self._unload_provider(body)
         elif path == "/api/providers/probe":
             self._probe_local_provider(body)
         elif path == "/api/settings":
@@ -1316,6 +1318,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         try:
             provider = self._provider_profile(body)
             self._json({"models": APP.models.list_online_models(provider)})
+        except Exception as exc:
+            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _unload_provider(self, body: dict[str, Any]) -> None:
+        try:
+            model_key = str(body.get("model_key") or "").strip()
+            provider = APP.config.profile(model_key)
+            result = APP.models.unload_local_model(provider)
+            self._json({"ok": True, **result})
         except Exception as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
