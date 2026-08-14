@@ -1063,46 +1063,6 @@ function addProvider() {
   $('#providerName').focus();
 }
 
-async function applyPreset(kind) {
-  if (state.providerEditing) {
-    toast('请先完成或取消当前编辑');
-    return;
-  }
-  const hint = $('#providerPresetHint');
-  hint.hidden = false;
-  hint.textContent = '正在探测本地服务…';
-  hint.className = 'provider-presets-hint';
-  try {
-    const result = await api('/api/providers/probe', { method: 'POST', body: { kind } });
-    const preset = result.preset || {};
-    showProviderForm({}, { editing: true, isNew: true });
-    $('#providerName').value = preset.name || '';
-    $('#providerBaseUrl').value = preset.base_url || '';
-    $('#providerFormat').value = preset.request_format || 'openai_chat';
-    // Ollama 的 OpenAI 兼容端点接受任意占位 Key；LM Studio 无需 Key。
-    $('#providerApiKey').value = kind === 'ollama' ? 'ollama' : '';
-    $('#providerKeyStatus').textContent = $('#providerApiKey').value ? '待保存' : '未配置';
-    const models = result.models || [];
-    if (models.length) {
-      setProviderModelOptions(models, models[0].id);
-      hint.textContent = `已检测到 ${models.length} 个模型，确认保存即可使用。`;
-      hint.classList.add('ok');
-    } else if (result.reachable) {
-      setProviderModelOptions([], '');
-      hint.textContent = '服务在线但未返回模型，请先加载模型后再点“检查模型”。';
-      hint.classList.add('warn');
-    } else {
-      setProviderModelOptions([], '');
-      hint.textContent = result.error || '未检测到服务运行，已填好配置，启动后可点“检查模型”。';
-      hint.classList.add('warn');
-    }
-    $('#providerName').focus();
-  } catch (error) {
-    hint.textContent = `探测失败：${error.message}`;
-    hint.classList.add('warn');
-  }
-}
-
 function editProvider() {
   if (!$('#providerId').value) return;
   setProviderEditMode(true, false);
@@ -1778,7 +1738,6 @@ function bindEvents() {
   $('#sidebarBackdrop').addEventListener('click', closeSidebar);
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => switchSettingsTab(button.dataset.settingsTab)));
   $('#addProvider').addEventListener('click', addProvider);
-  $$('[data-preset]').forEach((button) => button.addEventListener('click', () => applyPreset(button.dataset.preset)));
   $('#providerSelect').addEventListener('change', (event) => {
     const provider = state.bootstrap.providers.find((item) => item.id === event.target.value);
     showProviderForm(provider || {});
