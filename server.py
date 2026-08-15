@@ -245,6 +245,7 @@ def default_config() -> dict[str, Any]:
         "provider_id": "",
         "temperature": 0.7,
         "max_tokens": 8192,
+        "context_size": 8192,
         "max_agent_steps": 8,
         "agent_system_prompt": "",
         "permission_mode": "confirm",
@@ -296,6 +297,12 @@ class ConfigStore:
             except (OSError, json.JSONDecodeError):
                 pass
         self.data = defaults
+        try:
+            self.data["context_size"] = self._positive_context_size(
+                self.data.get("context_size", 8192), "context_size"
+            )
+        except ValueError:
+            self.data["context_size"] = 8192
         tools = self.data.get("agent_tools")
         if isinstance(tools, list) and "call_mcp" in tools and "register_mcp" not in tools:
             tools.insert(tools.index("call_mcp"), "register_mcp")
@@ -366,6 +373,7 @@ class ConfigStore:
             "provider_id",
             "temperature",
             "max_tokens",
+            "context_size",
             "max_agent_steps",
             "agent_system_prompt",
             "permission_mode",
@@ -397,6 +405,8 @@ class ConfigStore:
                         }
                         requested = values[key] if isinstance(values[key], list) else []
                         self.data[key] = [tool for tool in requested if tool in valid_tools]
+                    elif key == "context_size":
+                        self.data[key] = self._positive_context_size(values[key], "context_size")
                     else:
                         self.data[key] = values[key]
             self.save()
@@ -447,11 +457,19 @@ class ConfigStore:
                 "api_key": str(values.get("api_key") or "").strip(),
                 "request_format": request_format,
             }
+            if request_format == "ollama":
+                raw_context_size = values.get("context_size")
+                if raw_context_size not in (None, ""):
+                    payload["context_size"] = self._positive_context_size(
+                        raw_context_size, "Ollama context_size"
+                    )
             if not payload["base_url"] or not payload["model"]:
                 raise ValueError("API URL 和模型名称不能为空")
             if existing and not payload["api_key"]:
                 payload["api_key"] = existing.get("api_key", "")
             if existing:
+                if "context_size" not in payload:
+                    existing.pop("context_size", None)
                 existing.update(payload)
             else:
                 providers.append(payload)
@@ -495,8 +513,20 @@ class ConfigStore:
         with self.lock:
             return {
                 key: self.data[key]
-                for key in ("temperature", "max_tokens")
+                for key in ("temperature", "max_tokens", "context_size")
             }
+
+    @staticmethod
+    def _positive_context_size(value: Any, field: str) -> int:
+        if isinstance(value, bool):
+            raise ValueError(f"{field} 必须是正整数")
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{field} 必须是正整数") from None
+        if parsed <= 0 or (isinstance(value, float) and not value.is_integer()):
+            raise ValueError(f"{field} 必须是正整数")
+        return parsed
 
     # ---- Agent 管理 ----
 

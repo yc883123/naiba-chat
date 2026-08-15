@@ -1194,6 +1194,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   }
   $('#providerName').value = provider.name || '';
   $('#providerBaseUrl').value = provider.base_url || '';
+  $('#providerContextSize').value = provider.context_size || '';
   setProviderModelOptions([], provider.model || '');
   $('#providerFormat').value = provider.request_format || 'openai_chat';
   $('#providerApiKey').value = '';
@@ -1204,6 +1205,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   $('#providerError').textContent = '';
   setProviderEditMode(editing, isNew);
   updateProviderFormatGuide();
+  updateProviderContextField();
   updateUnloadModelButton();
 }
 
@@ -1218,6 +1220,15 @@ function updateProviderFormatGuide() {
   guide.hidden = !guides[format];
 }
 
+function updateProviderContextField() {
+  const field = $('#providerContextField');
+  const input = $('#providerContextSize');
+  const active = Boolean($('#providerId').value) || state.providerIsNew;
+  const ollama = $('#providerFormat').value === 'ollama';
+  field.hidden = !active || !ollama;
+  input.disabled = !state.providerEditing || !ollama;
+}
+
 function setProviderEditMode(editing, isNew = false) {
   state.providerEditing = editing;
   state.providerIsNew = isNew;
@@ -1226,7 +1237,7 @@ function setProviderEditMode(editing, isNew = false) {
   $('#providerEmpty').hidden = active;
   [
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
-    '#providerModel', '#providerModelCustom',
+    '#providerModel', '#providerModelCustom', '#providerContextSize',
   ].forEach((selector) => { $(selector).disabled = !editing; });
   $('#providerSelect').disabled = editing;
   $('#addProvider').disabled = editing;
@@ -1236,6 +1247,7 @@ function setProviderEditMode(editing, isNew = false) {
   $('#editProvider').hidden = !active || editing;
   $('#cancelProvider').hidden = !editing;
   $('#saveProvider').hidden = !editing;
+  updateProviderContextField();
   updateUnloadModelButton();
 }
 
@@ -1278,6 +1290,9 @@ function providerFormValue() {
     model: selectedModel === '__custom__' ? $('#providerModelCustom').value.trim() : selectedModel,
     api_key: $('#providerApiKey').value.trim(),
     request_format: $('#providerFormat').value,
+    context_size: $('#providerFormat').value === 'ollama' && $('#providerContextSize').value.trim()
+      ? Number($('#providerContextSize').value)
+      : undefined,
   };
 }
 
@@ -1384,6 +1399,7 @@ function populateRuntimeSettings() {
   const settings = state.bootstrap.settings;
   $('#temperature').value = settings.temperature;
   $('#maxTokens').value = settings.max_tokens;
+  $('#contextSize').value = settings.context_size;
   $('#maxAgentSteps').value = settings.max_agent_steps;
   $('#commandTimeout').value = settings.command_timeout;
 }
@@ -1512,6 +1528,7 @@ async function saveRuntimeSettings() {
   const payload = {
     temperature: Number($('#temperature').value),
     max_tokens: Number($('#maxTokens').value),
+    context_size: Number($('#contextSize').value),
     max_agent_steps: Number($('#maxAgentSteps').value),
     command_timeout: Number($('#commandTimeout').value),
   };
@@ -2037,7 +2054,10 @@ function bindEvents() {
   $('#testProvider').addEventListener('click', testProvider);
   $('#loadProviderModels').addEventListener('click', () => loadProviderModels());
   $('#unloadProviderModel').addEventListener('click', unloadConfiguredProviderModel);
-  $('#providerFormat').addEventListener('change', updateProviderFormatGuide);
+  $('#providerFormat').addEventListener('change', () => {
+    updateProviderFormatGuide();
+    updateProviderContextField();
+  });
   $('#providerModel').addEventListener('change', toggleCustomModel);
   $('#toggleProviderKey').addEventListener('click', toggleProviderKey);
   $('#providerApiKey').addEventListener('input', (event) => {

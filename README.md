@@ -54,6 +54,8 @@
 - **请求格式**：选择对应的 API 格式
 - **模型名称**：使用的模型名称
 
+使用 Ollama 时，全局运行参数中的 `context_size` 会作为 `num_ctx` 发送；也可以在 Ollama 供应商中填写上下文 Tokens 覆盖全局值。上下文值应不小于实际提示词长度，否则 Ollama 会返回 context size exceeded 错误。
+
 ### 技能系统
 
 技能文件位于 `skills/` 目录，每个技能是一个文件夹，包含：

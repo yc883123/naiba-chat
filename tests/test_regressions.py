@@ -400,6 +400,40 @@ class OllamaFormatTests(unittest.TestCase):
         self.assertEqual(False, body["stream"])
         self.assertEqual(0, body["options"]["temperature"])
         self.assertEqual(64, body["options"]["num_predict"])
+        self.assertEqual(8192, body["options"]["num_ctx"])
+
+    def test_ollama_context_size_prefers_provider_override_over_global_option(self) -> None:
+        captured: dict[str, object] = {}
+
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps({"message": {"content": "OK"}}).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+            return Response()
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            ModelRuntime._complete_online(
+                {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "qwen3:8b",
+                    "request_format": "ollama",
+                    "context_size": 16384,
+                },
+                [{"role": "user", "content": "hello"}],
+                {"temperature": 0, "max_tokens": 64, "context_size": 8192, "stream": False},
+            )
+
+        self.assertEqual(16384, captured["body"]["options"]["num_ctx"])
 
     def test_local_connection_failure_is_not_retried(self) -> None:
         calls = 0
@@ -642,6 +676,62 @@ class PermissionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "权限模式"):
                 store.update_settings({"permission_mode": "invalid"})
 
+    def test_context_size_defaults_and_rejects_invalid_values(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = ConfigStore(Path(root) / "config.json")
+
+            self.assertEqual(8192, store.generation_options()["context_size"])
+            self.assertEqual(16384, store.update_settings({"context_size": 16384})["context_size"])
+            with self.assertRaisesRegex(ValueError, "context_size"):
+                store.update_settings({"context_size": 0})
+
+    def test_ollama_provider_context_size_is_persisted_and_non_ollama_omits_it(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = ConfigStore(Path(root) / "config.json")
+            provider = store.upsert_provider(
+                {
+                    "name": "Ollama",
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "qwen3:8b",
+                    "request_format": "ollama",
+                    "context_size": 16384,
+                }
+            )
+            self.assertEqual(16384, provider["context_size"])
+            self.assertEqual(16384, store.profile(f"online:{provider['id']}")["context_size"])
+
+            cleared = store.upsert_provider(
+                {
+                    "id": provider["id"],
+                    "name": "Ollama",
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "qwen3:8b",
+                    "request_format": "ollama",
+                }
+            )
+            self.assertNotIn("context_size", cleared)
+
+            updated = store.upsert_provider(
+                {
+                    "id": provider["id"],
+                    "name": "Ollama",
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "qwen3:8b",
+                    "request_format": "openai_chat",
+                }
+            )
+            self.assertNotIn("context_size", updated)
+            with self.assertRaisesRegex(ValueError, "context_size"):
+                store.upsert_provider(
+                    {
+                        "name": "Bad Ollama",
+                        "base_url": "http://127.0.0.1:11434/v1",
+                        "model": "qwen3:8b",
+                        "request_format": "ollama",
+                        "context_size": 0,
+                    }
+                )
+
     def test_selected_provider_is_persisted_across_config_reloads(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "config.json"
@@ -807,6 +897,16 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn("/api/models/unload", source)
         self.assertIn('path == "/api/models/unload"', server_source)
         self.assertNotIn("url.port === '11434'", source)
+
+    def test_ollama_context_controls_are_wired_through_the_frontend(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        markup = Path("public/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("providerContextSize", source)
+        self.assertIn("context_size:", source)
+        self.assertIn("num_ctx", Path("model_runtime.py").read_text(encoding="utf-8"))
+        self.assertIn('id="contextSize"', markup)
+        self.assertIn('id="providerContextSize"', markup)
 
 
 class PublicRepositoryHygieneTests(unittest.TestCase):

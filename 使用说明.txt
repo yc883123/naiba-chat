@@ -1,4 +1,4 @@
-naiba-chat build-24
+naiba-chat build-25
 
 1. 解压整个 ZIP 后运行 naiba-chat.exe。
 2. 首次运行会在 EXE 同目录创建 config.json 和 data 目录。
@@ -9,8 +9,9 @@ naiba-chat build-24
 7. 在线模型和本地模型使用独立的请求格式与超时策略；Ollama 使用 /api/chat，LM Studio 使用 /api/v1/chat。
 8. 对话框支持上传多张图片。图片会在发送给模型前自动压缩，并保留最近一轮图片组，降低请求过大导致失败的概率。
 9. Ollama 和 LM Studio 可在对话框中手动卸载当前模型，以释放显存和内存。
-10. 后续更新通过 GitHub Releases 自动下载、校验并安装；设置页会显示本次版本说明。
-11. 请勿把 config.json 对外分享，其中可能包含 API Key。
+10. Ollama 的上下文 Tokens 默认使用全局运行参数中的 `context_size`（8192）；供应商中填写的上下文值会覆盖全局值，并发送为 Ollama 的 `num_ctx`。该值必须不小于提示词长度。
+11. 后续更新通过 GitHub Releases 自动下载、校验并安装；设置页会显示本次版本说明。
+12. 请勿把 config.json 对外分享，其中可能包含 API Key。
 
 项目地址：https://github.com/yc883123/naiba-chat
-版本：build-24
+版本：build-25

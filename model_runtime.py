@@ -370,11 +370,16 @@ class ModelRuntime:
             headers["anthropic-version"] = "2023-06-01"
         elif request_format == "ollama":
             endpoint = ModelRuntime._local_endpoint(base_url, "/api/chat")
+            context_size = profile.get("context_size") or options.get("context_size", 8192)
             payload = {
                 "model": model,
                 "messages": ModelRuntime._ollama_messages(messages),
                 "stream": stream_enabled,
-                "options": {"temperature": temperature, "num_predict": max_tokens},
+                "options": {
+                    "temperature": temperature,
+                    "num_predict": max_tokens,
+                    "num_ctx": int(context_size),
+                },
             }
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
