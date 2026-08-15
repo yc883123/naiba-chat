@@ -5,6 +5,7 @@ import gc
 import io
 import json
 import server
+from datetime import timedelta
 from pathlib import Path
 import sys
 import tempfile
@@ -1031,7 +1032,7 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
         workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
         spec = Path("naiba-chat.spec").read_text(encoding="utf-8")
 
-        self.assertIn('"mcp>=1.2.0,<2"', workflow)
+        self.assertIn('"mcp==1.29.0"', workflow)
         self.assertIn('"mcp.client.stdio"', spec)
 
     def test_release_workflow_reads_shared_release_notes(self) -> None:
@@ -1224,7 +1225,66 @@ class MCPRegistrationTests(unittest.TestCase):
 
         self.assertEqual(1, max_active)
         self.assertCountEqual([(True, "first"), (True, "second")], results)
-        self.assertEqual([2, 2], received_timeouts)
+        self.assertEqual([timedelta(seconds=2), timedelta(seconds=2)], received_timeouts)
+        self.assertTrue(all(isinstance(value, timedelta) for value in received_timeouts))
+
+    def test_call_cancels_inflight_request_after_timeout(self) -> None:
+        loop = asyncio.new_event_loop()
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+        cancelled = threading.Event()
+
+        class Session:
+            async def call_tool(inner_self, tool_name, arguments, read_timeout_seconds):
+                del tool_name, arguments, read_timeout_seconds
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+        connection = MCPServerConnection("test", "python", [], {})
+        connection._loop = loop
+        connection._session = Session()
+        try:
+            self.assertEqual(
+                (False, "MCP 工具调用超过 0.05 秒"),
+                connection.call("slow", {}, timeout=0.05),
+            )
+            self.assertTrue(cancelled.wait(timeout=1))
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=1)
+            loop.close()
+
+    def test_call_distinguishes_disconnected_and_tool_errors(self) -> None:
+        disconnected = MCPServerConnection("test", "python", [], {})
+        self.assertEqual(
+            (False, "MCP 服务尚未连接"),
+            disconnected.call("tool", {}),
+        )
+
+        loop = asyncio.new_event_loop()
+        loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
+        loop_thread.start()
+
+        class FailingSession:
+            async def call_tool(inner_self, tool_name, arguments, read_timeout_seconds):
+                del tool_name, arguments, read_timeout_seconds
+                raise RuntimeError("server-side failure")
+
+        connected = MCPServerConnection("test", "python", [], {})
+        connected._loop = loop
+        connected._session = FailingSession()
+        try:
+            self.assertEqual(
+                (False, "RuntimeError: server-side failure"),
+                connected.call("tool", {}),
+            )
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            loop_thread.join(timeout=1)
+            loop.close()
 
     def test_stop_keeps_live_thread_references(self) -> None:
         class LiveThread:

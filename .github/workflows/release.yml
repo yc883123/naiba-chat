@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: build-29
+  RELEASE_VERSION: build-30
 
 concurrency:
   group: naiba-chat-release
@@ -29,7 +29,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install --disable-pip-version-check --upgrade pyinstaller pywebview pystray "mcp>=1.2.0,<2"
+          python -m pip install --disable-pip-version-check --upgrade pyinstaller pywebview pystray "mcp==1.29.0"
           python -m pip install --disable-pip-version-check --upgrade --force-reinstall --no-cache-dir pillow
           python -c "from PIL import Image; print('Pillow', Image.__version__)"
 

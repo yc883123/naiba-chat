@@ -5,6 +5,7 @@ import os
 import threading
 from contextlib import AsyncExitStack
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from datetime import timedelta
 from typing import Any
 
 
@@ -100,7 +101,7 @@ class MCPServerConnection:
                 self._session.call_tool(
                     tool_name,
                     arguments,
-                    read_timeout_seconds=timeout,
+                    read_timeout_seconds=timedelta(seconds=timeout),
                 ),
                 self._loop,
             )
