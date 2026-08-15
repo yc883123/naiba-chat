@@ -515,7 +515,6 @@ class SkillAgent:
         options: dict[str, Any],
         auto_skills: bool,
         selected_ids: list[str],
-        max_steps: int,
         agent_system_prompt: str,
         allowed_tools: list[str],
         event: EventCallback,
@@ -559,7 +558,6 @@ class SkillAgent:
                 profile,
                 options,
                 active,
-                max_steps,
                 agent_system_prompt,
                 allowed_tools,
                 event,
@@ -578,7 +576,6 @@ class SkillAgent:
         profile: dict[str, Any],
         options: dict[str, Any],
         active: list[dict[str, Any]],
-        max_steps: int,
         agent_system_prompt: str,
         allowed_tools: list[str],
         event: EventCallback,
@@ -650,10 +647,12 @@ class SkillAgent:
         reasonings: list[str] = []
         # model_complete 是 ModelRuntime.complete 的绑定方法，可通过 __self__ 读取 last_reasoning
         model_runtime = getattr(self.model_complete, "__self__", None)
-        for step in range(max_steps):
+        step = 0
+        while True:
             if cancel_event and cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
-            event({"type": "status", "message": f"正在思考（{step + 1}/{max_steps}）"})
+            step += 1
+            event({"type": "status", "message": f"正在思考（第 {step} 轮）"})
             raw = self.model_complete(profile, messages, options, event)
             if cancel_event and cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
@@ -714,12 +713,6 @@ class SkillAgent:
                 }
             )
 
-        return (
-            f"任务达到最大执行步数（{max_steps}），已停止。请查看工具执行记录后继续。",
-            runs,
-            reasonings,
-            self._summarize_usage(usages),
-        )
 
     @staticmethod
     def _summarize_usage(records: list[dict[str, int]]) -> dict[str, Any]:

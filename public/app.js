@@ -13,6 +13,7 @@ const state = {
   autoSkills: (localStorage.getItem('naibaChatAutoSkills') ?? localStorage.getItem('lanAutoSkills')) === 'true',
   pendingFiles: [],
   abortController: null,
+  chatRunId: '',
   taskSubmitting: false,
   conversationSettingsId: '',
   providerEditing: false,
@@ -23,6 +24,7 @@ const state = {
   agentFormSkillIds: [],
   tasks: [],
   taskTimer: null,
+  planTimer: null,
   plans: [],
   interactionMode: localStorage.getItem('naibaChatInteractionMode') || 'craft',
   planEditingId: '',
@@ -368,6 +370,7 @@ async function initialize() {
   await loadTasks();
   startTaskSync();
   startConversationSync();
+  startPlanSync();
 }
 
 const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
@@ -623,6 +626,10 @@ async function executePlan(planId) {
 }
 
 async function cancelPlan(planId) {
+  const plan = state.plans.find((item) => item.id === planId);
+  if (plan?.status === 'prepare' && state.abortController) {
+    await cancelCurrentRun();
+  }
   try {
     await api(`/api/plans/${planId}/cancel`, { method: 'POST', body: {} });
   } catch (error) {
@@ -1070,6 +1077,13 @@ function startConversationSync() {
   });
 }
 
+function startPlanSync() {
+  if (state.planTimer) return;
+  state.planTimer = window.setInterval(() => {
+    if (state.conversationId) loadPlans();
+  }, 1500);
+}
+
 function openConversationSettings(id) {
   const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation) return;
@@ -1400,7 +1414,6 @@ function populateRuntimeSettings() {
   $('#temperature').value = settings.temperature;
   $('#maxTokens').value = settings.max_tokens;
   $('#contextSize').value = settings.context_size;
-  $('#maxAgentSteps').value = settings.max_agent_steps;
   $('#commandTimeout').value = settings.command_timeout;
 }
 
@@ -1529,7 +1542,6 @@ async function saveRuntimeSettings() {
     temperature: Number($('#temperature').value),
     max_tokens: Number($('#maxTokens').value),
     context_size: Number($('#contextSize').value),
-    max_agent_steps: Number($('#maxAgentSteps').value),
     command_timeout: Number($('#commandTimeout').value),
   };
   const result = await api('/api/settings', { method: 'POST', body: payload });
@@ -1601,7 +1613,7 @@ function renderPendingFiles() {
     <span class="file-chip">${file.uploading ? '上传中 · ' : ''}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除">×</button></span>`).join('');
 }
 
-async function sendPlanMessage(textOverride = '') {
+async function sendChatMessage(textOverride = '') {
   const input = $('#messageInput');
   const text = (textOverride || input.value).trim();
   if (!text || state.abortController || state.taskSubmitting) return;
@@ -1666,6 +1678,7 @@ async function sendPlanMessage(textOverride = '') {
       temporary.querySelector('.answer-content').innerHTML = `<p>请求失败：${escapeHtml(error.message)}</p>`;
     }
   } finally {
+    state.chatRunId = '';
     state.abortController = null;
     setBusy(false);
     try {
@@ -1678,65 +1691,14 @@ async function sendPlanMessage(textOverride = '') {
 }
 
 async function sendMessage(textOverride = '') {
-  if (currentInteractionMode() === 'plan') {
-    await sendPlanMessage(textOverride);
-    return;
-  }
-  const input = $('#messageInput');
-  const text = (textOverride || input.value).trim();
-  if (!text || state.abortController || state.taskSubmitting) return;
-  if (state.pendingFiles.some((file) => file.uploading)) {
-    toast('请等待文件上传完成');
-    return;
-  }
-  // 只有消息确定可以发送时，才结束当前选项交互。
-  hideChoiceButtons();
-  if (!state.conversationId) await createConversation();
-  const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
-  state.pendingFiles = [];
-  renderPendingFiles();
-  input.value = '';
-  resizeTextarea();
-  const emptyState = $('#emptyState');
-  if (emptyState) emptyState.hidden = true;
-  const messages = $('#messages');
-  messages.append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
-  scrollToBottom();
-  state.taskSubmitting = true;
-  setBusy(true);
-
-  try {
-    const task = await api('/api/tasks', {
-      method: 'POST',
-      body: {
-        conversation_id: state.conversationId,
-        message: text,
-        attachments,
-        model_key: $('#modelSelect').value,
-        auto_skills: state.autoSkills,
-        skill_ids: state.selectedSkills,
-      },
-    });
-    state.tasks.unshift(task);
-    renderTasks();
-    toast(`${task.agent_name} 已在后台执行`);
-  } catch (error) {
-    messages.append(messageElement({ role: 'error', content: `请求失败：${error.message}` }));
-  } finally {
-    state.taskSubmitting = false;
-    setBusy(false);
-    try {
-      await loadConversations();
-      if (state.conversationId) await openConversation(state.conversationId);
-    } catch (error) {
-      console.error('刷新对话失败', error);
-    }
-  }
+  await sendChatMessage(textOverride);
 }
 
 function handleChatEvent(event, row) {
   const answer = row.querySelector('.answer-content');
-  if (event.type === 'status') {
+  if (event.type === 'run_started') {
+    state.chatRunId = String(event.run_id || '');
+  } else if (event.type === 'status') {
     answer.innerHTML = `<div class="activity">${escapeHtml(event.message)}</div>`;
     $('#runtimeStatus').textContent = event.message;
   } else if (event.type === 'skills') {
@@ -1798,6 +1760,8 @@ function handleChatEvent(event, row) {
   } else if (event.type === 'choice') {
     // AI回复包含可选项，显示选择按钮
     showChoiceButtons(event.choices, event.choice_groups);
+  } else if (event.type === 'cancelled') {
+    answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
   } else if (event.type === 'done') {
     try {
       row.replaceWith(messageElement(event.message));
@@ -1954,15 +1918,27 @@ async function rejectTool(confirmId) {
 
 function setBusy(busy) {
   const sendBtn = $('#sendButton');
-  sendBtn.disabled = busy;
-  sendBtn.classList.remove('is-stop');
-  sendBtn.textContent = '↑';
-  sendBtn.title = busy ? '正在提交' : '发送';
+  sendBtn.disabled = false;
+  sendBtn.classList.toggle('is-stop', busy);
+  sendBtn.textContent = busy ? '■' : '↑';
+  sendBtn.title = busy ? '停止当前请求' : '发送';
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
-  sendBtn.setAttribute('aria-label', busy ? '正在提交' : '发送');
+  sendBtn.setAttribute('aria-label', busy ? '停止当前请求' : '发送');
   $('#messageInput').disabled = false;
   updateUnloadModelButton();
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
+}
+
+async function cancelCurrentRun() {
+  const runId = state.chatRunId;
+  if (runId) {
+    try {
+      await api('/api/chat/cancel', { method: 'POST', body: { run_id: runId } });
+    } catch (error) {
+      console.debug('[naiba] cancel chat failed:', error.message);
+    }
+  }
+  state.abortController?.abort();
 }
 
 function resizeTextarea() {
@@ -2058,6 +2034,11 @@ function bindEvents() {
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
     sendMessage();
+  });
+  $('#sendButton').addEventListener('click', (event) => {
+    if (!state.abortController) return;
+    event.preventDefault();
+    cancelCurrentRun();
   });
   $('#messageInput').addEventListener('input', resizeTextarea);
   $('#messageInput').addEventListener('keydown', (event) => {

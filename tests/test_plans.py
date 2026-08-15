@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 from plan_runtime import (
+    CraftToolExecutor,
     PlanManager,
     ReadOnlyToolExecutor,
     extract_plan_block,
@@ -127,6 +128,50 @@ class ModePermissionTests(unittest.TestCase):
         self.assertEqual((True, "forwarded:http_request"), proxy.execute("http_request", {}, []))
         self.assertEqual((True, "forwarded:read_file"), proxy.execute("read_file", {"path": "x"}, []))
 
+    def test_craft_executor_auto_allows_only_workspace_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            workspace = Path(root) / "workspace"
+            workspace.mkdir()
+
+            class FakeInner:
+                permission_mode = "confirm"
+
+                def __init__(self):
+                    self.workspace = workspace.resolve()
+
+                def _resolve_tool_path(self, raw):
+                    path = Path(str(raw))
+                    return (self.workspace / path).resolve() if not path.is_absolute() else path.resolve()
+
+                @staticmethod
+                def _path_within(path, parent):
+                    try:
+                        path.relative_to(parent)
+                        return True
+                    except ValueError:
+                        return False
+
+                def _execute_unchecked(self, tool, arguments, active_skills):
+                    return True, f"unchecked:{tool}"
+
+                def execute(self, tool, arguments, active_skills):
+                    return False, f"checked:{tool}"
+
+            proxy = CraftToolExecutor(FakeInner())
+            self.assertEqual(
+                (True, "unchecked:write_file"),
+                proxy.execute("write_file", {"path": "notes.txt", "content": "ok"}, []),
+            )
+            outside = str(Path(root).parent / "outside.txt")
+            self.assertEqual(
+                (False, "checked:write_file"),
+                proxy.execute("write_file", {"path": outside, "content": "no"}, []),
+            )
+            self.assertEqual(
+                (False, "checked:run_command"),
+                proxy.execute("run_command", {"command": "echo ok"}, []),
+            )
+
 
 class PlanParsingTests(unittest.TestCase):
     def test_parses_title_and_steps_from_document(self) -> None:
@@ -194,11 +239,13 @@ class PlanManagerTests(unittest.TestCase):
         self.assertEqual("prepare", plan["status"])
         again = manager.ensure_active_plan(self.conversation["id"], "补充说明")
         self.assertEqual(plan["id"], again["id"])
+        self.assertEqual("补充说明", again["question"])
 
         self.app.storage.update_plan(plan["id"], status="ready")
         revised = manager.ensure_active_plan(self.conversation["id"], "改一下方案")
         self.assertEqual(plan["id"], revised["id"])
         self.assertEqual("prepare", revised["status"])
+        self.assertEqual("改一下方案", revised["question"])
 
         self.app.storage.update_plan(plan["id"], status="finished")
         fresh = manager.ensure_active_plan(self.conversation["id"], "新需求")
@@ -234,6 +281,22 @@ class PlanManagerTests(unittest.TestCase):
         cleaned, updated = manager.process_response(plan["id"], "请问目标用户是谁？")
         self.assertEqual("请问目标用户是谁？", cleaned)
         self.assertEqual("prepare", updated["status"])
+        self.assertEqual(1, updated["detail"]["clarification_round"])
+        self.assertIn("不要继续提问", manager.prepare_prompt(updated))
+
+    def test_process_response_rejects_plan_without_steps(self) -> None:
+        manager = self.make_manager()
+        plan = manager.ensure_active_plan(self.conversation["id"], "需求")
+
+        cleaned, updated = manager.process_response(
+            plan["id"],
+            "<plan>\n# 只有标题\n## 方案概述\n尚未列出步骤\n</plan>",
+        )
+
+        self.assertIn("只有标题", cleaned)
+        self.assertEqual("prepare", updated["status"])
+        self.assertEqual([], updated["steps"])
+        self.assertIn("没有识别到", updated["error"])
 
     def test_edit_plan_preserves_step_progress_and_blocks_building(self) -> None:
         manager = self.make_manager()
@@ -379,9 +442,12 @@ class FrontendIntegrationTests(unittest.TestCase):
         self.assertIn('id="planEditDialog"', html)
         self.assertIn("function switchInteractionMode(mode)", source)
         self.assertIn("interaction_mode: state.interactionMode", source)
-        self.assertIn("async function sendPlanMessage", source)
-        self.assertIn("if (currentInteractionMode() === 'plan')", source)
+        self.assertIn("async function sendChatMessage", source)
+        self.assertIn("await sendChatMessage(textOverride)", source)
         self.assertIn("fetch('/api/chat'", source)
+        self.assertIn("event.type === 'run_started'", source)
+        self.assertIn("/api/chat/cancel", source)
+        self.assertIn("function startPlanSync()", source)
         self.assertIn("function renderPlanBar()", source)
         self.assertIn("function fillPlanCards()", source)
         self.assertIn("method: 'PUT'", source)
@@ -395,6 +461,8 @@ class FrontendIntegrationTests(unittest.TestCase):
         self.assertIn("def do_PUT(self)", server_source)
         self.assertIn("APP.plans.execute(plan_id)", server_source)
         self.assertIn("APP.plans.edit_plan(", server_source)
+        self.assertIn('path == "/api/chat/cancel"', server_source)
+        self.assertIn('f"{content_type}; charset=utf-8"', server_source)
 
 
 if __name__ == "__main__":

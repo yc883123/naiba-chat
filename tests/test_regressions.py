@@ -25,7 +25,7 @@ from server import (
     build_model_history,
     encode_image_for_model,
 )
-from skill_runtime import SkillAgent, SkillCatalog, ToolExecutor
+from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor
 from storage import ChatStorage
 from updater import UpdateManager
 
@@ -174,6 +174,70 @@ class OnlineResponseTests(unittest.TestCase):
 
         self.assertEqual(action, json.loads(content))
         self.assertEqual("", reasoning)
+
+
+class AgentLoopTests(unittest.TestCase):
+    class Catalog:
+        @staticmethod
+        def scan():
+            return []
+
+    class Executor:
+        class Registry:
+            @staticmethod
+            def acquire():
+                return None
+
+            @staticmethod
+            def release():
+                return None
+
+        mcp_registry = Registry()
+
+        @staticmethod
+        def mcp_tool_guide():
+            return ""
+
+        def __init__(self, cancel_event=None):
+            self.cancel_event = cancel_event
+
+        def execute(self, tool, arguments, active_skills):
+            if self.cancel_event:
+                self.cancel_event.set()
+            return True, "ok"
+
+    def test_agent_runs_past_eight_tool_calls_until_final_response(self) -> None:
+        calls = 0
+
+        def complete(profile, messages, options, event):
+            nonlocal calls
+            calls += 1
+            if calls <= 10:
+                return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "x"}})
+            return "done"
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, False, [], "", ["read_file"], lambda _event: None,
+            lambda *_args: None,
+        )
+
+        self.assertEqual("done", content)
+        self.assertEqual(10, len(runs))
+        self.assertEqual(11, calls)
+
+    def test_agent_observes_cancellation_between_tool_calls(self) -> None:
+        cancel_event = threading.Event()
+
+        def complete(profile, messages, options, event):
+            return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "x"}})
+
+        agent = SkillAgent(self.Catalog(), self.Executor(cancel_event), complete)
+        with self.assertRaises(TaskCancelled):
+            agent.run(
+                "work", [], {}, {}, False, [], "", ["read_file"], lambda _event: None,
+                lambda *_args: None, cancel_event,
+            )
 
 
 class ImageAttachmentTests(unittest.TestCase):

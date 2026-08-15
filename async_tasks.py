@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from model_runtime import ModelRuntime
-from plan_runtime import ASK_MODE_PROMPT, ReadOnlyToolExecutor, resolve_mode_tools
+from plan_runtime import ASK_MODE_PROMPT, CraftToolExecutor, ReadOnlyToolExecutor, resolve_mode_tools
 from skill_runtime import SkillAgent, TaskCancelled
 
 
@@ -141,7 +141,7 @@ class BackgroundTaskManager:
             mode = str(snapshot.get("interaction_mode") or "craft")
             plan_id = str(snapshot.get("plan_id") or "")
             allowed_tools = resolve_mode_tools(mode, [str(x) for x in self.app.config.data.get("agent_tools", [])])
-            executor = self.app.executor if mode == "craft" else ReadOnlyToolExecutor(self.app.executor)
+            executor = CraftToolExecutor(self.app.executor) if mode == "craft" else ReadOnlyToolExecutor(self.app.executor)
             if mode == "ask":
                 prompt = (prompt + "\n\n" + ASK_MODE_PROMPT).strip()
             elif mode == "plan":
@@ -151,7 +151,7 @@ class BackgroundTaskManager:
             worker = SkillAgent(self.app.catalog, executor, runtime.complete)
             response, runs, reasonings, usage = worker.run(
                 effective, history, profile, options, bool(snapshot.get("auto_skills")), selected,
-                int(self.app.config.data.get("max_agent_steps", 8)), prompt,
+                prompt,
                 allowed_tools, event,
                 lambda tool, args, result, success: self.app.storage.log_tool_run(conversation_id, tool, args, result, success),
                 cancel_event,

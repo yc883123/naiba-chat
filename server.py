@@ -40,8 +40,8 @@ if str(APP_DIR) not in sys.path:
 
 from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
-from plan_runtime import ASK_MODE_PROMPT, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
-from skill_runtime import SkillAgent, SkillCatalog, ToolExecutor
+from plan_runtime import ASK_MODE_PROMPT, CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
+from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor
 from async_tasks import BackgroundTaskManager
 from storage import ChatStorage
 from updater import UpdateManager
@@ -246,7 +246,6 @@ def default_config() -> dict[str, Any]:
         "temperature": 0.7,
         "max_tokens": 8192,
         "context_size": 8192,
-        "max_agent_steps": 8,
         "agent_system_prompt": "",
         "permission_mode": "confirm",
         "agent_tools": [
@@ -297,6 +296,8 @@ class ConfigStore:
             except (OSError, json.JSONDecodeError):
                 pass
         self.data = defaults
+        # Legacy builds persisted max_agent_steps; it is intentionally ignored.
+        self.data.pop("max_agent_steps", None)
         try:
             self.data["context_size"] = self._positive_context_size(
                 self.data.get("context_size", 8192), "context_size"
@@ -374,7 +375,6 @@ class ConfigStore:
             "temperature",
             "max_tokens",
             "context_size",
-            "max_agent_steps",
             "agent_system_prompt",
             "permission_mode",
             "agent_tools",
@@ -816,15 +816,36 @@ class NaibaChatApp:
             permission_mode=self.config.data.get("permission_mode", "confirm"),
             mcp_register=self.register_mcp_server,
         )
-        self.agent = SkillAgent(self.catalog, self.executor, self.models.complete)
         self.tasks = BackgroundTaskManager(self)
         self.plans = PlanManager(self)
+        self._chat_runs: dict[str, threading.Event] = {}
+        self._chat_runs_lock = threading.RLock()
         self.updater = UpdateManager(APP_DIR, DATA_DIR)
         self.update_restart_callback = None
 
     def stop(self) -> None:
+        with self._chat_runs_lock:
+            for event in self._chat_runs.values():
+                event.set()
+            self._chat_runs.clear()
         self.plans.shutdown()
         self.mcp.stop()
+
+    def register_chat_run(self, run_id: str, cancel_event: threading.Event) -> None:
+        with self._chat_runs_lock:
+            self._chat_runs[run_id] = cancel_event
+
+    def cancel_chat_run(self, run_id: str) -> bool:
+        with self._chat_runs_lock:
+            event = self._chat_runs.get(run_id)
+            if event:
+                event.set()
+                return True
+        return False
+
+    def finish_chat_run(self, run_id: str) -> None:
+        with self._chat_runs_lock:
+            self._chat_runs.pop(run_id, None)
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         if str(values.get("id") or "").strip() == "comfyui":
@@ -1065,6 +1086,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._install_folder(body)
         elif path == "/api/skills/scan":
             self._json({"skills": APP.catalog.scan(), "configured": APP.config.get_skills_dirs()})
+        elif path == "/api/chat/cancel":
+            run_id = str(body.get("run_id") or "").strip()
+            if not run_id:
+                self._json({"error": "run_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            else:
+                self._json({"cancelled": APP.cancel_chat_run(run_id)})
         elif path == "/api/chat":
             self._chat(body)
         elif path == "/api/tasks":
@@ -1230,7 +1257,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             data = path.read_bytes()
             content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", content_type)
+        self.send_header(
+            "Content-Type",
+            f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type,
+        )
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "private, max-age=3600")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -1489,6 +1519,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not conversation:
             self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
             return
+        run_id = uuid.uuid4().hex
+        cancel_event = threading.Event()
+        APP.register_chat_run(run_id, cancel_event)
         if uploads:
             upload_lines = [f"[用户上传文件：{item.get('path')}]" for item in uploads if item.get("path")]
             effective_message = message + "\n" + "\n".join(upload_lines)
@@ -1523,8 +1556,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             except OSError:
                 client_connected = False
+                cancel_event.set()
 
         try:
+            event({"type": "run_started", "run_id": run_id})
             model_key = str(body.get("model_key") or "")
             profile = APP.config.profile(model_key)
             if model_key.startswith("online:"):
@@ -1564,11 +1599,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             elif interaction_mode == "plan":
                 plan_id = str(APP.plans.ensure_active_plan(conversation_id, message)["id"])
                 combined_prompt = (combined_prompt + "\n\n" + APP.plans.prepare_prompt(APP.plans.get(plan_id))).strip()
-            chat_agent = (
-                APP.agent
+            chat_executor = (
+                CraftToolExecutor(APP.executor)
                 if interaction_mode == "craft"
-                else SkillAgent(APP.catalog, ReadOnlyToolExecutor(APP.executor), APP.models.complete)
+                else ReadOnlyToolExecutor(APP.executor)
             )
+            chat_agent = SkillAgent(APP.catalog, chat_executor, APP.models.complete)
             response, runs, reasonings, usage = chat_agent.run(
                 effective_message,
                 history,
@@ -1576,11 +1612,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 options,
                 auto_skills,
                 selected_ids,
-                int(APP.config.data.get("max_agent_steps", 8)),
                 combined_prompt,
                 allowed_tools,
                 event,
                 logger,
+                cancel_event,
             )
             plan_status = ""
             if interaction_mode == "plan" and plan_id:
@@ -1605,6 +1641,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             if choices:
                 event({"type": "choice", "choices": choices, "choice_groups": choice_groups})
             event({"type": "done", "message": saved})
+        except TaskCancelled:
+            event({"type": "cancelled", "message": "任务已取消"})
         except Exception as exc:
             traceback.print_exc()
             error_message = str(exc)
@@ -1618,6 +1656,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             except Exception:
                 traceback.print_exc()
             event({"type": "error", "message": error_message})
+        finally:
+            APP.finish_chat_run(run_id)
 
     def _confirm_tool(self, body: dict[str, Any]) -> None:
         confirm_id = str(body.get("confirm_id") or "").strip()

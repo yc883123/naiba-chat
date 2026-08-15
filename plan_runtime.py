@@ -105,6 +105,28 @@ class ReadOnlyToolExecutor:
         return self._inner.execute(tool, arguments, active_skills)
 
 
+class CraftToolExecutor:
+    """Craft policy: auto-allow workspace writes, keep other policy checks."""
+
+    def __init__(self, inner: ToolExecutor):
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+    def execute(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+    ) -> tuple[bool, str]:
+        if tool == "write_file" and getattr(self._inner, "permission_mode", "confirm") != "deny":
+            path = self._inner._resolve_tool_path((arguments or {}).get("path"))
+            if self._inner._path_within(path, self._inner.workspace):
+                return self._inner._execute_unchecked(tool, arguments, active_skills)
+        return self._inner.execute(tool, arguments, active_skills)
+
+
 def parse_plan_document(content: str) -> tuple[str, list[dict[str, Any]]]:
     """从 <plan> 内容解析标题与步骤。步骤优先取“实施步骤”类标题下的编号行。"""
     title = ""
@@ -244,14 +266,20 @@ class PlanManager:
                 if status == "building":
                     raise ValueError("当前计划正在执行中，请先取消或等待完成")
                 if status == "prepare":
-                    return plan
+                    updated = self.app.storage.update_plan(plan["id"], question=question)
+                    return updated or plan
                 if status == "ready":
-                    updated = self.app.storage.update_plan(plan["id"], status="prepare", error="")
+                    updated = self.app.storage.update_plan(
+                        plan["id"], status="prepare", question=question, error="",
+                        detail={"message": "正在准备计划", "clarification_round": 0},
+                    )
                     return updated or plan
             return self.app.storage.create_plan(conversation_id, question)
 
     def prepare_prompt(self, plan: dict[str, Any] | None) -> str:
         prompt = PLAN_PREPARE_PROMPT
+        if plan and int((plan.get("detail") or {}).get("clarification_round") or 0) >= 1:
+            prompt += "\n\n已经完成一轮澄清；即使仍有未知信息，也请明确列出假设并直接输出完整 <plan>，不要继续提问。"
         if plan and str(plan.get("content") or "").strip():
             prompt += (
                 "\n\n当前已有一版方案（用户的新消息是对它的修订意见，"
@@ -266,8 +294,20 @@ class PlanManager:
             return response, None
         content, cleaned = extract_plan_block(response)
         if content is None:
-            return response, plan
+            detail = dict(plan.get("detail") or {})
+            detail["clarification_round"] = min(1, int(detail.get("clarification_round") or 0) + 1)
+            detail["message"] = "等待用户补充信息；下一轮将基于现有信息生成计划"
+            updated = self.app.storage.update_plan(plan_id, status="prepare", detail=detail)
+            return response, updated or plan
         title, steps = parse_plan_document(content)
+        if not steps:
+            updated = self.app.storage.update_plan(
+                plan_id,
+                status="prepare",
+                error="计划内容中没有识别到可执行步骤",
+                detail={"message": "未识别到有效步骤，请重新生成计划"},
+            )
+            return response, updated or plan
         if not title:
             title = (plan.get("question") or "").strip()[:30] or "实施计划"
         updated = self.app.storage.update_plan(
@@ -528,7 +568,7 @@ class PlanManager:
             "请专注完成当前步骤；完成后用中文简要汇报该步骤结果（不超过 3 句话）。"
         )
         allowed_tools = resolve_mode_tools("craft", [str(t) for t in self.app.config.data.get("agent_tools", [])])
-        worker = SkillAgent(self.app.catalog, self.app.executor, ModelRuntime().complete)
+        worker = SkillAgent(self.app.catalog, CraftToolExecutor(self.app.executor), ModelRuntime().complete)
         selected = [str(item) for item in agent.get("skill_ids", [])]
         content, runs, reasonings, usage = worker.run(
             instruction,
@@ -537,7 +577,6 @@ class PlanManager:
             options,
             False,
             selected,
-            int(self.app.config.data.get("max_agent_steps", 8)),
             combined_prompt,
             allowed_tools,
             event,
