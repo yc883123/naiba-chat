@@ -1,4 +1,4 @@
-naiba-chat build-25
+naiba-chat build-26
 
 1. 解压整个 ZIP 后运行 naiba-chat.exe。
 2. 首次运行会在 EXE 同目录创建 config.json 和 data 目录。
@@ -14,4 +14,4 @@ naiba-chat build-25
 12. 请勿把 config.json 对外分享，其中可能包含 API Key。
 
 项目地址：https://github.com/yc883123/naiba-chat
-版本：build-25
+版本：build-26

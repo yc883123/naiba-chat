@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import io
 import json
 import server
 from pathlib import Path
@@ -460,6 +461,43 @@ class OllamaFormatTests(unittest.TestCase):
 
 
 class ProviderConnectionTestTests(unittest.TestCase):
+    def test_html_http_errors_are_summarized_without_markup(self) -> None:
+        html = """<!DOCTYPE html><html><head><title>Error - Request Blocked</title></head>
+        <body><h1>Request Blocked</h1><p>Access denied</p><script>secret()</script></body></html>"""
+
+        detail = model_runtime._summarize_http_error(html, "text/html", "www.deepseek.com")
+
+        self.assertIn("Request Blocked", detail)
+        self.assertIn("api.deepseek.com", detail)
+        self.assertNotIn("<html", detail)
+        self.assertNotIn("secret", detail)
+
+    def test_http_error_path_uses_readable_summary(self) -> None:
+        body = b"<html><title>Request Blocked</title><body>Access denied</body></html>"
+
+        def fake_urlopen(_request, timeout):
+            del timeout
+            raise model_runtime.urllib.error.HTTPError(
+                "https://www.deepseek.com/v1/chat/completions",
+                403,
+                "Forbidden",
+                {"Content-Type": "text/html"},
+                io.BytesIO(body),
+            )
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 403.*Request Blocked.*api.deepseek.com"):
+                ModelRuntime._complete_online(
+                    {
+                        "name": "deepseek",
+                        "base_url": "https://www.deepseek.com",
+                        "model": "deepseek-chat",
+                        "request_format": "openai_chat",
+                    },
+                    [{"role": "user", "content": "hello"}],
+                    {"temperature": 0, "max_tokens": 64, "stream": False},
+                )
+
     def test_online_connection_test_has_short_timeout_and_no_retry(self) -> None:
         calls = 0
 

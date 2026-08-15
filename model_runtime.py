@@ -4,6 +4,7 @@ import json
 import re
 import threading
 import time
+from html.parser import HTMLParser
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,6 +16,90 @@ ONLINE_MODEL_TIMEOUT_SECONDS = 180
 LOCAL_MODEL_TIMEOUT_SECONDS = 1800
 PROVIDER_TEST_TIMEOUT_SECONDS = 30
 FAST_RETRY_NETWORK_ERRORS = {10053, 10054, 10061}
+
+
+class _ErrorHTMLParser(HTMLParser):
+    """Extract readable text from an upstream HTML error page."""
+
+    _IGNORED_TAGS = {"script", "style", "noscript", "svg"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.parts: list[str] = []
+        self._ignored_depth = 0
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in self._IGNORED_TAGS:
+            self._ignored_depth += 1
+        elif tag == "title":
+            self._in_title = True
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in self._IGNORED_TAGS and self._ignored_depth:
+            self._ignored_depth -= 1
+        elif tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        if self._ignored_depth:
+            return
+        value = " ".join(data.split())
+        if not value:
+            return
+        if self._in_title:
+            self.title = f"{self.title} {value}".strip()
+        self.parts.append(value)
+
+
+def _summarize_http_error(raw: str, content_type: str = "", host: str = "") -> str:
+    """Keep upstream failures readable and actionable in the chat UI."""
+    text = str(raw or "").strip()
+    if not text:
+        return "空响应"
+
+    is_html = "html" in str(content_type).lower() or re.search(
+        r"<!doctype\s+html|<html\b|<head\b|<body\b", text, flags=re.IGNORECASE
+    )
+    if is_html:
+        parser = _ErrorHTMLParser()
+        try:
+            parser.feed(text)
+        except Exception:
+            parser = None
+        if parser:
+            title = " ".join(parser.title.split())
+            visible = " ".join(parser.parts)
+            if title and visible.lower().startswith(title.lower()):
+                visible = visible[len(title):].lstrip(" :—-")
+            summary = f"{title}: {visible}" if title and visible else title or visible
+        else:
+            summary = ""
+        summary = summary or "上游返回了 HTML 错误页"
+        lowered_host = str(host or "").lower()
+        if "deepseek.com" in lowered_host and not lowered_host.startswith("api."):
+            summary += "；请将 API URL 改为 https://api.deepseek.com，不要填写 deepseek.com 网页地址"
+        else:
+            summary += "；请检查 API URL 是否为模型接口地址，而不是网页地址或被拦截的代理地址"
+    else:
+        summary = re.sub(r"\s+", " ", text)
+        try:
+            parsed = json.loads(text)
+        except (TypeError, json.JSONDecodeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            error = parsed.get("error")
+            if isinstance(error, dict):
+                summary = str(error.get("message") or error.get("detail") or error.get("type") or summary)
+            elif error:
+                summary = str(error)
+            elif parsed.get("message"):
+                summary = str(parsed["message"])
+
+    return summary[:800]
 
 
 def _network_error_code(error: BaseException) -> int | None:
@@ -157,12 +242,18 @@ class ModelRuntime:
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 raw = response.read().decode("utf-8", errors="replace")
+                content_type = response.headers.get("Content-Type", "") if hasattr(response, "headers") else ""
                 try:
                     result = json.loads(raw)
                 except json.JSONDecodeError as exc:
-                    raise RuntimeError(f"模型接口返回的不是 JSON：{raw.strip()[:500] or '空响应'}") from exc
+                    detail = _summarize_http_error(raw, content_type, urllib.parse.urlsplit(endpoint).hostname or "")
+                    raise RuntimeError(f"模型接口返回的不是 JSON：{detail}") from exc
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:2000]
+            detail = _summarize_http_error(
+                exc.read().decode("utf-8", errors="replace"),
+                exc.headers.get("Content-Type", "") if exc.headers else "",
+                urllib.parse.urlsplit(endpoint).hostname or "",
+            )
             raise RuntimeError(f"模型列表返回 HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"无法连接模型列表接口：{exc.reason}") from exc
@@ -236,7 +327,11 @@ class ModelRuntime:
             with urllib.request.urlopen(request, timeout=15) as response:
                 response.read()
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:1000]
+            detail = _summarize_http_error(
+                exc.read().decode("utf-8", errors="replace"),
+                exc.headers.get("Content-Type", "") if exc.headers else "",
+                urllib.parse.urlsplit(endpoint).hostname or "",
+            )
             raise RuntimeError(f"{provider_name} 卸载模型失败 HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
             raise RuntimeError(f"无法连接 {provider_name} 卸载接口：{exc.reason}") from exc
@@ -469,7 +564,11 @@ class ModelRuntime:
                             ) from exc
                 break
             except urllib.error.HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")[:2000]
+                detail = _summarize_http_error(
+                    exc.read().decode("utf-8", errors="replace"),
+                    exc.headers.get("Content-Type", "") if exc.headers else "",
+                    endpoint_host,
+                )
                 if (
                     not is_local
                     and not connection_test

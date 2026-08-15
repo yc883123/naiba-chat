@@ -1601,7 +1601,87 @@ function renderPendingFiles() {
     <span class="file-chip">${file.uploading ? '上传中 · ' : ''}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除">×</button></span>`).join('');
 }
 
+async function sendPlanMessage(textOverride = '') {
+  const input = $('#messageInput');
+  const text = (textOverride || input.value).trim();
+  if (!text || state.abortController || state.taskSubmitting) return;
+  if (state.pendingFiles.some((file) => file.uploading)) {
+    toast('请等待文件上传完成');
+    return;
+  }
+  hideChoiceButtons();
+  if (!state.conversationId) await createConversation();
+  const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
+  state.pendingFiles = [];
+  renderPendingFiles();
+  input.value = '';
+  resizeTextarea();
+  const emptyState = $('#emptyState');
+  if (emptyState) emptyState.hidden = true;
+  const messages = $('#messages');
+  messages.append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
+  const temporary = messageElement({ role: 'assistant', content: '' }, true);
+  messages.append(temporary);
+  scrollToBottom();
+  setBusy(true);
+
+  const controller = new AbortController();
+  state.abortController = controller;
+  try {
+    const response = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
+      body: JSON.stringify({
+        conversation_id: state.conversationId,
+        message: text,
+        attachments,
+        model_key: $('#modelSelect').value,
+        auto_skills: state.autoSkills,
+        skill_ids: state.selectedSkills,
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.error || `HTTP ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        handleChatEvent(JSON.parse(line), temporary);
+      }
+      if (done) break;
+    }
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      temporary.querySelector('.answer-content').innerHTML = '<p>已停止等待，电脑端正在结束当前任务。</p>';
+    } else {
+      temporary.querySelector('.answer-content').innerHTML = `<p>请求失败：${escapeHtml(error.message)}</p>`;
+    }
+  } finally {
+    state.abortController = null;
+    setBusy(false);
+    try {
+      await loadConversations();
+      if (state.conversationId) await openConversation(state.conversationId);
+    } catch (error) {
+      console.error('刷新对话失败', error);
+    }
+  }
+}
+
 async function sendMessage(textOverride = '') {
+  if (currentInteractionMode() === 'plan') {
+    await sendPlanMessage(textOverride);
+    return;
+  }
   const input = $('#messageInput');
   const text = (textOverride || input.value).trim();
   if (!text || state.abortController || state.taskSubmitting) return;
