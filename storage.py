@@ -59,6 +59,10 @@ class ChatStorage:
                 CREATE TABLE IF NOT EXISTS background_tasks (
                     id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL,
+                    kind TEXT NOT NULL DEFAULT 'chat',
+                    interaction_mode TEXT NOT NULL DEFAULT 'craft',
+                    input_message_id TEXT NOT NULL DEFAULT '',
+                    plan_id TEXT NOT NULL DEFAULT '',
                     agent_id TEXT NOT NULL DEFAULT '',
                     agent_name TEXT NOT NULL DEFAULT '',
                     status TEXT NOT NULL,
@@ -77,6 +81,17 @@ class ChatStorage:
                     ON background_tasks(status, updated_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_background_tasks_conversation
                     ON background_tasks(conversation_id, created_at DESC);
+                CREATE TABLE IF NOT EXISTS run_events (
+                    run_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    PRIMARY KEY(run_id, sequence),
+                    FOREIGN KEY(run_id) REFERENCES background_tasks(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_run_events_run
+                    ON run_events(run_id, sequence);
                 CREATE TABLE IF NOT EXISTS plans (
                     id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL,
@@ -115,12 +130,40 @@ class ChatStorage:
                     db.execute(f"SELECT {column} FROM conversations LIMIT 1")
                 except sqlite3.OperationalError:
                     db.execute(f"ALTER TABLE conversations ADD COLUMN {column} {definition}")
+            for column, definition in (
+                ("kind", "TEXT NOT NULL DEFAULT 'chat'"),
+                ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
+                ("input_message_id", "TEXT NOT NULL DEFAULT ''"),
+                ("plan_id", "TEXT NOT NULL DEFAULT ''"),
+            ):
+                try:
+                    db.execute(f"SELECT {column} FROM background_tasks LIMIT 1")
+                except sqlite3.OperationalError:
+                    db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
             now = int(time.time() * 1000)
+            interrupted = db.execute(
+                "SELECT id FROM background_tasks "
+                "WHERE status IN ('queued', 'running', 'waiting', 'cancelling')"
+            ).fetchall()
             db.execute(
                 "UPDATE background_tasks SET status = 'failed', error = ?, updated_at = ?, finished_at = ? "
                 "WHERE status IN ('queued', 'running', 'waiting', 'cancelling')",
-                ("服务重启，任务已中断", now, now),
+                ("服务重启，运行已中断", now, now),
             )
+            for row in interrupted:
+                sequence = db.execute(
+                    "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE run_id = ?",
+                    (row["id"],),
+                ).fetchone()[0]
+                payload = json.dumps(
+                    {"type": "error", "message": "服务重启，运行已中断"},
+                    ensure_ascii=False,
+                )
+                db.execute(
+                    "INSERT INTO run_events(run_id, sequence, event_type, payload, created_at) "
+                    "VALUES (?, ?, 'error', ?, ?)",
+                    (row["id"], sequence, payload, now),
+                )
             # 服务重启时，仍在执行的计划标记为已取消，running 步骤回退为 pending
             stuck_plans = db.execute("SELECT id, steps FROM plans WHERE status = 'building'").fetchall()
             for plan_row in stuck_plans:
@@ -347,15 +390,139 @@ class ChatStorage:
         agent: dict[str, Any],
         snapshot: dict[str, Any],
     ) -> dict[str, Any]:
+        return self.create_run(
+            conversation_id,
+            message,
+            agent,
+            snapshot,
+            interaction_mode=str(snapshot.get("interaction_mode") or "craft"),
+            plan_id=str(snapshot.get("plan_id") or ""),
+        )
+
+    def active_run(self, conversation_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
+                "agent_id, agent_name, status, message, detail, error, cancel_requested, "
+                "created_at, started_at, updated_at, finished_at "
+                "FROM background_tasks WHERE conversation_id = ? "
+                "AND status IN ('queued', 'running', 'waiting', 'cancelling') "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        return self._task_dict(row) if row else None
+
+    def create_chat_run(
+        self,
+        conversation_id: str,
+        message: str,
+        attachments: list[dict[str, Any]],
+        agent: dict[str, Any],
+        snapshot: dict[str, Any],
+        interaction_mode: str,
+        plan_id: str = "",
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Atomically append the user message and create its owning run."""
+        now = int(time.time() * 1000)
+        run_id = uuid.uuid4().hex
+        message_id = uuid.uuid4().hex
+        metadata = {
+            "attachments": attachments,
+            "run_id": run_id,
+            "agent_id": str(agent.get("id") or ""),
+        }
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute(
+                "SELECT id FROM background_tasks WHERE conversation_id = ? "
+                "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if active:
+                raise RuntimeError(f"ACTIVE_RUN:{active['id']}")
+            conversation = db.execute(
+                "SELECT title_customized FROM conversations WHERE id = ?",
+                (conversation_id,),
+            ).fetchone()
+            if not conversation:
+                raise LookupError("对话不存在")
+            db.execute(
+                "INSERT INTO messages(id, conversation_id, role, content, metadata, created_at) "
+                "VALUES (?, ?, 'user', ?, ?, ?)",
+                (message_id, conversation_id, message, json.dumps(metadata, ensure_ascii=False), now),
+            )
+            rows = db.execute(
+                "SELECT id, role, content, metadata, created_at FROM messages "
+                "WHERE conversation_id = ? ORDER BY created_at, rowid",
+                (conversation_id,),
+            ).fetchall()
+            history = [self._message_dict(row) for row in rows]
+            frozen = dict(snapshot)
+            frozen["conversation_messages"] = history
+            db.execute(
+                "INSERT INTO background_tasks("
+                "id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
+                "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at"
+                ") VALUES (?, ?, 'chat', ?, ?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?)",
+                (
+                    run_id,
+                    conversation_id,
+                    interaction_mode,
+                    message_id,
+                    plan_id,
+                    str(agent.get("id") or ""),
+                    str(agent.get("name") or "Agent"),
+                    message,
+                    json.dumps(frozen, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+            db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+            message_count = db.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()[0]
+            if message_count <= 2 and not conversation["title_customized"]:
+                title = " ".join(message.strip().split())[:36] or "新对话"
+                db.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
+        return self.get_background_task(run_id) or {}, history
+
+    def create_run(
+        self,
+        conversation_id: str,
+        message: str,
+        agent: dict[str, Any],
+        snapshot: dict[str, Any],
+        *,
+        kind: str = "chat",
+        interaction_mode: str = "craft",
+        input_message_id: str = "",
+        plan_id: str = "",
+    ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         task_id = uuid.uuid4().hex
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute(
+                "SELECT id FROM background_tasks WHERE conversation_id = ? "
+                "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if active:
+                raise RuntimeError(f"ACTIVE_RUN:{active['id']}")
             db.execute(
-                "INSERT INTO background_tasks(id, conversation_id, agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?)",
+                "INSERT INTO background_tasks("
+                "id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
+                "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?)",
                 (
                     task_id,
                     conversation_id,
+                    kind,
+                    interaction_mode,
+                    input_message_id,
+                    plan_id,
                     str(agent.get("id") or ""),
                     str(agent.get("name") or "Agent"),
                     message,
@@ -365,6 +532,60 @@ class ChatStorage:
                 ),
             )
         return self.get_background_task(task_id) or {}
+
+    def get_run_snapshot(self, run_id: str) -> dict[str, Any] | None:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT snapshot FROM background_tasks WHERE id = ?", (run_id,)
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            value = json.loads(row["snapshot"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            value = {}
+        return value if isinstance(value, dict) else {}
+
+    def append_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        now = int(time.time() * 1000)
+        event_type = str(payload.get("type") or "event")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            exists = db.execute(
+                "SELECT 1 FROM background_tasks WHERE id = ?", (run_id,)
+            ).fetchone()
+            if not exists:
+                raise LookupError("运行不存在")
+            sequence = db.execute(
+                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM run_events WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()[0]
+            db.execute(
+                "INSERT INTO run_events(run_id, sequence, event_type, payload, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (run_id, sequence, event_type, json.dumps(payload, ensure_ascii=False), now),
+            )
+        return {**payload, "run_id": run_id, "sequence": sequence, "created_at": now}
+
+    def list_run_events(self, run_id: str, after: int = 0, limit: int = 500) -> list[dict[str, Any]]:
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT sequence, payload, created_at FROM run_events "
+                "WHERE run_id = ? AND sequence > ? ORDER BY sequence LIMIT ?",
+                (run_id, max(0, int(after)), max(1, min(int(limit), 2000))),
+            ).fetchall()
+        events = []
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                payload = {"type": "error", "message": "运行事件损坏"}
+            if not isinstance(payload, dict):
+                payload = {"type": "error", "message": "运行事件损坏"}
+            events.append(
+                {**payload, "run_id": run_id, "sequence": row["sequence"], "created_at": row["created_at"]}
+            )
+        return events
 
     def update_background_task(
         self,
@@ -380,6 +601,8 @@ class ChatStorage:
         now = int(time.time() * 1000)
         values: dict[str, Any] = {"updated_at": now}
         if status is not None:
+            if status not in {"queued", "running", "waiting", "cancelling", "completed", "failed", "cancelled"}:
+                raise ValueError("非法的 Run 状态")
             values["status"] = status
         if detail is not None:
             values["detail"] = json.dumps(detail, ensure_ascii=False)
@@ -404,7 +627,8 @@ class ChatStorage:
     def get_background_task(self, task_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, conversation_id, agent_id, agent_name, status, message, detail, error, "
+                "SELECT id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
+                "agent_id, agent_name, status, message, detail, error, "
                 "cancel_requested, created_at, started_at, updated_at, finished_at "
                 "FROM background_tasks WHERE id = ?",
                 (task_id,),
@@ -428,7 +652,8 @@ class ChatStorage:
         parameters.append(max(1, min(int(limit), 200)))
         with self._connect() as db:
             rows = db.execute(
-                "SELECT id, conversation_id, agent_id, agent_name, status, message, detail, error, "
+                "SELECT id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
+                "agent_id, agent_name, status, message, detail, error, "
                 "cancel_requested, created_at, started_at, updated_at, finished_at "
                 f"FROM background_tasks {where} ORDER BY created_at DESC LIMIT ?",
                 parameters,

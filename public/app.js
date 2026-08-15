@@ -14,6 +14,9 @@ const state = {
   pendingFiles: [],
   abortController: null,
   chatRunId: '',
+  runConversationId: '',
+  runSequence: 0,
+  runEvents: {},
   taskSubmitting: false,
   conversationSettingsId: '',
   providerEditing: false,
@@ -199,8 +202,8 @@ function messageElement(message, temporary = false) {
 }
 
 function startEditMessage(row) {
-  if (!row || state.abortController) {
-    if (state.abortController) toast('请先停止当前对话再编辑');
+  if (!row || state.chatRunId) {
+    if (state.chatRunId) toast('请先停止当前对话再编辑');
     return;
   }
   const body = row.querySelector('.message-body');
@@ -380,7 +383,7 @@ async function loadTasks() {
     const result = await api('/api/tasks');
     const previous = new Map(state.tasks.map((task) => [task.id, task.status]));
     state.tasks = result.tasks || [];
-    renderTasks();
+    renderRunTasks();
     for (const task of state.tasks) {
       if (previous.has(task.id) && previous.get(task.id) !== task.status && ['completed', 'failed', 'cancelled'].includes(task.status)) {
         if (task.status === 'completed') toast(`${task.agent_name} 的任务已完成`);
@@ -399,57 +402,6 @@ function startTaskSync() {
 
 function taskStatusLabel(status) {
   return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消' })[status] || status;
-}
-
-function renderTasks() {
-  const active = state.tasks.filter((task) => activeTaskStatuses.has(task.status));
-  $('#taskCount').textContent = String(active.length);
-  $('#openTasks').classList.toggle('has-active', active.length > 0);
-  const current = active.filter((task) => task.conversation_id === state.conversationId);
-  const bar = $('#activeTaskBar');
-  bar.hidden = current.length === 0;
-  if (current.length) {
-    const names = [...new Set(current.map((task) => task.agent_name))].join('、');
-    bar.innerHTML = `${escapeHtml(names)} 有 ${current.length} 个任务正在后台执行。<button type="button" data-open-tasks>查看</button>`;
-  }
-  const list = $('#taskList');
-  if (!state.tasks.length) {
-    list.innerHTML = '<div class="task-empty">暂无异步任务</div>';
-    return;
-  }
-  list.innerHTML = state.tasks.map((task) => {
-    const conversation = state.conversations.find((item) => item.id === task.conversation_id);
-    const detail = task.error || task.detail?.message || '';
-    const confirm = task.status === 'waiting' && task.detail?.confirm_id
-      ? `<button class="task-confirm" data-confirm-task="${escapeHtml(task.detail.confirm_id)}">确认</button><button class="task-reject" data-reject-task="${escapeHtml(task.detail.confirm_id)}">拒绝</button>`
-      : '';
-    return `<div class="task-item" data-task-id="${task.id}">
-      <div class="task-title">${escapeHtml(task.message)}</div>
-      <div class="task-meta">${escapeHtml(task.agent_name)} · ${escapeHtml(conversation?.title || '原对话')}</div>
-      <div class="task-detail">${escapeHtml(detail)}</div>
-      <div class="task-actions"><span class="task-status ${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span>${confirm}${activeTaskStatuses.has(task.status) ? '<button class="task-cancel" data-cancel-task>取消</button>' : ''}</div>
-    </div>`;
-  }).join('');
-}
-
-async function cancelTask(taskId) {
-  try {
-    await api(`/api/tasks/${taskId}/cancel`, { method: 'DELETE' });
-    await loadTasks();
-  } catch (error) {
-    toast(`取消失败：${error.message}`);
-  }
-}
-
-async function resolveTaskConfirmation(confirmId, approved) {
-  try {
-    await api(approved ? '/api/tool/confirm' : '/api/tool/reject', {
-      method: 'POST', body: { confirm_id: confirmId },
-    });
-    await loadTasks();
-  } catch (error) {
-    toast(`处理确认失败：${error.message}`);
-  }
 }
 
 // ---- 交互模式（Craft / Plan / Ask） ----
@@ -617,7 +569,10 @@ function planCardMarkup(plan) {
 
 async function executePlan(planId) {
   try {
-    await api(`/api/plans/${planId}/execute`, { method: 'POST', body: {} });
+    const run = await api(`/api/plans/${planId}/execute`, { method: 'POST', body: {} });
+    if (run?.id && run.conversation_id === state.conversationId) {
+      await resumeRun(run);
+    }
     toast('计划已开始执行');
   } catch (error) {
     toast(`执行失败：${error.message}`);
@@ -627,7 +582,7 @@ async function executePlan(planId) {
 
 async function cancelPlan(planId) {
   const plan = state.plans.find((item) => item.id === planId);
-  if (plan?.status === 'prepare' && state.abortController) {
+  if (plan?.status === 'prepare' && state.chatRunId) {
     await cancelCurrentRun();
   }
   try {
@@ -639,9 +594,14 @@ async function cancelPlan(planId) {
 }
 
 async function resolvePlanConfirmation(confirmId, approved) {
+  const runId = String(activePlan()?.detail?.run_id || state.chatRunId || '');
+  if (!runId) {
+    toast('找不到该确认所属的 Run');
+    return;
+  }
   try {
     await api(approved ? '/api/tool/confirm' : '/api/tool/reject', {
-      method: 'POST', body: { confirm_id: confirmId },
+      method: 'POST', body: { run_id: runId, confirm_id: confirmId },
     });
   } catch (error) {
     toast(`处理确认失败：${error.message}`);
@@ -821,7 +781,7 @@ function localProviderKind(provider) {
 }
 
 function updateUnloadModelButton() {
-  const busy = Boolean(state.abortController || state.taskSubmitting);
+  const busy = Boolean(state.chatRunId || state.taskSubmitting);
   const topButton = $('#unloadModel');
   const topKind = localProviderKind(selectedProvider());
   if (topButton) {
@@ -847,7 +807,7 @@ async function unloadProviderModel(provider) {
     toast('当前供应商不是支持卸载的本地模型');
     return;
   }
-  if (state.abortController || state.taskSubmitting) {
+  if (state.chatRunId || state.taskSubmitting) {
     toast('请先等待当前对话结束');
     return;
   }
@@ -1005,6 +965,7 @@ function renderConversations() {
 }
 
 async function createConversation() {
+  detachRunSubscription();
   hideChoiceButtons();
   const conversation = await api('/api/conversations', {
     method: 'POST',
@@ -1024,7 +985,10 @@ async function createConversation() {
 }
 
 async function openConversation(id) {
-  if (id !== state.conversationId) hideChoiceButtons();
+  if (id !== state.conversationId) {
+    detachRunSubscription();
+    hideChoiceButtons();
+  }
   const conversation = await api(`/api/conversations/${id}`);
   state.conversationId = id;
   const index = state.conversations.findIndex((item) => item.id === id);
@@ -1036,7 +1000,8 @@ async function openConversation(id) {
   applyConversationAgent(conversation);
   renderMessages(conversation.messages || []);
   renderModeSwitch();
-  loadPlans();
+  await loadPlans();
+  await resumeConversationRun(id);
   closeSidebar();
 }
 
@@ -1075,6 +1040,47 @@ function startConversationSync() {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') syncCurrentConversation();
   });
+}
+
+function taskModeLabel(task) {
+  if (task.kind === 'plan_execute') return 'Plan 执行';
+  return ({ craft: 'Craft', plan: 'Plan 准备', ask: 'Ask' })[task.interaction_mode] || 'Run';
+}
+
+function taskElapsed(task) {
+  const start = Number(task.started_at || task.created_at || 0);
+  const end = Number(task.finished_at || Date.now());
+  if (!start || end < start) return '';
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  if (seconds < 60) return `${seconds} 秒`;
+  return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
+}
+
+function renderRunTasks() {
+  const active = state.tasks.filter((task) => activeTaskStatuses.has(task.status));
+  $('#taskCount').textContent = String(active.length);
+  $('#openTasks').classList.toggle('has-active', active.length > 0);
+  const current = active.filter((task) => task.conversation_id === state.conversationId);
+  const bar = $('#activeTaskBar');
+  bar.hidden = current.length === 0;
+  if (current.length) {
+    bar.innerHTML = `当前对话有 ${current.length} 个 Run 正在执行。<button type="button" data-open-tasks>查看</button>`;
+  }
+  const list = $('#taskList');
+  if (!state.tasks.length) {
+    list.innerHTML = '<div class="task-empty">暂无异步任务</div>';
+    return;
+  }
+  list.innerHTML = state.tasks.map((task) => {
+    const conversation = state.conversations.find((item) => item.id === task.conversation_id);
+    const detail = task.error || task.detail?.message || '';
+    return `<div class="task-item" data-task-id="${escapeHtml(task.id)}">
+      <div class="task-title">${escapeHtml(task.message)}</div>
+      <div class="task-meta">${escapeHtml(taskModeLabel(task))} · ${escapeHtml(task.agent_name)} · ${escapeHtml(conversation?.title || '原对话')} · ${escapeHtml(taskElapsed(task))}</div>
+      <div class="task-detail">${escapeHtml(detail)}</div>
+      <div class="task-actions"><span class="task-status ${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span></div>
+    </div>`;
+  }).join('');
 }
 
 function startPlanSync() {
@@ -1123,7 +1129,7 @@ async function saveConversationSettings(event) {
 }
 
 async function deleteConversation(id) {
-  if (id === state.conversationId && state.abortController) {
+  if (id === state.conversationId && state.chatRunId) {
     toast('请先停止当前回复再删除对话');
     return;
   }
@@ -1613,38 +1619,149 @@ function renderPendingFiles() {
     <span class="file-chip">${file.uploading ? '上传中 · ' : ''}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除">×</button></span>`).join('');
 }
 
+function detachRunSubscription() {
+  state.abortController?.abort();
+  state.abortController = null;
+  state.chatRunId = '';
+  state.runConversationId = '';
+  state.runSequence = 0;
+  setBusy(false);
+}
+
+function createRunRow(run) {
+  const row = messageElement({ role: 'assistant', content: '' }, true);
+  row.dataset.runId = String(run.id || '');
+  row.dataset.runKind = String(run.kind || 'chat');
+  $('#messages').append(row);
+  scrollToBottom();
+  return row;
+}
+
+async function consumeRunStream(response, row, conversationId, runId, controller) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const event = JSON.parse(line);
+      if (event.type === 'heartbeat') continue;
+      const eventRunId = String(event.run_id || runId || state.chatRunId || '');
+      if (eventRunId) {
+        const cached = state.runEvents[eventRunId] || [];
+        cached.push(event);
+        state.runEvents[eventRunId] = cached.slice(-2000);
+      }
+      state.runSequence = Math.max(state.runSequence, Number(event.sequence || 0));
+      handleChatEvent(event, row, conversationId, runId);
+      if (eventRunId && ['done', 'error', 'cancelled'].includes(event.type)) {
+        delete state.runEvents[eventRunId];
+      }
+    }
+    if (done) break;
+  }
+  if (buffer.trim()) {
+    const event = JSON.parse(buffer);
+    if (event.type !== 'heartbeat') handleChatEvent(event, row, conversationId, runId);
+  }
+}
+
+async function finishRunSubscription(conversationId, controller) {
+  if (state.abortController === controller) {
+    state.abortController = null;
+    state.chatRunId = '';
+    state.runConversationId = '';
+    state.runSequence = 0;
+    setBusy(false);
+  }
+  await loadTasks();
+  if (state.conversationId === conversationId && !state.abortController) {
+    await loadConversations();
+    if (state.conversationId === conversationId) await openConversation(conversationId);
+  }
+}
+
+async function resumeRun(run) {
+  const conversationId = String(run?.conversation_id || '');
+  const runId = String(run?.id || '');
+  if (!runId || conversationId !== state.conversationId) return;
+  detachRunSubscription();
+  const row = createRunRow(run);
+  const controller = new AbortController();
+  state.abortController = controller;
+  state.chatRunId = runId;
+  state.runConversationId = conversationId;
+  const cached = state.runEvents[runId] || [];
+  state.runSequence = Number(cached.at(-1)?.sequence || 0);
+  setBusy(true);
+  cached.forEach((event) => handleChatEvent(event, row, conversationId, runId));
+  void (async () => {
+    try {
+      const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/events?after=${state.runSequence}`, {
+        headers: { Authorization: `Bearer ${state.token}` },
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      await consumeRunStream(response, row, conversationId, runId, controller);
+    } catch (error) {
+      if (error.name !== 'AbortError' && state.conversationId === conversationId) {
+        row.querySelector('.answer-content').innerHTML = `<p>恢复 Run 失败：${escapeHtml(error.message)}</p>`;
+      }
+    } finally {
+      if (state.abortController === controller) await finishRunSubscription(conversationId, controller);
+    }
+  })();
+}
+
+async function resumeConversationRun(conversationId) {
+  if (!conversationId || conversationId !== state.conversationId || state.abortController) return;
+  try {
+    const result = await api(`/api/runs?conversation_id=${encodeURIComponent(conversationId)}&active_only=1`);
+    if (conversationId !== state.conversationId || state.abortController) return;
+    const run = (result.runs || [])[0];
+    if (run) await resumeRun(run);
+    else setBusy(false);
+  } catch (error) {
+    console.debug('[naiba] Run 恢复失败:', error.message);
+  }
+}
+
 async function sendChatMessage(textOverride = '') {
   const input = $('#messageInput');
   const text = (textOverride || input.value).trim();
-  if (!text || state.abortController || state.taskSubmitting) return;
+  if (!text || state.chatRunId || state.abortController || state.taskSubmitting) return;
   if (state.pendingFiles.some((file) => file.uploading)) {
     toast('请等待文件上传完成');
     return;
   }
   hideChoiceButtons();
   if (!state.conversationId) await createConversation();
+  const conversationId = state.conversationId;
   const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
   state.pendingFiles = [];
   renderPendingFiles();
   input.value = '';
   resizeTextarea();
-  const emptyState = $('#emptyState');
-  if (emptyState) emptyState.hidden = true;
-  const messages = $('#messages');
-  messages.append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
-  const temporary = messageElement({ role: 'assistant', content: '' }, true);
-  messages.append(temporary);
-  scrollToBottom();
-  setBusy(true);
-
+  if ($('#emptyState')) $('#emptyState').hidden = true;
+  $('#messages').append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
+  const row = createRunRow({ id: '', kind: 'chat' });
   const controller = new AbortController();
   state.abortController = controller;
+  state.runConversationId = conversationId;
+  setBusy(true);
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
       body: JSON.stringify({
-        conversation_id: state.conversationId,
+        conversation_id: conversationId,
         message: text,
         attachments,
         model_key: $('#modelSelect').value,
@@ -1654,39 +1771,22 @@ async function sendChatMessage(textOverride = '') {
       signal: controller.signal,
     });
     if (!response.ok) {
-      const error = await response.json().catch(() => ({}));
-      throw new Error(error.error || `HTTP ${response.status}`);
-    }
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        handleChatEvent(JSON.parse(line), temporary);
+      const payload = await response.json().catch(() => ({}));
+      if (response.status === 409 && payload.active_run_id) {
+        detachRunSubscription();
+        if (state.conversationId === conversationId) await openConversation(conversationId);
+        toast('当前对话已有 Run，已恢复其进度');
+        return;
       }
-      if (done) break;
+      throw new Error(payload.error || `HTTP ${response.status}`);
     }
+    await consumeRunStream(response, row, conversationId, state.chatRunId, controller);
   } catch (error) {
-    if (error.name === 'AbortError') {
-      temporary.querySelector('.answer-content').innerHTML = '<p>已停止等待，电脑端正在结束当前任务。</p>';
-    } else {
-      temporary.querySelector('.answer-content').innerHTML = `<p>请求失败：${escapeHtml(error.message)}</p>`;
+    if (error.name !== 'AbortError' && state.conversationId === conversationId) {
+      row.querySelector('.answer-content').innerHTML = `<p>请求失败：${escapeHtml(error.message)}</p>`;
     }
   } finally {
-    state.chatRunId = '';
-    state.abortController = null;
-    setBusy(false);
-    try {
-      await loadConversations();
-      if (state.conversationId) await openConversation(state.conversationId);
-    } catch (error) {
-      console.error('刷新对话失败', error);
-    }
+    if (state.abortController === controller) await finishRunSubscription(conversationId, controller);
   }
 }
 
@@ -1694,10 +1794,13 @@ async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
 }
 
-function handleChatEvent(event, row) {
+function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
+  if (conversationId !== state.conversationId) return;
   const answer = row.querySelector('.answer-content');
   if (event.type === 'run_started') {
     state.chatRunId = String(event.run_id || '');
+    state.runConversationId = conversationId;
+    row.dataset.runId = state.chatRunId;
   } else if (event.type === 'status') {
     answer.innerHTML = `<div class="activity">${escapeHtml(event.message)}</div>`;
     $('#runtimeStatus').textContent = event.message;
@@ -1751,8 +1854,8 @@ function handleChatEvent(event, row) {
           ${toolArguments ? `<div class="tool-confirm-args"><pre>${escapeHtml(toolArguments)}</pre></div>` : ''}
         </div>
         <div class="tool-confirm-actions">
-          <button class="tool-confirm-btn tool-confirm-reject" onclick="rejectTool('${escapeHtml(confirmId)}')">拒绝</button>
-          <button class="tool-confirm-btn tool-confirm-approve" onclick="approveTool('${escapeHtml(confirmId)}')">允许执行</button>
+          <button class="tool-confirm-btn tool-confirm-reject" onclick="rejectTool('${escapeHtml(confirmId)}', '${escapeHtml(event.run_id || runId)}')">拒绝</button>
+          <button class="tool-confirm-btn tool-confirm-approve" onclick="approveTool('${escapeHtml(confirmId)}', '${escapeHtml(event.run_id || runId)}')">允许执行</button>
         </div>
       </div>`;
     stack.insertAdjacentHTML('beforeend', confirmMarkup);
@@ -1763,10 +1866,14 @@ function handleChatEvent(event, row) {
   } else if (event.type === 'cancelled') {
     answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
   } else if (event.type === 'done') {
-    try {
-      row.replaceWith(messageElement(event.message));
-    } catch (error) {
-      console.error('[naiba] done 事件渲染崩溃:', error, 'message=', event.message);
+    if (event.message) {
+      try {
+        row.replaceWith(messageElement(event.message));
+      } catch (error) {
+        console.error('[naiba] done 事件渲染崩溃:', error, 'message=', event.message);
+      }
+    } else {
+      answer.innerHTML = '<p>计划执行完成</p>';
     }
     $('#runtimeStatus').textContent = '就绪';
   } else if (event.type === 'error') {
@@ -1888,13 +1995,15 @@ function hideChoiceButtons() {
   if (existing) existing.remove();
 }
 
-async function approveTool(confirmId) {
+async function approveTool(confirmId, runId = state.chatRunId) {
   try {
     const confirmEl = document.querySelector(`[data-confirm-id="${confirmId}"]`);
     if (confirmEl) {
       confirmEl.querySelector('.tool-confirm-actions').innerHTML = '<div class="tool-confirm-status">正在执行...</div>';
     }
-    const response = await api('/api/tool/confirm', { method: 'POST', body: { confirm_id: confirmId } });
+    const response = await api('/api/tool/confirm', {
+      method: 'POST', body: { run_id: runId, confirm_id: confirmId },
+    });
     if (confirmEl) {
       confirmEl.querySelector('.tool-confirm-status').textContent = response.success ? '已执行' : `执行失败：${response.result}`;
     }
@@ -1903,13 +2012,15 @@ async function approveTool(confirmId) {
   }
 }
 
-async function rejectTool(confirmId) {
+async function rejectTool(confirmId, runId = state.chatRunId) {
   try {
     const confirmEl = document.querySelector(`[data-confirm-id="${confirmId}"]`);
     if (confirmEl) {
       confirmEl.querySelector('.tool-confirm-actions').innerHTML = '<div class="tool-confirm-status">已拒绝</div>';
     }
-    const response = await api('/api/tool/reject', { method: 'POST', body: { confirm_id: confirmId } });
+    const response = await api('/api/tool/reject', {
+      method: 'POST', body: { run_id: runId, confirm_id: confirmId },
+    });
     if (confirmEl) confirmEl.querySelector('.tool-confirm-status').textContent = response.result || '已拒绝';
   } catch (error) {
     toast(`拒绝失败：${error.message}`);
@@ -1938,7 +2049,6 @@ async function cancelCurrentRun() {
       console.debug('[naiba] cancel chat failed:', error.message);
     }
   }
-  state.abortController?.abort();
 }
 
 function resizeTextarea() {
@@ -2002,13 +2112,8 @@ function bindEvents() {
   $('#taskList').addEventListener('click', (event) => {
     const item = event.target.closest('[data-task-id]');
     if (!item) return;
-    if (event.target.closest('[data-cancel-task]')) cancelTask(item.dataset.taskId);
-    else if (event.target.closest('[data-confirm-task]')) resolveTaskConfirmation(event.target.closest('[data-confirm-task]').dataset.confirmTask, true);
-    else if (event.target.closest('[data-reject-task]')) resolveTaskConfirmation(event.target.closest('[data-reject-task]').dataset.rejectTask, false);
-    else {
-      const task = state.tasks.find((value) => value.id === item.dataset.taskId);
-      if (task) { $('#tasksDialog').close(); openConversation(task.conversation_id); }
-    }
+    const task = state.tasks.find((value) => value.id === item.dataset.taskId);
+    if (task) { $('#tasksDialog').close(); openConversation(task.conversation_id); }
   });
   $('#mcpStatus').addEventListener('click', () => {
     $('#settingsDialog').showModal();
@@ -2036,9 +2141,9 @@ function bindEvents() {
     sendMessage();
   });
   $('#sendButton').addEventListener('click', (event) => {
-    if (!state.abortController) return;
+    if (!state.chatRunId && !state.abortController) return;
     event.preventDefault();
-    cancelCurrentRun();
+    if (state.chatRunId) cancelCurrentRun();
   });
   $('#messageInput').addEventListener('input', resizeTextarea);
   $('#messageInput').addEventListener('keydown', (event) => {

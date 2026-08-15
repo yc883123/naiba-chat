@@ -973,22 +973,22 @@ class ConversationInteractionHistoryTests(unittest.TestCase):
 
     def test_enabled_skills_are_saved_and_rendered_with_messages(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
-        server_source = Path("server.py").read_text(encoding="utf-8")
+        run_source = Path("async_tasks.py").read_text(encoding="utf-8")
 
         self.assertIn("skillMarkup(metadata.skills)", source)
-        self.assertIn('"skills": enabled_skills', server_source)
-        self.assertIn('{"error": True, "skills": enabled_skills}', server_source)
+        self.assertIn('"skills": skills', run_source)
+        self.assertIn('{"error": True, "skills": skills, "run_id": run_id}', run_source)
 
 
 class ModelSelectionTests(unittest.TestCase):
     def test_frontend_restores_the_saved_provider(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
-        server_source = Path("server.py").read_text(encoding="utf-8")
+        run_source = Path("async_tasks.py").read_text(encoding="utf-8")
 
         self.assertIn("state.bootstrap.settings?.provider_id", source)
         self.assertIn("select.value = saved", source)
-        self.assertIn('model_key.startswith("online:")', server_source)
-        self.assertIn('update_settings({"provider_id": provider_id})', server_source)
+        self.assertIn("body: { provider_id: providerId }", source)
+        self.assertIn('model_key = str(snapshot.get("model_key") or "")', run_source)
 
     def test_local_provider_controls_use_the_selected_request_format(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
@@ -1014,8 +1014,9 @@ class ModelSelectionTests(unittest.TestCase):
 class PublicRepositoryHygieneTests(unittest.TestCase):
     def test_background_tasks_preserve_uploaded_image_metadata(self) -> None:
         source = Path("async_tasks.py").read_text(encoding="utf-8")
-        self.assertIn("from server import build_model_history", source)
-        self.assertIn("history = build_model_history(conversation.get(\"messages\", []))", source)
+        self.assertIn("from server import _detect_choice_groups, build_model_history, extract_attachments", source)
+        self.assertIn('history = build_model_history(snapshot.get("conversation_messages") or [])', source)
+        self.assertIn('uploads = snapshot.get("attachments") or []', source)
 
     def test_example_config_and_bundled_skills_exclude_private_runtime_data(self) -> None:
         example = Path("config.example.json").read_text(encoding="utf-8")

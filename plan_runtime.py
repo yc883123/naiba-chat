@@ -362,37 +362,52 @@ class PlanManager:
         return updated
 
     # ---- 执行 ----
-    def execute(self, plan_id: str) -> dict[str, Any]:
-        """开始或继续执行：从第一个未完成步骤继续。"""
+    def validate_execution(self, plan_id: str) -> dict[str, Any]:
+        """Validate that a plan can start without mutating its state."""
+        plan = self.app.storage.get_plan(plan_id)
+        if not plan:
+            raise LookupError("计划不存在")
+        status = plan.get("status")
+        if status == "building":
+            raise ValueError("计划已在执行中")
+        if status not in self.EXECUTABLE_STATUSES:
+            names = {"prepare": "方案尚未生成", "finished": "计划已完成"}
+            raise ValueError(names.get(status, f"当前状态（{status}）不能执行"))
+        steps = plan.get("steps") or []
+        if not steps:
+            raise ValueError("计划没有可执行的步骤")
+        if all(step.get("status") == "done" for step in steps):
+            raise ValueError("所有步骤已完成")
+        return plan
+
+    def prepare_execution(self, plan_id: str, run_id: str = "") -> dict[str, Any]:
+        """Move a validated plan into building state for its owning run."""
         with self._lock:
-            plan = self.app.storage.get_plan(plan_id)
-            if not plan:
-                raise LookupError("计划不存在")
-            status = plan.get("status")
-            if status == "building":
-                raise ValueError("计划已在执行中")
-            if status not in self.EXECUTABLE_STATUSES:
-                names = {"prepare": "方案尚未生成", "finished": "计划已完成"}
-                raise ValueError(names.get(status, f"当前状态（{status}）不能执行"))
+            plan = self.validate_execution(plan_id)
             steps = plan.get("steps") or []
-            if not steps:
-                raise ValueError("计划没有可执行的步骤")
-            if all(step.get("status") == "done" for step in steps):
-                raise ValueError("所有步骤已完成")
             for step in steps:
                 if step.get("status") in {"running", "failed"}:
                     step["status"] = "pending"
                     step["summary"] = ""
-            cancel_event = threading.Event()
-            self._cancel_events[plan_id] = cancel_event
             updated = self.app.storage.update_plan(
                 plan_id,
                 status="building",
                 steps=steps,
                 error="",
-                detail={"message": "准备执行计划"},
+                detail={"message": "准备执行计划", "run_id": run_id},
                 started=not plan.get("started_at"),
             )
+            if updated:
+                self.archive(updated)
+            return updated or plan
+
+    def execute(self, plan_id: str) -> dict[str, Any]:
+        """Legacy in-process entry used by tests; the server uses ConversationRunManager."""
+        with self._lock:
+            self.validate_execution(plan_id)
+            cancel_event = threading.Event()
+            self._cancel_events[plan_id] = cancel_event
+            updated = self.prepare_execution(plan_id)
             thread = threading.Thread(
                 target=self._execute_loop,
                 args=(plan_id, cancel_event),
@@ -401,9 +416,24 @@ class PlanManager:
             )
             self._threads[plan_id] = thread
             thread.start()
-            if updated:
-                self.archive(updated)
-            return updated or plan
+            return updated
+
+    def run_execution(
+        self,
+        plan_id: str,
+        cancel_event: threading.Event,
+        event: Callable[[dict[str, Any]], None],
+        snapshot: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        """Run an already-prepared plan inside its ConversationRunManager thread."""
+        self._execute_loop(
+            plan_id,
+            cancel_event,
+            external_event=event,
+            manage_registry=False,
+            execution_snapshot=snapshot,
+        )
+        return self.app.storage.get_plan(plan_id)
 
     def cancel(self, plan_id: str) -> dict[str, Any]:
         with self._lock:
@@ -418,6 +448,10 @@ class PlanManager:
             event = self._cancel_events.get(plan_id)
             if event:
                 event.set()
+            elif status == "building":
+                runs = getattr(self.app, "runs", None)
+                if runs is not None:
+                    runs.cancel_plan(plan_id)
             if status in {"prepare", "ready"}:
                 updated = self.app.storage.update_plan(
                     plan_id, status="cancelled", detail={"message": "已取消"}, finished=True
@@ -432,10 +466,25 @@ class PlanManager:
             )
             return updated or plan
 
-    def _execute_loop(self, plan_id: str, cancel_event: threading.Event) -> None:
+    def _execute_loop(
+        self,
+        plan_id: str,
+        cancel_event: threading.Event,
+        external_event: Callable[[dict[str, Any]], None] | None = None,
+        manage_registry: bool = True,
+        execution_snapshot: dict[str, Any] | None = None,
+    ) -> None:
+        initial = self.app.storage.get_plan(plan_id) or {}
+        run_id = str((initial.get("detail") or {}).get("run_id") or "")
+
+        def detail_with_run(detail: dict[str, Any]) -> dict[str, Any]:
+            return {**detail, **({"run_id": run_id} if run_id else {})}
+
         def event(payload: dict[str, Any]) -> None:
             if cancel_event.is_set():
                 raise TaskCancelled("计划已取消")
+            if external_event is not None:
+                external_event(payload)
             kind = str(payload.get("type") or "")
             detail: dict[str, Any] | None = None
             if kind == "status":
@@ -454,7 +503,7 @@ class PlanManager:
                 detail = {"message": f"工具 {payload.get('tool') or ''} 执行完毕"}
             if detail is not None:
                 try:
-                    self.app.storage.update_plan(plan_id, detail=detail)
+                    self.app.storage.update_plan(plan_id, detail=detail_with_run(detail))
                 except Exception:
                     pass
 
@@ -477,15 +526,25 @@ class PlanManager:
                 self.app.storage.update_plan(
                     plan_id,
                     steps=steps,
-                    detail={"message": f"正在执行第 {next_index + 1}/{len(steps)} 步：{step.get('title')}"},
+                    detail=detail_with_run(
+                        {"message": f"正在执行第 {next_index + 1}/{len(steps)} 步：{step.get('title')}"}
+                    ),
                 )
-                summary = self._step_runner(plan, step, next_index, len(steps), cancel_event, event)
+                if execution_snapshot is not None and self._step_runner == self._run_step_with_agent:
+                    summary = self._run_step_with_agent(
+                        plan, step, next_index, len(steps), cancel_event, event, execution_snapshot
+                    )
+                else:
+                    summary = self._step_runner(plan, step, next_index, len(steps), cancel_event, event)
                 step["status"] = "done"
                 step["summary"] = re.sub(r"\s+", " ", str(summary or "")).strip()[:500]
                 self.app.storage.update_plan(plan_id, steps=steps)
                 self.archive(self.app.storage.get_plan(plan_id) or plan)
             finished = self.app.storage.update_plan(
-                plan_id, status="finished", detail={"message": "计划已完成"}, finished=True
+                plan_id,
+                status="finished",
+                detail=detail_with_run({"message": "计划已完成"}),
+                finished=True,
             )
             if finished:
                 self.archive(finished)
@@ -497,7 +556,11 @@ class PlanManager:
                     if step.get("status") == "running":
                         step["status"] = "pending"
                 updated = self.app.storage.update_plan(
-                    plan_id, status="cancelled", steps=steps, detail={"message": "已取消"}, finished=True
+                    plan_id,
+                    status="cancelled",
+                    steps=steps,
+                    detail=detail_with_run({"message": "已取消"}),
+                    finished=True,
                 )
                 if updated:
                     self.archive(updated)
@@ -514,15 +577,16 @@ class PlanManager:
                     status="failed",
                     steps=steps,
                     error=str(exc),
-                    detail={"message": f"执行失败：{exc}"},
+                    detail=detail_with_run({"message": f"执行失败：{exc}"}),
                     finished=True,
                 )
                 if updated:
                     self.archive(updated)
         finally:
-            with self._lock:
-                self._cancel_events.pop(plan_id, None)
-                self._threads.pop(plan_id, None)
+            if manage_registry:
+                with self._lock:
+                    self._cancel_events.pop(plan_id, None)
+                    self._threads.pop(plan_id, None)
 
     def _run_step_with_agent(
         self,
@@ -532,25 +596,28 @@ class PlanManager:
         total: int,
         cancel_event: threading.Event,
         event: Callable[[dict[str, Any]], None],
+        snapshot: dict[str, Any] | None = None,
     ) -> str:
         """默认步骤执行器：以 Craft 能力运行 SkillAgent 完成单个步骤。"""
-        from model_runtime import ModelRuntime
         from server import build_model_history
 
         conversation_id = str(plan.get("conversation_id") or "")
         conversation = self.app.storage.get_conversation(conversation_id)
         if not conversation:
             raise RuntimeError("发起计划的对话已删除")
-        history = build_model_history(conversation.get("messages", []))
-        provider_id = str(conversation.get("provider_id") or "")
+        frozen = snapshot or {}
+        history = build_model_history(frozen.get("conversation_messages") or conversation.get("messages", []))
+        provider_id = str(frozen.get("provider_id") or conversation.get("provider_id") or "")
         profile = self.app.config.profile(f"online:{provider_id}" if provider_id else "")
-        options = self.app.config.generation_options()
-        options["stream"] = bool(conversation.get("stream_enabled", 1))
-        agent = self.app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
+        options = dict(frozen.get("generation_options") or self.app.config.generation_options())
+        options["stream"] = bool(frozen.get("stream_enabled", conversation.get("stream_enabled", 1)))
+        agent = frozen.get("agent") or self.app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
         agent_prompt = str(agent.get("system_prompt") or "").strip() or str(
             self.app.config.data.get("agent_system_prompt", "")
         )
-        conversation_prompt = str(conversation.get("system_prompt") or "").strip()
+        conversation_prompt = str(
+            frozen.get("conversation_system_prompt", conversation.get("system_prompt") or "")
+        ).strip()
         combined_prompt = "\n\n".join(item for item in (agent_prompt, conversation_prompt) if item)
         done_steps = [
             item for item in (plan.get("steps") or []) if item.get("status") == "done"
@@ -567,8 +634,10 @@ class PlanManager:
             f"{step.get('detail') or ''}\n\n"
             "请专注完成当前步骤；完成后用中文简要汇报该步骤结果（不超过 3 句话）。"
         )
-        allowed_tools = resolve_mode_tools("craft", [str(t) for t in self.app.config.data.get("agent_tools", [])])
-        worker = SkillAgent(self.app.catalog, CraftToolExecutor(self.app.executor), ModelRuntime().complete)
+        allowed_tools = [str(item) for item in frozen.get("allowed_tools") or resolve_mode_tools(
+            "craft", [str(t) for t in self.app.config.data.get("agent_tools", [])]
+        )]
+        worker = SkillAgent(self.app.catalog, CraftToolExecutor(self.app.executor), self.app.models.complete)
         selected = [str(item) for item in agent.get("skill_ids", [])]
         content, runs, reasonings, usage = worker.run(
             instruction,

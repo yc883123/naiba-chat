@@ -12,7 +12,6 @@
   "max_tokens": 8192,
   "context_size": 8192,
   "gpu_layers": -1,
-  "max_agent_steps": 8,
   "agent_system_prompt": "",
   "permission_mode": "confirm",
   "agent_tools": [

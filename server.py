@@ -42,7 +42,7 @@ from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
 from plan_runtime import ASK_MODE_PROMPT, CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
 from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor
-from async_tasks import BackgroundTaskManager
+from async_tasks import ActiveRunError, ConversationRunManager
 from storage import ChatStorage
 from updater import UpdateManager
 
@@ -816,36 +816,16 @@ class NaibaChatApp:
             permission_mode=self.config.data.get("permission_mode", "confirm"),
             mcp_register=self.register_mcp_server,
         )
-        self.tasks = BackgroundTaskManager(self)
         self.plans = PlanManager(self)
-        self._chat_runs: dict[str, threading.Event] = {}
-        self._chat_runs_lock = threading.RLock()
+        self.runs = ConversationRunManager(self)
+        self.tasks = self.runs
         self.updater = UpdateManager(APP_DIR, DATA_DIR)
         self.update_restart_callback = None
 
     def stop(self) -> None:
-        with self._chat_runs_lock:
-            for event in self._chat_runs.values():
-                event.set()
-            self._chat_runs.clear()
+        self.runs.shutdown()
         self.plans.shutdown()
         self.mcp.stop()
-
-    def register_chat_run(self, run_id: str, cancel_event: threading.Event) -> None:
-        with self._chat_runs_lock:
-            self._chat_runs[run_id] = cancel_event
-
-    def cancel_chat_run(self, run_id: str) -> bool:
-        with self._chat_runs_lock:
-            event = self._chat_runs.get(run_id)
-            if event:
-                event.set()
-                return True
-        return False
-
-    def finish_chat_run(self, run_id: str) -> None:
-        with self._chat_runs_lock:
-            self._chat_runs.pop(run_id, None)
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         if str(values.get("id") or "").strip() == "comfyui":
@@ -926,6 +906,24 @@ class RequestHandler(BaseHTTPRequestHandler):
             conversation_id = query.get("conversation_id", [""])[0]
             active_only = query.get("active_only", ["0"])[0] == "1"
             self._json({"tasks": APP.tasks.list(conversation_id, active_only)})
+        elif path == "/api/runs":
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation_id = query.get("conversation_id", [""])[0]
+            active_only = query.get("active_only", ["0"])[0] == "1"
+            self._json({"runs": APP.runs.list(conversation_id, active_only)})
+        elif path.startswith("/api/runs/") and path.endswith("/events"):
+            run_id = path.split("/")[-2]
+            query = urllib.parse.parse_qs(parsed.query)
+            try:
+                after = max(0, int(query.get("after", ["0"])[0]))
+            except ValueError:
+                self._json({"error": "after 必须是整数"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._stream_run(run_id, after)
+        elif path.startswith("/api/runs/"):
+            run_id = path.rsplit("/", 1)[-1]
+            run = APP.runs.get(run_id)
+            self._json(run or {"error": "运行不存在"}, HTTPStatus.OK if run else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/tasks/"):
             task_id = path.rsplit("/", 1)[-1]
             task = APP.storage.get_background_task(task_id)
@@ -1091,12 +1089,21 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not run_id:
                 self._json({"error": "run_id 不能为空"}, HTTPStatus.BAD_REQUEST)
             else:
-                self._json({"cancelled": APP.cancel_chat_run(run_id)})
+                run = APP.runs.cancel(run_id)
+                self._json(
+                    {"cancelled": bool(run), "run": run},
+                    HTTPStatus.OK if run else HTTPStatus.NOT_FOUND,
+                )
         elif path == "/api/chat":
             self._chat(body)
         elif path == "/api/tasks":
             try:
                 self._json(APP.tasks.submit(body), HTTPStatus.ACCEPTED)
+            except ActiveRunError as exc:
+                self._json(
+                    {"error": str(exc), "active_run_id": exc.run_id},
+                    HTTPStatus.CONFLICT,
+                )
             except LookupError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
             except (ValueError, TypeError) as exc:
@@ -1108,7 +1115,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/plans/") and path.endswith("/execute"):
             plan_id = path.split("/")[-2]
             try:
-                self._json(APP.plans.execute(plan_id))
+                self._json(APP.runs.submit_plan(plan_id), HTTPStatus.ACCEPTED)
+            except ActiveRunError as exc:
+                self._json(
+                    {"error": str(exc), "active_run_id": exc.run_id},
+                    HTTPStatus.CONFLICT,
+                )
             except LookupError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
             except ValueError as exc:
@@ -1509,168 +1521,77 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._json({"ok": True, "removed": removed, "attachments": (target.get("metadata") or {}).get("attachments") or []})
 
     def _chat(self, body: dict[str, Any]) -> None:
-        conversation_id = str(body.get("conversation_id") or "")
-        message = str(body.get("message") or "").strip()
-        uploads = body.get("attachments") or []
-        if not conversation_id or not message:
-            self._json({"error": "conversation_id 和 message 不能为空"}, HTTPStatus.BAD_REQUEST)
+        try:
+            run = APP.runs.submit_chat(body)
+        except ActiveRunError as exc:
+            self._json(
+                {"error": str(exc), "active_run_id": exc.run_id},
+                HTTPStatus.CONFLICT,
+            )
             return
-        conversation = APP.storage.get_conversation(conversation_id)
-        if not conversation:
-            self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
+        except LookupError as exc:
+            self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
             return
-        run_id = uuid.uuid4().hex
-        cancel_event = threading.Event()
-        APP.register_chat_run(run_id, cancel_event)
-        if uploads:
-            upload_lines = [f"[用户上传文件：{item.get('path')}]" for item in uploads if item.get("path")]
-            effective_message = message + "\n" + "\n".join(upload_lines)
-        else:
-            effective_message = message
-        APP.storage.add_message(conversation_id, "user", message, {"attachments": uploads})
-        conversation_messages = APP.storage.get_conversation(conversation_id)["messages"]
-        history = build_model_history(conversation_messages)
+        except (ValueError, TypeError) as exc:
+            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        self._stream_run(str(run["id"]), 0, known_run=run)
 
+    def _stream_run(
+        self,
+        run_id: str,
+        after: int = 0,
+        known_run: dict[str, Any] | None = None,
+    ) -> None:
+        run = known_run or APP.runs.get(run_id)
+        if not run:
+            self._json({"error": "运行不存在"}, HTTPStatus.NOT_FOUND)
+            return
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Connection", "close")
         self.end_headers()
         self.close_connection = True
-
-        client_connected = True
-        enabled_skills: list[dict[str, str]] = []
-
-        def event(payload: dict[str, Any]) -> None:
-            nonlocal client_connected, enabled_skills
-            if payload.get("type") == "skills" and isinstance(payload.get("skills"), list):
-                enabled_skills = [
-                    {"id": str(item.get("id") or ""), "name": str(item.get("name") or "")}
-                    for item in payload["skills"]
-                    if isinstance(item, dict) and item.get("name")
-                ]
-            if not client_connected:
-                return
-            try:
-                self.wfile.write((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-                self.wfile.flush()
-            except OSError:
-                client_connected = False
-                cancel_event.set()
-
+        sequence = max(0, int(after))
         try:
-            event({"type": "run_started", "run_id": run_id})
-            model_key = str(body.get("model_key") or "")
-            profile = APP.config.profile(model_key)
-            if model_key.startswith("online:"):
-                provider_id = model_key[7:]
-                if provider_id and APP.config.data.get("provider_id") != provider_id:
-                    APP.config.update_settings({"provider_id": provider_id})
-                if provider_id and conversation.get("provider_id") != provider_id:
-                    APP.storage.update_conversation_settings(conversation_id, provider_id=provider_id)
-            options = APP.config.generation_options()
-            options["stream"] = bool(conversation.get("stream_enabled", 1))
-            auto_skills = bool(body.get("auto_skills", False))
-
-            def logger(tool: str, arguments: dict[str, Any], result: str, success: bool) -> None:
-                APP.storage.log_tool_run(conversation_id, tool, arguments, result, success)
-
-            # 交互模式：craft 全量工具；ask 只读；plan 准备阶段只读、确认后由计划执行器运行
-            interaction_mode = str(conversation.get("interaction_mode") or "craft")
-            if interaction_mode not in ("craft", "plan", "ask"):
-                interaction_mode = "craft"
-            allowed_tools = resolve_mode_tools(
-                interaction_mode, [str(tool) for tool in APP.config.data.get("agent_tools", [])]
-            )
-            # 解析当前对话绑定的 Agent；Agent 缺失时回退到默认 Agent，再回退到旧全局提示词。
-            agent = APP.config.get_agent(str(conversation.get("agent_id") or ""))
-            if agent is None:
-                agent = APP.config.get_agent(APP.config.default_agent_id())
-            agent_skill_ids = [str(item) for item in (agent or {}).get("skill_ids", [])]
-            selected_ids = list(dict.fromkeys(agent_skill_ids + [str(item) for item in body.get("skill_ids", [])]))
-            agent_prompt = str((agent or {}).get("system_prompt") or "").strip() or str(
-                APP.config.data.get("agent_system_prompt", "")
-            )
-            conversation_prompt = str(conversation.get("system_prompt") or "").strip()
-            combined_prompt = "\n\n".join(item for item in (agent_prompt.strip(), conversation_prompt) if item)
-            plan_id = ""
-            if interaction_mode == "ask":
-                combined_prompt = (combined_prompt + "\n\n" + ASK_MODE_PROMPT).strip()
-            elif interaction_mode == "plan":
-                plan_id = str(APP.plans.ensure_active_plan(conversation_id, message)["id"])
-                combined_prompt = (combined_prompt + "\n\n" + APP.plans.prepare_prompt(APP.plans.get(plan_id))).strip()
-            chat_executor = (
-                CraftToolExecutor(APP.executor)
-                if interaction_mode == "craft"
-                else ReadOnlyToolExecutor(APP.executor)
-            )
-            chat_agent = SkillAgent(APP.catalog, chat_executor, APP.models.complete)
-            response, runs, reasonings, usage = chat_agent.run(
-                effective_message,
-                history,
-                profile,
-                options,
-                auto_skills,
-                selected_ids,
-                combined_prompt,
-                allowed_tools,
-                event,
-                logger,
-                cancel_event,
-            )
-            plan_status = ""
-            if interaction_mode == "plan" and plan_id:
-                response, plan = APP.plans.process_response(plan_id, response)
-                plan_status = str((plan or {}).get("status") or "")
-            attachments = extract_attachments(runs)
-            choice_groups = _detect_choice_groups(response)
-            choices = choice_groups[0]["choices"] if choice_groups else []
-            metadata = {
-                "skills": enabled_skills,
-                "tool_runs": runs,
-                "attachments": attachments,
-                "reasoning": reasonings,
-                "usage": usage,
-                "choices": choices,
-                "choice_groups": choice_groups,
-                "interaction_mode": interaction_mode,
-                "plan_id": plan_id,
-                "plan_status": plan_status,
-            }
-            saved = APP.storage.add_message(conversation_id, "assistant", response, metadata)
-            if choices:
-                event({"type": "choice", "choices": choices, "choice_groups": choice_groups})
-            event({"type": "done", "message": saved})
-        except TaskCancelled:
-            event({"type": "cancelled", "message": "任务已取消"})
-        except Exception as exc:
-            traceback.print_exc()
-            error_message = str(exc)
-            try:
-                APP.storage.add_message(
-                    conversation_id,
-                    "error",
-                    f"请求失败：{error_message}",
-                    {"error": True, "skills": enabled_skills},
-                )
-            except Exception:
-                traceback.print_exc()
-            event({"type": "error", "message": error_message})
-        finally:
-            APP.finish_chat_run(run_id)
+            while True:
+                events = APP.runs.wait_for_events(run_id, sequence, timeout=15.0)
+                for event in events:
+                    self.wfile.write((json.dumps(event, ensure_ascii=False) + "\n").encode("utf-8"))
+                    self.wfile.flush()
+                    sequence = max(sequence, int(event.get("sequence") or 0))
+                current = APP.runs.get(run_id)
+                if not current or current.get("status") in APP.runs.TERMINAL:
+                    if not APP.runs.events_after(run_id, sequence):
+                        break
+                if not events:
+                    self.wfile.write(b'{"type":"heartbeat"}\n')
+                    self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            # Detaching a stream never cancels its conversation-owned run.
+            return
 
     def _confirm_tool(self, body: dict[str, Any]) -> None:
         confirm_id = str(body.get("confirm_id") or "").strip()
-        if not confirm_id:
-            self._json({"error": "confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+        run_id = str(body.get("run_id") or "").strip()
+        if not confirm_id or not run_id:
+            self._json({"error": "run_id 和 confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            return
+        if not APP.runs.owns_confirmation(run_id, confirm_id):
+            self._json({"error": "确认请求不属于该运行或已失效"}, HTTPStatus.CONFLICT)
             return
         success, result = APP.executor.confirm_execute(confirm_id)
         self._json({"success": success, "result": result})
 
     def _reject_tool(self, body: dict[str, Any]) -> None:
         confirm_id = str(body.get("confirm_id") or "").strip()
-        if not confirm_id:
-            self._json({"error": "confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+        run_id = str(body.get("run_id") or "").strip()
+        if not confirm_id or not run_id:
+            self._json({"error": "run_id 和 confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            return
+        if not APP.runs.owns_confirmation(run_id, confirm_id):
+            self._json({"error": "确认请求不属于该运行或已失效"}, HTTPStatus.CONFLICT)
             return
         success, result = APP.executor.reject_execute(confirm_id)
         self._json({"success": success, "result": result})
