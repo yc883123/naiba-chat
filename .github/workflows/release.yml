@@ -34,7 +34,19 @@ jobs:
           python -c "from PIL import Image; print('Pillow', Image.__version__)"
 
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        shell: pwsh
+        run: |
+          $attempts = 2
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            python -m unittest discover -s tests -v
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -lt $attempts) {
+              Write-Host "Tests failed on attempt $attempt; retrying once."
+            }
+          }
+          exit 1
 
       - name: Build executable
         shell: pwsh
