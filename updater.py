@@ -114,6 +114,11 @@ class UpdateManager:
             pass
         return list(DEFAULT_RELEASE_NOTES)
 
+    @staticmethod
+    def _build_number(version: str) -> int | None:
+        match = re.fullmatch(r"build-(\d+)", str(version or "").strip(), flags=re.IGNORECASE)
+        return int(match.group(1)) if match else None
+
     @property
     def supported(self) -> bool:
         return bool(os.name == "nt" and (getattr(sys, "frozen", False) or self._source_repository()))
@@ -251,9 +256,15 @@ class UpdateManager:
                     "release_url": LATEST_RELEASE_URL,
                 }
             )
+            current_number = self._build_number(self.build.get("version", ""))
+            latest_number = self._build_number(manifest.get("version", ""))
+            update_available = manifest["commit"] != self.build.get("commit")
+            if current_number is not None and latest_number is not None:
+                update_available = latest_number > current_number
+            manifest["update_available"] = update_available
             with self.lock:
                 self.latest = manifest
-                self.phase = "available" if manifest["commit"] != self.build.get("commit") else "current"
+                self.phase = "available" if update_available else "current"
                 self.checked_at = int(time.time())
         except urllib.error.HTTPError as exc:
             message = "尚无可用的自动更新版本" if exc.code == 404 else f"检查更新失败：HTTP {exc.code}"

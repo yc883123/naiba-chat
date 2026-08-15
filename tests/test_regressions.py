@@ -12,7 +12,7 @@ import threading
 import time
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import PropertyMock, patch
 
 import model_runtime
 from model_runtime import ModelRuntime
@@ -991,6 +991,31 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
 
 
 class UpdateManifestTests(unittest.TestCase):
+    def test_build_number_prevents_downgrading_to_an_older_release(self) -> None:
+        self.assertEqual(26, UpdateManager._build_number("build-26"))
+        self.assertEqual(25, UpdateManager._build_number("BUILD-25"))
+        self.assertIsNone(UpdateManager._build_number("source"))
+
+    def test_executable_update_check_does_not_offer_an_older_build(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            manager = UpdateManager(Path(root), Path(root) / "data")
+            manager.build = {"version": "build-26", "commit": "c" * 40}
+            manifest = {
+                "repository": "yc883123/naiba-chat",
+                "commit": "d" * 40,
+                "sha256": "e" * 64,
+                "asset": "naiba-chat.exe",
+                "version": "build-25",
+            }
+            with (
+                patch.object(UpdateManager, "mode", new_callable=PropertyMock, return_value="executable"),
+                patch.object(UpdateManager, "_request_json", return_value=manifest),
+            ):
+                status = manager.check(force=True)
+
+            self.assertFalse(status["update_available"])
+            self.assertEqual("current", status["phase"])
+
     def test_frozen_update_restart_resets_pyinstaller_environment(self) -> None:
         source = Path("updater.py").read_text(encoding="utf-8")
 
