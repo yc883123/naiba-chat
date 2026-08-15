@@ -547,7 +547,13 @@ class SkillAgent:
         if active:
             event({"type": "skills", "skills": [{"id": item["id"], "name": item["name"]} for item in active]})
 
-        needs_mcp = "call_mcp" in allowed_tools and any(skill.get("requires_mcp") for skill in active)
+        # MCP is scoped to an agent run, but it must not depend on skill routing:
+        # plan execution and a generic agent may call an explicitly configured
+        # MCP service without having the service's skill selected.
+        configured_mcp = bool(getattr(self.executor.mcp_registry, "connections", {}))
+        needs_mcp = "call_mcp" in allowed_tools and (configured_mcp or any(
+            skill.get("requires_mcp") for skill in active
+        ))
         if needs_mcp:
             event({"type": "status", "message": "正在连接 Skill 所需的 MCP 服务"})
             self.executor.mcp_registry.acquire()

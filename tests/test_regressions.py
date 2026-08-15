@@ -240,6 +240,42 @@ class AgentLoopTests(unittest.TestCase):
                 lambda *_args: None, cancel_event,
             )
 
+    def test_agent_connects_configured_mcp_without_selected_mcp_skill(self) -> None:
+        class Registry:
+            connections = {"comfyui": object()}
+            acquired = 0
+            released = 0
+
+            @classmethod
+            def acquire(cls):
+                cls.acquired += 1
+
+            @classmethod
+            def release(cls):
+                cls.released += 1
+
+        class Executor:
+            mcp_registry = Registry()
+
+            @staticmethod
+            def mcp_tool_guide():
+                return ""
+
+            @staticmethod
+            def execute(tool, arguments, active_skills):
+                del tool, arguments, active_skills
+                return True, "ok"
+
+        agent = SkillAgent(self.Catalog(), Executor(), lambda *_args: "done")
+        content, _runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, False, [], "", ["call_mcp"], lambda _event: None,
+            lambda *_args: None,
+        )
+
+        self.assertEqual("done", content)
+        self.assertEqual(1, Registry.acquired)
+        self.assertEqual(1, Registry.released)
+
 
 class ImageAttachmentTests(unittest.TestCase):
     @staticmethod
