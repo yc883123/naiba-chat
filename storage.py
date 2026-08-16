@@ -140,13 +140,28 @@ class ChatStorage:
                     db.execute(f"SELECT {column} FROM background_tasks LIMIT 1")
                 except sqlite3.OperationalError:
                     db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
+            # Harness Job 字段（增量迁移，沿用现有 background_tasks 表，不新建平行表）
+            for column, definition in (
+                ("parent_job_id", "TEXT NOT NULL DEFAULT ''"),
+                ("owner_session_id", "TEXT NOT NULL DEFAULT ''"),
+                ("progress", "REAL NOT NULL DEFAULT 0"),
+                ("current_step", "TEXT NOT NULL DEFAULT ''"),
+                ("attempt", "INTEGER NOT NULL DEFAULT 0"),
+                ("checkpoint", "TEXT NOT NULL DEFAULT '{}'"),
+                ("result", "TEXT NOT NULL DEFAULT '{}'"),
+            ):
+                try:
+                    db.execute(f"SELECT {column} FROM background_tasks LIMIT 1")
+                except sqlite3.OperationalError:
+                    db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
             now = int(time.time() * 1000)
             interrupted = db.execute(
                 "SELECT id FROM background_tasks "
                 "WHERE status IN ('queued', 'running', 'waiting', 'cancelling')"
             ).fetchall()
+            # Harness 对齐：运行中任务在服务重启后变为 interrupted，而非静默丢失
             db.execute(
-                "UPDATE background_tasks SET status = 'failed', error = ?, updated_at = ?, finished_at = ? "
+                "UPDATE background_tasks SET status = 'interrupted', error = ?, updated_at = ?, finished_at = ? "
                 "WHERE status IN ('queued', 'running', 'waiting', 'cancelling')",
                 ("服务重启，运行已中断", now, now),
             )
@@ -421,6 +436,8 @@ class ChatStorage:
         snapshot: dict[str, Any],
         interaction_mode: str,
         plan_id: str = "",
+        parent_job_id: str = "",
+        owner_session_id: str = "",
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Atomically append the user message and create its owning run."""
         now = int(time.time() * 1000)
@@ -462,8 +479,9 @@ class ChatStorage:
             db.execute(
                 "INSERT INTO background_tasks("
                 "id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
-                "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at"
-                ") VALUES (?, ?, 'chat', ?, ?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?)",
+                "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at, "
+                "parent_job_id, owner_session_id"
+                ") VALUES (?, ?, 'chat', ?, ?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?, ?, ?)",
                 (
                     run_id,
                     conversation_id,
@@ -476,6 +494,8 @@ class ChatStorage:
                     json.dumps(frozen, ensure_ascii=False),
                     now,
                     now,
+                    parent_job_id,
+                    owner_session_id or conversation_id,
                 ),
             )
             db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
@@ -499,9 +519,12 @@ class ChatStorage:
         interaction_mode: str = "craft",
         input_message_id: str = "",
         plan_id: str = "",
+        parent_job_id: str = "",
+        owner_session_id: str = "",
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         task_id = uuid.uuid4().hex
+        owner = owner_session_id or conversation_id
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             active = db.execute(
@@ -514,8 +537,9 @@ class ChatStorage:
             db.execute(
                 "INSERT INTO background_tasks("
                 "id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
-                "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?)",
+                "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at, "
+                "parent_job_id, owner_session_id"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, '{}', ?, ?, ?, ?)",
                 (
                     task_id,
                     conversation_id,
@@ -529,6 +553,8 @@ class ChatStorage:
                     json.dumps(snapshot, ensure_ascii=False),
                     now,
                     now,
+                    parent_job_id,
+                    owner,
                 ),
             )
         return self.get_background_task(task_id) or {}
@@ -601,7 +627,7 @@ class ChatStorage:
         now = int(time.time() * 1000)
         values: dict[str, Any] = {"updated_at": now}
         if status is not None:
-            if status not in {"queued", "running", "waiting", "cancelling", "completed", "failed", "cancelled"}:
+            if status not in {"queued", "running", "waiting", "stopping", "cancelling", "completed", "failed", "cancelled", "interrupted"}:
                 raise ValueError("非法的 Run 状态")
             values["status"] = status
         if detail is not None:
@@ -624,12 +650,68 @@ class ChatStorage:
                 return None
         return self.get_background_task(task_id)
 
+    def update_job(
+        self,
+        task_id: str,
+        *,
+        status: str | None = None,
+        progress: float | None = None,
+        current_step: str | None = None,
+        attempt: int | None = None,
+        checkpoint: dict[str, Any] | None = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        detail: dict[str, Any] | None = None,
+        cancel_requested: bool | None = None,
+        started: bool = False,
+        finished: bool = False,
+    ) -> dict[str, Any] | None:
+        """更新 Harness Job 专用字段（沿用 background_tasks 表）。"""
+        now = int(time.time() * 1000)
+        values: dict[str, Any] = {"updated_at": now}
+        if status is not None:
+            if status not in {"queued", "running", "waiting", "stopping", "cancelling", "completed", "failed", "cancelled", "interrupted"}:
+                raise ValueError("非法的 Job 状态")
+            values["status"] = status
+        if progress is not None:
+            values["progress"] = max(0.0, min(100.0, float(progress)))
+        if current_step is not None:
+            values["current_step"] = str(current_step)[:2000]
+        if attempt is not None:
+            values["attempt"] = int(attempt)
+        if checkpoint is not None:
+            values["checkpoint"] = json.dumps(checkpoint, ensure_ascii=False)
+        if result is not None:
+            values["result"] = json.dumps(result, ensure_ascii=False)
+        if error is not None:
+            values["error"] = error[:50000]
+        if detail is not None:
+            values["detail"] = json.dumps(detail, ensure_ascii=False)
+        if cancel_requested is not None:
+            values["cancel_requested"] = 1 if cancel_requested else 0
+        if started:
+            values["started_at"] = now
+        if finished:
+            values["finished_at"] = now
+        if not values:
+            return self.get_background_task(task_id)
+        assignments = ", ".join(f"{key} = ?" for key in values)
+        with self._connect() as db:
+            cursor = db.execute(
+                f"UPDATE background_tasks SET {assignments} WHERE id = ?",
+                (*values.values(), task_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_background_task(task_id)
+
     def get_background_task(self, task_id: str) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
                 "SELECT id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
-                "agent_id, agent_name, status, message, detail, error, "
-                "cancel_requested, created_at, started_at, updated_at, finished_at "
+"agent_id, agent_name, status, message, detail, error, "
+"cancel_requested, created_at, started_at, updated_at, finished_at, "
+"parent_job_id, owner_session_id, progress, current_step, attempt, checkpoint, result "
                 "FROM background_tasks WHERE id = ?",
                 (task_id,),
             ).fetchone()
@@ -653,8 +735,9 @@ class ChatStorage:
         with self._connect() as db:
             rows = db.execute(
                 "SELECT id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
-                "agent_id, agent_name, status, message, detail, error, "
-                "cancel_requested, created_at, started_at, updated_at, finished_at "
+"agent_id, agent_name, status, message, detail, error, "
+"cancel_requested, created_at, started_at, updated_at, finished_at, "
+"parent_job_id, owner_session_id, progress, current_step, attempt, checkpoint, result "
                 f"FROM background_tasks {where} ORDER BY created_at DESC LIMIT ?",
                 parameters,
             ).fetchall()
@@ -776,5 +859,15 @@ class ChatStorage:
             result["detail"] = json.loads(result.get("detail") or "{}")
         except json.JSONDecodeError:
             result["detail"] = {}
+        for key in ("checkpoint", "result"):
+            try:
+                result[key] = json.loads(result.get(key) or "{}")
+            except (json.JSONDecodeError, TypeError):
+                result[key] = {}
+        try:
+            result["progress"] = float(result.get("progress") or 0)
+        except (TypeError, ValueError):
+            result["progress"] = 0.0
+        result["attempt"] = int(result.get("attempt") or 0)
         result["cancel_requested"] = bool(result.get("cancel_requested"))
         return result

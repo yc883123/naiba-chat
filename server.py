@@ -819,12 +819,36 @@ class NaibaChatApp:
         self.plans = PlanManager(self)
         self.runs = ConversationRunManager(self)
         self.tasks = self.runs
+        # Harness 级统一工具系统与 Job Registry
+        from tool_registry import build_tool_registry
+        from job_registry import JobRegistry
+
+        self.tool_registry = build_tool_registry()
+        self.tool_registry.bind_executor(self.executor)
+        self.tool_registry.bind_mcp(self.mcp)
+        self.jobs = JobRegistry(self)
+        # MCP 生命周期：工具发现后注册到统一工具表，断开/注销时清理
+        self.mcp.on_tools_discovered = self.tool_registry.register_mcp_tools
+        self.mcp.on_tools_deregistered = self.tool_registry.deregister_mcp_tools
+        self.mcp.register_tools_into(self.tool_registry)
+        from subagent import (
+            subagent_handler_factory,
+            job_tool_handler_factory,
+            run_subagent_agent,
+        )
+        self.jobs.agent_runner = lambda jid, spec, cancel, emit: run_subagent_agent(
+            self, jid, spec, cancel, emit
+        )
+        self.tool_registry.register_system_handler("subagent", subagent_handler_factory(self))
+        for _name, _handler in job_tool_handler_factory(self).items():
+            self.tool_registry.register_system_handler(_name, _handler)
         self.updater = UpdateManager(APP_DIR, DATA_DIR)
         self.update_restart_callback = None
 
     def stop(self) -> None:
         self.runs.shutdown()
         self.plans.shutdown()
+        self.jobs.shutdown()
         self.mcp.stop()
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
@@ -928,6 +952,39 @@ class RequestHandler(BaseHTTPRequestHandler):
             task_id = path.rsplit("/", 1)[-1]
             task = APP.storage.get_background_task(task_id)
             self._json(task or {"error": "任务不存在"}, HTTPStatus.OK if task else HTTPStatus.NOT_FOUND)
+        # ---- Harness Job Registry 接口 ----
+        elif path == "/api/jobs":
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation_id = query.get("conversation_id", [""])[0]
+            active_only = query.get("active_only", ["0"])[0] == "1"
+            jobs = APP.jobs.list(owner=conversation_id or None, active_only=active_only)
+            self._json({"jobs": jobs})
+        elif path.startswith("/api/jobs/") and path.endswith("/events"):
+            job_id = path.split("/")[-2]
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation_id = query.get("conversation_id", [""])[0]
+            try:
+                after = max(0, int(query.get("after", ["0"])[0]))
+            except ValueError:
+                self._json({"error": "after 必须是整数"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json(APP.jobs.read(job_id, after, owner=conversation_id or None))
+        elif path.startswith("/api/jobs/") and path.endswith("/status"):
+            job_id = path.split("/")[-2]
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation_id = query.get("conversation_id", [""])[0]
+            job = APP.jobs.get(job_id, owner=conversation_id or None)
+            self._json(job or {"error": "Job 不存在"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
+        elif path == "/api/tools":
+            self._json({"tools": APP.tool_registry.schemas()})
+        elif path == "/api/mcp":
+            self._json({"servers": APP.mcp.states()})
+        elif path.startswith("/api/jobs/"):
+            job_id = path.rsplit("/", 1)[-1]
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation_id = query.get("conversation_id", [""])[0]
+            job = APP.jobs.get(job_id, owner=conversation_id or None)
+            self._json(job or {"error": "Job 不存在"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
         elif path == "/api/conversations":
             query = urllib.parse.parse_qs(parsed.query)
             mode = query.get("mode", [None])[0]
@@ -1094,6 +1151,41 @@ class RequestHandler(BaseHTTPRequestHandler):
                     {"cancelled": bool(run), "run": run},
                     HTTPStatus.OK if run else HTTPStatus.NOT_FOUND,
                 )
+        elif path.startswith("/api/jobs/") and path.endswith("/cancel"):
+            job_id = path.split("/")[-2]
+            if not job_id:
+                self._json({"error": "job_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            else:
+                reason = str(body.get("reason") or "") or None
+                job = APP.jobs.cancel(job_id, owner=body.get("conversation_id") or None, reason=reason)
+                self._json(
+                    {"cancelled": bool(job), "job": job},
+                    HTTPStatus.OK if job else HTTPStatus.NOT_FOUND,
+                )
+        elif path.startswith("/api/jobs/") and path.endswith("/resume"):
+            job_id = path.split("/")[-2]
+            if not job_id:
+                self._json({"error": "job_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            else:
+                new_id = APP.jobs.resume(job_id, owner=body.get("conversation_id") or None)
+                if new_id:
+                    self._json({"resumed": True, "job_id": new_id}, HTTPStatus.OK)
+                else:
+                    self._json({"error": "Job 不可恢复或不存在"}, HTTPStatus.NOT_FOUND)
+        elif path.startswith("/api/jobs/") and path.endswith("/retry"):
+            job_id = path.split("/")[-2]
+            if not job_id:
+                self._json({"error": "job_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            else:
+                try:
+                    new_id = APP.jobs.retry(job_id, owner=body.get("conversation_id") or None)
+                except ValueError as exc:
+                    self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                else:
+                    if new_id:
+                        self._json({"retried": True, "job_id": new_id}, HTTPStatus.OK)
+                    else:
+                        self._json({"error": "Job 不存在或无权访问"}, HTTPStatus.NOT_FOUND)
         elif path == "/api/chat":
             self._chat(body)
         elif path == "/api/tasks":

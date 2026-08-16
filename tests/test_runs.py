@@ -70,7 +70,7 @@ class RunStorageTests(unittest.TestCase):
             del storage
             gc.collect()
 
-    def test_restart_marks_active_run_failed_and_appends_terminal_event(self) -> None:
+    def test_restart_marks_active_run_interrupted_and_appends_terminal_event(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             storage = self.make_storage(root)
             conversation = storage.create_conversation()
@@ -82,7 +82,7 @@ class RunStorageTests(unittest.TestCase):
             reopened = self.make_storage(root)
             recovered = reopened.get_background_task(run["id"])
             events = reopened.list_run_events(run["id"])
-            self.assertEqual("failed", recovered["status"])
+            self.assertEqual("interrupted", recovered["status"])
             self.assertIn("服务重启", recovered["error"])
             self.assertEqual("error", events[-1]["type"])
             self.assertIn("服务重启", events[-1]["message"])

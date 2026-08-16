@@ -320,6 +320,8 @@ class ConversationRunManager:
                     conversation_id, tool, args, result, success
                 ),
                 cancel_event,
+                max_steps=int(self.app.config.data.get("agent_max_steps", 32)),
+                tool_registry=self.app.tool_registry,
             )
             sink.flush()
             if cancel_event.is_set():

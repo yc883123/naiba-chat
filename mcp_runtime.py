@@ -3,10 +3,24 @@ from __future__ import annotations
 import asyncio
 import os
 import threading
+import time
+import traceback
 from contextlib import AsyncExitStack
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import timedelta
-from typing import Any
+from typing import Any, Callable
+
+
+class MCPError(RuntimeError):
+    """MCP 通用错误基类。"""
+
+
+class MCPStartupError(MCPError):
+    """stdio 服务启动 / 初始化失败（区别于调用失败）。"""
+
+
+class MCPCallError(MCPError):
+    """工具调用失败。"""
 
 
 class MCPServerConnection:
@@ -26,6 +40,19 @@ class MCPServerConnection:
         self._call_lock = threading.Lock()
         self._stopping = False
         self._stopped = False
+        # 重连相关
+        self._reconnect_attempts = 0
+        self.max_reconnect_attempts = 5
+        self.backoff_base = 2.0
+        self.on_event: Callable[[str, str, dict[str, Any]], None] | None = None
+        self.on_tools_discovered: Callable[[str, list[dict[str, Any]]], None] | None = None
+
+    def _emit(self, kind: str, **payload: Any) -> None:
+        if self.on_event:
+            try:
+                self.on_event(self.server_id, kind, payload)
+            except Exception:
+                traceback.print_exc()
 
     def start(self, timeout: int = 20) -> None:
         if self._thread and self._thread.is_alive():
@@ -42,6 +69,8 @@ class MCPServerConnection:
         self._thread.start()
         if not self._ready.wait(timeout):
             self.error = f"MCP 服务启动超过 {timeout} 秒"
+            self._emit("startup_timeout", timeout=timeout)
+            raise MCPStartupError(self.error)
 
     def _thread_main(self) -> None:
         self._loop = asyncio.new_event_loop()
@@ -51,6 +80,7 @@ class MCPServerConnection:
         except Exception as exc:
             self.error = f"{type(exc).__name__}: {exc}"
             self._ready.set()
+            self._emit("startup_failed", error=self.error)
         finally:
             self._loop.close()
             if self._stopping:
@@ -63,6 +93,7 @@ class MCPServerConnection:
             await self._connect()
             self.error = ""
             self._ready.set()
+            self._emit("connected", tools=[t.get("name") for t in self.tools])
             await self._stop_signal.wait()
         finally:
             if self._stack:
@@ -82,7 +113,7 @@ class MCPServerConnection:
         self._session = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
         await self._session.initialize()
         result = await self._session.list_tools()
-        self.tools = [
+        new_tools = [
             {
                 "name": tool.name,
                 "description": tool.description or "",
@@ -90,13 +121,26 @@ class MCPServerConnection:
             }
             for tool in result.tools
         ]
+        # 工具列表变化时重新同步
+        if [t["name"] for t in new_tools] != [t["name"] for t in self.tools]:
+            self.tools = new_tools
+            if self.on_tools_discovered:
+                self.on_tools_discovered(self.server_id, new_tools)
 
     def call(self, tool_name: str, arguments: dict[str, Any], timeout: int = 620) -> tuple[bool, str]:
         with self._call_lock:
-            if self.error:
+            if self.error and "已注销" not in self.error:
                 return False, self.error
             if not self._session or not self._loop:
-                return False, "MCP 服务尚未连接"
+                # 从未启动的服务应立即报告未连接；只有已有连接线程丢失会话时才重连。
+                if self._thread is None:
+                    return False, "MCP 服务尚未连接"
+                try:
+                    self.reconnect_with_backoff()
+                except MCPError as exc:
+                    return False, str(exc)
+                if not self._session or not self._loop:
+                    return False, "MCP 服务尚未连接"
             future = asyncio.run_coroutine_threadsafe(
                 self._session.call_tool(
                     tool_name,
@@ -112,6 +156,12 @@ class MCPServerConnection:
                 return False, f"MCP 工具调用超过 {timeout} 秒"
             except Exception as exc:
                 future.cancel()
+                # 连接类错误尝试重连
+                if "Session" in type(exc).__name__ or "closed" in str(exc).lower():
+                    try:
+                        self.reconnect_with_backoff()
+                    except MCPError as reconn_exc:
+                        return False, str(reconn_exc)
                 return False, f"{type(exc).__name__}: {exc}"
             blocks = []
             for item in result.content:
@@ -124,6 +174,41 @@ class MCPServerConnection:
                 except Exception:
                     blocks.append(str(item))
             return not bool(result.isError), "\n".join(blocks)
+
+    def reconnect_with_backoff(self) -> None:
+        """指数退避重连；达到最大重试次数后注销该 Server 的工具。"""
+        while self._reconnect_attempts < self.max_reconnect_attempts:
+            self._reconnect_attempts += 1
+            delay = self.backoff_base * (2 ** (self._reconnect_attempts - 1))
+            self._emit("reconnect_attempt", attempt=self._reconnect_attempts, delay=delay)
+            time.sleep(delay)
+            self._reset_thread()
+            try:
+                self.start(timeout=20)
+                self._reconnect_attempts = 0
+                self._emit("reconnected")
+                return
+            except MCPError:
+                continue
+        # 重试耗尽，注销工具
+        self.tools = []
+        self.error = f"MCP 服务 {self.server_id} 重连失败，工具已注销"
+        self._emit("deregistered", reason="重连耗尽")
+
+    def _reset_thread(self) -> None:
+        self._stopping = True
+        if self._loop and self._loop.is_running() and self._stop_signal:
+            self._loop.call_soon_threadsafe(self._stop_signal.set)
+        if self._thread:
+            self._thread.join(timeout=5)
+        self._thread = None
+        self._session = None
+        self._stack = None
+        self._loop = None
+        self._stop_signal = None
+        self._ready = threading.Event()
+        self._stopping = False
+        self._stopped = True
 
     def stop(self) -> None:
         self._stopping = True
@@ -160,6 +245,7 @@ class MCPServerConnection:
             "status": status,
             "error": self.error,
             "tools": self.tools,
+            "reconnect_attempts": self._reconnect_attempts,
         }
 
 
@@ -169,6 +255,9 @@ class MCPRegistry:
         self._session_count = 0
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
+        self.on_event: Callable[[str, str, dict[str, Any]], None] | None = None
+        self.on_tools_discovered: Callable[[str, list[dict[str, Any]]], None] | None = None
+        self.on_tools_deregistered: Callable[[str], None] | None = None
         for config in configs:
             if not config.get("enabled", True):
                 continue
@@ -180,12 +269,17 @@ class MCPRegistry:
 
     @staticmethod
     def _connection(config: dict[str, Any]) -> MCPServerConnection:
-        return MCPServerConnection(
+        connection = MCPServerConnection(
             str(config["id"]),
             str(config["command"]),
             [str(item) for item in config.get("args", [])],
             {str(key): str(value) for key, value in (config.get("env") or {}).items()},
         )
+        return connection
+
+    def _wire(self, connection: MCPServerConnection) -> None:
+        connection.on_event = self.on_event
+        connection.on_tools_discovered = self.on_tools_discovered
 
     def upsert(self, config: dict[str, Any]) -> dict[str, Any]:
         """Add or replace one server without interrupting unrelated MCP sessions."""
@@ -206,8 +300,11 @@ class MCPRegistry:
         if previous:
             previous.stop()
         if not normalized["enabled"]:
+            if self.on_tools_deregistered:
+                self.on_tools_deregistered(server_id)
             return {"id": server_id, "status": "disabled", "connected": False, "tools": [], "error": ""}
         connection = self._connection(normalized)
+        self._wire(connection)
         with self._lifecycle_lock:
             with self._lock:
                 self.connections[server_id] = connection
@@ -238,7 +335,10 @@ class MCPRegistry:
                 self._session_count += 1
                 connections = list(self.connections.values()) if should_start else []
         for connection in connections:
-            connection.start()
+            try:
+                connection.start()
+            except MCPStartupError as exc:
+                connection._emit("startup_failed", error=str(exc))
 
     def release(self) -> None:
         with self._lifecycle_lock:
@@ -277,3 +377,14 @@ class MCPRegistry:
                     f"参数={schema}"
                 )
         return "\n".join(rows)
+
+    # ---- Harness：将工具注册为 mcp__<server>__<tool> ----
+    def register_tools_into(self, tool_registry: Any) -> None:
+        """把每个 MCP 工具以 mcp__<server>__<tool> 名称注册到统一工具表。"""
+        self.on_tools_discovered = tool_registry.register_mcp_tools
+        with self._lock:
+            connections = list(self.connections.items())
+        for server_id, connection in connections:
+            self._wire(connection)
+            discovered = list(connection.tools)
+            tool_registry.register_mcp_tools(server_id, discovered)

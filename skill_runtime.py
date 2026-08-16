@@ -520,6 +520,9 @@ class SkillAgent:
         event: EventCallback,
         tool_logger: Callable[[str, dict[str, Any], str, bool], None],
         cancel_event: threading.Event | None = None,
+        max_steps: int | None = None,
+        tool_registry: Any = None,
+        run_context: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, Any]]:
         if cancel_event and cancel_event.is_set():
             raise TaskCancelled("任务已取消")
@@ -570,6 +573,9 @@ class SkillAgent:
                 tool_logger,
                 usages,
                 cancel_event,
+                max_steps,
+                tool_registry,
+                run_context,
             )
         finally:
             if needs_mcp:
@@ -588,6 +594,9 @@ class SkillAgent:
         tool_logger: Callable[[str, dict[str, Any], str, bool], None],
         usages: list[dict[str, int]],
         cancel_event: threading.Event | None = None,
+        max_steps: int | None = None,
+        tool_registry: Any = None,
+        run_context: dict[str, Any] | None = None,
     ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, Any]]:
 
         skill_prompts = []
@@ -653,14 +662,22 @@ class SkillAgent:
         reasonings: list[str] = []
         # model_complete 是 ModelRuntime.complete 的绑定方法，可通过 __self__ 读取 last_reasoning
         model_runtime = getattr(self.model_complete, "__self__", None)
+        # 有界、可恢复：默认最多 agent_max_steps 个模型步骤
+        max_steps = 32 if max_steps is None else max(1, int(max_steps))
         step = 0
-        while True:
+        repeat_key = ""
+        repeat_count = 0
+        while step < max_steps:
             if cancel_event and cancel_event.is_set():
+                event({"type": "run_cancelled", "reason": "用户取消"})
                 raise TaskCancelled("任务已取消")
             step += 1
-            event({"type": "status", "message": f"正在思考（第 {step} 轮）"})
+            event({"type": "step_started", "step": step})
+            event({"type": "status", "message": f"正在思考（第 {step}/{max_steps} 轮）"})
+            event({"type": "model_request", "step": step})
             raw = self.model_complete(profile, messages, options, event)
             if cancel_event and cancel_event.is_set():
+                event({"type": "run_cancelled", "reason": "用户取消"})
                 raise TaskCancelled("任务已取消")
             reasoning = getattr(model_runtime, "last_reasoning", "") if model_runtime else ""
             usage = getattr(model_runtime, "last_usage", {}) if model_runtime else {}
@@ -671,41 +688,48 @@ class SkillAgent:
                 event({"type": "reasoning", "content": reasoning})
             action = self._parse_action(raw)
             if action.get("type") != "tool":
+                event({"type": "assistant_response", "content": str(action.get("content") or raw or "")[:2000], "is_tool": False})
                 content = str(action.get("content") or raw or "任务已完成").strip()
+                event({"type": "step_finished", "step": step})
+                event({"type": "run_completed", "message": content[:2000]})
                 return content, runs, reasonings, self._summarize_usage(usages)
 
+            event({"type": "assistant_response", "is_tool": True, "tool": str(action.get("tool") or "")})
             tool = str(action.get("tool") or "")
             arguments = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
-            event({"type": "tool_start", "tool": tool, "arguments": arguments, "reason": action.get("reason", "")})
+            # 解析失败：模型本意是工具调用但无法解析为合法动作
+            if not tool:
+                event({"type": "run_failed", "error": "工具调用解析失败：缺少工具名或参数"})
+                return (
+                    "工具调用解析失败，已停止执行。", runs, reasonings, self._summarize_usage(usages)
+                )
+            event({"type": "tool_requested", "tool": tool, "arguments": arguments, "reason": action.get("reason", "")})
             if cancel_event and cancel_event.is_set():
+                event({"type": "run_cancelled", "reason": "用户取消"})
                 raise TaskCancelled("任务已取消")
-            if tool not in allowed:
-                success, result = False, f"Agent 设置已禁用工具：{tool}"
-            else:
-                success, result = self.executor.execute(tool, arguments, active)
-                # 处理需要确认的响应
-                if not success and result.startswith("NEED_CONFIRM:"):
-                    parts = result.split(":", 3)
-                    if len(parts) >= 4:
-                        confirm_id = parts[1]
-                        tool_desc = parts[2]
-                        # 发送确认事件
-                        event({
-                            "type": "tool_confirm",
-                            "confirm_id": confirm_id,
-                            "tool_name": tool,
-                            "tool_desc": tool_desc,
-                            "arguments": arguments,
-                        })
-                        success, result = self.executor.wait_for_confirmation(
-                            confirm_id,
-                            timeout=300,
-                            cancel_event=cancel_event,
-                        )
+
+            # 执行（含权限确认），仅对可重试错误自动重试最多 2 次
+            success, result = self._execute_with_retry(
+                tool, arguments, active, allowed, tool_registry, cancel_event, event, run_context
+            )
             tool_logger(tool, arguments, result, success)
             run = {"tool": tool, "arguments": arguments, "result": result[:4000], "success": success, "reason": str(action.get("reason") or "")}
             runs.append(run)
             event({"type": "tool_result", **run})
+
+            # 循环重复检测：同一工具+参数连续失败超过阈值则明确失败
+            key = f"{tool}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
+            if not success and key == repeat_key:
+                repeat_count += 1
+            else:
+                repeat_key = key
+                repeat_count = 1 if not success else 0
+            if not success and repeat_count >= 3:
+                event({"type": "run_failed", "error": f"工具 {tool} 连续失败且重复，已停止执行"})
+                return (
+                    f"工具 {tool} 连续失败且重复，已停止执行。", runs, reasonings, self._summarize_usage(usages)
+                )
+
             messages.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
             messages.append(
                 {
@@ -718,6 +742,69 @@ class SkillAgent:
                     ),
                 }
             )
+            event({"type": "step_finished", "step": step})
+
+        # 超过最大步骤，明确失败，不允许无限循环
+        event({"type": "run_failed", "error": f"已达到最大步骤数 {max_steps}"})
+        return (
+            f"已达到最大步骤数（{max_steps}），任务未能在限定步数内完成。",
+            runs, reasonings, self._summarize_usage(usages),
+        )
+
+    def _execute_with_retry(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        active: list[dict[str, Any]],
+        allowed: set[str],
+        tool_registry: Any,
+        cancel_event: threading.Event | None,
+        event: EventCallback,
+        run_context: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        """执行工具并处理权限确认与可重试失败（最多 2 次）。副作用工具不重试。
+
+        若提供 ``tool_registry``，则统一经其分发（可解析 subagent / job_* 等系统工具）；
+        否则退回 ``ToolExecutor`` 直接执行。
+        """
+        if tool not in allowed:
+            event({"type": "tool_started", "tool": tool})
+            return False, f"Agent 设置已禁用工具：{tool}"
+        event({"type": "tool_started", "tool": tool})
+
+        def _dispatch() -> tuple[bool, str]:
+            if tool_registry is not None:
+                return tool_registry.execute(tool, arguments, active, run_context)
+            return self.executor.execute(tool, arguments, active)
+
+        success, result = _dispatch()
+        if not success and result.startswith("NEED_CONFIRM:"):
+            parts = result.split(":", 3)
+            if len(parts) >= 4:
+                confirm_id = parts[1]
+                tool_desc = parts[2]
+                event({
+                    "type": "tool_confirm",
+                    "confirm_id": confirm_id,
+                    "tool_name": tool,
+                    "tool_desc": tool_desc,
+                    "arguments": arguments,
+                })
+                success, result = self.executor.wait_for_confirmation(
+                    confirm_id, timeout=300, cancel_event=cancel_event
+                )
+        # 可重试错误：MCP / HTTP / Job 查询等；副作用工具（写文件/命令/脚本）不自动重试
+        retryable = bool(tool_registry and getattr(tool_registry, "retryable", lambda _: False)(tool))
+        attempt = 0
+        while not success and retryable and attempt < 2:
+            if cancel_event and cancel_event.is_set():
+                event({"type": "run_cancelled", "reason": "用户取消"})
+                raise TaskCancelled("任务已取消")
+            attempt += 1
+            event({"type": "retry", "tool": tool, "attempt": attempt, "reason": "可重试错误，自动重试"})
+            time.sleep(1.0)
+            success, result = _dispatch()
+        return success, result
 
 
     @staticmethod

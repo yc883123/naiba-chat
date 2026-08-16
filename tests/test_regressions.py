@@ -17,7 +17,7 @@ from unittest.mock import PropertyMock, patch
 
 import model_runtime
 from model_runtime import ModelRuntime
-from mcp_runtime import MCPRegistry, MCPServerConnection
+from mcp_runtime import MCPRegistry, MCPServerConnection, MCPStartupError
 from server import (
     MODEL_IMAGE_TARGET_BYTES,
     ConfigStore,
@@ -1209,7 +1209,8 @@ class MCPRegistrationTests(unittest.TestCase):
                 inner_self._session = object()
 
         connection = SlowConnection("slow", "python", [], {})
-        connection.start(timeout=0)
+        with self.assertRaises(MCPStartupError):
+            connection.start(timeout=0)
         self.assertIn("启动超过", connection.error)
 
         self.assertTrue(connection._ready.wait(timeout=1))
@@ -1295,10 +1296,12 @@ class MCPRegistrationTests(unittest.TestCase):
 
     def test_call_distinguishes_disconnected_and_tool_errors(self) -> None:
         disconnected = MCPServerConnection("test", "python", [], {})
-        self.assertEqual(
-            (False, "MCP 服务尚未连接"),
-            disconnected.call("tool", {}),
-        )
+        with patch.object(disconnected, "reconnect_with_backoff") as reconnect:
+            self.assertEqual(
+                (False, "MCP 服务尚未连接"),
+                disconnected.call("tool", {}),
+            )
+        reconnect.assert_not_called()
 
         loop = asyncio.new_event_loop()
         loop_thread = threading.Thread(target=loop.run_forever, daemon=True)
@@ -1424,6 +1427,22 @@ class MCPRegistrationTests(unittest.TestCase):
 
         self.assertEqual("disabled", state["status"])
         self.assertNotIn("comfyui", registry.connections)
+
+    def test_existing_mcp_connections_are_wired_into_tool_registry(self) -> None:
+        registry = MCPRegistry([{"id": "test", "command": "python"}])
+        connection = registry.connections["test"]
+        connection.tools = [{"name": "ping", "description": "", "input_schema": {}}]
+        registered = []
+
+        class ToolRegistry:
+            def register_mcp_tools(inner_self, server_id, tools):
+                registered.append((server_id, tools))
+
+        tools = ToolRegistry()
+        registry.register_tools_into(tools)
+
+        self.assertEqual([("test", connection.tools)], registered)
+        self.assertEqual(tools.register_mcp_tools, connection.on_tools_discovered)
 
     def test_comfyui_server_files_are_copied_out_of_the_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as root:
