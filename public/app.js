@@ -1863,8 +1863,12 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'choice') {
     // AI回复包含可选项，显示选择按钮
     showChoiceButtons(event.choices, event.choice_groups);
-  } else if (event.type === 'cancelled') {
+    } else if (event.type === 'cancelled') {
     answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
+  } else if (event.type === 'run_failed') {
+    // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
+    answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
+    $('#runtimeStatus').textContent = '执行失败';
   } else if (event.type === 'done') {
     if (event.message) {
       try {

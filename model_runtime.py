@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 import time
@@ -10,12 +11,24 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
+logger = logging.getLogger("naiba.model_runtime")
+
 
 StatusCallback = Callable[[dict[str, Any]], None]
 ONLINE_MODEL_TIMEOUT_SECONDS = 180
 LOCAL_MODEL_TIMEOUT_SECONDS = 1800
 PROVIDER_TEST_TIMEOUT_SECONDS = 30
 FAST_RETRY_NETWORK_ERRORS = {10053, 10054, 10061}
+
+# Patterns used to keep agent tool-call protocols out of the user-facing
+# streaming answer. The classifier below decides, before forwarding any
+# fragment, whether the leading model output is ordinary prose or an agent
+# action (JSON / XML tool protocol) that must only reach the Agent Loop.
+_TOOL_OPEN_TAG = re.compile(r"^<(tool_calls|invoke|tool)\b", re.IGNORECASE)
+_TOOL_NAMED_ATTR = re.compile(r"\b(?:name|type)\s*=")
+# Upper bound (chars) for buffering an ambiguous leading fragment before we
+# give up and treat it as plain text, so a malformed stream can never stall.
+_AGENT_BUFFER_LIMIT = 1024
 
 
 class _ErrorHTMLParser(HTMLParser):
@@ -627,9 +640,10 @@ class ModelRuntime:
     @staticmethod
     def _read_ollama_stream(response: Any, status: StatusCallback | None) -> dict[str, Any]:
         chunks: list[dict[str, Any]] = []
-        content_parts: list[str] = []
+        full_content_parts: list[str] = []
+        pending_parts: list[str] = []
         reasoning_parts: list[str] = []
-        visible = None
+        decided = None  # None until classified; "tool" or "text" afterwards.
         for raw_line in response:
             try:
                 chunk = json.loads(raw_line.decode("utf-8", errors="replace"))
@@ -643,17 +657,21 @@ class ModelRuntime:
                 reasoning_parts.append(reasoning)
             if not text:
                 continue
-            content_parts.append(text)
-            if visible is None:
-                probe = "".join(content_parts).lstrip()
-                visible = not (
-                    probe.startswith(("{", "["))
-                    or re.match(r"<(?:tool_calls|invoke)(?:\s|>)", probe, re.IGNORECASE)
-                )
-            if visible and status:
+            full_content_parts.append(text)
+            if decided is None:
+                pending_parts.append(text)
+                kind = ModelRuntime._classify_agent_output("".join(pending_parts))
+                if kind == "tool":
+                    decided = "tool"
+                elif kind == "text":
+                    decided = "text"
+                    if status:
+                        status({"type": "delta", "content": "".join(pending_parts)})
+                    pending_parts = []
+            elif decided == "text" and status:
                 status({"type": "delta", "content": text})
         return {
-            "content": "".join(content_parts),
+            "content": ModelRuntime._clean_content("".join(full_content_parts)),
             "reasoning": "".join(reasoning_parts),
             "usage": ModelRuntime._online_usage("ollama", chunks),
         }
@@ -671,11 +689,19 @@ class ModelRuntime:
         request_format: str,
         status: StatusCallback | None,
     ) -> dict[str, Any]:
-        """Collect SSE chunks while forwarding visible text to the chat client."""
+        """Collect SSE chunks while forwarding only ordinary prose to the chat client.
+
+        Agent tool protocols (JSON actions, ``<tool_calls>`` / ``<invoke>``,
+        DeepSeek ``<tool name="...">`` and native OpenAI ``tool_calls``) are
+        buffered but never sent as ``delta`` events—they only reach the Agent
+        Loop as the parsed action returned by ``complete``.
+        """
         chunks: list[dict[str, Any]] = []
-        content_parts: list[str] = []
+        full_content_parts: list[str] = []
+        pending_parts: list[str] = []  # Leading unflushed buffer being classified.
         reasoning_parts: list[str] = []
-        visible = None
+        native_tool_calls: dict[int, dict[str, str]] = {}
+        decided = None  # None until classified; "tool" or "text" afterwards.
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -690,26 +716,137 @@ class ModelRuntime:
             if not isinstance(chunk, dict):
                 continue
             chunks.append(chunk)
-            text, reasoning = ModelRuntime._stream_delta(request_format, chunk)
+            text, reasoning, tool_calls = ModelRuntime._stream_delta_full(request_format, chunk)
             if reasoning:
                 reasoning_parts.append(reasoning)
+            if tool_calls:
+                # Native OpenAI tool calls must not appear as answer text.
+                decided = "tool"
+                for call in tool_calls:
+                    slot = native_tool_calls.setdefault(
+                        call.get("index", 0), {"id": "", "name": "", "arguments": ""}
+                    )
+                    if call.get("id"):
+                        slot["id"] = call["id"]
+                    if call.get("name"):
+                        slot["name"] += call["name"]
+                    if call.get("arguments") is not None:
+                        slot["arguments"] += call["arguments"]
+                continue
             if not text:
                 continue
-            content_parts.append(text)
-            # Agent tool calls start with a JSON object. Do not reveal those interim instructions.
-            if visible is None:
-                probe = "".join(content_parts).lstrip()
-                if not probe:
-                    continue
-                # Keep JSON/XML agent protocol out of the user-facing answer.
-                visible = not (
-                    probe.startswith(("{", "["))
-                    or re.match(r"<(?:tool_calls|invoke)(?:\s|>)", probe, re.IGNORECASE)
-                )
-            if visible and status:
+            full_content_parts.append(text)
+            if decided is None:
+                pending_parts.append(text)
+                kind = ModelRuntime._classify_agent_output("".join(pending_parts))
+                if kind == "tool":
+                    decided = "tool"
+                elif kind == "text":
+                    decided = "text"
+                    if status:
+                        status({"type": "delta", "content": "".join(pending_parts)})
+                    pending_parts = []
+            elif decided == "text" and status:
                 status({"type": "delta", "content": text})
         usage = ModelRuntime._online_usage(request_format, chunks)
-        return {"content": "".join(content_parts), "reasoning": "".join(reasoning_parts), "usage": usage}
+        if native_tool_calls:
+            # Convert to the internal action structure the Agent Loop consumes.
+            content = ModelRuntime._build_action_from_native_tool_calls(native_tool_calls)
+        else:
+            content = ModelRuntime._clean_content("".join(full_content_parts))
+        return {"content": content, "reasoning": "".join(reasoning_parts), "usage": usage}
+
+    @staticmethod
+    def _stream_delta_full(request_format: str, chunk: dict[str, Any]) -> tuple[str, str, list[dict[str, str]]]:
+        """Like ``_stream_delta`` but also extracts native OpenAI ``tool_calls``.
+
+        Returns ``(text, reasoning, tool_calls)`` where ``tool_calls`` is a list
+        of ``{"index", "id", "name", "arguments"}`` dicts accumulated by the caller.
+        """
+        text, reasoning = ModelRuntime._stream_delta(request_format, chunk)
+        tool_calls: list[dict[str, str]] = []
+        if request_format in {"openai_chat", "lm_studio"}:
+            choices = chunk.get("choices") or []
+            delta = (choices[0].get("delta") or {}) if choices and isinstance(choices[0], dict) else {}
+            for raw_call in delta.get("tool_calls") or []:
+                if not isinstance(raw_call, dict):
+                    continue
+                function = raw_call.get("function") or {}
+                tool_calls.append(
+                    {
+                        "index": int(raw_call.get("index", 0) or 0),
+                        "id": str(raw_call.get("id") or ""),
+                        "name": str(function.get("name") or ""),
+                        "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else "",
+                    }
+                )
+        return text, reasoning, tool_calls
+
+    @staticmethod
+    def _build_action_from_native_tool_calls(native_tool_calls: dict[int, dict[str, str]]) -> str:
+        """Reassemble streamed OpenAI ``tool_calls`` into the internal action JSON.
+
+        Raises ``RuntimeError`` on malformed/unsupported calls so the original
+        protocol is never forwarded to the chat answer.
+        """
+        calls = [native_tool_calls[index] for index in sorted(native_tool_calls)]
+        if len(calls) != 1:
+            logger.warning("工具调用解析失败：收到 %d 个并行 tool_calls，暂不支持", len(calls))
+            raise RuntimeError(
+                f"暂不支持并行工具调用（收到 {len(calls)} 个 tool_calls）；请一次只调用一个工具"
+            )
+        call = calls[0]
+        name = call["name"].strip()
+        if not name:
+            logger.warning("工具调用解析失败：缺少工具名")
+            raise RuntimeError("工具调用解析失败：缺少工具名")
+        raw_args = call["arguments"] or "{}"
+        try:
+            arguments = json.loads(raw_args) if raw_args.strip() else {}
+        except json.JSONDecodeError as exc:
+            logger.warning("工具调用解析失败：参数不是合法 JSON")
+            raise RuntimeError(f"工具调用参数不是合法 JSON：{exc}") from exc
+        if not isinstance(arguments, dict):
+            logger.warning("工具调用解析失败：参数不是 JSON 对象")
+            raise RuntimeError("工具调用参数必须是 JSON 对象")
+        return json.dumps({"type": "tool", "tool": name, "arguments": arguments}, ensure_ascii=False)
+
+    @staticmethod
+    def _classify_agent_output(buffer: str) -> str:
+        """Classify the leading model output before forwarding it to the chat UI.
+
+        Returns ``"tool"`` for an agent tool-call protocol (kept out of the
+        visible answer), ``"text"`` for ordinary prose (safe to stream), or
+        ``"pending"`` when the buffer is too short to decide confidently.
+        """
+        probe = buffer.lstrip()
+        if not probe:
+            return "pending"
+        first = probe[0]
+        if first in "{[":
+            # JSON object / array agent action is never part of the answer.
+            return "tool"
+        if first == "<":
+            match = re.match(r"^<([A-Za-z][\w-]*)", probe)
+            if not match:
+                return "text" if (">" in probe[:64] or len(probe) > 64) else "pending"
+            tag = match.group(1).lower()
+            if tag in {"tool_calls", "invoke"}:
+                return "tool"
+            if tag == "tool":
+                # DeepSeek named-tool dialect: <tool name="..."> (optionally
+                # wrapped in <tool type="tool">). Require a name/type attribute.
+                if _TOOL_NAMED_ATTR.search(probe[:200]):
+                    return "tool"
+                if ">" in probe[:200]:
+                    return "text"
+                return "pending" if len(probe) <= _AGENT_BUFFER_LIMIT else "text"
+            # Another tag (markdown/HTML in prose, <think>, ...): decide once
+            # the opening tag closes; otherwise keep buffering briefly.
+            if ">" in probe[:200]:
+                return "text"
+            return "pending" if len(probe) <= _AGENT_BUFFER_LIMIT else "text"
+        return "text"
 
     @staticmethod
     def _stream_delta(request_format: str, chunk: dict[str, Any]) -> tuple[str, str]:
@@ -794,6 +931,11 @@ class ModelRuntime:
     @staticmethod
     def _online_response(request_format: str, result: Any) -> tuple[str, str]:
         reasoning = ModelRuntime._online_reasoning(request_format, result)
+        # Native OpenAI tool_calls (non-streaming) are converted to the internal
+        # action structure so the Agent Loop can consume them directly.
+        action = ModelRuntime._openai_tool_calls_action(result, request_format)
+        if action is not None:
+            return action, reasoning
         content = ModelRuntime._online_content(request_format, result)
         if not content:
             content = ModelRuntime._reasoning_action(reasoning)
@@ -803,6 +945,51 @@ class ModelRuntime:
             else:
                 raise RuntimeError(f"在线模型响应中没有文本内容：{str(result)[:1000]}")
         return ModelRuntime._clean_content(content), reasoning
+
+    @staticmethod
+    def _openai_tool_calls_action(result: Any, request_format: str) -> str | None:
+        """Extract native OpenAI ``tool_calls`` from a non-streaming response.
+
+        Returns the internal action JSON string, or ``None`` when the response
+        has no tool calls. Raises ``RuntimeError`` on malformed calls.
+        """
+        if request_format not in {"openai_chat", "lm_studio"} or not isinstance(result, dict):
+            return None
+        choices = result.get("choices") or []
+        message = (choices[0].get("message") or {}) if choices and isinstance(choices[0], dict) else {}
+        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
+        if not isinstance(tool_calls, list) or not tool_calls:
+            return None
+        calls: list[dict[str, str]] = []
+        for raw_call in tool_calls:
+            if not isinstance(raw_call, dict):
+                continue
+            function = raw_call.get("function") or {}
+            calls.append(
+                {
+                    "name": str(function.get("name") or ""),
+                    "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else "",
+                }
+            )
+        if len(calls) != 1:
+            logger.warning("工具调用解析失败：收到 %d 个并行 tool_calls，暂不支持", len(calls))
+            raise RuntimeError(
+                f"暂不支持并行工具调用（收到 {len(calls)} 个 tool_calls）；请一次只调用一个工具"
+            )
+        name = calls[0]["name"].strip()
+        if not name:
+            logger.warning("工具调用解析失败：缺少工具名")
+            raise RuntimeError("工具调用解析失败：缺少工具名")
+        raw_args = calls[0]["arguments"] or "{}"
+        try:
+            arguments = json.loads(raw_args) if raw_args.strip() else {}
+        except json.JSONDecodeError as exc:
+            logger.warning("工具调用解析失败：参数不是合法 JSON")
+            raise RuntimeError(f"工具调用参数不是合法 JSON：{exc}") from exc
+        if not isinstance(arguments, dict):
+            logger.warning("工具调用解析失败：参数不是 JSON 对象")
+            raise RuntimeError("工具调用参数必须是 JSON 对象")
+        return json.dumps({"type": "tool", "tool": name, "arguments": arguments}, ensure_ascii=False)
 
     @staticmethod
     def _reasoning_action(reasoning: str) -> str:

@@ -24,6 +24,8 @@ class _RunEventSink:
         self.cancel_event = cancel_event
         self._delta = ""
         self._last_flush = time.monotonic()
+        self._announced_tools: set[str] = set()
+        self.failure_message: str | None = None
 
     def __call__(self, payload: dict[str, Any]) -> None:
         if self.cancel_event.is_set():
@@ -35,6 +37,25 @@ class _RunEventSink:
                 self.flush()
             return
         self.flush()
+        kind = str(payload.get("type") or "")
+        if kind == "run_failed":
+            self.failure_message = str(payload.get("error") or "任务执行失败")
+        # SkillAgent emits a rich `tool_requested` event before dispatch and a
+        # lower-level `tool_started` event inside the executor. The browser
+        # protocol has one lifecycle event, so publish one `tool_start` and
+        # suppress the duplicate while retaining the request metadata.
+        if kind == "tool_requested":
+            tool = str(payload.get("tool") or "")
+            if tool:
+                self._announced_tools.add(tool)
+            payload = {**payload, "type": "tool_start"}
+        elif kind == "tool_started":
+            tool = str(payload.get("tool") or "")
+            if tool in self._announced_tools:
+                return
+            payload = {**payload, "type": "tool_start"}
+            if tool:
+                self._announced_tools.add(tool)
         self.manager.emit(self.run_id, payload)
 
     def flush(self) -> None:
@@ -327,7 +348,7 @@ class ConversationRunManager:
             if cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
             plan_status = ""
-            if mode == "plan" and plan_id:
+            if sink.failure_message is None and mode == "plan" and plan_id:
                 response, plan = self.app.plans.process_response(plan_id, response)
                 plan_status = str((plan or {}).get("status") or "")
             choice_groups = _detect_choice_groups(response)
@@ -346,12 +367,14 @@ class ConversationRunManager:
                 "interaction_mode": mode,
                 "plan_id": plan_id,
                 "plan_status": plan_status,
+                **({"error": sink.failure_message} if sink.failure_message else {}),
             }
             saved = self.app.storage.add_message(conversation_id, "assistant", response, metadata)
             self.app.storage.update_background_task(
                 run_id,
-                status="completed",
+                status="failed" if sink.failure_message else "completed",
                 detail={"message": "任务已完成", "message_id": saved["id"]},
+                error=sink.failure_message,
                 finished=True,
             )
             if choice_groups:

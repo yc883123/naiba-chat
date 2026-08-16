@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -17,8 +18,16 @@ from typing import Any, Callable
 
 from mcp_runtime import MCPRegistry
 
+logger = logging.getLogger("naiba.skill_runtime")
+
 
 EventCallback = Callable[[dict[str, Any]], None]
+
+# Mirror of the agent-protocol markers in model_runtime used to decide whether
+# a malformed model output was meant to be a tool call (and therefore must not
+# leak into the answer as plain text).
+_TOOL_OPEN_TAG = re.compile(r"^<(tool_calls|invoke|tool)\b", re.IGNORECASE)
+_TOOL_NAMED_ATTR = re.compile(r"\b(?:name|type)\s*=")
 
 
 class TaskCancelled(RuntimeError):
@@ -687,6 +696,15 @@ class SkillAgent:
                 reasonings.append(reasoning)
                 event({"type": "reasoning", "content": reasoning})
             action = self._parse_action(raw)
+            if action.get("type") == "parse_error":
+                # Model clearly intended a tool call but the protocol was
+                # incomplete or malformed; surface a readable error instead of
+                # the raw protocol. Do not forward the original text.
+                logger.warning("工具调用解析失败：模型返回的工具协议不完整或格式错误（不展示原文）")
+                event({"type": "run_failed", "error": "工具调用解析失败：模型返回的工具协议不完整或格式错误"})
+                return (
+                    "工具调用解析失败，已停止执行。", runs, reasonings, self._summarize_usage(usages)
+                )
             if action.get("type") != "tool":
                 event({"type": "assistant_response", "content": str(action.get("content") or raw or "")[:2000], "is_tool": False})
                 content = str(action.get("content") or raw or "任务已完成").strip()
@@ -904,7 +922,32 @@ class SkillAgent:
         parsed = cls._extract_json(text)
         if isinstance(parsed, dict) and parsed.get("type") in {"tool", "final"}:
             return parsed
+        # The output clearly intends an agent tool action but could not be
+        # parsed (truncated tag, malformed JSON, ...). Signal a parse failure
+        # instead of leaking the raw protocol as the answer.
+        if cls._looks_like_tool_protocol(text):
+            return {"type": "parse_error"}
         return {"type": "final", "content": text.strip()}
+
+    @classmethod
+    def _looks_like_tool_protocol(cls, text: str) -> bool:
+        """Heuristic: does ``text`` look like an agent tool-call protocol that
+        merely failed to parse, rather than a plain-language answer?"""
+        probe = (text or "").lstrip()
+        if not probe:
+            return False
+        first = probe[0]
+        if first in "{[":
+            # JSON/array action schema: only treat as a protocol when it
+            # carries the action-style ``"type"``/``"tool"`` key, so an ordinary
+            # JSON answer is still shown to the user.
+            return bool(re.search(r'"(?:type|tool)"\s*:', probe[:200]))
+        if first == "<":
+            if _TOOL_OPEN_TAG.match(probe):
+                if probe[:4].lower() == "<tool":
+                    return bool(_TOOL_NAMED_ATTR.search(probe[:200]))
+                return True
+        return False
 
     @classmethod
     def _extract_xml_tool_action(cls, text: str) -> dict[str, Any] | None:

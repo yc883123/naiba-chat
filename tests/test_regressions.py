@@ -1518,5 +1518,201 @@ class MCPRegistrationTests(unittest.TestCase):
             self.assertNotEqual(script, persisted_script)
 
 
+class ToolProtocolStreamTests(unittest.TestCase):
+    def _collect_sse(self, request_format, chunks):
+        events = []
+        lines = [f"data: {json.dumps(c, ensure_ascii=False)}".encode("utf-8") for c in chunks]
+        lines.append(b"data: [DONE]")
+        result = ModelRuntime._read_sse_response(lines, request_format, lambda e: events.append(e))
+        return result, events
+
+    def test_classifies_tool_protocol_markers(self) -> None:
+        self.assertEqual("tool", ModelRuntime._classify_agent_output('<tool name="read_file">'))
+        self.assertEqual("tool", ModelRuntime._classify_agent_output('<tool type="tool">'))
+        self.assertEqual("tool", ModelRuntime._classify_agent_output('<tool_calls><invoke name="x">'))
+        self.assertEqual("tool", ModelRuntime._classify_agent_output('{"type":"tool","tool":"x"}'))
+        self.assertEqual("text", ModelRuntime._classify_agent_output('你好，这是普通回答'))
+        self.assertEqual("text", ModelRuntime._classify_agent_output('```python\nprint(1)'))
+
+    def test_tool_name_protocol_split_across_chunks_leaks_no_delta(self) -> None:
+        # The opening tag is split across two SSE chunks; the whole protocol
+        # must stay out of the user-facing answer.
+        protocol = '<tool name="read_file"><parameter name="path">D:\\x\\unit.md</parameter></tool>'
+        chunks = [
+            {"choices": [{"delta": {"content": protocol[:10]}}]},
+            {"choices": [{"delta": {"content": protocol[10:]}}]},
+        ]
+        result, events = self._collect_sse("openai_chat", chunks)
+        self.assertNotIn("delta", [e.get("type") for e in events])
+        # The full protocol is still returned for the Agent Loop to parse.
+        self.assertEqual(protocol, result["content"])
+        self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
+
+    def test_legacy_tool_calls_invoke_protocol_still_parsed(self) -> None:
+        protocol = '<tool_calls><invoke name="read_file"><parameter name="path">x</parameter></invoke></tool_calls>'
+        result, events = self._collect_sse("openai_chat", [{"choices": [{"delta": {"content": protocol}}]}])
+        self.assertNotIn("delta", [e.get("type") for e in events])
+        action = SkillAgent._parse_action(result["content"])
+        self.assertEqual("tool", action["type"])
+        self.assertEqual("read_file", action["tool"])
+
+    def test_json_tool_action_is_not_streamed_as_answer(self) -> None:
+        action = {"type": "tool", "tool": "read_file", "arguments": {"path": "x"}}
+        result, events = self._collect_sse(
+            "openai_chat", [{"choices": [{"delta": {"content": json.dumps(action, ensure_ascii=False)}}]}]
+        )
+        self.assertNotIn("delta", [e.get("type") for e in events])
+        self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
+
+    def test_plain_text_is_streamed_as_delta(self) -> None:
+        chunks = [
+            {"choices": [{"delta": {"content": "你好"}}]},
+            {"choices": [{"delta": {"content": "世界"}}]},
+        ]
+        result, events = self._collect_sse("openai_chat", chunks)
+        deltas = [e for e in events if e.get("type") == "delta"]
+        self.assertEqual(["你好", "世界"], [e["content"] for e in deltas])
+        self.assertEqual("你好世界", result["content"])
+
+    def test_native_tool_calls_convert_to_agent_action(self) -> None:
+        chunks = [
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": ""}}
+            ]}}]},
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "function": {"arguments": '{"path":"x"}'}}
+            ]}}]},
+        ]
+        result, events = self._collect_sse("openai_chat", chunks)
+        self.assertNotIn("delta", [e.get("type") for e in events])
+        self.assertEqual(
+            {"type": "tool", "tool": "read_file", "arguments": {"path": "x"}},
+            SkillAgent._parse_action(result["content"]),
+        )
+
+    def test_native_tool_calls_non_streaming_converts(self) -> None:
+        result = {
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "tool_calls": [{
+                        "id": "c", "type": "function",
+                        "function": {"name": "read_file", "arguments": '{"path":"x"}'},
+                    }],
+                }
+            }]
+        }
+        content, _reasoning = ModelRuntime._online_response("openai_chat", result)
+        self.assertEqual(
+            {"type": "tool", "tool": "read_file", "arguments": {"path": "x"}},
+            SkillAgent._parse_action(content),
+        )
+
+    def test_incomplete_tool_tag_does_not_leak_and_parse_fails(self) -> None:
+        truncated = '<tool name="read_file"><parameter name="path">D:\\x'
+        result, events = self._collect_sse("openai_chat", [{"choices": [{"delta": {"content": truncated}}]}])
+        self.assertNotIn("delta", [e.get("type") for e in events])
+        self.assertEqual("parse_error", SkillAgent._parse_action(result["content"])["type"])
+
+    def test_incomplete_json_does_not_leak_and_parse_fails(self) -> None:
+        truncated = '{"type":"tool","tool":"read_file"'
+        result, events = self._collect_sse("openai_chat", [{"choices": [{"delta": {"content": truncated}}]}])
+        self.assertNotIn("delta", [e.get("type") for e in events])
+        self.assertEqual("parse_error", SkillAgent._parse_action(result["content"])["type"])
+
+    def test_ollama_tool_name_protocol_does_not_leak(self) -> None:
+        protocol = '<tool name="read_file"><parameter name="path">x</parameter></tool>'
+        lines = [json.dumps({"message": {"content": protocol}}).encode("utf-8")]
+        events = []
+        result = ModelRuntime._read_ollama_stream(lines, lambda e: events.append(e))
+        self.assertNotIn("delta", [e.get("type") for e in events])
+        self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
+
+
+class ToolProtocolAgentLoopTests(unittest.TestCase):
+    class Catalog:
+        @staticmethod
+        def scan():
+            return []
+
+    class Executor:
+        class Registry:
+            @staticmethod
+            def acquire():
+                return None
+
+            @staticmethod
+            def release():
+                return None
+
+        mcp_registry = Registry()
+
+        def __init__(self, cancel_event=None):
+            self.cancel_event = cancel_event
+
+        @staticmethod
+        def mcp_tool_guide():
+            return ""
+
+        def execute(self, tool, arguments, active_skills):
+            if self.cancel_event:
+                self.cancel_event.set()
+            return True, "ok"
+
+    def test_event_order_is_tool_start_then_result_then_answer(self) -> None:
+        events: list[dict[str, Any]] = []
+        calls = {"n": 0}
+
+        def complete(profile, messages, options, event):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "x"}})
+            return "done"
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, _runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, False, [], "", ["read_file"],
+            lambda e: events.append(e), lambda *_args: None,
+        )
+        types = [e.get("type") for e in events]
+        self.assertIn("tool_started", types)
+        self.assertIn("tool_result", types)
+        self.assertIn("run_completed", types)
+        self.assertLess(types.index("tool_started"), types.index("tool_result"))
+        self.assertLess(types.index("tool_result"), types.index("run_completed"))
+        # Final answer is plain text, not the tool protocol.
+        self.assertEqual("done", content)
+
+    def test_parse_error_is_reported_not_leaked(self) -> None:
+        events: list[dict[str, Any]] = []
+
+        def complete(profile, messages, options, event):
+            return '<tool name="read_file"><parameter name="path">D:\\x'
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, _runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, False, [], "", ["read_file"],
+            lambda e: events.append(e), lambda *_args: None,
+        )
+        self.assertIn("run_failed", [e.get("type") for e in events])
+        # The raw protocol must not be saved as the assistant message.
+        self.assertNotIn('<tool name="read_file">', content)
+
+    def test_persisted_assistant_message_excludes_protocol(self) -> None:
+        def complete(profile, messages, options, event):
+            if not getattr(complete, "step", 0):
+                complete.step = 1
+                return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "x"}})
+            return "已读取文件并完成总结。"
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, _runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, False, [], "", ["read_file"],
+            lambda *_args: None, lambda *_args: None,
+        )
+        self.assertEqual("已读取文件并完成总结。", content)
+        self.assertNotIn("read_file", content)
+
+
 if __name__ == "__main__":
     unittest.main()
