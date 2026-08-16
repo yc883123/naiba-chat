@@ -352,6 +352,14 @@ async function initialize() {
     $('#authDialog').showModal();
     return;
   }
+  const migration = state.bootstrap.data_location?.migration;
+  if (migration?.migrated) {
+    const restored = [
+      migration.config ? 'API 配置' : '',
+      migration.data ? '对话数据' : '',
+    ].filter(Boolean).join('和');
+    toast(`已从旧目录恢复${restored || '数据'}`);
+  }
   $('#serverDot').className = 'connected';
   $('#serverLabel').textContent = '服务已连接';
   $('#lanAddress').textContent = state.bootstrap.lan_url;

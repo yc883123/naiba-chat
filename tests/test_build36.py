@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -301,6 +302,65 @@ class WorkspaceAndDataTests(unittest.TestCase):
         self.assertTrue(report["migrated"])
         self.assertTrue(config_path.is_file())
         self.assertTrue((data_sub / "chat.db").is_file())
+
+    def test_migrate_legacy_data_repairs_existing_empty_targets(self) -> None:
+        exe_dir = Path(tempfile.mkdtemp())
+        app_dir = Path(tempfile.mkdtemp())
+        config_path = app_dir / "config.json"
+        data_sub = app_dir / "data"
+        legacy_data = exe_dir / "data"
+        legacy_data.mkdir()
+        (exe_dir / "config.json").write_text(
+            json.dumps({"providers": [{"id": "legacy", "api_key": "secret"}]}),
+            encoding="utf-8",
+        )
+        source_db = legacy_data / "chat.db"
+        with sqlite3.connect(source_db) as db:
+            db.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+            db.execute("INSERT INTO conversations(id) VALUES ('legacy-conversation')")
+        data_sub.mkdir()
+        config_path.write_text(json.dumps({"providers": []}), encoding="utf-8")
+        target_db = data_sub / "chat.db"
+        with sqlite3.connect(target_db) as db:
+            db.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+
+        with patch.object(server, "EXE_DIR", exe_dir), patch.object(server, "APP_DIR", app_dir), patch.object(server, "CONFIG_PATH", config_path), patch.object(server, "DATA_DIR", data_sub):
+            report = migrate_legacy_data()
+
+        self.assertTrue(report["migrated"])
+        self.assertTrue(report["config"])
+        self.assertTrue(report["data"])
+        self.assertEqual("secret", json.loads(config_path.read_text(encoding="utf-8"))["providers"][0]["api_key"])
+        with sqlite3.connect(target_db) as db:
+            self.assertEqual(1, db.execute("SELECT COUNT(*) FROM conversations").fetchone()[0])
+
+    def test_migrate_legacy_data_does_not_overwrite_nonempty_targets(self) -> None:
+        exe_dir = Path(tempfile.mkdtemp())
+        app_dir = Path(tempfile.mkdtemp())
+        config_path = app_dir / "config.json"
+        data_sub = app_dir / "data"
+        (exe_dir / "data").mkdir()
+        (exe_dir / "config.json").write_text(
+            json.dumps({"providers": [{"id": "legacy"}]}), encoding="utf-8"
+        )
+        source_db = exe_dir / "data" / "chat.db"
+        with sqlite3.connect(source_db) as db:
+            db.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+            db.execute("INSERT INTO conversations(id) VALUES ('legacy')")
+        data_sub.mkdir()
+        config_path.write_text(json.dumps({"providers": [{"id": "current"}]}), encoding="utf-8")
+        target_db = data_sub / "chat.db"
+        with sqlite3.connect(target_db) as db:
+            db.execute("CREATE TABLE conversations (id TEXT PRIMARY KEY)")
+            db.execute("INSERT INTO conversations(id) VALUES ('current')")
+
+        with patch.object(server, "EXE_DIR", exe_dir), patch.object(server, "APP_DIR", app_dir), patch.object(server, "CONFIG_PATH", config_path), patch.object(server, "DATA_DIR", data_sub):
+            report = migrate_legacy_data()
+
+        self.assertFalse(report["migrated"])
+        self.assertEqual("current", json.loads(config_path.read_text(encoding="utf-8"))["providers"][0]["id"])
+        with sqlite3.connect(target_db) as db:
+            self.assertEqual("current", db.execute("SELECT id FROM conversations").fetchone()[0])
 
 
 if __name__ == "__main__":

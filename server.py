@@ -11,6 +11,7 @@ import io
 import re
 import secrets
 import shutil
+import sqlite3
 import socket
 import sys
 import tempfile
@@ -61,6 +62,86 @@ STATUS_PATH = DATA_DIR / "server.json"
 LOCK_PATH = DATA_DIR / "server.lock"
 
 
+def _config_has_providers(path: Path) -> bool:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    providers = value.get("providers") if isinstance(value, dict) else None
+    return isinstance(providers, list) and any(
+        isinstance(provider, dict) and str(provider.get("id") or "").strip()
+        for provider in providers
+    )
+
+
+def _database_has_conversations(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=1)
+        try:
+            row = connection.execute("SELECT COUNT(*) FROM conversations").fetchone()
+            return bool(row and int(row[0] or 0))
+        finally:
+            connection.close()
+    except (OSError, sqlite3.Error):
+        return False
+
+
+def _copy_legacy_data(source: Path, replace_empty_target: bool = True) -> dict[str, bool]:
+    """Merge a legacy install into APP_DIR without overwriting non-empty data."""
+    report = {"config": False, "data": False}
+    legacy_config = source / "config.json"
+    legacy_data = source / "data"
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+
+    if legacy_config.is_file() and (
+        not CONFIG_PATH.exists() or not _config_has_providers(CONFIG_PATH)
+    ):
+        shutil.copy2(legacy_config, CONFIG_PATH)
+        report["config"] = True
+
+    if not legacy_data.is_dir():
+        return report
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    source_db = legacy_data / "chat.db"
+    target_db = DATA_DIR / "chat.db"
+    replace_db = source_db.is_file() and (
+        not target_db.exists()
+        or (replace_empty_target and not _database_has_conversations(target_db)
+            and _database_has_conversations(source_db))
+    )
+    if replace_db:
+        # A stale WAL/SHM pair from the empty database must not be reused with
+        # the restored database. The running server is stopped before startup
+        # migration, and the target directory was backed up by the caller.
+        for suffix in ("-wal", "-shm"):
+            sidecar = target_db.with_name(target_db.name + suffix)
+            try:
+                sidecar.unlink(missing_ok=True)
+            except OSError:
+                pass
+        shutil.copy2(source_db, target_db)
+        report["data"] = True
+        for suffix in ("-wal", "-shm"):
+            sidecar = source_db.with_name(source_db.name + suffix)
+            if sidecar.is_file() and sidecar.stat().st_size:
+                shutil.copy2(sidecar, target_db.with_name(target_db.name + suffix))
+
+    for item in legacy_data.iterdir():
+        if item.name in {"chat.db", "chat.db-wal", "chat.db-shm", "server.lock"}:
+            continue
+        destination = DATA_DIR / item.name
+        if destination.exists():
+            continue
+        if item.is_dir():
+            shutil.copytree(item, destination)
+        else:
+            shutil.copy2(item, destination)
+        report["data"] = True
+    return report
+
+
 def migrate_legacy_data() -> dict[str, Any]:
     """冻结版首次启动：从 EXE 相邻旧目录迁移 config.json 与 data/ 到数据目录。
 
@@ -72,21 +153,13 @@ def migrate_legacy_data() -> dict[str, Any]:
         return report
     legacy_config = EXE_DIR / "config.json"
     legacy_data = EXE_DIR / "data"
-    if not legacy_config.exists() and not legacy_data.exists():
+    if not legacy_config.is_file() and not legacy_data.is_dir():
         return report
-    APP_DIR.mkdir(parents=True, exist_ok=True)
-    if not CONFIG_PATH.exists() and legacy_config.is_file():
-        try:
-            shutil.copy2(legacy_config, CONFIG_PATH)
-            report["config"] = True
-        except OSError as exc:
-            print(f"迁移配置文件失败：{exc}")
-    if not DATA_DIR.exists() and legacy_data.is_dir():
-        try:
-            shutil.copytree(legacy_data, DATA_DIR)
-            report["data"] = True
-        except OSError as exc:
-            print(f"迁移数据目录失败：{exc}")
+    try:
+        migrated = _copy_legacy_data(EXE_DIR)
+        report.update(migrated)
+    except OSError as exc:
+        print(f"迁移旧数据失败：{exc}")
     if report["config"] or report["data"]:
         report["migrated"] = True
         report["source"] = str(EXE_DIR)
@@ -1205,27 +1278,11 @@ class NaibaChatApp:
     def import_legacy_data(self, source: Path) -> dict[str, Any]:
         """从用户指定的旧数据目录导入 config.json 与 data/（保留目标已存在数据）。"""
         source = Path(source)
-        report = {"config": False, "data": False}
         legacy_config = source / "config.json"
         legacy_data = source / "data"
         if not legacy_config.is_file() and not legacy_data.is_dir():
             raise ValueError("旧数据目录中没有 config.json 或 data/")
-        APP_DIR.mkdir(parents=True, exist_ok=True)
-        if not CONFIG_PATH.exists() and legacy_config.is_file():
-            shutil.copy2(legacy_config, CONFIG_PATH)
-            report["config"] = True
-        target_data = DATA_DIR
-        if legacy_data.is_dir():
-            target_data.mkdir(parents=True, exist_ok=True)
-            for item in legacy_data.iterdir():
-                dest = target_data / item.name
-                if dest.exists():
-                    continue  # 保留目标已存在数据
-                if item.is_dir():
-                    shutil.copytree(item, dest)
-                else:
-                    shutil.copy2(item, dest)
-                report["data"] = True
+        report = _copy_legacy_data(source)
         if report["config"]:
             # 重新加载配置，使导入的模型/MCP 立即生效。
             self.config = ConfigStore(CONFIG_PATH)
