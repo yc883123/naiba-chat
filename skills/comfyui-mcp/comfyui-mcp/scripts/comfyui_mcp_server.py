@@ -12,6 +12,10 @@ import uuid
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
+
+# 查询类工具标记为只读（readOnlyHint），run_workflow 等保持有副作用（不标记）。
+_READONLY = ToolAnnotations(readOnlyHint=True)
 
 
 COMFYUI_URL = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
@@ -602,7 +606,7 @@ def _collect_artifacts(prompt_id: str, outputs: dict) -> list[dict]:
     return artifacts
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def get_environment() -> str:
     """Return effective paths, interpreter, URL, and ComfyUI reachability."""
     reachable = False
@@ -628,7 +632,7 @@ def get_environment() -> str:
     return json.dumps(result, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def list_models(kind: str = "", query: str = "", limit: int = 50, offset: int = 0) -> str:
     """Search one model kind with pagination; omit filters only for the legacy full inventory."""
     try:
@@ -686,7 +690,7 @@ def list_models(kind: str = "", query: str = "", limit: int = 50, offset: int = 
         return json.dumps({"error": f"Cannot query ComfyUI at {COMFYUI_URL}: {exc}"}, ensure_ascii=False)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def list_workflows() -> str:
     """Classify workflow files as ready, needing API export, or invalid."""
     if not WORKFLOWS_DIR.is_dir():
@@ -708,7 +712,7 @@ def list_workflows() -> str:
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def get_workflow_requirements(workflow_name: str) -> str:
     """Show required files, prompts, defaults, and parameters before queuing a workflow."""
     try:
@@ -741,7 +745,7 @@ def get_workflow_requirements(workflow_name: str) -> str:
         )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def validate_workflow(workflow_name: str) -> str:
     """Validate one installed workflow against live ComfyUI nodes and model assets."""
     try:
@@ -878,7 +882,7 @@ def run_workflow(
         return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=2)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READONLY)
 def get_image(prompt_id: str) -> str:
     """Return image URLs from ComfyUI history for a known prompt_id."""
     try:

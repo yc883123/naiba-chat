@@ -1226,6 +1226,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   $('#providerName').value = provider.name || '';
   $('#providerBaseUrl').value = provider.base_url || '';
   $('#providerContextSize').value = provider.context_size || '';
+  $('#providerReasoningEffort').value = provider.reasoning_effort || 'auto';
   setProviderModelOptions([], provider.model || '');
   $('#providerFormat').value = provider.request_format || 'openai_chat';
   $('#providerApiKey').value = '';
@@ -1268,7 +1269,7 @@ function setProviderEditMode(editing, isNew = false) {
   $('#providerEmpty').hidden = active;
   [
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
-    '#providerModel', '#providerModelCustom', '#providerContextSize',
+    '#providerModel', '#providerModelCustom', '#providerContextSize', '#providerReasoningEffort',
   ].forEach((selector) => { $(selector).disabled = !editing; });
   $('#providerSelect').disabled = editing;
   $('#addProvider').disabled = editing;
@@ -1324,6 +1325,7 @@ function providerFormValue() {
     context_size: $('#providerFormat').value === 'ollama' && $('#providerContextSize').value.trim()
       ? Number($('#providerContextSize').value)
       : undefined,
+    reasoning_effort: $('#providerReasoningEffort').value,
   };
 }
 
@@ -1432,6 +1434,8 @@ function populateRuntimeSettings() {
   $('#maxTokens').value = settings.max_tokens;
   $('#contextSize').value = settings.context_size;
   $('#commandTimeout').value = settings.command_timeout;
+  $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
+  $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
 }
 
 function populateAgentSettings() {
@@ -1560,9 +1564,12 @@ async function saveRuntimeSettings() {
     max_tokens: Number($('#maxTokens').value),
     context_size: Number($('#contextSize').value),
     command_timeout: Number($('#commandTimeout').value),
+    workspace_dir: $('#workspaceDir').value.trim(),
   };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
+  state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
+  $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
   toast('运行参数已保存');
 }
 
@@ -1597,6 +1604,36 @@ function renderMcp() {
       <span><b>${escapeHtml(server.id)} · ${server.connected ? '已连接' : (server.status === 'idle' ? '待机' : '不可用')}</b><small>${server.connected ? `${server.tools.length} 个工具` : (server.status === 'idle' ? '仅在本轮激活的 Skill 需要 MCP 时连接' : escapeHtml(server.error))}</small></span>
       <span class="status-mark" style="background:${server.connected ? '#3ecf8e' : (server.status === 'idle' ? '#7d867d' : '#e45e55')}"></span>
     </div>`).join('') || '<p class="activity">没有注册 MCP 服务</p>';
+  $$('#mcpList .connection-item').forEach((item, index) => {
+    const server = servers[index];
+    if (!server) return;
+    const actions = document.createElement('span');
+    actions.className = 'mcp-actions';
+    const test = document.createElement('button');
+    test.className = 'control-button mcp-test';
+    test.type = 'button';
+    test.textContent = '测试';
+    test.addEventListener('click', () => mcpAction(server.id, 'test'));
+    const reconnect = document.createElement('button');
+    reconnect.className = 'control-button mcp-reconnect';
+    reconnect.type = 'button';
+    reconnect.textContent = '重连';
+    reconnect.addEventListener('click', () => mcpAction(server.id, 'reconnect'));
+    actions.append(test, reconnect);
+    item.append(actions);
+  });
+}
+
+async function mcpAction(serverId, action) {
+  try {
+    const result = await api('/api/mcp/' + action, { method: 'POST', body: { server_id: serverId } });
+    const server = state.bootstrap.mcp_servers.find((item) => item.id === serverId);
+    if (server) Object.assign(server, result);
+    renderMcp();
+    toast(action === 'test' ? 'MCP 测试完成' : 'MCP 已重新连接');
+  } catch (error) {
+    toast('MCP 操作失败：' + error.message);
+  }
 }
 
 async function uploadFiles(files) {

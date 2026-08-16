@@ -195,6 +195,15 @@
             <label class="provider-field" id="providerContextField">Ollama 上下文 Tokens（可选）
               <input id="providerContextSize" type="number" min="1" max="1048576" step="1" placeholder="留空则使用全局设置">
             </label>
+            <label class="provider-field">思维强度
+              <select id="providerReasoningEffort">
+                <option value="auto">自动</option>
+                <option value="off">关闭</option>
+                <option value="low">低</option>
+                <option value="medium">中</option>
+                <option value="high">高</option>
+              </select>
+            </label>
             <p class="form-error provider-field" id="providerError"></p>
             <div class="form-actions provider-actions provider-field">
               <button type="button" class="control-button" id="testProvider">测试连接</button>
@@ -267,11 +276,17 @@
             <label>上下文 Tokens<input id="contextSize" type="number" min="1" max="1048576" step="1"></label>
             <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"></label>
           </div>
+          <h3 class="subheading">工作区</h3>
+          <label class="field-wide">工作区目录
+            <input id="workspaceDir" type="text" placeholder="留空使用程序目录下的 workspace">
+            <small class="hint">当前解析路径：<code id="resolvedWorkspaceDir">-</code></small>
+          </label>
           <div class="form-actions"><button class="primary-button" id="saveRuntime" type="button">保存参数</button></div>
         </section>
         <section data-settings-panel="connections" hidden>
           <h3>MCP 服务</h3>
           <div id="mcpList" class="connection-list"></div>
+          <div class="form-actions"><button class="control-button" id="testMcp" type="button">测试连接</button><button class="control-button" id="reconnectMcp" type="button">重新连接</button></div>
           <h3>服务地址</h3>
           <div class="connection-address" id="connectionAddress"></div>
           <h3 class="subheading">访问口令</h3>

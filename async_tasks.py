@@ -138,8 +138,11 @@ class ConversationRunManager:
                 "attachments": attachments,
                 "interaction_mode": mode,
                 "plan_id": plan_id,
+                "workspace_dir": str(self.app.config.resolve_workspace_dir()),
                 "allowed_tools": resolve_mode_tools(
-                    mode, [str(item) for item in self.app.config.data.get("agent_tools", [])]
+                    mode,
+                    [str(item) for item in self.app.config.data.get("agent_tools", [])],
+                    self.app.tool_registry.readonly_mcp_tools(),
                 ),
             }
             try:

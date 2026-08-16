@@ -40,6 +40,8 @@ class ToolSpec:
     permission: str = "confirm"
     execute: ToolExecuteFn | None = None
     summarize: ToolSummarizeFn | None = None
+    # 来自 MCP 工具的 annotations（readOnlyHint / destructiveHint 等）
+    annotations: dict[str, Any] = field(default_factory=dict)
 
 
 def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bool) -> str:
@@ -66,14 +68,17 @@ class ToolRegistry:
             return
         for tool in tools or []:
             name = f"mcp__{server_id}__{tool.get('name')}"
+            annotations = tool.get("annotations") or {}
+            read_only = bool(annotations.get("readOnlyHint", False))
             spec = ToolSpec(
                 name=name,
                 description=str(tool.get("description") or ""),
                 parameters=tool.get("input_schema") or {"type": "object", "properties": {}},
-                side_effect=True,
+                side_effect=not read_only,
                 retryable=True,
                 timeout=620,
                 permission="confirm",
+                annotations=annotations,
             )
             self.register(spec)
             server = server_id
@@ -118,6 +123,14 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._specs.keys())
 
+    def readonly_mcp_tools(self) -> list[str]:
+        """返回已注册 MCP 工具中标注为只读（无副作用）的名称列表。"""
+        return [
+            name
+            for name, spec in self._specs.items()
+            if name.startswith("mcp__") and not spec.side_effect
+        ]
+
     def side_effect(self, name: str) -> bool:
         spec = self._specs.get(name)
         return spec.side_effect if spec else True
@@ -151,6 +164,7 @@ class ToolRegistry:
                     "retryable": spec.retryable,
                     "timeout": spec.timeout,
                     "permission": spec.permission,
+                    "annotations": spec.annotations,
                 }
             )
         return rows

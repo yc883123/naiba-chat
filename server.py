@@ -26,17 +26,24 @@ from pathlib import Path
 from typing import Any
 
 # 打包成 exe（PyInstaller）后，__file__ 指向临时解压目录，不能用于读写运行数据。
-# 因此区分两类目录：
-#   - RESOURCE_DIR：静态资源（public 等），随 exe 打包，运行时从 sys._MEIPASS 读取
-#   - APP_DIR：可写运行目录（config.json / data / skills / workspace），用 exe 所在目录
+# 目录分三类：
+#   - EXE_DIR：exe 所在目录（仅冻结时与仓库根不同），用于默认工作区与定位相邻旧数据。
+#   - RESOURCE_DIR：静态资源（public 等），随 exe 打包，运行时从 sys._MEIPASS 读取。
+#   - APP_DIR：可写运行数据目录（config.json / data / skills），冻结版固定到
+#     %LOCALAPPDATA%\NaibaChat；源码模式继续使用仓库目录。
 if getattr(sys, "frozen", False):
-    APP_DIR = Path(sys.executable).resolve().parent
-    RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", APP_DIR)).resolve()
+    EXE_DIR = Path(sys.executable).resolve().parent
+    RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", EXE_DIR)).resolve()
+    _localappdata = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+    APP_DIR = Path(_localappdata).resolve() / "NaibaChat"
 else:
-    APP_DIR = Path(__file__).resolve().parent
-    RESOURCE_DIR = APP_DIR
+    EXE_DIR = Path(__file__).resolve().parent
+    RESOURCE_DIR = EXE_DIR
+    APP_DIR = EXE_DIR
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
+if str(EXE_DIR) not in sys.path and str(EXE_DIR) != str(APP_DIR):
+    sys.path.insert(0, str(EXE_DIR))
 
 from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
@@ -52,6 +59,38 @@ DATA_DIR = APP_DIR / "data"
 CONFIG_PATH = APP_DIR / "config.json"
 STATUS_PATH = DATA_DIR / "server.json"
 LOCK_PATH = DATA_DIR / "server.lock"
+
+
+def migrate_legacy_data() -> dict[str, Any]:
+    """冻结版首次启动：从 EXE 相邻旧目录迁移 config.json 与 data/ 到数据目录。
+
+    仅当数据目录（%LOCALAPPDATA%\\NaibaChat）尚未初始化时执行；旧文件保留，
+    不覆盖已存在的新数据。源码模式（APP_DIR == EXE_DIR）跳过。
+    """
+    report: dict[str, Any] = {"migrated": False, "config": False, "data": False, "source": ""}
+    if str(APP_DIR) == str(EXE_DIR):
+        return report
+    legacy_config = EXE_DIR / "config.json"
+    legacy_data = EXE_DIR / "data"
+    if not legacy_config.exists() and not legacy_data.exists():
+        return report
+    APP_DIR.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_PATH.exists() and legacy_config.is_file():
+        try:
+            shutil.copy2(legacy_config, CONFIG_PATH)
+            report["config"] = True
+        except OSError as exc:
+            print(f"迁移配置文件失败：{exc}")
+    if not DATA_DIR.exists() and legacy_data.is_dir():
+        try:
+            shutil.copytree(legacy_data, DATA_DIR)
+            report["data"] = True
+        except OSError as exc:
+            print(f"迁移数据目录失败：{exc}")
+    if report["config"] or report["data"]:
+        report["migrated"] = True
+        report["source"] = str(EXE_DIR)
+    return report
 
 
 def static_asset_version() -> str:
@@ -332,11 +371,13 @@ class ConfigStore:
 
     def public(self) -> dict[str, Any]:
         with self.lock:
-            return {
+            result = {
                 key: value
                 for key, value in self.data.items()
                 if key not in {"access_token", "providers", "mcp_servers"}
             }
+            result["resolved_workspace_dir"] = str(self.resolve_workspace_dir())
+            return result
 
     def get_skills_dirs(self) -> list[str]:
         with self.lock:
@@ -372,6 +413,49 @@ class ConfigStore:
             path = (APP_DIR / path).resolve()
         return path.resolve()
 
+    def resolve_workspace_dir(self, raw: str | None = None) -> Path:
+        """解析工作区目录：相对路径以 EXE 所在目录为基准（不受启动目录影响）。"""
+        raw = (raw if raw is not None else self.data.get("workspace_dir", "workspace") or "workspace").strip()
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = (EXE_DIR / path).resolve()
+        return path.resolve()
+
+    def validate_workspace_dir(self, resolved: Path) -> None:
+        """拒绝磁盘根目录、系统目录、程序数据目录等过宽或危险路径。"""
+        resolved = resolved.resolve()
+        if resolved.parent == resolved:
+            raise ValueError("不能把磁盘根目录作为工作区")
+        system_roots = [Path(os.environ.get("SystemRoot", r"C:\Windows"))]
+        for env_name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+            value = os.environ.get(env_name)
+            if value:
+                system_roots.append(Path(value))
+        for root in system_roots:
+            root = root.resolve()
+            if resolved == root or path_within(resolved, root):
+                raise ValueError(f"不允许使用系统目录作为工作区：{root}")
+        forbidden_exact = {
+            Path.home().resolve(),
+            APP_DIR,
+            DATA_DIR.resolve(),
+            PUBLIC_DIR.resolve(),
+        }
+        if resolved in forbidden_exact:
+            raise ValueError("不能把程序数据目录或用户主目录作为工作区，请使用其子目录")
+
+    def ensure_workspace_writable(self, resolved: Path) -> None:
+        """创建工作区目录并验证可读写性；不允许则抛出。"""
+        self.validate_workspace_dir(resolved)
+        resolved.mkdir(parents=True, exist_ok=True)
+        probe = resolved / ".naiba_write_test"
+        try:
+            probe.write_text("ok", encoding="utf-8")
+            probe.read_text(encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            raise ValueError(f"工作区目录不可读写：{resolved}（{exc}）")
+
     def public_providers(self) -> list[dict[str, Any]]:
         with self.lock:
             return [
@@ -394,6 +478,7 @@ class ConfigStore:
             "agent_tools",
             "command_timeout",
             "access_token",
+            "workspace_dir",
         }
         with self.lock:
             for key in allowed:
@@ -421,6 +506,14 @@ class ConfigStore:
                         self.data[key] = [tool for tool in requested if tool in valid_tools]
                     elif key == "context_size":
                         self.data[key] = self._positive_context_size(values[key], "context_size")
+                    elif key == "workspace_dir":
+                        raw = str(values[key] or "").strip()
+                        if not raw:
+                            # 恢复默认：EXE 所在目录下的 workspace。
+                            raw = "workspace"
+                        resolved = self.resolve_workspace_dir(raw)
+                        self.ensure_workspace_writable(resolved)
+                        self.data[key] = raw
                     else:
                         self.data[key] = values[key]
             self.save()
@@ -506,6 +599,11 @@ class ConfigStore:
                     provider["local_backend"] = request_format
                 else:
                     provider.pop("local_backend", None)
+            # 旧配置补全思维强度，默认 auto（不发送协议字段）。
+            effort = str(provider.get("reasoning_effort") or "auto").strip().lower()
+            if effort not in {"auto", "off", "low", "medium", "high"}:
+                effort = "auto"
+            provider["reasoning_effort"] = effort
         # 计算 default_model_key：旧 provider_id 指向的条目决定前缀。
         default_key = str(self.data.get("default_model_key") or "").strip()
         if not default_key:
@@ -612,6 +710,10 @@ class ConfigStore:
                 "api_key": str(values.get("api_key") or "").strip(),
                 "request_format": request_format,
             }
+            raw_effort = str(values.get("reasoning_effort") or "auto").strip().lower()
+            if raw_effort not in {"auto", "off", "low", "medium", "high"}:
+                raise ValueError("思维强度必须是 auto / off / low / medium / high 之一")
+            payload["reasoning_effort"] = raw_effort
             if kind == "local":
                 payload["local_backend"] = local_backend
                 if local_backend == "ollama":
@@ -970,6 +1072,8 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
 
 class NaibaChatApp:
     def __init__(self):
+        # 冻结版首次启动：从 EXE 相邻旧目录迁移配置与数据到 %LOCALAPPDATA%\NaibaChat。
+        self.data_migration = migrate_legacy_data()
         self.config = ConfigStore(CONFIG_PATH)
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.storage = ChatStorage(DATA_DIR / "chat.db")
@@ -990,7 +1094,7 @@ class NaibaChatApp:
         )
         self.mcp = MCPRegistry(self.config.data.get("mcp_servers", []))
         self.executor = ToolExecutor(
-            Path(self.config.data["workspace_dir"]).resolve(),
+            self.config.resolve_workspace_dir(),
             sys.executable,
             int(self.config.data.get("command_timeout", 120)),
             self.mcp,
@@ -1012,6 +1116,8 @@ class NaibaChatApp:
         self.mcp.on_tools_discovered = self.tool_registry.register_mcp_tools
         self.mcp.on_tools_deregistered = self.tool_registry.deregister_mcp_tools
         self.mcp.register_tools_into(self.tool_registry)
+        # MCP 生命周期：启动即在后台连接所有已启用服务，保持到退出。
+        threading.Thread(target=self._start_mcp_background, name="mcp-startup", daemon=True).start()
         from subagent import (
             subagent_handler_factory,
             job_tool_handler_factory,
@@ -1059,6 +1165,72 @@ class NaibaChatApp:
         payload["env"] = env
         return payload
 
+    def _start_mcp_background(self) -> None:
+        """应用启动后在后台连接所有已启用 MCP 服务，并保持到退出。"""
+        try:
+            self.mcp.start()
+        except Exception as exc:  # 单个服务启动失败不应中断其他服务
+            print(f"MCP 后台启动部分失败：{exc}")
+
+    def test_mcp_server(self, server_id: str) -> dict[str, Any]:
+        """返回指定 MCP 的 stdio 状态，并对 ComfyUI 额外探测 HTTP 可达性。"""
+        with self.mcp._lock:
+            connection = self.mcp.connections.get(server_id)
+        if not connection:
+            raise ValueError(f"未注册的 MCP 服务：{server_id}")
+        state = connection.state()
+        if server_id == "comfyui":
+            address = (connection.env or {}).get("COMFYUI_SERVER_ADDRESS") or "http://127.0.0.1:8188"
+            try:
+                import urllib.request
+
+                req = urllib.request.Request(f"{address.rstrip('/')}/", method="HEAD")
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    state["comfyui_reachable"] = 200 <= resp.status < 500
+            except Exception as exc:
+                state["comfyui_reachable"] = False
+                state["comfyui_error"] = str(exc)
+        return state
+
+    def reconnect_mcp_server(self, server_id: str) -> dict[str, Any]:
+        """强制重连指定 MCP 服务：先停止再启动，返回最新状态。"""
+        with self.mcp._lock:
+            connection = self.mcp.connections.get(server_id)
+        if not connection:
+            raise ValueError(f"未注册的 MCP 服务：{server_id}")
+        connection.stop()
+        connection.start(timeout=20)
+        return connection.state()
+
+    def import_legacy_data(self, source: Path) -> dict[str, Any]:
+        """从用户指定的旧数据目录导入 config.json 与 data/（保留目标已存在数据）。"""
+        source = Path(source)
+        report = {"config": False, "data": False}
+        legacy_config = source / "config.json"
+        legacy_data = source / "data"
+        if not legacy_config.is_file() and not legacy_data.is_dir():
+            raise ValueError("旧数据目录中没有 config.json 或 data/")
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        if not CONFIG_PATH.exists() and legacy_config.is_file():
+            shutil.copy2(legacy_config, CONFIG_PATH)
+            report["config"] = True
+        target_data = DATA_DIR
+        if legacy_data.is_dir():
+            target_data.mkdir(parents=True, exist_ok=True)
+            for item in legacy_data.iterdir():
+                dest = target_data / item.name
+                if dest.exists():
+                    continue  # 保留目标已存在数据
+                if item.is_dir():
+                    shutil.copytree(item, dest)
+                else:
+                    shutil.copy2(item, dest)
+                report["data"] = True
+        if report["config"]:
+            # 重新加载配置，使导入的模型/MCP 立即生效。
+            self.config = ConfigStore(CONFIG_PATH)
+        return report
+
     def bootstrap(self) -> dict[str, Any]:
         return {
             "settings": self.config.public(),
@@ -1071,6 +1243,14 @@ class NaibaChatApp:
             "default_agent_id": self.config.default_agent_id(),
             "lan_url": f"http://{get_lan_ip()}:{self.config.data['port']}",
             "update": self.updater.status(),
+            "data_location": {
+                "is_frozen": bool(getattr(sys, "frozen", False)),
+                "data_dir": str(DATA_DIR),
+                "config_path": str(CONFIG_PATH),
+                "exe_dir": str(EXE_DIR),
+                "migration": self.data_migration,
+            },
+            "resolved_workspace_dir": str(self.config.resolve_workspace_dir()),
         }
 
     def list_skill_dirs(self) -> dict[str, Any]:
@@ -1270,6 +1450,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             if agent_id is not None and not isinstance(agent_id, str):
                 self._json({"error": "agent_id 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
+            model_key = body.get("model_key")
+            if model_key is not None and not isinstance(model_key, str):
+                self._json({"error": "model_key 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
             interaction_mode = body.get("interaction_mode")
             if interaction_mode is not None:
                 if not isinstance(interaction_mode, str) or interaction_mode not in ("craft", "plan", "ask"):
@@ -1283,6 +1467,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 provider_id=provider_id,
                 agent_id=agent_id,
                 interaction_mode=interaction_mode,
+                model_key=model_key,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
         elif path == "/api/agents":
@@ -1323,13 +1508,42 @@ class RequestHandler(BaseHTTPRequestHandler):
                     settings = APP.config.public()
                 APP.executor.command_timeout = int(APP.config.data.get("command_timeout", 120))
                 APP.executor.set_permission_mode(str(APP.config.data.get("permission_mode", "confirm")))
+                # 工作区变更：仅影响新任务；已运行后台任务继续使用其启动时的快照路径。
+                if "workspace_dir" in body:
+                    APP.executor.workspace = APP.config.resolve_workspace_dir()
                 self._json(
                     {
                         "settings": settings,
                         "default_model_key": APP.config.default_model_key(),
+                        "resolved_workspace_dir": str(APP.config.resolve_workspace_dir()),
                     }
                 )
             except (OSError, ValueError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/settings/import-legacy":
+            # 从用户指定的旧数据目录导入 config.json 与 data/（保留目标已存在数据）。
+            try:
+                source = Path(str(body.get("source") or "").strip()).expanduser().resolve()
+                if not source.is_dir():
+                    self._json({"error": "旧数据目录不存在"}, HTTPStatus.BAD_REQUEST)
+                    return
+                imported = APP.import_legacy_data(source)
+                self._json({"ok": True, **imported})
+            except (OSError, ValueError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/mcp/test":
+            try:
+                server_id = str(body.get("server_id") or "").strip()
+                result = APP.test_mcp_server(server_id)
+                self._json(result)
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/mcp/reconnect":
+            try:
+                server_id = str(body.get("server_id") or "").strip()
+                result = APP.reconnect_mcp_server(server_id)
+                self._json(result)
+            except (OSError, ValueError, RuntimeError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/update/check":
             self._json(APP.updater.start_check(force=True))
@@ -1561,7 +1775,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         else:
             path = Path(source).expanduser().resolve()
             allowed_roots = [
-                Path(APP.config.data["workspace_dir"]).expanduser().resolve(),
+                APP.config.resolve_workspace_dir(),
                 DATA_DIR.resolve(),
             ]
             if not any(path_within(path, root) for root in allowed_roots):

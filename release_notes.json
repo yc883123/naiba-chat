@@ -1,16 +1,8 @@
 [
-  "修复兼容 DeepSeek 风格的 <tool name=...> 工具调用协议，确保 Agent Loop 在 Plan 和 Craft 模式下继续执行工具，而不是把工具请求误当作最终文本。",
-  "新增完整 Agent Loop 与统一工具注册系统，支持最多 32 步的连续工具调用、失败重试和明确终止。",
-  "新增后台 Job、持续检查与同进程子 Agent 能力，支持状态查询、增量输出、等待、取消和重启中断恢复。",
-  "MCP stdio 工具现在可动态注册到 Agent，并已通过 NaibaChat 调用 ComfyUI MCP 完成真实生图验证。",
-  "修复工具权限确认事件与持久 Run 状态不一致导致确认请求返回 409 的问题。",
-  "修复已配置 MCP 服务但未显式选择 MCP Skill 时连接未启动，导致 call_mcp 报告服务尚未连接的问题。",
-  "修复 ComfyUI MCP 客户端向 MCP SDK 传递整数超时导致工具调用失败的问题，并固定应用侧 MCP SDK 版本。",
-  "更新 H3 擦边导演 Skill，新增 T2VA 文生视频、I2VA 图生视频和 Ref2VA 参考生视频三种模式。",
-  "H3 Skill 新增无图纯文字输入流程、多图参考输入规则、首帧设计和对应的英文指令行模板。",
-  "H3 Skill 的动作、运镜、视觉事实和图片引用规则统一改为按首帧来源处理。",
-  "将 Craft、Ask、Plan 准备和 Plan 执行统一为对话拥有的持久 Run，切换对话或关闭事件流不会中断任务。",
-  "重新进入运行中的对话时会重放持久事件并恢复生成文本、工具进度、权限确认和计划状态。",
-  "同一对话同时只允许一个主 Run，不同对话可以并行执行；任务面板改为只读状态与对话导航。",
-  "继续保持 Agent 无限步骤循环、显式取消、服务重启恢复和计划归档 Markdown 的 UTF-8 中文显示。"
+  "修复 LM Studio 协议：为 /api/v1/chat 增加独立序列化器，文本使用 {type:text,content}、图片使用 {type:image,data_url}、system 消息写入 system_prompt，不再发送 OpenAI messages 或 image_url；按 LM Studio 原生 SSE 解析 message.delta、reasoning.delta、error 与 chat.end，非流式响应从 output[] 提取正文与推理。",
+  "数据与升级迁移：冻结版配置、对话库和 MCP 文件固定到 %LOCALAPPDATA%\\NaibaChat；首次启动自动从旧 EXE 相邻的 config.json / data/ 迁移并保留旧文件；设置页显示实际数据位置并提供旧数据目录导入；修复会话设置接口遗漏的 model_key，确保每个对话所选模型可正确恢复。",
+  "工作区设置：设置页新增工作区目录输入框、目录选择按钮、当前解析后的绝对路径与打开目录按钮；默认值统一为 workspace 并解析为 EXE所在目录\\workspace，不依赖快捷方式或进程启动目录；支持自定义目录、校验可读写、拒绝根目录/系统目录/数据目录等危险路径；切换不自动移动旧文件；已运行的后台任务沿用启动工作区。",
+  "MCP 生命周期：应用启动后在后台连接所有已启用 MCP 并保持到退出；调用时发现断线先执行一次有界重连，再返回明确的启动或调用错误；保留 MCP 工具 annotations（ComfyUI 查询工具只读、run_workflow 有副作用）；Plan/Ask 可调用 ComfyUI 环境与工作流查询等只读工具，但不能调用 run_workflow；设置页新增 MCP 测试与重新连接，并展示 stdio 状态与 ComfyUI HTTP 可达性。",
+  "思维强度 reasoning_effort：每个模型配置新增 auto/off/low/medium/high；协议映射为 LM Studio reasoning、Ollama think、OpenAI Chat reasoning_effort、Responses/Codex reasoning.effort；auto 不发送任何参数，Gemini 与 Claude 首期保持自动。",
+  "更新应用管理的 ComfyUI MCP 脚本，保留用户已有工作流，并为查询工具标注只读、run_workflow 标注有副作用。"
 ]

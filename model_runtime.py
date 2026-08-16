@@ -385,6 +385,7 @@ class ModelRuntime:
         temperature = float(options.get("temperature", 0.7))
         max_tokens = int(options.get("max_tokens", 8192))
         stream_enabled = bool(options.get("stream", False))
+        reasoning_effort = str(profile.get("reasoning_effort") or "auto").strip().lower()
         headers = {"Content-Type": "application/json"}
 
         if request_format == "openai_chat":
@@ -396,6 +397,9 @@ class ModelRuntime:
                 "max_tokens": max_tokens,
                 "stream": stream_enabled,
             }
+            reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
+            if reasoning_params:
+                payload.update(reasoning_params)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
         elif request_format == "codex_responses":
@@ -421,6 +425,9 @@ class ModelRuntime:
             }
             if instructions:
                 payload["instructions"] = instructions
+            reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
+            if reasoning_params:
+                payload.update(reasoning_params)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
         elif request_format == "gemini":
@@ -508,15 +515,23 @@ class ModelRuntime:
             }
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
+            reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
+            if reasoning_params:
+                payload.update(reasoning_params)
         elif request_format == "lm_studio":
             endpoint = ModelRuntime._local_endpoint(base_url, "/api/v1/chat")
+            system_prompt, lm_input = ModelRuntime._lm_studio_messages(messages)
             payload = {
                 "model": model,
-                "input": ModelRuntime._openai_messages(messages),
+                "system_prompt": system_prompt,
+                "input": lm_input,
                 "temperature": temperature,
                 "max_output_tokens": max_tokens,
                 "stream": stream_enabled,
             }
+            reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
+            if reasoning_params:
+                payload.update(reasoning_params)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
         else:
@@ -556,6 +571,17 @@ class ModelRuntime:
                                 reasoning = ""
                             else:
                                 raise RuntimeError("Ollama 流式响应中没有文本内容")
+                        return content, reasoning, streamed["usage"]
+                    if stream_enabled and request_format == "lm_studio":
+                        streamed = ModelRuntime._read_lm_studio_stream(response, status)
+                        content = ModelRuntime._clean_content(streamed["content"])
+                        reasoning = streamed["reasoning"]
+                        if not content:
+                            content = ModelRuntime._reasoning_action(reasoning)
+                            if content:
+                                reasoning = ""
+                            else:
+                                raise RuntimeError("LM Studio 流式响应中没有文本内容")
                         return content, reasoning, streamed["usage"]
                     if stream_enabled and request_format != "gemini":
                         streamed = ModelRuntime._read_sse_response(response, request_format, status)
@@ -653,6 +679,61 @@ class ModelRuntime:
                 message["images"] = images
             converted.append(message)
         return converted
+
+    @staticmethod
+    def _lm_studio_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+        """LM Studio 原生 /api/v1/chat 序列化。
+
+        - system 消息提取到顶层 ``system_prompt``；
+        - 其余消息的内容统一展开为结构化部件：文本 ``{"type":"text","content":...}``、
+          图片 ``{"type":"image","data_url":"..."}``。不再使用 OpenAI ``messages``/``image_url``。
+        """
+        system_parts: list[str] = []
+        input_parts: list[dict[str, Any]] = []
+        for item in messages:
+            role = str(item.get("role") or "user")
+            content = item.get("content")
+            if role == "system":
+                system_parts.append(ModelRuntime._content_text(content))
+                continue
+            for part in ModelRuntime._content_parts(content):
+                if part.get("type") == "text":
+                    text = str(part.get("text") or "")
+                    if text:
+                        input_parts.append({"type": "text", "content": text})
+                elif part.get("type") == "image" and part.get("data"):
+                    input_parts.append(
+                        {
+                            "type": "image",
+                            "data_url": f"data:{part.get('media_type') or 'image/jpeg'};base64,{part['data']}",
+                        }
+                    )
+        system_prompt = "\n\n".join(p.strip() for p in system_parts if p.strip())
+        return system_prompt, input_parts
+
+    @staticmethod
+    def _reasoning_params(request_format: str, effort: str) -> dict[str, Any]:
+        """把思维强度映射为各供应商协议字段；``auto`` 不发送任何参数。"""
+        effort = (effort or "auto").strip().lower()
+        if effort not in {"off", "low", "medium", "high"}:
+            return {}
+        if request_format == "lm_studio":
+            # LM Studio 原生 API 支持 off/low/medium/high/on。
+            return {"reasoning": effort if effort != "off" else "off"}
+        if request_format == "ollama":
+            # Ollama 支持布尔值以及 low/medium/high；保留用户选择的强度。
+            return {"think": False if effort == "off" else effort}
+        if request_format == "openai_chat":
+            # OpenAI 仅支持 low/medium/high；off 视为不启用（不发送字段）。
+            if effort == "off":
+                return {}
+            return {"reasoning_effort": effort}
+        if request_format == "codex_responses":
+            if effort == "off":
+                return {}
+            return {"reasoning": {"effort": effort}}
+        # gemini / claude 首期保持自动，不发送未验证字段。
+        return {}
 
     @staticmethod
     def _read_ollama_stream(response: Any, status: StatusCallback | None) -> dict[str, Any]:
@@ -772,6 +853,69 @@ class ModelRuntime:
         else:
             content = ModelRuntime._clean_content("".join(full_content_parts))
         return {"content": content, "reasoning": "".join(reasoning_parts), "usage": usage}
+
+    @staticmethod
+    def _read_lm_studio_stream(response: Any, status: StatusCallback | None) -> dict[str, Any]:
+        """按 LM Studio 原生 chat SSE 事件解析（``message.delta`` / ``reasoning.delta`` / ``error`` / ``chat.end``）。
+
+        与 OpenAI 兼容流不同，LM Studio 的 ``type`` 事件直接携带 ``content`` 增量；结构化错误事件
+        为 ``{"type":"error","error":...}``，结束事件为 ``{"type":"chat.end"}``。
+        """
+        chunks: list[dict[str, Any]] = []
+        full_content_parts: list[str] = []
+        pending_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        decided = None  # None 直到分类；"tool" 或 "text" 之后。
+        for raw_line in response:
+            line = raw_line.decode("utf-8", errors="replace").strip()
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if not data or data == "[DONE]":
+                continue
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            chunks.append(chunk)
+            event_type = str(chunk.get("type") or "")
+            if event_type == "error":
+                error = chunk.get("error") or "LM Studio 返回未知错误"
+                if isinstance(error, dict):
+                    error = str(error.get("message") or error.get("details") or error)
+                raise RuntimeError(f"LM Studio 流式错误：{error}")
+            if event_type in ("chat.end", "message.end", "reasoning.end", "message.start", "reasoning.start"):
+                continue
+            if event_type in ("reasoning.delta", "reasoning.full"):
+                reasoning_parts.append(ModelRuntime._text_value(chunk.get("content")))
+                continue
+            if event_type in ("message.delta", "message.full"):
+                text = ModelRuntime._text_value(chunk.get("content"))
+            else:
+                # 未知事件但可能带有正文/文本字段（兼容字段命名）。
+                text = ModelRuntime._text_value(chunk.get("content") or chunk.get("text"))
+            if not text:
+                continue
+            full_content_parts.append(text)
+            if decided is None:
+                pending_parts.append(text)
+                kind = ModelRuntime._classify_agent_output("".join(pending_parts))
+                if kind == "tool":
+                    decided = "tool"
+                elif kind == "text":
+                    decided = "text"
+                    if status:
+                        status({"type": "delta", "content": "".join(pending_parts)})
+                    pending_parts = []
+            elif decided == "text" and status:
+                status({"type": "delta", "content": text})
+        return {
+            "content": ModelRuntime._clean_content("".join(full_content_parts)),
+            "reasoning": "".join(reasoning_parts),
+            "usage": ModelRuntime._online_usage("lm_studio", chunks) if chunks else {},
+        }
 
     @staticmethod
     def _stream_delta_full(request_format: str, chunk: dict[str, Any]) -> tuple[str, str, list[dict[str, str]]]:
@@ -1086,13 +1230,7 @@ class ModelRuntime:
         if request_format in ("codex_responses", "lm_studio"):
             for item in result.get("output") or []:
                 if isinstance(item, dict) and item.get("type") == "reasoning":
-                    summary = item.get("summary") or item.get("content") or []
-                    texts = [
-                        str(part.get("text")) for part in summary
-                        if isinstance(part, dict) and part.get("text")
-                    ]
-                    if texts:
-                        return "\n".join(texts)
+                    return ModelRuntime._text_value(item.get("content") or item.get("summary"))
         return ""
 
     @staticmethod
@@ -1146,6 +1284,9 @@ class ModelRuntime:
             texts = []
             for item in output:
                 if not isinstance(item, dict):
+                    continue
+                # 推理类部件（type == "reasoning"）不属于正文，单独由 _online_reasoning 提取。
+                if str(item.get("type") or "") == "reasoning":
                     continue
                 value = item.get("content") or (item.get("message") or {}).get("content") or item.get("text")
                 text = ModelRuntime._text_value(value)

@@ -113,34 +113,50 @@ class MCPServerConnection:
         self._session = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
         await self._session.initialize()
         result = await self._session.list_tools()
-        new_tools = [
-            {
-                "name": tool.name,
-                "description": tool.description or "",
-                "input_schema": tool.inputSchema or {},
-            }
-            for tool in result.tools
-        ]
+        new_tools = []
+        for tool in result.tools:
+            annotations: dict[str, Any] = {}
+            ann = getattr(tool, "annotations", None)
+            if ann is not None:
+                for hint in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"):
+                    value = getattr(ann, hint, None)
+                    if value is not None:
+                        annotations[hint] = value
+            new_tools.append(
+                {
+                    "name": tool.name,
+                    "description": tool.description or "",
+                    "input_schema": tool.inputSchema or {},
+                    "annotations": annotations,
+                }
+            )
         # 工具列表变化时重新同步
         if [t["name"] for t in new_tools] != [t["name"] for t in self.tools]:
             self.tools = new_tools
             if self.on_tools_discovered:
                 self.on_tools_discovered(self.server_id, new_tools)
 
+    def reconnect_once(self, timeout: int = 20) -> bool:
+        """执行一次有界重连（无指数退避），成功返回 True。"""
+        self._reset_thread()
+        try:
+            self.start(timeout=timeout)
+        except MCPError:
+            return False
+        return bool(self._session)
+
     def call(self, tool_name: str, arguments: dict[str, Any], timeout: int = 620) -> tuple[bool, str]:
         with self._call_lock:
-            if self.error and "已注销" not in self.error:
+            if self.error and "已注销" in self.error:
                 return False, self.error
-            if not self._session or not self._loop:
-                # 从未启动的服务应立即报告未连接；只有已有连接线程丢失会话时才重连。
-                if self._thread is None:
+            if self.error or not self._session or not self._loop:
+                # 调用时发现断线：先执行一次有界重连，再返回明确的启动/调用错误。
+                if self._thread is None and not self.error:
                     return False, "MCP 服务尚未连接"
-                try:
-                    self.reconnect_with_backoff()
-                except MCPError as exc:
-                    return False, str(exc)
+                if not self.reconnect_once():
+                    return False, self.error or "MCP 服务重连失败"
                 if not self._session or not self._loop:
-                    return False, "MCP 服务尚未连接"
+                    return False, self.error or "MCP 服务尚未连接"
             future = asyncio.run_coroutine_threadsafe(
                 self._session.call_tool(
                     tool_name,
@@ -253,6 +269,8 @@ class MCPRegistry:
     def __init__(self, configs: list[dict[str, Any]]):
         self.connections: dict[str, MCPServerConnection] = {}
         self._session_count = 0
+        # start() is used by application bootstrap and keeps connections alive until stop().
+        self._persistent = False
         self._lock = threading.RLock()
         self._lifecycle_lock = threading.Lock()
         self.on_event: Callable[[str, str, dict[str, Any]], None] | None = None
@@ -308,7 +326,7 @@ class MCPRegistry:
         with self._lifecycle_lock:
             with self._lock:
                 self.connections[server_id] = connection
-                should_start = self._session_count > 0
+                should_start = self._persistent or self._session_count > 0
         if should_start:
             connection.start()
         return connection.state()
@@ -316,13 +334,18 @@ class MCPRegistry:
     def start(self) -> None:
         with self._lifecycle_lock:
             with self._lock:
+                self._persistent = True
                 connections = list(self.connections.values())
         for connection in connections:
-            connection.start()
+            try:
+                connection.start()
+            except MCPStartupError as exc:
+                connection._emit("startup_failed", error=str(exc))
 
     def stop(self) -> None:
         with self._lifecycle_lock:
             with self._lock:
+                self._persistent = False
                 self._session_count = 0
                 connections = list(self.connections.values())
         for connection in connections:
@@ -331,7 +354,7 @@ class MCPRegistry:
     def acquire(self) -> None:
         with self._lifecycle_lock:
             with self._lock:
-                should_start = self._session_count == 0
+                should_start = self._session_count == 0 and not self._persistent
                 self._session_count += 1
                 connections = list(self.connections.values()) if should_start else []
         for connection in connections:
@@ -346,7 +369,7 @@ class MCPRegistry:
                 if self._session_count == 0:
                     return
                 self._session_count -= 1
-                connections = list(self.connections.values()) if self._session_count == 0 else []
+                connections = list(self.connections.values()) if self._session_count == 0 and not self._persistent else []
         for connection in connections:
             connection.stop()
 

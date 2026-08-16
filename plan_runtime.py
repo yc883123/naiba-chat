@@ -68,11 +68,21 @@ STEP_LINE_RE = re.compile(r"^(?:\d{1,2}[.、)．]|- \[[ xX]\])\s*(.+)$")
 STEPS_HEADING_RE = re.compile(r"步骤|实施|流程|安排")
 
 
-def resolve_mode_tools(mode: str, agent_tools: list[str]) -> list[str]:
-    """按交互模式解析可用工具：与全局 agent_tools 取交集，ask/plan 再过滤为只读。"""
+def resolve_mode_tools(
+    mode: str, agent_tools: list[str], readonly_mcp_tools: list[str] | None = None
+) -> list[str]:
+    """按交互模式解析可用工具：与全局 agent_tools 取交集，ask/plan 再过滤为只读。
+
+    ask/plan 额外允许标注为只读的 MCP 工具（如 ComfyUI 的环境/模型/工作流查询），
+    但 ``run_workflow`` 等有副作用工具始终排除。
+    """
     configured = [tool for tool in (agent_tools or []) if tool in ALL_TOOLS]
     if mode in ("ask", "plan"):
-        return [tool for tool in configured if tool in READONLY_TOOLS]
+        result = [tool for tool in configured if tool in READONLY_TOOLS]
+        for mcp_tool in readonly_mcp_tools or []:
+            if mcp_tool and mcp_tool not in result and not mcp_tool.endswith("__run_workflow"):
+                result.append(mcp_tool)
+        return result
     return configured
 
 
@@ -82,7 +92,7 @@ class ReadOnlyToolExecutor:
     写类工具在 SkillAgent 层已通过 allowed_tools 过滤，本代理作为最后防线。
     """
 
-    BLOCKED_TOOLS = {"write_file", "run_command", "run_skill_script", "register_mcp", "call_mcp"}
+    BLOCKED_TOOLS = {"write_file", "run_command", "run_skill_script", "register_mcp"}
 
     def __init__(self, inner: ToolExecutor):
         self._inner = inner
@@ -97,6 +107,18 @@ class ReadOnlyToolExecutor:
         active_skills: list[dict[str, Any]],
     ) -> tuple[bool, str]:
         if tool in self.BLOCKED_TOOLS or "." in tool:
+            return False, f"当前为只读模式，已禁止工具：{tool}"
+        if tool == "call_mcp":
+            server_id = str((arguments or {}).get("server") or "")
+            tool_name = str((arguments or {}).get("tool") or "")
+            registry = getattr(self._inner, "mcp_registry", None)
+            connection = getattr(registry, "connections", {}).get(server_id) if registry else None
+            metadata = next((item for item in getattr(connection, "tools", []) if item.get("name") == tool_name), None)
+            if not metadata or not bool((metadata.get("annotations") or {}).get("readOnlyHint")):
+                return False, f"当前为只读模式，已禁止工具：call_mcp:{server_id}.{tool_name}"
+            return self._inner._execute_unchecked(tool, arguments, active_skills)
+        # 只读模式始终禁止 ComfyUI 的 run_workflow 等具有副作用的 MCP 工具。
+        if tool.endswith("__run_workflow"):
             return False, f"当前为只读模式，已禁止工具：{tool}"
         if tool == "http_request":
             method = str((arguments or {}).get("method") or "GET").upper()
