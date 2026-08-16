@@ -2,16 +2,11 @@
   "host": "0.0.0.0",
   "port": 8765,
   "access_token": "change-me",
-  "model_dir": "models",
   "skills_dirs": [],
   "workspace_dir": "skills",
-  "local_model": "",
-  "provider_id": "",
-  "model_mode": "local",
   "temperature": 0.7,
   "max_tokens": 8192,
   "context_size": 8192,
-  "gpu_layers": -1,
   "agent_system_prompt": "",
   "permission_mode": "confirm",
   "agent_tools": [
@@ -26,7 +21,40 @@
     "call_mcp"
   ],
   "command_timeout": 120,
-  "providers": [],
+  "providers": [
+    {
+      "id": "online-openai-demo",
+      "kind": "online",
+      "name": "OpenAI 兼容（示例）",
+      "base_url": "https://api.openai.com/v1",
+      "model": "gpt-4o-mini",
+      "api_key": "sk- replace-me",
+      "request_format": "openai_chat"
+    },
+    {
+      "id": "local-ollama-demo",
+      "kind": "local",
+      "local_backend": "ollama",
+      "name": "本机 Ollama",
+      "base_url": "http://127.0.0.1:11434/v1",
+      "model": "qwen2.5:latest",
+      "api_key": "",
+      "request_format": "ollama",
+      "context_size": 8192
+    },
+    {
+      "id": "local-lmstudio-demo",
+      "kind": "local",
+      "local_backend": "lm_studio",
+      "name": "本机 LM Studio",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "model": "model-identifier",
+      "api_key": "",
+      "request_format": "lm_studio"
+    }
+  ],
+  "default_model_key": "online:online-openai-demo",
+  "provider_id": "online-openai-demo",
   "mcp_servers": [],
   "agents": [
     { "id": "general", "name": "通用 Agent", "system_prompt": "", "skill_ids": [] },

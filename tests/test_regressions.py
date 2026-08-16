@@ -881,7 +881,7 @@ class PermissionTests(unittest.TestCase):
                 }
             )
             self.assertEqual(16384, provider["context_size"])
-            self.assertEqual(16384, store.profile(f"online:{provider['id']}")["context_size"])
+            self.assertEqual(16384, store.profile(f"local:{provider['id']}")["context_size"])
 
             cleared = store.upsert_provider(
                 {
@@ -1066,9 +1066,9 @@ class ModelSelectionTests(unittest.TestCase):
         source = Path("public/app.js").read_text(encoding="utf-8")
         run_source = Path("async_tasks.py").read_text(encoding="utf-8")
 
-        self.assertIn("state.bootstrap.settings?.provider_id", source)
-        self.assertIn("select.value = saved", source)
-        self.assertIn("body: { provider_id: providerId }", source)
+        self.assertIn("state.bootstrap.default_model_key", source)
+        self.assertIn("select.value = defaultKey", source)
+        self.assertIn("body: { model_key: value }", source)
         self.assertIn('model_key = str(snapshot.get("model_key") or "")', run_source)
 
     def test_local_provider_controls_use_the_selected_request_format(self) -> None:

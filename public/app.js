@@ -740,28 +740,38 @@ async function installUpdate() {
 function populateModels() {
   const select = $('#modelSelect');
   const previous = select.value;
-  const savedProviderId = String(state.bootstrap.settings?.provider_id || '');
-  const saved = savedProviderId ? `online:${savedProviderId}` : '';
+  const profiles = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+  const defaultKey = String(state.bootstrap.default_model_key || '');
   select.innerHTML = '';
 
-  const providers = state.bootstrap.providers || [];
-  providers.forEach((provider) => {
-    const option = document.createElement('option');
-    option.value = `online:${provider.id}`;
-    option.textContent = `${provider.name} · ${provider.model}`;
-    select.append(option);
-  });
-  if (!select.options.length) {
+  if (!profiles.length) {
     const opt = document.createElement('option');
     opt.value = '';
-    opt.textContent = '请先添加在线供应商';
+    opt.textContent = '请先在设置中添加模型';
     select.append(opt);
+  } else {
+    const online = profiles.filter((p) => (p.kind || 'online') === 'online');
+    const local = profiles.filter((p) => p.kind === 'local');
+    const group = (label, list) => {
+      if (!list.length) return;
+      const og = document.createElement('optgroup');
+      og.label = label;
+      list.forEach((p) => {
+        const option = document.createElement('option');
+        option.value = p.model_key;
+        option.textContent = `${p.name} · ${p.model}`;
+        og.append(option);
+      });
+      select.append(og);
+    };
+    group('在线 API', online);
+    group('本地模型', local);
   }
 
   if ([...select.options].some((o) => o.value === previous)) {
     select.value = previous;
-  } else if ([...select.options].some((o) => o.value === saved)) {
-    select.value = saved;
+  } else if (defaultKey && [...select.options].some((o) => o.value === defaultKey)) {
+    select.value = defaultKey;
   } else if (select.options.length) {
     select.selectedIndex = 0;
   }
@@ -770,8 +780,9 @@ function populateModels() {
 
 function selectedProvider() {
   const value = $('#modelSelect')?.value || '';
-  if (!value.startsWith('online:')) return null;
-  return (state.bootstrap?.providers || []).find((provider) => provider.id === value.slice(7)) || null;
+  if (!value) return null;
+  const profiles = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+  return profiles.find((p) => p.model_key === value) || null;
 }
 
 function localProviderKind(provider) {
@@ -817,7 +828,7 @@ async function unloadProviderModel(provider) {
   try {
     const result = await api('/api/models/unload', {
       method: 'POST',
-      body: { model_key: `online:${provider.id}` },
+      body: { model_key: provider.model_key },
     });
     toast(`${result.provider} 模型已卸载，显存和内存将被回收`);
   } catch (error) {
@@ -833,21 +844,20 @@ async function unloadCurrentModel() {
 
 async function unloadConfiguredProviderModel() {
   const providerId = $('#providerId').value;
-  const provider = (state.bootstrap?.providers || []).find((item) => item.id === providerId);
+  const provider = (state.bootstrap.model_profiles || state.bootstrap.providers || []).find((item) => item.id === providerId);
   await unloadProviderModel(provider);
 }
 
 async function saveModelSelection() {
   const value = $('#modelSelect').value;
-  const providerId = value.startsWith('online:') ? value.slice(7) : '';
-  const payload = value.startsWith('online:') ? { provider_id: providerId } : {};
-  const result = await api('/api/settings', { method: 'POST', body: payload });
+  const result = await api('/api/settings', { method: 'POST', body: { model_key: value } });
   Object.assign(state.bootstrap.settings, result.settings);
+  state.bootstrap.default_model_key = result.default_model_key || value;
   if (state.conversationId) {
     try {
       await api(`/api/conversations/${state.conversationId}/settings`, {
         method: 'POST',
-        body: { provider_id: providerId },
+        body: { model_key: value },
       });
     } catch (error) {
       console.debug('[naiba] 保存对话模型失败:', error.message);
@@ -857,20 +867,18 @@ async function saveModelSelection() {
   toast('模型已切换');
 }
 
-// 根据对话已保存的 provider_id 恢复模型选择；未绑定或已删除时回退到全局默认
+// 根据对话已保存的 model_key 恢复模型选择；未绑定或已删除时回退到全局默认
 function applyConversationModel(conversation) {
   const select = $('#modelSelect');
   if (!select) return;
-  const providerId = String(conversation?.provider_id || '');
-  const target = providerId ? `online:${providerId}` : '';
+  const target = String(conversation?.model_key || '');
   if (target && [...select.options].some((o) => o.value === target)) {
     select.value = target;
     updateUnloadModelButton();
     return;
   }
-  const savedProviderId = String(state.bootstrap.settings?.provider_id || '');
-  const fallback = savedProviderId ? `online:${savedProviderId}` : '';
-  if ([...select.options].some((o) => o.value === fallback)) {
+  const fallback = String(state.bootstrap.default_model_key || '');
+  if (fallback && [...select.options].some((o) => o.value === fallback)) {
     select.value = fallback;
   } else if (select.options.length) {
     select.selectedIndex = 0;
@@ -1192,10 +1200,13 @@ function updateSkillSummary() {
 }
 
 function renderProviders() {
-  const providers = state.bootstrap.providers;
+  const providers = state.bootstrap.model_profiles || state.bootstrap.providers || [];
   const select = $('#providerSelect');
   select.innerHTML = providers.length
-    ? providers.map((provider) => `<option value="${provider.id}">${escapeHtml(provider.name)}</option>`).join('')
+    ? providers.map((provider) => {
+        const tag = provider.kind === 'local' ? '[本地] ' : '[在线] ';
+        return `<option value="${provider.id}">${escapeHtml(tag + provider.name)}</option>`;
+      }).join('')
     : '<option value="">尚未添加供应商</option>';
   const currentId = $('#providerId').value;
   const current = providers.find((provider) => provider.id === currentId)

@@ -607,8 +607,11 @@ class PlanManager:
             raise RuntimeError("发起计划的对话已删除")
         frozen = snapshot or {}
         history = build_model_history(frozen.get("conversation_messages") or conversation.get("messages", []))
-        provider_id = str(frozen.get("provider_id") or conversation.get("provider_id") or "")
-        profile = self.app.config.profile(f"online:{provider_id}" if provider_id else "")
+        model_key = str(frozen.get("model_key") or conversation.get("model_key") or "")
+        if not model_key:
+            provider_id = str(frozen.get("provider_id") or conversation.get("provider_id") or "")
+            model_key = f"online:{provider_id}" if provider_id else ""
+        profile = self.app.config.profile(model_key)
         options = dict(frozen.get("generation_options") or self.app.config.generation_options())
         options["stream"] = bool(frozen.get("stream_enabled", conversation.get("stream_enabled", 1)))
         agent = frozen.get("agent") or self.app.config.get_agent(str(conversation.get("agent_id") or "")) or {}

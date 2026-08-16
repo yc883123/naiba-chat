@@ -19,6 +19,8 @@ ONLINE_MODEL_TIMEOUT_SECONDS = 180
 LOCAL_MODEL_TIMEOUT_SECONDS = 1800
 PROVIDER_TEST_TIMEOUT_SECONDS = 30
 FAST_RETRY_NETWORK_ERRORS = {10053, 10054, 10061}
+# 本地推理后端对应的请求格式；与 server.LOCAL_REQUEST_FORMATS 保持一致。
+LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio"}
 
 # Patterns used to keep agent tool-call protocols out of the user-facing
 # streaming answer. The classifier below decides, before forwarding any
@@ -152,6 +154,21 @@ class ModelRuntime:
         options: dict[str, Any],
         status: StatusCallback | None = None,
     ) -> str:
+        # 按 profile.kind 路由，禁止在线/本地跨模式 fallback。
+        kind = str(profile.get("kind") or "").strip().lower()
+        request_format = str(profile.get("request_format") or "openai_chat").strip().lower()
+        if not kind:
+            # 旧 profile 未携带 kind 时按请求格式推断，保持兼容。
+            kind = "local" if request_format in LOCAL_REQUEST_FORMATS else "online"
+            profile = {**profile, "kind": kind}
+        if kind == "local":
+            if request_format not in LOCAL_REQUEST_FORMATS:
+                raise ValueError(f"本地模型配置使用了非本地请求格式：{request_format}")
+        elif kind == "online":
+            if request_format in LOCAL_REQUEST_FORMATS:
+                raise ValueError(f"在线模型配置使用了本地请求格式：{request_format}")
+        else:
+            raise ValueError(f"不支持的模型类型：{kind}")
         content, reasoning, usage = self._complete_online(profile, messages, options, status)
         self.last_reasoning = reasoning
         self.last_usage = usage

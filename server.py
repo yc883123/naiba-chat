@@ -283,6 +283,18 @@ def default_config() -> dict[str, Any]:
     }
 
 
+# 在线请求协议集合（首期本地后端仅支持 ollama / lm_studio）。
+ONLINE_REQUEST_FORMATS = {"openai_chat", "codex_responses", "gemini", "claude"}
+LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio"}
+VALID_MODEL_KINDS = {"online", "local"}
+VALID_LOCAL_BACKENDS = {"ollama", "lm_studio"}
+
+
+def _infer_kind_for_request_format(request_format: str) -> str:
+    """根据请求格式推断模型类别，兼容未携带 kind 的旧配置。"""
+    return "local" if request_format in LOCAL_REQUEST_FORMATS else "online"
+
+
 class ConfigStore:
     def __init__(self, path: Path):
         self.path = path
@@ -307,6 +319,8 @@ class ConfigStore:
         tools = self.data.get("agent_tools")
         if isinstance(tools, list) and "call_mcp" in tools and "register_mcp" not in tools:
             tools.insert(tools.index("call_mcp"), "register_mcp")
+        # 在线/本地模型配置分层：为旧 providers 补全 kind/local_backend，并生成 default_model_key。
+        self._migrate_model_profiles()
         self.save()
 
     def save(self) -> None:
@@ -441,50 +455,31 @@ class ConfigStore:
         return payload
 
     def upsert_provider(self, values: dict[str, Any]) -> dict[str, Any]:
-        provider_id = str(values.get("id") or uuid.uuid4().hex[:12])
-        request_format = str(values.get("request_format") or "openai_chat")
-        valid_formats = {"openai_chat", "codex_responses", "gemini", "claude", "lm_studio", "ollama"}
-        if request_format not in valid_formats:
-            raise ValueError("不支持的请求格式")
-        with self.lock:
-            providers = self.data.setdefault("providers", [])
-            existing = next((item for item in providers if item.get("id") == provider_id), None)
-            payload = {
-                "id": provider_id,
-                "name": str(values.get("name") or "在线模型").strip(),
-                "base_url": str(values.get("base_url") or "").strip().rstrip("/"),
-                "model": str(values.get("model") or "").strip(),
-                "api_key": str(values.get("api_key") or "").strip(),
-                "request_format": request_format,
-            }
-            if request_format == "ollama":
-                raw_context_size = values.get("context_size")
-                if raw_context_size not in (None, ""):
-                    payload["context_size"] = self._positive_context_size(
-                        raw_context_size, "Ollama context_size"
-                    )
-            if not payload["base_url"] or not payload["model"]:
-                raise ValueError("API URL 和模型名称不能为空")
-            if existing and not payload["api_key"]:
-                payload["api_key"] = existing.get("api_key", "")
-            if existing:
-                if "context_size" not in payload:
-                    existing.pop("context_size", None)
-                existing.update(payload)
-            else:
-                providers.append(payload)
-            self.save()
-        return {**payload, "api_key": "", "has_api_key": bool(payload["api_key"])}
+        """兼容别名：按请求格式推断类别后转发到统一模型配置保存。"""
+        request_format = str(values.get("request_format") or "openai_chat").strip().lower()
+        payload = dict(values)
+        payload["kind"] = _infer_kind_for_request_format(request_format)
+        if payload["kind"] == "local":
+            payload["local_backend"] = request_format
+        return self.upsert_model_profile(payload)
 
     def delete_provider(self, provider_id: str) -> bool:
+        """兼容别名：按 id 删除（不区分 online/local）。"""
         with self.lock:
             providers = self.data.setdefault("providers", [])
             before = len(providers)
             self.data["providers"] = [item for item in providers if item.get("id") != provider_id]
+            removed = len(self.data["providers"]) < before
+            default = self.data.get("default_model_key") or ""
+            if default.endswith(f":{provider_id}"):
+                remaining = self.data.get("providers", [])
+                self.data["default_model_key"] = (
+                    f"{remaining[0].get('kind', 'online')}:{remaining[0].get('id')}" if remaining else ""
+                )
             if self.data.get("provider_id") == provider_id:
                 self.data["provider_id"] = ""
             self.save()
-            return len(self.data["providers"]) < before
+            return removed
 
     def provider_secret(self, provider_id: str) -> str | None:
         with self.lock:
@@ -494,20 +489,206 @@ class ConfigStore:
             )
             return str(provider.get("api_key") or "") if provider else None
 
-    def profile(self, selection: str = "") -> dict[str, Any]:
+    # ---- 在线 / 本地模型配置统一层 ----
+
+    def _migrate_model_profiles(self) -> None:
+        """启动时把旧 providers 分层为 online/local，并生成 default_model_key。
+
+        不把旧的 local_model / model_mode 伪造成本地 API 配置。
+        """
+        providers = self.data.setdefault("providers", [])
+        for provider in providers:
+            if provider.get("kind") not in VALID_MODEL_KINDS:
+                request_format = str(provider.get("request_format") or "openai_chat").strip().lower()
+                kind = _infer_kind_for_request_format(request_format)
+                provider["kind"] = kind
+                if kind == "local":
+                    provider["local_backend"] = request_format
+                else:
+                    provider.pop("local_backend", None)
+        # 计算 default_model_key：旧 provider_id 指向的条目决定前缀。
+        default_key = str(self.data.get("default_model_key") or "").strip()
+        if not default_key:
+            provider_id = str(self.data.get("provider_id") or "").strip()
+            if provider_id:
+                target = next(
+                    (item for item in providers if item.get("id") == provider_id), None
+                )
+                if target:
+                    default_key = f"{target.get('kind', 'online')}:{provider_id}"
+        # 规范化 default_model_key，确保指向现存条目。
+        if default_key:
+            kind, _, model_id = default_key.partition(":")
+            if kind not in VALID_MODEL_KINDS or not any(
+                item.get("id") == model_id and item.get("kind") == kind for item in providers
+            ):
+                default_key = ""
+        if not default_key and providers:
+            first = providers[0]
+            default_key = f"{first.get('kind', 'online')}:{first.get('id')}"
+        self.data["default_model_key"] = default_key
+
+    def default_model_key(self) -> str:
         with self.lock:
-            selected = selection
-            if selected.startswith("online:"):
-                provider_id = selected[7:]
-            else:
-                provider_id = self.data.get("provider_id", "")
+            return str(self.data.get("default_model_key") or "")
+
+    def set_default_model_key(self, model_key: str) -> str:
+        with self.lock:
+            key = self._normalize_model_key(model_key)
+            kind, _, model_id = key.partition(":")
             provider = next(
-                (item for item in self.data.get("providers", []) if item.get("id") == provider_id),
+                (
+                    item
+                    for item in self.data.get("providers", [])
+                    if item.get("id") == model_id and item.get("kind") == kind
+                ),
                 None,
             )
             if not provider:
-                raise ValueError("找不到选择的在线模型配置")
-            return {"kind": "online", **provider}
+                raise ValueError("模型配置不存在")
+            self.data["default_model_key"] = key
+            self.data["provider_id"] = model_id  # 兼容旧字段
+            self.save()
+            return key
+
+    @staticmethod
+    def _normalize_model_key(model_key: str) -> str:
+        model_key = str(model_key or "").strip()
+        if not model_key:
+            return ""
+        if ":" not in model_key:
+            return f"online:{model_key}"
+        return model_key
+
+    def model_profiles(self, kind: str | None = None) -> list[dict[str, Any]]:
+        """返回所有模型配置（脱敏），并附带 model_key 与是否默认。"""
+        with self.lock:
+            default = self.data.get("default_model_key") or ""
+            result = []
+            for provider in self.data.get("providers", []):
+                entry_kind = provider.get("kind", "online")
+                key = f"{entry_kind}:{provider.get('id')}"
+                entry = dict(provider)
+                entry["model_key"] = key
+                entry["is_default"] = key == default
+                entry["api_key"] = ""
+                entry["has_api_key"] = bool(provider.get("api_key"))
+                result.append(entry)
+            if kind:
+                result = [item for item in result if item.get("kind") == kind]
+            return result
+
+    def upsert_model_profile(self, values: dict[str, Any]) -> dict[str, Any]:
+        """统一保存在线 API 或本地模型配置。"""
+        model_id = str(values.get("id") or uuid.uuid4().hex[:12]).strip()
+        kind = str(values.get("kind") or "online").strip().lower()
+        if kind not in VALID_MODEL_KINDS:
+            raise ValueError("模型类型必须是 online 或 local")
+        if kind == "local":
+            local_backend = str(
+                values.get("local_backend") or values.get("request_format") or ""
+            ).strip().lower()
+            if local_backend not in VALID_LOCAL_BACKENDS:
+                raise ValueError("本地后端必须是 ollama 或 lm_studio")
+            request_format = local_backend
+        else:
+            request_format = str(values.get("request_format") or "openai_chat").strip().lower()
+            if request_format not in ONLINE_REQUEST_FORMATS:
+                raise ValueError("不支持的在线请求格式")
+            local_backend = ""
+        with self.lock:
+            providers = self.data.setdefault("providers", [])
+            # 以 id 为主键：更新时就地切换 kind，避免同一 id 跨类别产生重复条目。
+            existing = next(
+                (item for item in providers if item.get("id") == model_id),
+                None,
+            )
+            payload = {
+                "id": model_id,
+                "kind": kind,
+                "name": str(values.get("name") or ("本地模型" if kind == "local" else "在线模型")).strip(),
+                "base_url": str(values.get("base_url") or "").strip().rstrip("/"),
+                "model": str(values.get("model") or "").strip(),
+                "api_key": str(values.get("api_key") or "").strip(),
+                "request_format": request_format,
+            }
+            if kind == "local":
+                payload["local_backend"] = local_backend
+                if local_backend == "ollama":
+                    raw_context_size = values.get("context_size")
+                    if raw_context_size not in (None, ""):
+                        payload["context_size"] = self._positive_context_size(
+                            raw_context_size, "Ollama context_size"
+                        )
+            else:
+                payload.pop("local_backend", None)
+            if not payload["base_url"] or not payload["model"]:
+                raise ValueError("API/服务地址和模型名称不能为空")
+            if existing:
+                # 空 API Key 表示保留已有 Key（不覆盖、不清除）。
+                if not payload["api_key"]:
+                    payload["api_key"] = existing.get("api_key", "")
+                if "context_size" not in payload:
+                    existing.pop("context_size", None)
+                existing.update(payload)
+            else:
+                providers.append(payload)
+            if not self.data.get("default_model_key"):
+                self.data["default_model_key"] = f"{kind}:{model_id}"
+            self.save()
+        return {
+            **payload,
+            "model_key": f"{kind}:{model_id}",
+            "api_key": "",
+            "has_api_key": bool(payload["api_key"]),
+            "is_default": (self.data.get("default_model_key") == f"{kind}:{model_id}"),
+        }
+
+    def delete_model_profile(self, model_key: str) -> bool:
+        with self.lock:
+            key = self._normalize_model_key(model_key)
+            kind, _, model_id = key.partition(":")
+            providers = self.data.setdefault("providers", [])
+            before = len(providers)
+            self.data["providers"] = [
+                item
+                for item in providers
+                if not (item.get("id") == model_id and item.get("kind") == kind)
+            ]
+            removed = len(self.data["providers"]) < before
+            if self.data.get("default_model_key") == key:
+                remaining = self.data.get("providers", [])
+                self.data["default_model_key"] = (
+                    f"{remaining[0].get('kind', 'online')}:{remaining[0].get('id')}" if remaining else ""
+                )
+            if self.data.get("provider_id") == model_id:
+                self.data["provider_id"] = ""
+            self.save()
+            return removed
+
+    def profile(self, selection: str = "") -> dict[str, Any]:
+        """按 model_key 解析完整模型配置（含 api_key）。
+
+        selection 可为 online:<id> / local:<id>；缺省时回退 default_model_key。
+        """
+        with self.lock:
+            key = self._normalize_model_key(selection) or self.data.get("default_model_key") or ""
+            if not key:
+                raise ValueError("未选择模型配置")
+            kind, _, model_id = key.partition(":")
+            if kind not in VALID_MODEL_KINDS:
+                raise ValueError(f"不支持的模型类型：{kind}")
+            provider = next(
+                (
+                    item
+                    for item in self.data.get("providers", [])
+                    if item.get("id") == model_id and item.get("kind") == kind
+                ),
+                None,
+            )
+            if not provider:
+                raise ValueError(f"找不到模型配置：{key}")
+            return {"kind": provider.get("kind", kind), **provider}
 
     def generation_options(self) -> dict[str, Any]:
         with self.lock:
@@ -882,6 +1063,8 @@ class NaibaChatApp:
         return {
             "settings": self.config.public(),
             "providers": self.config.public_providers(),
+            "model_profiles": self.config.model_profiles(),
+            "default_model_key": self.config.default_model_key(),
             "skills": self.catalog.scan(),
             "mcp_servers": self.mcp.states(),
             "agents": self.config.public_agents(),
@@ -1018,6 +1201,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 {"api_key": api_key} if api_key is not None else {"error": "供应商不存在"},
                 HTTPStatus.OK if api_key is not None else HTTPStatus.NOT_FOUND,
             )
+        elif path == "/api/model-profiles":
+            query = urllib.parse.parse_qs(parsed.query)
+            kind = query.get("kind", [None])[0]
+            self._json({"profiles": APP.config.model_profiles(kind)})
         elif path == "/api/file":
             query = urllib.parse.parse_qs(parsed.query)
             self._serve_local_file(query.get("path", [""])[0])
@@ -1045,6 +1232,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         if path == "/api/conversations":
             title = str(body.get("title") or "新对话")
             provider_id = str(body.get("provider_id") or APP.config.data.get("provider_id") or "")
+            model_key = str(body.get("model_key") or "")
             agent_id = str(body.get("agent_id") or APP.config.default_agent_id())
             interaction_mode = str(body.get("interaction_mode") or "craft")
             if interaction_mode not in ("craft", "plan", "ask"):
@@ -1052,7 +1240,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             self._json(
                 APP.storage.create_conversation(
-                    title=title, provider_id=provider_id, agent_id=agent_id, interaction_mode=interaction_mode
+                    title=title, provider_id=provider_id, agent_id=agent_id,
+                    interaction_mode=interaction_mode, model_key=model_key,
                 ),
                 HTTPStatus.CREATED,
             )
@@ -1114,12 +1303,32 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._unload_provider(body)
         elif path == "/api/models/unload":
             self._unload_provider(body)
+        elif path == "/api/model-profiles/test":
+            self._test_provider(body)
+        elif path == "/api/model-profiles/models":
+            self._provider_models(body)
+        elif path == "/api/model-profiles/unload":
+            self._unload_provider(body)
+        elif path == "/api/model-profiles":
+            try:
+                self._json(APP.config.upsert_model_profile(body))
+            except Exception as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/settings":
             try:
                 settings = APP.config.update_settings(body)
+                model_key = str(body.get("model_key") or body.get("default_model_key") or "").strip()
+                if model_key:
+                    APP.config.set_default_model_key(model_key)
+                    settings = APP.config.public()
                 APP.executor.command_timeout = int(APP.config.data.get("command_timeout", 120))
                 APP.executor.set_permission_mode(str(APP.config.data.get("permission_mode", "confirm")))
-                self._json({"settings": settings})
+                self._json(
+                    {
+                        "settings": settings,
+                        "default_model_key": APP.config.default_model_key(),
+                    }
+                )
             except (OSError, ValueError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/update/check":
@@ -1271,6 +1480,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(task or {"error": "任务不存在"}, HTTPStatus.OK if task else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/agents/"):
             deleted = APP.config.delete_agent(path.rsplit("/", 1)[-1])
+            self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+        elif path.startswith("/api/model-profiles/"):
+            deleted = APP.config.delete_model_profile(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/providers/"):
             deleted = APP.config.delete_provider(path.rsplit("/", 1)[-1])
@@ -1546,7 +1758,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _test_provider(self, body: dict[str, Any]) -> None:
         try:
-            provider = self._provider_profile(body)
+            provider = self._resolve_model_profile(body)
             result = APP.models.complete(
                 provider,
                 [
@@ -1561,7 +1773,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _provider_models(self, body: dict[str, Any]) -> None:
         try:
-            provider = self._provider_profile(body)
+            provider = self._resolve_model_profile(body)
             self._json({"models": APP.models.list_online_models(provider)})
         except Exception as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
@@ -1574,6 +1786,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"ok": True, **result})
         except Exception as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+
+    def _resolve_model_profile(self, body: dict[str, Any]) -> dict[str, Any]:
+        """优先用 model_key 解析，缺失时回退到内联 provider（兼容旧调用）。"""
+        model_key = str(body.get("model_key") or "").strip()
+        if model_key:
+            return APP.config.profile(model_key)
+        return self._provider_profile(body)
 
     @staticmethod
     def _provider_profile(body: dict[str, Any]) -> dict[str, Any]:

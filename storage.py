@@ -123,6 +123,7 @@ class ChatStorage:
                 ("system_prompt", "TEXT NOT NULL DEFAULT ''"),
                 ("stream_enabled", "INTEGER NOT NULL DEFAULT 1"),
                 ("provider_id", "TEXT NOT NULL DEFAULT ''"),
+                ("model_key", "TEXT NOT NULL DEFAULT ''"),
                 ("agent_id", "TEXT NOT NULL DEFAULT ''"),
                 ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
             ):
@@ -130,6 +131,14 @@ class ChatStorage:
                     db.execute(f"SELECT {column} FROM conversations LIMIT 1")
                 except sqlite3.OperationalError:
                     db.execute(f"ALTER TABLE conversations ADD COLUMN {column} {definition}")
+            # 旧会话回填 model_key：legacy 仅使用 online 前缀（provider_id 一律按 online 处理）。
+            try:
+                db.execute(
+                    "UPDATE conversations SET model_key = 'online:' || provider_id "
+                    "WHERE model_key = '' AND provider_id != ''"
+                )
+            except sqlite3.OperationalError:
+                pass
             for column, definition in (
                 ("kind", "TEXT NOT NULL DEFAULT 'chat'"),
                 ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
@@ -200,16 +209,33 @@ class ChatStorage:
         provider_id: str = "",
         agent_id: str = "",
         interaction_mode: str = "craft",
+        model_key: str = "",
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
         if interaction_mode not in ("craft", "plan", "ask"):
             interaction_mode = "craft"
+        resolved_model_key = str(model_key or "").strip()
+        if not resolved_model_key and provider_id:
+            resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (conversation_id, title.strip() or "新对话", "online", 0, "", 1, provider_id or "", agent_id or "", interaction_mode, now, now),
+                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    conversation_id,
+                    title.strip() or "新对话",
+                    "online",
+                    0,
+                    "",
+                    1,
+                    provider_id or "",
+                    resolved_model_key,
+                    agent_id or "",
+                    interaction_mode,
+                    now,
+                    now,
+                ),
             )
         return self.get_conversation(conversation_id, include_messages=False)
 
@@ -217,13 +243,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -231,7 +257,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -254,6 +280,7 @@ class ChatStorage:
         system_prompt: str | None = None,
         stream_enabled: bool | None = None,
         provider_id: str | None = None,
+        model_key: str | None = None,
         agent_id: str | None = None,
         interaction_mode: str | None = None,
     ) -> dict[str, Any] | None:
@@ -282,6 +309,9 @@ class ChatStorage:
             values["stream_enabled"] = 1 if bool(stream_enabled) else 0
         if provider_id is not None:
             values["provider_id"] = str(provider_id or "")
+        if model_key is not None:
+            # 切换模型只更新该会话的 model_key，不影响其他会话与正在运行的 Run。
+            values["model_key"] = str(model_key or "")
         if agent_id is not None:
             values["agent_id"] = str(agent_id or "")
         if interaction_mode is not None:

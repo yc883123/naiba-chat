@@ -177,6 +177,10 @@ class ConversationRunManager:
                 "system_prompt": str(agent.get("system_prompt") or ""),
                 "skill_ids": [str(item) for item in agent.get("skill_ids", [])],
             }
+            model_key = str(conversation.get("model_key") or "")
+            if not model_key:
+                provider_id = str(conversation.get("provider_id") or "")
+                model_key = f"online:{provider_id}" if provider_id else ""
             snapshot = {
                 "plan_id": plan_id,
                 "interaction_mode": "plan",
@@ -184,6 +188,7 @@ class ConversationRunManager:
                 "conversation_system_prompt": str(conversation.get("system_prompt") or ""),
                 "conversation_messages": conversation.get("messages") or [],
                 "provider_id": str(conversation.get("provider_id") or ""),
+                "model_key": model_key,
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
                 "generation_options": self.app.config.generation_options(),
                 "allowed_tools": resolve_mode_tools(

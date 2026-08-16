@@ -65,8 +65,11 @@ def run_subagent_agent(
         app.storage.update_job(job_id, result={"error": "对话已删除"})
         return
     history = build_model_history(conversation.get("messages", []))
-    provider_id = str(conversation.get("provider_id") or "")
-    profile = app.config.profile(f"online:{provider_id}" if provider_id else "")
+    model_key = str(conversation.get("model_key") or "")
+    if not model_key:
+        provider_id = str(conversation.get("provider_id") or "")
+        model_key = f"online:{provider_id}" if provider_id else ""
+    profile = app.config.profile(model_key)
     options = dict(app.config.generation_options())
     options["stream"] = bool(conversation.get("stream_enabled", 1))
     agent = app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
