@@ -906,15 +906,33 @@ class SkillAgent:
             return parsed
         return {"type": "final", "content": text.strip()}
 
-    @staticmethod
-    def _extract_xml_tool_action(text: str) -> dict[str, Any] | None:
+    @classmethod
+    def _extract_xml_tool_action(cls, text: str) -> dict[str, Any] | None:
         """Accept XML tool-call dialects emitted by some OpenAI-compatible models."""
         cleaned = str(text or "").strip()
-        if not cleaned or "<invoke" not in cleaned:
+        if not cleaned:
             return None
         # Models occasionally wrap the protocol in a markdown XML fence.
         cleaned = re.sub(r"^```(?:xml)?\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+
+        # DeepSeek-compatible endpoints may emit ``<tool name="...">``
+        # wrapped in an outer ``<tool type="tool">`` block. Some versions
+        # append a mismatched ``</invoke>`` marker, so parse the named block
+        # directly instead of requiring the entire response to be valid XML.
+        named_tool = re.search(
+            r"<tool\b[^>]*\bname\s*=\s*['\"]([^'\"]+)['\"][^>]*>(.*?)</tool>",
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if named_tool:
+            tool = named_tool.group(1).strip()
+            body = named_tool.group(2)
+            arguments = cls._parse_xml_parameters(body)
+            return {"type": "tool", "tool": tool, "arguments": arguments}
+
+        if "<invoke" not in cleaned:
+            return None
         try:
             root = ET.fromstring(cleaned)
         except ET.ParseError:
@@ -944,6 +962,43 @@ class SkillAgent:
             else:
                 arguments[name] = ""
         return {"type": "tool", "tool": tool, "arguments": arguments}
+
+    @staticmethod
+    def _parse_xml_parameters(body: str) -> dict[str, Any]:
+        """Parse parameter children from a named tool block."""
+        arguments: dict[str, Any] = {}
+        try:
+            wrapper = ET.fromstring(f"<invoke>{body}</invoke>")
+            parameters = list(wrapper)
+        except ET.ParseError:
+            parameters = []
+            for match in re.finditer(
+                r"<parameter\b[^>]*\bname\s*=\s*['\"]([^'\"]+)['\"][^>]*>(.*?)</parameter>",
+                body,
+                flags=re.IGNORECASE | re.DOTALL,
+            ):
+                parameters.append((match.group(1), match.group(2)))
+
+        for parameter in parameters:
+            if isinstance(parameter, tuple):
+                name, value = parameter
+            else:
+                if parameter.tag.rsplit("}", 1)[-1] != "parameter":
+                    continue
+                name = str(parameter.attrib.get("name") or "").strip()
+                value = "".join(parameter.itertext()).strip()
+            name = str(name or "").strip()
+            if not name:
+                continue
+            value = str(value or "").strip()
+            if not value:
+                arguments[name] = ""
+                continue
+            try:
+                arguments[name] = json.loads(value)
+            except json.JSONDecodeError:
+                arguments[name] = value
+        return arguments
 
     @staticmethod
     def _extract_json(text: str) -> dict[str, Any] | None:

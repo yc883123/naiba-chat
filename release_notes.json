@@ -1,4 +1,5 @@
 [
+  "修复兼容 DeepSeek 风格的 <tool name=...> 工具调用协议，确保 Agent Loop 在 Plan 和 Craft 模式下继续执行工具，而不是把工具请求误当作最终文本。",
   "新增完整 Agent Loop 与统一工具注册系统，支持最多 32 步的连续工具调用、失败重试和明确终止。",
   "新增后台 Job、持续检查与同进程子 Agent 能力，支持状态查询、增量输出、等待、取消和重启中断恢复。",
   "MCP stdio 工具现在可动态注册到 Agent，并已通过 NaibaChat 调用 ComfyUI MCP 完成真实生图验证。",

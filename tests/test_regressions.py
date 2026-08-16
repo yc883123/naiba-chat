@@ -143,6 +143,26 @@ class OnlineResponseTests(unittest.TestCase):
         self.assertEqual("read_file", action["tool"])
         self.assertEqual(1200, action["arguments"]["max_chars"])
 
+    def test_parses_deepseek_named_tool_action(self) -> None:
+        raw = """<tool type="tool">
+<tool name="read_file">
+<parameter name="path">D:\\海螺H3提示词工程\\素材4\\单元03.md</parameter>
+<parameter name="max_chars">30000</parameter>
+</tool>
+</invoke>"""
+        action = SkillAgent._parse_action(raw)
+        self.assertEqual(
+            {
+                "type": "tool",
+                "tool": "read_file",
+                "arguments": {
+                    "path": "D:\\海螺H3提示词工程\\素材4\\单元03.md",
+                    "max_chars": 30000,
+                },
+            },
+            action,
+        )
+
 
     def test_extracts_responses_stream_deltas(self) -> None:
         self.assertEqual(
@@ -226,6 +246,30 @@ class AgentLoopTests(unittest.TestCase):
         self.assertEqual("done", content)
         self.assertEqual(10, len(runs))
         self.assertEqual(11, calls)
+
+    def test_agent_loop_executes_deepseek_named_tool_call(self) -> None:
+        calls = 0
+
+        def complete(profile, messages, options, event):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return """<tool type="tool">
+<tool name="read_file">
+<parameter name="path">D:\\素材\\单元03.md</parameter>
+</tool>
+</invoke>"""
+            return "已读取并完成。"
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, runs, _reasoning, _usage = agent.run(
+            "完成单元03", [], {}, {}, False, [], "", ["read_file"], lambda _event: None,
+            lambda *_args: None,
+        )
+
+        self.assertEqual("已读取并完成。", content)
+        self.assertEqual(1, len(runs))
+        self.assertEqual("read_file", runs[0]["tool"])
 
     def test_agent_observes_cancellation_between_tool_calls(self) -> None:
         cancel_event = threading.Event()
