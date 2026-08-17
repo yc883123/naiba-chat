@@ -879,6 +879,11 @@ class ConfigStore:
                 entry["is_default"] = key == default
                 entry["api_key"] = ""
                 entry["has_api_key"] = bool(provider.get("api_key"))
+                explicit_images = provider.get("supports_images")
+                entry["supports_images_explicit"] = (
+                    explicit_images if isinstance(explicit_images, bool) else None
+                )
+                entry["supports_images"] = _infer_supports_images(provider)
                 result.append(entry)
             if kind:
                 result = [item for item in result if item.get("kind") == kind]
@@ -922,6 +927,15 @@ class ConfigStore:
             if raw_effort not in {"auto", "off", "low", "medium", "high"}:
                 raise ValueError("思维强度必须是 auto / off / low / medium / high 之一")
             payload["reasoning_effort"] = raw_effort
+            clear_supports_images = False
+            if "supports_images" in values:
+                raw_supports_images = values.get("supports_images")
+                if raw_supports_images is None:
+                    clear_supports_images = True
+                elif isinstance(raw_supports_images, bool):
+                    payload["supports_images"] = raw_supports_images
+                else:
+                    raise ValueError("supports_images 必须是布尔值或 null")
             if kind == "local":
                 payload["local_backend"] = local_backend
                 if local_backend == "ollama":
@@ -940,18 +954,27 @@ class ConfigStore:
                     payload["api_key"] = existing.get("api_key", "")
                 if "context_size" not in payload:
                     existing.pop("context_size", None)
+                if clear_supports_images:
+                    existing.pop("supports_images", None)
                 existing.update(payload)
+                stored = existing
             else:
                 providers.append(payload)
+                stored = payload
             if not self.data.get("default_model_key"):
                 self.data["default_model_key"] = f"{kind}:{model_id}"
             self.save()
+        explicit_images = stored.get("supports_images")
         return {
-            **payload,
+            **stored,
             "model_key": f"{kind}:{model_id}",
             "api_key": "",
-            "has_api_key": bool(payload["api_key"]),
+            "has_api_key": bool(stored["api_key"]),
             "is_default": (self.data.get("default_model_key") == f"{kind}:{model_id}"),
+            "supports_images_explicit": (
+                explicit_images if isinstance(explicit_images, bool) else None
+            ),
+            "supports_images": _infer_supports_images(stored),
         }
 
     def delete_model_profile(self, model_key: str) -> bool:
@@ -998,7 +1021,11 @@ class ConfigStore:
             )
             if not provider:
                 raise ValueError(f"找不到模型配置：{key}")
-            return {"kind": provider.get("kind", kind), **provider}
+            return {
+                "kind": provider.get("kind", kind),
+                **provider,
+                "supports_images": _infer_supports_images(provider),
+            }
 
     def generation_options(self) -> dict[str, Any]:
         with self.lock:
@@ -1290,6 +1317,27 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
         seen.add(item)
         unique.append({"name": Path(urllib.parse.urlparse(item).path).name or "生成结果", "source": item})
     return unique[:20]
+
+
+def _infer_supports_images(provider: dict[str, Any]) -> bool:
+    """推断模型是否支持图片输入（supports_images 能力字段）。
+
+    - 配置显式给出布尔值时直接使用；
+    - DeepSeek 官方接口（api.deepseek.com 等）默认 false（纯文本模型）；
+    - 其余按模型名启发式推断（gemini / claude / 含 vl 等关键词）。
+    """
+    explicit = provider.get("supports_images")
+    if isinstance(explicit, bool):
+        return explicit
+    base_url = str(provider.get("base_url") or "").lower()
+    if "api.deepseek.com" in base_url or "deepseek.com" in base_url:
+        return False
+    try:
+        from vision_runtime import VisionRouter
+
+        return VisionRouter._brain_supports_vision(provider)
+    except Exception:  # noqa: BLE001 - 视觉模块不可用时不阻塞模型解析
+        return False
 
 
 class NaibaChatApp:
@@ -1639,13 +1687,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             model_key = str(body.get("model_key") or "")
             agent_id = str(body.get("agent_id") or APP.config.default_agent_id())
             interaction_mode = str(body.get("interaction_mode") or "craft")
+            permission_mode = str(body.get("permission_mode") or "confirm")
             if interaction_mode not in ("craft", "plan", "ask"):
                 self._json({"error": "interaction_mode 必须是 craft / plan / ask"}, HTTPStatus.BAD_REQUEST)
+                return
+            if permission_mode not in ("confirm", "auto", "full"):
+                self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
                 return
             self._json(
                 APP.storage.create_conversation(
                     title=title, provider_id=provider_id, agent_id=agent_id,
                     interaction_mode=interaction_mode, model_key=model_key,
+                    permission_mode=permission_mode,
                 ),
                 HTTPStatus.CREATED,
             )
@@ -1683,6 +1736,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not isinstance(interaction_mode, str) or interaction_mode not in ("craft", "plan", "ask"):
                     self._json({"error": "interaction_mode 必须是 craft / plan / ask"}, HTTPStatus.BAD_REQUEST)
                     return
+            permission_mode = body.get("permission_mode")
+            if permission_mode is not None:
+                if not isinstance(permission_mode, str) or permission_mode not in ("confirm", "auto", "full"):
+                    self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
+                    return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
                 title=title,
@@ -1692,6 +1750,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 agent_id=agent_id,
                 interaction_mode=interaction_mode,
                 model_key=model_key,
+                permission_mode=permission_mode,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
         elif path == "/api/agents":
@@ -2343,10 +2402,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not confirm_id or not run_id:
             self._json({"error": "run_id 和 confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
             return
-        if not APP.runs.owns_confirmation(run_id, confirm_id):
+        result_pair = APP.runs.confirm_tool(run_id, confirm_id)
+        if result_pair is None:
             self._json({"error": "确认请求不属于该运行或已失效"}, HTTPStatus.CONFLICT)
             return
-        success, result = APP.executor.confirm_execute(confirm_id)
+        success, result = result_pair
         self._json({"success": success, "result": result})
 
     def _reject_tool(self, body: dict[str, Any]) -> None:
@@ -2355,10 +2415,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not confirm_id or not run_id:
             self._json({"error": "run_id 和 confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
             return
-        if not APP.runs.owns_confirmation(run_id, confirm_id):
+        result_pair = APP.runs.reject_tool(run_id, confirm_id)
+        if result_pair is None:
             self._json({"error": "确认请求不属于该运行或已失效"}, HTTPStatus.CONFLICT)
             return
-        success, result = APP.executor.reject_execute(confirm_id)
+        success, result = result_pair
         self._json({"success": success, "result": result})
 
 

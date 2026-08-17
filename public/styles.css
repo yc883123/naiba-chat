@@ -146,10 +146,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .send-button.is-stop { background: var(--red); font-size: 15px; }
 .send-button.is-stop:hover { background: #a02820; }
 .composer-meta { min-height: 22px; display: flex; justify-content: space-between; align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; gap: 10px; }
-.mode-switch { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
-.mode-switch button { border: 0; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; padding: 2px 12px; border-radius: 4px; min-height: 20px; }
-.mode-switch button:hover { color: var(--text); }
-.mode-switch button.active { background: var(--surface); color: var(--green); box-shadow: 0 1px 3px rgba(22, 31, 23, .15); }
+.composer-meta-left { min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.mode-select { display: inline-flex; align-items: center; gap: 3px; padding: 2px 3px 2px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.mode-select > span { color: var(--muted); white-space: nowrap; }
+.mode-select select { min-height: 20px; border: 0; outline: 0; border-radius: 4px; background: var(--surface); color: var(--green); font-size: 11px; font-weight: 600; padding: 1px 20px 1px 7px; }
+.mode-select select:focus-visible { box-shadow: 0 0 0 2px rgba(23, 122, 80, .18); }
+.permission-mode-switch { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
+.permission-mode-switch > span { padding: 0 4px; color: var(--muted); white-space: nowrap; }
+.permission-mode-switch button { border: 0; background: transparent; color: var(--muted); font-size: 11px; padding: 2px 7px; border-radius: 4px; min-height: 20px; white-space: nowrap; }
+.permission-mode-switch button:hover:not(:disabled) { color: var(--text); }
+.permission-mode-switch button.active { background: var(--surface); color: var(--green); box-shadow: 0 1px 3px rgba(22, 31, 23, .15); }
+.permission-mode-switch button[data-permission-mode="full"].active { color: var(--red); }
+.permission-mode-switch button:disabled { opacity: .5; cursor: not-allowed; }
 .plan-bar { margin: 0 0 7px; padding: 7px 9px; border-left: 2px solid var(--amber); background: var(--amber-soft); color: var(--text); font-size: 12px; line-height: 1.4; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .plan-bar[hidden] { display: none; }
 .plan-bar-text { flex: 1; min-width: 200px; }
@@ -303,15 +311,6 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .permission-grid span { display: grid; gap: 4px; }
 .permission-grid b { font-size: 13px; }
 .permission-grid small { color: var(--muted); line-height: 1.35; }
-.permission-mode-control { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; }
-.permission-mode-option { position: relative; min-width: 0; cursor: pointer; }
-.permission-mode-option + .permission-mode-option { border-left: 1px solid var(--line); }
-.permission-mode-option input { position: absolute; opacity: 0; pointer-events: none; }
-.permission-mode-option span { display: grid; gap: 3px; min-height: 58px; padding: 9px 10px; align-content: center; background: var(--surface); text-align: center; }
-.permission-mode-option b { color: var(--text); font-size: 13px; }
-.permission-mode-option small { color: var(--muted); font-size: 11px; line-height: 1.25; }
-.permission-mode-option input:checked + span { background: var(--green-soft); box-shadow: inset 0 -2px 0 var(--green); }
-.permission-mode-option input:focus-visible + span { outline: 2px solid var(--green); outline-offset: -2px; }
 .skill-dir-add, .skill-install { display: flex; gap: 9px; margin-bottom: 18px; }
 .skill-dir-add input, .skill-install input[type="file"] { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }
 .skill-install input[type="file"] { padding: 8px; }

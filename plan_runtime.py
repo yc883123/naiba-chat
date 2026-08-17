@@ -446,6 +446,7 @@ class PlanManager:
         cancel_event: threading.Event,
         event: Callable[[dict[str, Any]], None],
         snapshot: dict[str, Any] | None = None,
+        run_executor: ToolExecutor | None = None,
     ) -> dict[str, Any] | None:
         """Run an already-prepared plan inside its ConversationRunManager thread."""
         self._execute_loop(
@@ -454,6 +455,7 @@ class PlanManager:
             external_event=event,
             manage_registry=False,
             execution_snapshot=snapshot,
+            execution_executor=run_executor,
         )
         return self.app.storage.get_plan(plan_id)
 
@@ -495,6 +497,7 @@ class PlanManager:
         external_event: Callable[[dict[str, Any]], None] | None = None,
         manage_registry: bool = True,
         execution_snapshot: dict[str, Any] | None = None,
+        execution_executor: ToolExecutor | None = None,
     ) -> None:
         initial = self.app.storage.get_plan(plan_id) or {}
         run_id = str((initial.get("detail") or {}).get("run_id") or "")
@@ -554,7 +557,14 @@ class PlanManager:
                 )
                 if execution_snapshot is not None and self._step_runner == self._run_step_with_agent:
                     summary = self._run_step_with_agent(
-                        plan, step, next_index, len(steps), cancel_event, event, execution_snapshot
+                        plan,
+                        step,
+                        next_index,
+                        len(steps),
+                        cancel_event,
+                        event,
+                        execution_snapshot,
+                        execution_executor,
                     )
                 else:
                     summary = self._step_runner(plan, step, next_index, len(steps), cancel_event, event)
@@ -619,6 +629,7 @@ class PlanManager:
         cancel_event: threading.Event,
         event: Callable[[dict[str, Any]], None],
         snapshot: dict[str, Any] | None = None,
+        run_executor: ToolExecutor | None = None,
     ) -> str:
         """默认步骤执行器：以 Craft 能力运行 SkillAgent 完成单个步骤。"""
         from server import build_model_history
@@ -662,7 +673,8 @@ class PlanManager:
         allowed_tools = [str(item) for item in frozen.get("allowed_tools") or resolve_mode_tools(
             "craft", [str(t) for t in self.app.config.data.get("agent_tools", [])]
         )]
-        worker = SkillAgent(self.app.catalog, CraftToolExecutor(self.app.executor), self.app.models.complete)
+        executor = CraftToolExecutor(run_executor or self.app.executor)
+        worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
         selected = [str(item) for item in agent.get("skill_ids", [])]
         content, runs, reasonings, usage = worker.run(
             instruction,
@@ -680,6 +692,10 @@ class PlanManager:
             cancel_event,
             max_steps=int(self.app.config.data.get("agent_max_steps", 32)),
             tool_registry=self.app.tool_registry,
+            run_context={
+                "run_id": str((plan.get("detail") or {}).get("run_id") or ""),
+                "executor": executor,
+            },
         )
         self.app.storage.add_message(
             conversation_id,

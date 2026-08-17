@@ -184,6 +184,17 @@ class ToolExecutor:
         normalized = str(mode or "confirm").strip().lower()
         self.permission_mode = normalized if normalized in self.VALID_PERMISSION_MODES else "confirm"
 
+    def clone_for_permission(self, mode: str) -> "ToolExecutor":
+        """Create an isolated executor for one Run while sharing external services."""
+        return ToolExecutor(
+            self.workspace,
+            self.python_executable,
+            self.command_timeout,
+            self.mcp_registry,
+            permission_mode=mode,
+            mcp_register=self.mcp_register,
+        )
+
     @staticmethod
     def _path_within(path: Path, root: Path) -> bool:
         try:

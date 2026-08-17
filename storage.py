@@ -35,6 +35,7 @@ class ChatStorage:
                     id TEXT PRIMARY KEY,
                     title TEXT NOT NULL,
                     mode TEXT NOT NULL DEFAULT 'online',
+                    permission_mode TEXT NOT NULL DEFAULT 'confirm',
                     title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
@@ -132,6 +133,7 @@ class ChatStorage:
                 ("model_key", "TEXT NOT NULL DEFAULT ''"),
                 ("agent_id", "TEXT NOT NULL DEFAULT ''"),
                 ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
+                ("permission_mode", "TEXT NOT NULL DEFAULT 'confirm'"),
             ):
                 try:
                     db.execute(f"SELECT {column} FROM conversations LIMIT 1")
@@ -216,22 +218,26 @@ class ChatStorage:
         agent_id: str = "",
         interaction_mode: str = "craft",
         model_key: str = "",
+        permission_mode: str = "confirm",
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
         if interaction_mode not in ("craft", "plan", "ask"):
             interaction_mode = "craft"
+        if permission_mode not in ("confirm", "auto", "full"):
+            permission_mode = "confirm"
         resolved_model_key = str(model_key or "").strip()
         if not resolved_model_key and provider_id:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
                     "online",
+                    permission_mode,
                     0,
                     "",
                     1,
@@ -249,13 +255,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -263,7 +269,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -289,6 +295,7 @@ class ChatStorage:
         model_key: str | None = None,
         agent_id: str | None = None,
         interaction_mode: str | None = None,
+        permission_mode: str | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -324,6 +331,10 @@ class ChatStorage:
             if interaction_mode not in ("craft", "plan", "ask"):
                 raise ValueError("interaction_mode 必须是 craft / plan / ask")
             values["interaction_mode"] = interaction_mode
+        if permission_mode is not None:
+            if permission_mode not in ("confirm", "auto", "full"):
+                raise ValueError("permission_mode 必须是 confirm / auto / full")
+            values["permission_mode"] = permission_mode
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)

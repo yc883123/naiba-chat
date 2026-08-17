@@ -76,10 +76,21 @@
           <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
         </form>
         <div class="composer-meta">
-          <div class="mode-switch" id="modeSwitch" role="tablist" aria-label="交互模式">
-            <button type="button" data-mode="craft" class="active" role="tab" title="Craft：直接执行，可用全部已启用工具">Craft</button>
-            <button type="button" data-mode="plan" role="tab" title="Plan：先只读澄清需求并生成计划，确认后逐步执行">Plan</button>
-            <button type="button" data-mode="ask" role="tab" title="Ask：只读问答，不做任何修改">Ask</button>
+          <div class="composer-meta-left">
+            <label class="mode-select" title="选择交互模式">
+              <span>模式</span>
+              <select id="modeSwitch" aria-label="交互模式">
+                <option value="craft" data-mode="craft">Craft</option>
+                <option value="plan" data-mode="plan">Plan</option>
+                <option value="ask" data-mode="ask">Ask</option>
+              </select>
+            </label>
+            <div class="permission-mode-switch" id="permissionModeSwitch" role="radiogroup" aria-label="当前对话审批模式">
+              <span>审批</span>
+              <button type="button" data-permission-mode="confirm" class="active" role="radio" title="敏感操作逐次确认">确认</button>
+              <button type="button" data-permission-mode="auto" role="radio" title="自动批准工作区内操作">自动</button>
+              <button type="button" data-permission-mode="full" role="radio" title="工具无需逐次确认">完全</button>
+            </div>
           </div>
           <span id="runtimeStatus">就绪</span>
         </div>
@@ -207,6 +218,13 @@
                 <option value="high">高</option>
               </select>
             </label>
+            <label class="provider-field">图片输入能力
+              <select id="providerSupportsImages">
+                <option value="auto">自动检测</option>
+                <option value="true">支持图片</option>
+                <option value="false">仅支持文本</option>
+              </select>
+            </label>
             <p class="form-error provider-field" id="providerError"></p>
             <div class="form-actions provider-actions provider-field">
               <button type="button" class="control-button" id="testProvider">测试连接</button>
@@ -244,22 +262,7 @@
               </div>
             </form>
           </div>
-          <h3 class="subheading">审批模式</h3>
-          <div class="permission-mode-control" role="radiogroup" aria-label="审批模式">
-            <label class="permission-mode-option">
-              <input type="radio" name="permissionMode" value="confirm">
-              <span><b>请求批准</b><small>敏感操作逐次确认</small></span>
-            </label>
-            <label class="permission-mode-option">
-              <input type="radio" name="permissionMode" value="auto">
-              <span><b>替我审批</b><small>工作区读写自动放行</small></span>
-            </label>
-            <label class="permission-mode-option">
-              <input type="radio" name="permissionMode" value="full">
-              <span><b>完全访问</b><small>工具无需确认或边界限制</small></span>
-            </label>
-          </div>
-          <h3 class="subheading">工具权限</h3>
+          <h3 class="subheading">工具范围</h3>
           <div class="permission-grid">
             <label><input type="checkbox" value="read_file,list_directory,search_files" data-agent-tool><span><b>读取文件</b><small>读取和搜索本机文件</small></span></label>
             <label><input type="checkbox" value="write_file" data-agent-tool><span><b>写入文件</b><small>创建和修改本机文件</small></span></label>
@@ -269,7 +272,7 @@
             <label><input type="checkbox" value="register_mcp" data-agent-tool><span><b>注册 MCP</b><small>自动保存并连接 Skill 所需服务</small></span></label>
             <label><input type="checkbox" value="call_mcp" data-agent-tool><span><b>MCP 工具</b><small>调用已连接的 MCP 服务</small></span></label>
           </div>
-          <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存全局权限</button></div>
+          <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存工具范围</button></div>
         </section>
         <section data-settings-panel="runtime" hidden>
           <h3>生成参数</h3>

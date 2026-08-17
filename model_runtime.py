@@ -557,7 +557,13 @@ class ModelRuntime:
             if is_local
             else PROVIDER_TEST_TIMEOUT_SECONDS if connection_test else ONLINE_MODEL_TIMEOUT_SECONDS
         )
+        timeout_override = options.get("request_timeout_seconds")
+        if isinstance(timeout_override, (int, float)) and timeout_override > 0:
+            request_timeout = max(1, min(int(timeout_override), LOCAL_MODEL_TIMEOUT_SECONDS))
         attempts = 1 if is_local else 3
+        attempts_override = options.get("request_attempts")
+        if isinstance(attempts_override, int) and attempts_override > 0:
+            attempts = min(attempts_override, 5)
         for attempt in range(attempts):
             try:
                 with urllib.request.urlopen(request, timeout=request_timeout) as response:

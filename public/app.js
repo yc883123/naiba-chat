@@ -425,9 +425,8 @@ function currentInteractionMode() {
 
 function renderModeSwitch() {
   const mode = currentInteractionMode();
-  $$('#modeSwitch [data-mode]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.mode === mode);
-  });
+  const switcher = $('#modeSwitch');
+  if (switcher) switcher.value = mode;
   const input = $('#messageInput');
   if (input) {
     const hints = {
@@ -436,6 +435,46 @@ function renderModeSwitch() {
       ask: '输入问题，只读探索，不做任何修改',
     };
     input.placeholder = hints[mode] || '输入消息';
+  }
+}
+
+function currentPermissionMode() {
+  const conversation = state.conversations.find((item) => item.id === state.conversationId);
+  const mode = conversation?.permission_mode || 'confirm';
+  return ['confirm', 'auto', 'full'].includes(mode) ? mode : 'confirm';
+}
+
+function renderPermissionModeSwitch() {
+  const mode = currentPermissionMode();
+  $$('#permissionModeSwitch [data-permission-mode]').forEach((button) => {
+    const active = button.dataset.permissionMode === mode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-checked', String(active));
+    button.disabled = !state.conversationId;
+  });
+}
+
+async function switchPermissionMode(mode) {
+  if (!state.conversationId || !['confirm', 'auto', 'full'].includes(mode) || mode === currentPermissionMode()) return;
+  if (mode === 'full' && !confirm('完全访问会允许此对话的 Agent 无需逐次确认即可操作本机文件、命令、网络和 MCP。确认启用？')) {
+    renderPermissionModeSwitch();
+    return;
+  }
+  const conversationId = state.conversationId;
+  try {
+    const updated = await api(`/api/conversations/${conversationId}/settings`, {
+      method: 'POST',
+      body: { permission_mode: mode },
+    });
+    if (state.conversationId !== conversationId) return;
+    const index = state.conversations.findIndex((item) => item.id === conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    renderPermissionModeSwitch();
+    const names = { confirm: '请求批准', auto: '替我审批', full: '完全访问' };
+    toast(`当前对话已切换为“${names[mode]}”`);
+  } catch (error) {
+    renderPermissionModeSwitch();
+    toast(`切换审批模式失败：${error.message}`);
   }
 }
 
@@ -974,6 +1013,7 @@ async function loadConversations() {
     await openConversation(state.conversations[0].id);
   } else if (!state.conversations.length) {
     renderMessages([]);
+    renderPermissionModeSwitch();
   }
 }
 
@@ -991,7 +1031,7 @@ async function createConversation() {
   hideChoiceButtons();
   const conversation = await api('/api/conversations', {
     method: 'POST',
-    body: { interaction_mode: state.interactionMode },
+    body: { interaction_mode: state.interactionMode, permission_mode: 'confirm' },
   });
   state.conversationId = conversation.id;
   state.conversations.unshift(conversation);
@@ -1001,6 +1041,7 @@ async function createConversation() {
   applyConversationAgent(conversation);
   renderMessages([]);
   renderModeSwitch();
+  renderPermissionModeSwitch();
   renderPlanBar();
   closeSidebar();
   $('#messageInput').focus();
@@ -1022,6 +1063,7 @@ async function openConversation(id) {
   applyConversationAgent(conversation);
   renderMessages(conversation.messages || []);
   renderModeSwitch();
+  renderPermissionModeSwitch();
   // 联网搜索开关：按对话保存（默认关闭），不同对话互不影响。
   state.webSearchEnabled = localStorage.getItem(`naibaWebSearch:${id}`) === 'true';
   updateWebSearchButton();
@@ -1051,6 +1093,7 @@ async function syncCurrentConversation() {
     state.conversationSnapshot = snapshot;
     renderConversations();
     renderMessages(conversation.messages || []);
+    renderPermissionModeSwitch();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
@@ -1244,6 +1287,9 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   $('#providerBaseUrl').value = provider.base_url || '';
   $('#providerContextSize').value = provider.context_size || '';
   $('#providerReasoningEffort').value = provider.reasoning_effort || 'auto';
+  $('#providerSupportsImages').value = provider.supports_images_explicit === true
+    ? 'true'
+    : provider.supports_images_explicit === false ? 'false' : 'auto';
   setProviderModelOptions([], provider.model || '');
   $('#providerFormat').value = provider.request_format || 'openai_chat';
   $('#providerApiKey').value = '';
@@ -1287,6 +1333,7 @@ function setProviderEditMode(editing, isNew = false) {
   [
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
     '#providerModel', '#providerModelCustom', '#providerContextSize', '#providerReasoningEffort',
+    '#providerSupportsImages',
   ].forEach((selector) => { $(selector).disabled = !editing; });
   $('#providerSelect').disabled = editing;
   $('#addProvider').disabled = editing;
@@ -1332,6 +1379,7 @@ function toggleCustomModel() {
 
 function providerFormValue() {
   const selectedModel = $('#providerModel').value;
+  const imageSupport = $('#providerSupportsImages').value;
   return {
     id: $('#providerId').value,
     name: $('#providerName').value.trim(),
@@ -1343,6 +1391,7 @@ function providerFormValue() {
       ? Number($('#providerContextSize').value)
       : undefined,
     reasoning_effort: $('#providerReasoningEffort').value,
+    supports_images: imageSupport === 'true' ? true : imageSupport === 'false' ? false : null,
   };
 }
 
@@ -1384,12 +1433,18 @@ async function saveProvider(event) {
   event.preventDefault();
   try {
     const saved = await api('/api/providers', { method: 'POST', body: providerFormValue() });
-    const index = state.bootstrap.providers.findIndex((item) => item.id === saved.id);
-    if (index >= 0) state.bootstrap.providers[index] = saved;
-    else state.bootstrap.providers.push(saved);
+    ['providers', 'model_profiles'].forEach((key) => {
+      const list = state.bootstrap[key] || (state.bootstrap[key] = []);
+      const index = list.findIndex((item) => item.id === saved.id);
+      if (index >= 0) list[index] = saved;
+      else list.push(saved);
+    });
     $('#providerId').value = saved.id;
     renderProviders();
     populateModels();
+    const visionSelect = $('#visionProvider');
+    if (visionSelect) delete visionSelect.dataset.populated;
+    populateVisionSettings();
     toast('API 供应商已保存');
   } catch (error) {
     $('#providerError').textContent = error.message;
@@ -1460,9 +1515,11 @@ function populateVisionSettings() {
   const vision = settings.vision || {};
   const select = $('#visionProvider');
   if (select && !select.dataset.populated) {
-    const providers = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+    // 视觉设置只显示明确支持图片输入的模型（supports_images === true）。
+    const providers = (state.bootstrap.model_profiles || state.bootstrap.providers || [])
+      .filter((p) => p.supports_images);
     select.innerHTML = '<option value="">OVH 免费视觉链（默认兜底）</option>'
-      + providers.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`).join('');
+      + providers.map((p) => `<option value="${escapeHtml(p.model_key || p.id)}">${escapeHtml(p.name || p.id)}</option>`).join('');
     select.dataset.populated = '1';
   }
   if (select) select.value = vision.provider_model_key || '';
@@ -1515,7 +1572,9 @@ async function testVisionConnection() {
   if (el) el.textContent = '测试中…';
   try {
     const result = await api('/api/vision/test', { method: 'POST', body: {} });
-    if (el) el.textContent = result.ok ? `可用（延迟 ${result.latency_ms ?? '?'}ms，模型 ${result.model || ''}）` : `不可用：${result.reason || ''}`;
+    if (el) el.textContent = result.ok
+      ? `可用（延迟 ${result.latency_ms ?? '?'}ms，${result.backend || result.model || ''}）`
+      : `不可用：${result.reason || ''}`;
   } catch (error) {
     if (el) el.textContent = `测试失败：${error.message}`;
   }
@@ -1534,9 +1593,6 @@ async function testSearchConnection() {
 
 function populateAgentSettings() {
   const settings = state.bootstrap.settings;
-  const permissionMode = settings.permission_mode || 'confirm';
-  const permissionInput = $(`[name="permissionMode"][value="${permissionMode}"]`);
-  if (permissionInput) permissionInput.checked = true;
   const enabled = new Set(settings.agent_tools || []);
   $$('[data-agent-tool]').forEach((input) => {
     input.checked = input.value.split(',').every((tool) => enabled.has(tool));
@@ -1544,19 +1600,12 @@ function populateAgentSettings() {
 }
 
 async function saveAgentSettings() {
-  const permissionMode = $('[name="permissionMode"]:checked')?.value || 'confirm';
-  if (
-    permissionMode === 'full'
-    && state.bootstrap.settings.permission_mode !== 'full'
-    && !confirm('完全访问会允许 Agent 在当前账户权限范围内操作本机文件、命令、网络和 MCP。确认启用？')
-  ) return;
   const payload = {
-    permission_mode: permissionMode,
     agent_tools: $$('[data-agent-tool]:checked').flatMap((input) => input.value.split(',')),
   };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
-  toast('全局权限已保存');
+  toast('工具范围已保存');
 }
 
 // ---- Agent 管理 ----
@@ -2274,9 +2323,10 @@ function bindEvents() {
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
   });
-  $('#modeSwitch').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-mode]');
-    if (button) switchInteractionMode(button.dataset.mode);
+  $('#modeSwitch').addEventListener('change', (event) => switchInteractionMode(event.target.value));
+  $('#permissionModeSwitch').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-permission-mode]');
+    if (button) switchPermissionMode(button.dataset.permissionMode);
   });
   $('#planBar').addEventListener('click', (event) => {
     const action = event.target.closest('[data-plan-action]');

@@ -179,11 +179,14 @@ class ToolRegistry:
     ) -> tuple[bool, str]:
         if tool in self._system_handlers:
             return self._system_handlers[tool](arguments, active_skills, run_context)
-        if tool in self._specs and self._executor is not None:
-            return self._executor.execute(tool, arguments, active_skills)
+        executor = self._executor
+        if isinstance(run_context, dict) and run_context.get("executor") is not None:
+            executor = run_context["executor"]
+        if tool in self._specs and executor is not None:
+            return executor.execute(tool, arguments, active_skills)
         # MCP 工具形如 server.tool，ToolExecutor 内部处理
-        if "." in tool and self._executor is not None:
-            return self._executor.execute(tool, arguments, active_skills)
+        if "." in tool and executor is not None:
+            return executor.execute(tool, arguments, active_skills)
         return False, f"未知工具：{tool}"
 
     def summarize(self, tool: str, args: dict[str, Any], result: str, success: bool) -> str:
