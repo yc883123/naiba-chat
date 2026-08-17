@@ -538,7 +538,7 @@ class ConfigStore:
                 sid = str(server.get("id") or "").strip()
                 if not sid or sid in seen:
                     if sid:
-                        print(f"[配置] 已忽略重复的 MCP 服务 id：{sid}")
+                        print(f"[config] Ignored duplicate MCP server id: {sid}")
                     continue
                 seen[sid] = 1
                 deduped.append(server)

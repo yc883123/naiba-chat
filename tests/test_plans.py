@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import sqlite3
 import sys
 import tempfile
 import threading
@@ -27,6 +28,15 @@ def make_storage(root: str) -> ChatStorage:
 
 
 class InteractionModeStorageTests(unittest.TestCase):
+    def test_connection_context_closes_database_handle(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = make_storage(root)
+            with storage._connect() as db:
+                db.execute("SELECT 1").fetchone()
+
+            with self.assertRaisesRegex(sqlite3.ProgrammingError, "closed"):
+                db.execute("SELECT 1")
+
     def test_conversation_defaults_to_craft_and_persists_mode(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             storage = make_storage(root)
