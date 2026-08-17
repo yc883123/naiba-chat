@@ -12,7 +12,10 @@ import uuid
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import ToolAnnotations
+try:
+    from mcp.types import ToolAnnotations
+except ImportError:  # 兼容较旧的 MCP SDK
+    from mcp.server.models import ToolAnnotations
 
 # 查询类工具标记为只读（readOnlyHint），run_workflow 等保持有副作用（不标记）。
 _READONLY = ToolAnnotations(readOnlyHint=True)

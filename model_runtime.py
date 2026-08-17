@@ -28,6 +28,15 @@ LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio"}
 # action (JSON / XML tool protocol) that must only reach the Agent Loop.
 _TOOL_OPEN_TAG = re.compile(r"^<(tool_calls|invoke|tool)\b", re.IGNORECASE)
 _TOOL_NAMED_ATTR = re.compile(r"\b(?:name|type)\s*=")
+# Some compatible endpoints prepend a sentence before emitting their tool
+# protocol. Keep a short unflushed tail so a marker split across SSE chunks is
+# detected before it can reach the visible answer.
+_TOOL_PROTOCOL_ANYWHERE = re.compile(r"<(?:tool_calls|invoke|tool)\b", re.IGNORECASE)
+_JSON_TOOL_ANYWHERE = re.compile(
+    r'\{(?=[\s\S]{0,96}"(?:type|tool)"\s*:)',
+    re.IGNORECASE,
+)
+_STREAM_GUARD_CHARS = 128
 # Upper bound (chars) for buffering an ambiguous leading fragment before we
 # give up and treat it as plain text, so a malformed stream can never stall.
 _AGENT_BUFFER_LIMIT = 1024
@@ -502,7 +511,6 @@ class ModelRuntime:
             headers["anthropic-version"] = "2023-06-01"
         elif request_format == "ollama":
             endpoint = ModelRuntime._local_endpoint(base_url, "/api/chat")
-            context_size = profile.get("context_size") or options.get("context_size", 8192)
             payload = {
                 "model": model,
                 "messages": ModelRuntime._ollama_messages(messages),
@@ -510,9 +518,10 @@ class ModelRuntime:
                 "options": {
                     "temperature": temperature,
                     "num_predict": max_tokens,
-                    "num_ctx": int(context_size),
                 },
             }
+            if profile.get("context_size"):
+                payload["options"]["num_ctx"] = int(profile["context_size"])
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
@@ -529,6 +538,8 @@ class ModelRuntime:
                 "max_output_tokens": max_tokens,
                 "stream": stream_enabled,
             }
+            if profile.get("context_size"):
+                payload["context_length"] = int(profile["context_size"])
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
             if reasoning_params:
                 payload.update(reasoning_params)
@@ -764,9 +775,9 @@ class ModelRuntime:
     def _read_ollama_stream(response: Any, status: StatusCallback | None) -> dict[str, Any]:
         chunks: list[dict[str, Any]] = []
         full_content_parts: list[str] = []
-        pending_parts: list[str] = []
+        pending = ""
         reasoning_parts: list[str] = []
-        decided = None  # None until classified; "tool" or "text" afterwards.
+        tool_protocol = False
         for raw_line in response:
             try:
                 chunk = json.loads(raw_line.decode("utf-8", errors="replace"))
@@ -781,18 +792,11 @@ class ModelRuntime:
             if not text:
                 continue
             full_content_parts.append(text)
-            if decided is None:
-                pending_parts.append(text)
-                kind = ModelRuntime._classify_agent_output("".join(pending_parts))
-                if kind == "tool":
-                    decided = "tool"
-                elif kind == "text":
-                    decided = "text"
-                    if status:
-                        status({"type": "delta", "content": "".join(pending_parts)})
-                    pending_parts = []
-            elif decided == "text" and status:
-                status({"type": "delta", "content": text})
+            if not tool_protocol:
+                pending += text
+                pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
+        if not tool_protocol:
+            ModelRuntime._forward_guarded_text(pending, status, final=True)
         return {
             "content": ModelRuntime._clean_content("".join(full_content_parts)),
             "reasoning": "".join(reasoning_parts),
@@ -821,10 +825,10 @@ class ModelRuntime:
         """
         chunks: list[dict[str, Any]] = []
         full_content_parts: list[str] = []
-        pending_parts: list[str] = []  # Leading unflushed buffer being classified.
+        pending = ""
         reasoning_parts: list[str] = []
         native_tool_calls: dict[int, dict[str, str]] = {}
-        decided = None  # None until classified; "tool" or "text" afterwards.
+        tool_protocol = False
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -844,7 +848,10 @@ class ModelRuntime:
                 reasoning_parts.append(reasoning)
             if tool_calls:
                 # Native OpenAI tool calls must not appear as answer text.
-                decided = "tool"
+                if not tool_protocol:
+                    ModelRuntime._forward_guarded_text(pending, status, final=True)
+                    pending = ""
+                tool_protocol = True
                 for call in tool_calls:
                     slot = native_tool_calls.setdefault(
                         call.get("index", 0), {"id": "", "name": "", "arguments": ""}
@@ -859,18 +866,11 @@ class ModelRuntime:
             if not text:
                 continue
             full_content_parts.append(text)
-            if decided is None:
-                pending_parts.append(text)
-                kind = ModelRuntime._classify_agent_output("".join(pending_parts))
-                if kind == "tool":
-                    decided = "tool"
-                elif kind == "text":
-                    decided = "text"
-                    if status:
-                        status({"type": "delta", "content": "".join(pending_parts)})
-                    pending_parts = []
-            elif decided == "text" and status:
-                status({"type": "delta", "content": text})
+            if not tool_protocol:
+                pending += text
+                pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
+        if not tool_protocol:
+            ModelRuntime._forward_guarded_text(pending, status, final=True)
         usage = ModelRuntime._online_usage(request_format, chunks)
         if native_tool_calls:
             # Convert to the internal action structure the Agent Loop consumes.
@@ -888,9 +888,9 @@ class ModelRuntime:
         """
         chunks: list[dict[str, Any]] = []
         full_content_parts: list[str] = []
-        pending_parts: list[str] = []
+        pending = ""
         reasoning_parts: list[str] = []
-        decided = None  # None 直到分类；"tool" 或 "text" 之后。
+        tool_protocol = False
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -924,18 +924,11 @@ class ModelRuntime:
             if not text:
                 continue
             full_content_parts.append(text)
-            if decided is None:
-                pending_parts.append(text)
-                kind = ModelRuntime._classify_agent_output("".join(pending_parts))
-                if kind == "tool":
-                    decided = "tool"
-                elif kind == "text":
-                    decided = "text"
-                    if status:
-                        status({"type": "delta", "content": "".join(pending_parts)})
-                    pending_parts = []
-            elif decided == "text" and status:
-                status({"type": "delta", "content": text})
+            if not tool_protocol:
+                pending += text
+                pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
+        if not tool_protocol:
+            ModelRuntime._forward_guarded_text(pending, status, final=True)
         return {
             "content": ModelRuntime._clean_content("".join(full_content_parts)),
             "reasoning": "".join(reasoning_parts),
@@ -1033,6 +1026,46 @@ class ModelRuntime:
                 return "text"
             return "pending" if len(probe) <= _AGENT_BUFFER_LIMIT else "text"
         return "text"
+
+    @staticmethod
+    def _tool_protocol_offset(buffer: str) -> int | None:
+        """Return the earliest XML/JSON agent protocol marker in ``buffer``."""
+        offsets = []
+        xml_match = _TOOL_PROTOCOL_ANYWHERE.search(buffer)
+        if xml_match:
+            offsets.append(xml_match.start())
+        json_match = _JSON_TOOL_ANYWHERE.search(buffer)
+        if json_match:
+            offsets.append(json_match.start())
+        return min(offsets) if offsets else None
+
+    @staticmethod
+    def _forward_guarded_text(
+        pending: str,
+        status: StatusCallback | None,
+        final: bool = False,
+    ) -> tuple[str, bool]:
+        """Forward safe prose while retaining enough tail to catch tool XML/JSON.
+
+        Returns the unflushed tail and whether a tool protocol was detected.
+        Once detected, callers suppress the remainder of that model response.
+        """
+        offset = ModelRuntime._tool_protocol_offset(pending)
+        if offset is not None:
+            visible = pending[:offset]
+            if visible and status:
+                status({"type": "delta", "content": visible})
+            return "", True
+        if final:
+            if pending and status:
+                status({"type": "delta", "content": pending})
+            return "", False
+        if len(pending) <= _STREAM_GUARD_CHARS:
+            return pending, False
+        visible = pending[:-_STREAM_GUARD_CHARS]
+        if visible and status:
+            status({"type": "delta", "content": visible})
+        return pending[-_STREAM_GUARD_CHARS:], False
 
     @staticmethod
     def _stream_delta(request_format: str, chunk: dict[str, Any]) -> tuple[str, str]:

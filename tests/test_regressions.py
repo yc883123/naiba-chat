@@ -26,7 +26,7 @@ from server import (
     build_model_history,
     encode_image_for_model,
 )
-from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor
+from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor, delete_skill
 from storage import ChatStorage
 from updater import UpdateManager
 
@@ -227,14 +227,18 @@ class AgentLoopTests(unittest.TestCase):
                 self.cancel_event.set()
             return True, "ok"
 
-    def test_agent_runs_past_eight_tool_calls_until_final_response(self) -> None:
+    def test_agent_runs_past_eight_distinct_tool_calls_until_final_response(self) -> None:
         calls = 0
 
         def complete(profile, messages, options, event):
             nonlocal calls
             calls += 1
             if calls <= 10:
-                return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "x"}})
+                return json.dumps({
+                    "type": "tool",
+                    "tool": "read_file",
+                    "arguments": {"path": f"x-{calls}"},
+                })
             return "done"
 
         agent = SkillAgent(self.Catalog(), self.Executor(), complete)
@@ -442,6 +446,9 @@ class ImageAttachmentTests(unittest.TestCase):
         self.assertEqual(2, summary["requests"])
         self.assertEqual(200, summary["cached_tokens"])
         self.assertEqual(50.0, summary["cache_hit_rate"])
+        self.assertEqual(300, summary["last_input_tokens"])
+        self.assertEqual(40, summary["last_output_tokens"])
+        self.assertEqual(340, summary["context_tokens"])
 
 
 class LocalModelUnloadTests(unittest.TestCase):
@@ -636,7 +643,7 @@ class OllamaFormatTests(unittest.TestCase):
         self.assertEqual(False, body["stream"])
         self.assertEqual(0, body["options"]["temperature"])
         self.assertEqual(64, body["options"]["num_predict"])
-        self.assertEqual(8192, body["options"]["num_ctx"])
+        self.assertNotIn("num_ctx", body["options"])
 
     def test_ollama_context_size_prefers_provider_override_over_global_option(self) -> None:
         captured: dict[str, object] = {}
@@ -1151,6 +1158,26 @@ class ConversationInteractionHistoryTests(unittest.TestCase):
         self.assertIn('{"error": True, "skills": skills, "run_id": run_id}', run_source)
 
 
+class TokenUsageUITests(unittest.TestCase):
+    def test_context_ring_is_between_search_and_send_controls(self) -> None:
+        markup = Path("public/index.html").read_text(encoding="utf-8")
+        search = markup.index('id="webSearchButton"')
+        context = markup.index('id="contextUsageButton"')
+        send = markup.index('id="sendButton"')
+
+        self.assertLess(search, context)
+        self.assertLess(context, send)
+
+    def test_usage_ring_uses_persisted_context_and_turn_totals(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        run_source = Path("async_tasks.py").read_text(encoding="utf-8")
+
+        self.assertIn("function renderContextUsage()", source)
+        self.assertIn("usage.context_tokens", source)
+        self.assertIn("usage[\"context_limit\"]", run_source)
+        self.assertIn("updateContextUsage(messages)", source)
+
+
 class ModelSelectionTests(unittest.TestCase):
     def test_frontend_restores_the_saved_provider(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
@@ -1171,15 +1198,68 @@ class ModelSelectionTests(unittest.TestCase):
         self.assertIn('path == "/api/models/unload"', server_source)
         self.assertNotIn("url.port === '11434'", source)
 
-    def test_ollama_context_controls_are_wired_through_the_frontend(self) -> None:
+    def test_local_context_controls_are_wired_through_the_frontend(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
         markup = Path("public/index.html").read_text(encoding="utf-8")
+        runtime = Path("model_runtime.py").read_text(encoding="utf-8")
 
         self.assertIn("providerContextSize", source)
         self.assertIn("context_size:", source)
-        self.assertIn("num_ctx", Path("model_runtime.py").read_text(encoding="utf-8"))
-        self.assertIn('id="contextSize"', markup)
+        self.assertIn("num_ctx", runtime)
+        self.assertIn("context_length", runtime)
+        self.assertNotIn('id="contextSize"', markup)
         self.assertIn('id="providerContextSize"', markup)
+
+    def test_generation_parameters_describe_their_scope(self) -> None:
+        markup = Path("public/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("在线与本地模型有效", markup)
+        self.assertIn("仅工具与命令执行有效", markup)
+        self.assertIn("在线模型使用供应商自身的模型上限", markup)
+
+
+class ConversationSearchPersistenceTests(unittest.TestCase):
+    def test_search_switch_is_persisted_per_conversation(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = ChatStorage(Path(root) / "chat.db")
+            first = storage.create_conversation(web_search_enabled=True)
+            second = storage.create_conversation()
+
+            self.assertEqual(1, first["web_search_enabled"])
+            self.assertEqual(0, second["web_search_enabled"])
+            updated = storage.update_conversation_settings(
+                second["id"], web_search_enabled=True
+            )
+            self.assertEqual(1, updated["web_search_enabled"])
+            self.assertEqual(2, storage.get_user_version())
+
+    def test_search_sources_are_normalized_for_message_metadata(self) -> None:
+        from async_tasks import _search_sources
+
+        runs = [{
+            "tool": "web_search",
+            "success": True,
+            "result": json.dumps({"results": [
+                {"title": "A", "url": "https://example.com/a", "snippet": "one", "published_at": "2026-08-17"},
+                {"title": "duplicate", "url": "https://example.com/a"},
+            ]}),
+        }]
+        self.assertEqual(
+            [{
+                "title": "A",
+                "url": "https://example.com/a",
+                "snippet": "one",
+                "published_at": "2026-08-17",
+            }],
+            _search_sources(runs),
+        )
+
+    def test_frontend_does_not_store_search_state_in_local_storage(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("naibaWebSearch:", source)
+        self.assertIn("web_search_enabled: state.webSearchEnabled", source)
+        self.assertIn("sourcesMarkup(metadata.sources)", source)
 
 
 class PublicRepositoryHygieneTests(unittest.TestCase):
@@ -1333,6 +1413,28 @@ class SkillIdentityTests(unittest.TestCase):
             second_id = SkillCatalog([Path(second_root)]).scan()[0]["id"]
 
             self.assertEqual(first_id, second_id)
+
+    def test_hidden_skill_is_omitted_without_removing_its_files(self) -> None:
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as recycle:
+            skill_dir = Path(root) / "demo"
+            skill_dir.mkdir()
+            skill_file = skill_dir / "SKILL.md"
+            skill_file.write_text("---\nname: demo\ndescription: test\n---\n", encoding="utf-8")
+            catalog = SkillCatalog([Path(root)])
+            skill = catalog.scan()[0]
+
+            result = delete_skill(
+                skill["id"],
+                recycle,
+                [],
+                root,
+                skills_by_id=catalog.by_id(),
+            )
+
+            self.assertTrue(result["success"])
+            self.assertTrue(result["hidden"])
+            self.assertTrue(skill_file.exists())
+            self.assertEqual([], SkillCatalog([Path(root)], hidden_ids=[skill["id"]]).scan())
 
 
 class MCPRegistrationTests(unittest.TestCase):
@@ -1661,8 +1763,28 @@ class ToolProtocolStreamTests(unittest.TestCase):
         ]
         result, events = self._collect_sse("openai_chat", chunks)
         deltas = [e for e in events if e.get("type") == "delta"]
-        self.assertEqual(["你好", "世界"], [e["content"] for e in deltas])
+        self.assertEqual("你好世界", "".join(e["content"] for e in deltas))
         self.assertEqual("你好世界", result["content"])
+
+    def test_tool_protocol_after_prose_never_leaks_protocol_delta(self) -> None:
+        protocol = '准备读取。\n<tool name="read_file"><parameter name="path">x</parameter></tool>'
+        chunks = [
+            {"choices": [{"delta": {"content": protocol[:18]}}]},
+            {"choices": [{"delta": {"content": protocol[18:]}}]},
+        ]
+        result, events = self._collect_sse("openai_chat", chunks)
+        visible = "".join(event.get("content", "") for event in events if event.get("type") == "delta")
+        self.assertNotIn("<tool", visible)
+        self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
+
+    def test_json_tool_action_after_prose_never_leaks_protocol_delta(self) -> None:
+        protocol = '我先检查。\n{"type":"tool","tool":"read_file","arguments":{"path":"x"}}'
+        result, events = self._collect_sse(
+            "openai_chat", [{"choices": [{"delta": {"content": protocol}}]}]
+        )
+        visible = "".join(event.get("content", "") for event in events if event.get("type") == "delta")
+        self.assertNotIn('"type":"tool"', visible)
+        self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
 
     def test_native_tool_calls_convert_to_agent_action(self) -> None:
         chunks = [
@@ -1802,6 +1924,24 @@ class ToolProtocolAgentLoopTests(unittest.TestCase):
         )
         self.assertEqual("已读取文件并完成总结。", content)
         self.assertNotIn("read_file", content)
+
+    def test_identical_successful_tool_calls_stop_as_no_progress(self) -> None:
+        events: list[dict[str, Any]] = []
+        calls = {"n": 0}
+
+        def complete(profile, messages, options, event):
+            calls["n"] += 1
+            return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "x"}})
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, False, [], "", ["read_file"],
+            lambda event: events.append(event), lambda *_args: None, max_steps=32,
+        )
+        self.assertEqual(3, calls["n"])
+        self.assertEqual(3, len(runs))
+        self.assertIn("没有进展", content)
+        self.assertIn("run_failed", [event.get("type") for event in events])
 
 
 if __name__ == "__main__":

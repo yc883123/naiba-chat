@@ -34,6 +34,9 @@
     <main class="chat-main">
       <header class="topbar">
         <button class="icon-button mobile-only" id="openSidebar" title="打开导航" aria-label="打开导航">☰</button>
+        <button class="workspace-control" id="openWorkspace" type="button" title="选择工作区目录">
+          <span>工作区</span><b id="workspaceLabel">workspace</b>
+        </button>
         <label class="model-control">
           <span>模型</span>
           <select id="modelSelect" aria-label="当前模型"></select>
@@ -73,6 +76,16 @@
           <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">＋</button>
           <textarea id="messageInput" rows="1" placeholder="输入消息" aria-label="消息"></textarea>
           <button class="icon-button web-search-button" type="button" id="webSearchButton" title="联网搜索：关闭" aria-label="联网搜索" aria-pressed="false">🌐</button>
+          <div class="context-usage-wrap">
+            <button class="context-usage-button" type="button" id="contextUsageButton" title="上下文用量：暂无数据" aria-label="查看上下文和 Token 用量" aria-expanded="false">
+              <span class="context-usage-ring" id="contextUsageRing" aria-hidden="true"></span>
+            </button>
+            <div class="context-usage-popover" id="contextUsagePopover" hidden>
+              <strong>Token 用量</strong>
+              <div id="contextUsageSummary">暂无模型用量数据</div>
+              <small id="lastTurnUsageSummary">完成一次回复后显示本轮消耗</small>
+            </div>
+          </div>
           <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
         </form>
         <div class="composer-meta">
@@ -110,6 +123,21 @@
     </form>
   </dialog>
 
+  <dialog id="workspaceDialog" class="panel-dialog workspace-dialog">
+    <div class="dialog-toolbar">
+      <div><h2>工作区目录</h2><p id="workspaceDialogResolved">-</p></div>
+      <button class="icon-button" data-close="workspaceDialog" type="button" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="workspace-dialog-body">
+      <label>目录路径
+        <input id="workspaceDialogInput" type="text" placeholder="留空使用程序目录下的 workspace">
+      </label>
+      <div class="form-actions">
+        <button class="primary-button" id="saveWorkspace" type="button">保存工作区</button>
+      </div>
+    </div>
+  </dialog>
+
   <dialog id="skillsDialog" class="panel-dialog">
     <div class="dialog-toolbar">
       <div><h2>Skills</h2><p id="skillsSummary"></p></div>
@@ -121,6 +149,26 @@
     </label>
     <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
     <div class="skill-list" id="skillList"></div>
+  </dialog>
+
+  <dialog id="skillImportDialog" class="panel-dialog skill-import-dialog">
+    <div class="dialog-toolbar">
+      <div><h2>导入 Skill</h2><p>上传包含 SKILL.md 的文件夹、.zip 或单个 .md</p></div>
+      <button class="icon-button" data-close="skillImportDialog" type="button" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="skill-import-body">
+      <div class="drop-zone" id="skillDropZone">
+        <p>拖拽文件夹 / .zip / .md 到此处，或点击下方按钮选择</p>
+        <div class="skill-import-buttons">
+          <button class="control-button" id="skillImportFolder" type="button">选择文件夹</button>
+          <button class="control-button" id="skillImportFiles" type="button">选择 .zip / .md</button>
+        </div>
+        <input id="skillImportFolderInput" type="file" webkitdirectory hidden>
+        <input id="skillImportFileInput" type="file" accept=".zip,.md" hidden>
+      </div>
+      <p class="hint">文件要求：文件夹 / ZIP 须含 SKILL.md；单个 .md 须含 name + description 的 YAML 头。</p>
+      <div class="skill-import-status" id="skillImportStatus"></div>
+    </div>
   </dialog>
 
 
@@ -165,6 +213,7 @@
         <button data-settings-tab="vision">视觉</button>
         <button data-settings-tab="search">联网搜索</button>
         <button data-settings-tab="skills">Skills 管理</button>
+        <button data-settings-tab="datamigration">数据与迁移</button>
         <button data-settings-tab="updates">软件更新</button>
       </nav>
       <div class="settings-content">
@@ -206,8 +255,9 @@
               </span>
               <input id="providerModelCustom" hidden placeholder="输入模型名称，例如 gpt-5-mini">
             </label>
-            <label class="provider-field" id="providerContextField">Ollama 上下文 Tokens（可选）
-              <input id="providerContextSize" type="number" min="1" max="1048576" step="1" placeholder="留空则使用全局设置">
+            <label class="provider-field" id="providerContextField"><span id="providerContextLabel">本地上下文 Tokens（可选）</span>
+              <input id="providerContextSize" type="number" min="1" max="1048576" step="1" placeholder="留空则使用本地服务默认值">
+              <small class="hint" id="providerContextHint">仅本地模型有效。</small>
             </label>
             <label class="provider-field">思维强度
               <select id="providerReasoningEffort">
@@ -216,13 +266,6 @@
                 <option value="low">低</option>
                 <option value="medium">中</option>
                 <option value="high">高</option>
-              </select>
-            </label>
-            <label class="provider-field">图片输入能力
-              <select id="providerSupportsImages">
-                <option value="auto">自动检测</option>
-                <option value="true">支持图片</option>
-                <option value="false">仅支持文本</option>
               </select>
             </label>
             <p class="form-error provider-field" id="providerError"></p>
@@ -277,11 +320,11 @@
         <section data-settings-panel="runtime" hidden>
           <h3>生成参数</h3>
           <div class="field-grid">
-            <label>温度<input id="temperature" type="number" min="0" max="2" step="0.1"></label>
-            <label>最大输出 Tokens<input id="maxTokens" type="number" min="64" max="32768" step="64"></label>
-            <label>上下文 Tokens<input id="contextSize" type="number" min="1" max="1048576" step="1"></label>
-            <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"></label>
+            <label>温度<input id="temperature" type="number" min="0" max="2" step="0.1"><small class="hint">在线与本地模型有效；控制输出随机性，供应商可能限制取值范围。</small></label>
+            <label>最大输出 Tokens<input id="maxTokens" type="number" min="64" max="32768" step="64"><small class="hint">在线与本地模型有效；限制单次回复长度，最终仍受模型和供应商上限约束。</small></label>
+            <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"><small class="hint">仅工具与命令执行有效；不控制在线或本地模型的响应超时。</small></label>
           </div>
+          <p class="hint">本地模型的上下文长度请在“API 供应商”中按 Ollama 或 LM Studio 单独设置；在线模型使用供应商自身的模型上限。</p>
           <h3 class="subheading">工作区</h3>
           <label class="field-wide">工作区目录
             <input id="workspaceDir" type="text" placeholder="留空使用程序目录下的 workspace">
@@ -292,7 +335,6 @@
         <section data-settings-panel="connections" hidden>
           <h3>MCP 服务</h3>
           <div id="mcpList" class="connection-list"></div>
-          <div class="form-actions"><button class="control-button" id="testMcp" type="button">测试连接</button><button class="control-button" id="reconnectMcp" type="button">重新连接</button></div>
           <h3>服务地址</h3>
           <div class="connection-address" id="connectionAddress"></div>
           <h3 class="subheading">访问口令</h3>
@@ -308,10 +350,14 @@
           <h3>视觉（给纯文本大脑装眼睛）</h3>
           <p class="hint">未配置视觉供应商时，自动使用内置 OVH 免费匿名视觉链兜底（限流严格，仅作默认）。生产建议配置自己的视觉 API（Qwen-VL / Gemini / GPT-4o 等）。</p>
           <div class="field-grid">
-            <label class="field-wide">视觉供应商（留空 = OVH 免费链）
-              <select id="visionProvider"></select>
-            </label>
-            <label>自动路由<input id="visionAutoRoute" type="checkbox"></label>
+            <div class="provider-current vision-provider-current field-wide">
+              <label>视觉供应商（留空 = OVH 免费链）
+                <select id="visionProvider"></select>
+              </label>
+              <button class="control-button" id="addVisionProvider" type="button">添加 API</button>
+              <button class="danger-button" id="deleteVisionProvider" type="button">删除 API</button>
+            </div>
+            <label class="toggle-row"><span><b>自动路由</b><small>根据上下文自动选择视觉链路</small></span><input id="visionAutoRoute" type="checkbox"></label>
             <label>超时（毫秒）<input id="visionTimeout" type="number" min="1000" step="1000"></label>
             <label>最大图片数<input id="visionMaxImages" type="number" min="1" max="20" step="1"></label>
           </div>
@@ -323,16 +369,16 @@
         </section>
         <section data-settings-panel="search" hidden>
           <h3>联网搜索（可选）</h3>
-          <p class="hint">完全可选。未启用或无端点时发送不会被阻止；开启且 provider 可用时才允许 web_search 工具。搜索结果属于不可信数据。</p>
+          <p class="hint">发送区的联网搜索按钮控制当前对话是否使用搜索。这里仅配置搜索 API，结果属于不可信数据。</p>
           <div class="field-grid">
-            <label class="field-wide">启用联网搜索<input id="searchEnabled" type="checkbox"></label>
-            <label class="field-wide">提供商
-              <select id="searchProvider">
-                <option value="custom">自定义端点</option>
-                <option value="duckduckgo">DuckDuckGo（免 Key）</option>
-                <option value="serper">Serper.dev（需 Key）</option>
-              </select>
-            </label>
+            <div class="provider-current field-wide">
+              <label>搜索 API
+                <select id="searchProfileSelect"></select>
+              </label>
+              <button class="control-button" id="addSearchProfile" type="button">添加</button>
+              <button class="danger-button" id="deleteSearchProfile" type="button">删除</button>
+            </div>
+            <label class="field-wide">名称<input id="searchProfileName" type="text" placeholder="例如公司搜索服务"></label>
             <label class="field-wide">端点 URL<input id="searchEndpoint" type="text" placeholder="https://..."></label>
             <label class="field-wide">API Key<input id="searchApiKey" type="text" placeholder="可选，留空不发送"></label>
             <label>最大结果数<input id="searchMaxResults" type="number" min="1" max="20" step="1"></label>
@@ -344,28 +390,36 @@
           <p class="hint" id="searchTestResult"></p>
         </section>
         <section data-settings-panel="skills" hidden>
-          <h3>Skill 扫描目录</h3>
-          <p class="hint">配置后才会在对话中加载 Skill。不配置则不会读取任何 Skill。</p>
-          <div id="skillDirList" class="connection-list"></div>
-          <div class="skill-dir-add">
-            <input id="skillDirInput" type="text" placeholder="目录路径，可相对项目（如 skills）或绝对路径">
-            <button class="control-button" id="addSkillDir" type="button">添加目录</button>
-          </div>
-          <h3 class="subheading">安装 Skill</h3>
-          <p class="hint">选择包含 SKILL.md 的 Skill 文件夹，或上传 .zip 压缩包，安装到上方第一个目录（若该目录不存在会自动创建）。</p>
-          <div class="skill-install">
-            <input id="skillFolder" type="file" webkitdirectory hidden>
-            <button class="primary-button" id="installSkillFolder" type="button">选择文件夹安装</button>
-          </div>
-          <div class="skill-install">
-            <input id="skillZip" type="file" accept=".zip,application/zip">
-            <button class="control-button" id="installSkill" type="button">安装 ZIP</button>
+          <div class="form-actions skill-import-actions">
+            <button class="primary-button" id="openSkillImport" type="button">导入 Skill</button>
           </div>
           <h3 class="subheading">已加载 Skill（<span id="installedSkillCount">0</span>）</h3>
-          <div class="form-actions">
-            <button class="control-button" id="refreshSkills" type="button">重新扫描</button>
-          </div>
           <div class="skill-list" id="installedSkillList"></div>
+        </section>
+        <section data-settings-panel="datamigration" hidden>
+          <h3>数据与迁移</h3>
+          <div class="update-status">
+            <div><span>数据库版本</span><b id="migrationDbVersion">-</b></div>
+            <div><span>数据目录</span><b id="migrationDataDir">-</b></div>
+            <div><span>健康状态</span><b id="migrationHealthy">-</b></div>
+            <div><span>已应用迁移</span><b id="migrationApplied">-</b></div>
+            <div><span>备份位置</span><b id="migrationBackup">-</b></div>
+          </div>
+          <div class="form-actions">
+            <button class="control-button" id="backupData" type="button">备份数据</button>
+            <button class="primary-button" id="runMigration" type="button">执行迁移</button>
+          </div>
+          <p class="hint" id="migrationMessage"></p>
+          <details class="advanced-settings">
+            <summary>手动合并旧数据</summary>
+            <label class="field-wide">旧数据目录
+              <input id="mergeSource" type="text" placeholder="旧版本数据目录路径">
+            </label>
+            <div class="form-actions">
+              <button class="control-button" id="mergeData" type="button">合并</button>
+            </div>
+            <p class="hint" id="mergeMessage"></p>
+          </details>
         </section>
         <section data-settings-panel="updates" hidden>
           <h3>软件更新</h3>
@@ -375,14 +429,12 @@
               <span>最新版本</span>
               <div class="update-latest-value">
                 <b id="latestVersion">尚未检查</b>
-                <button class="update-notes-toggle" id="updateNotesToggle" type="button" aria-expanded="false" hidden>
-                  <span>详细更新内容</span><span class="update-notes-arrow" aria-hidden="true">⌄</span>
-                </button>
               </div>
             </div>
-            <div class="update-notes" id="updateNotes" hidden>
+            <details class="update-notes" id="updateNotes" hidden>
+              <summary>详细更新内容</summary>
               <ul id="updateNotesList"></ul>
-            </div>
+            </details>
             <p id="updateMessage">启动后会自动从 GitHub 检查并安装更新。</p>
           </div>
           <div class="form-actions update-actions">

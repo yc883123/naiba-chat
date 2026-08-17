@@ -115,13 +115,30 @@ class WebSearchToolTest(TestCase):
             config=types.SimpleNamespace(data={"search": search})
         )
 
-    def test_disabled_degrades(self):
+    def test_missing_endpoint_degrades(self):
         app = self._fake_app({"enabled": False})
         rt = WebSearchRuntime(app)
         self.assertFalse(rt.is_available())
         ok, msg = rt.search("naiba-chat")
         self.assertFalse(ok)
-        self.assertIn("未启用", msg)
+        self.assertIn("未配置搜索端点", msg)
+
+    def test_composer_switch_owns_enable_state(self):
+        app = self._fake_app({"enabled": False, "endpoint": "https://search.example.com"})
+        self.assertTrue(WebSearchRuntime(app).is_available())
+
+    def test_selected_custom_search_profile(self):
+        app = self._fake_app({
+            "provider_id": "second",
+            "profiles": [
+                {"id": "first", "name": "First", "endpoint": "https://first.example.com"},
+                {"id": "second", "name": "Second", "endpoint": "https://second.example.com", "max_results": 8},
+            ],
+        })
+        cfg = WebSearchRuntime(app).config()
+        self.assertEqual("Second", cfg["name"])
+        self.assertEqual("https://second.example.com", cfg["endpoint"])
+        self.assertEqual(8, cfg["max_results"])
 
     def test_normalize_results(self):
         payload = {

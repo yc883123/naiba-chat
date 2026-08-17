@@ -213,12 +213,13 @@ class VisionRouter:
         return merged
 
     # ---- 视觉后端链 ----
-    def vision_backends(self) -> list[dict[str, Any]]:
-        """返回视觉后端 profile 列表：用户自配优先，OVH 免费链兜底。"""
+    def vision_backends(self, provider_model_key: str | None = None) -> list[dict[str, Any]]:
+        """返回视觉后端 profile 列表；显式选择时不静默切换到匿名链。"""
         cfg = self.config()
         backends: list[dict[str, Any]] = []
 
-        user_key = str(cfg.get("provider_model_key") or "").strip()
+        selected_key = cfg.get("provider_model_key") if provider_model_key is None else provider_model_key
+        user_key = str(selected_key or "").strip()
         if user_key:
             try:
                 profile = self.app.config.profile(user_key)
@@ -245,17 +246,19 @@ class VisionRouter:
                 }
             )
 
-        for model in DEFAULT_VISION_CHAIN:
-            backends.append(
-                {
-                    "kind": "online",
-                    "request_format": "openai_chat",
-                    "base_url": OVH_VISION_BASE,
-                    "model": model,
-                    "api_key": "",
-                    "name": f"OVH 免费视觉 · {model}",
-                }
-            )
+        # 只有留空使用默认视觉链时才加入匿名 OVH；显式选择失败必须显示真实失败原因。
+        if not user_key:
+            for model in DEFAULT_VISION_CHAIN:
+                backends.append(
+                    {
+                        "kind": "online",
+                        "request_format": "openai_chat",
+                        "base_url": OVH_VISION_BASE,
+                        "model": model,
+                        "api_key": "",
+                        "name": f"OVH 免费视觉 · {model}",
+                    }
+                )
         return backends
 
     @staticmethod
@@ -842,13 +845,13 @@ class VisionRouter:
         except Exception:
             return None
 
-    def probe(self) -> dict[str, Any]:
+    def probe(self, provider_model_key: str | None = None) -> dict[str, Any]:
         """发送真实的最小图片请求探测视觉后端可用性（不再仅用 /models 可达性冒充能力）。
 
-        按 vision_backends() 顺序 failover：用户自配优先，OVH 免费链兜底。
+        按 vision_backends() 顺序 failover；显式选择时不会静默落到匿名 OVH。
         成功返回首个可用后端的名称与延迟；全部失败返回聚合原因与最后尝试的后端名称。
         """
-        backends = self.vision_backends()
+        backends = self.vision_backends(provider_model_key)
         if not backends:
             return {"ok": False, "reason": "没有可用的视觉后端"}
         image_part = {"type": "image", "media_type": "image/png", "data": MINIMAL_PNG_B64}

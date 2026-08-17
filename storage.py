@@ -1,12 +1,93 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator
+
+
+# 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
+CURRENT_SCHEMA_VERSION = 2
+
+
+def _migrate_to_v1(db: sqlite3.Connection) -> None:
+    """Schema 版本 1 的迁移：补齐历史列并回填 legacy model_key。
+
+    全部操作幂等：列已存在时通过 `try: SELECT ... except OperationalError` 跳过 ALTER。
+    """
+    # Migration: add mode column to existing tables
+    try:
+        db.execute("SELECT mode FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'online'")
+    for column, definition in (
+        ("title_customized", "INTEGER NOT NULL DEFAULT 0"),
+        ("system_prompt", "TEXT NOT NULL DEFAULT ''"),
+        ("stream_enabled", "INTEGER NOT NULL DEFAULT 1"),
+        ("provider_id", "TEXT NOT NULL DEFAULT ''"),
+        ("model_key", "TEXT NOT NULL DEFAULT ''"),
+        ("agent_id", "TEXT NOT NULL DEFAULT ''"),
+        ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
+        ("permission_mode", "TEXT NOT NULL DEFAULT 'confirm'"),
+    ):
+        try:
+            db.execute(f"SELECT {column} FROM conversations LIMIT 1")
+        except sqlite3.OperationalError:
+            db.execute(f"ALTER TABLE conversations ADD COLUMN {column} {definition}")
+    # 旧会话回填 model_key：legacy 仅使用 online 前缀（provider_id 一律按 online 处理）。
+    try:
+        db.execute(
+            "UPDATE conversations SET model_key = 'online:' || provider_id "
+            "WHERE model_key = '' AND provider_id != ''"
+        )
+    except sqlite3.OperationalError:
+        pass
+    for column, definition in (
+        ("kind", "TEXT NOT NULL DEFAULT 'chat'"),
+        ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
+        ("input_message_id", "TEXT NOT NULL DEFAULT ''"),
+        ("plan_id", "TEXT NOT NULL DEFAULT ''"),
+    ):
+        try:
+            db.execute(f"SELECT {column} FROM background_tasks LIMIT 1")
+        except sqlite3.OperationalError:
+            db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
+
+
+def _migrate_to_v2(db: sqlite3.Connection) -> None:
+    """Persist the web-search switch per conversation."""
+    try:
+        db.execute("SELECT web_search_enabled FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN web_search_enabled "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+    # Harness Job 字段（增量迁移，沿用现有 background_tasks 表，不新建平行表）
+    for column, definition in (
+        ("parent_job_id", "TEXT NOT NULL DEFAULT ''"),
+        ("owner_session_id", "TEXT NOT NULL DEFAULT ''"),
+        ("progress", "REAL NOT NULL DEFAULT 0"),
+        ("current_step", "TEXT NOT NULL DEFAULT ''"),
+        ("attempt", "INTEGER NOT NULL DEFAULT 0"),
+        ("checkpoint", "TEXT NOT NULL DEFAULT '{}'"),
+        ("result", "TEXT NOT NULL DEFAULT '{}'"),
+    ):
+        try:
+            db.execute(f"SELECT {column} FROM background_tasks LIMIT 1")
+        except sqlite3.OperationalError:
+            db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
+
+
+# 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
+MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
+    1: _migrate_to_v1,
+    2: _migrate_to_v2,
+}
 
 
 class ChatStorage:
@@ -36,6 +117,7 @@ class ChatStorage:
                     title TEXT NOT NULL,
                     mode TEXT NOT NULL DEFAULT 'online',
                     permission_mode TEXT NOT NULL DEFAULT 'confirm',
+                    web_search_enabled INTEGER NOT NULL DEFAULT 0,
                     title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
@@ -120,57 +202,7 @@ class ChatStorage:
                     ON plans(conversation_id, created_at DESC);
                 """
             )
-            # Migration: add mode column to existing tables
-            try:
-                db.execute("SELECT mode FROM conversations LIMIT 1")
-            except sqlite3.OperationalError:
-                db.execute("ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'online'")
-            for column, definition in (
-                ("title_customized", "INTEGER NOT NULL DEFAULT 0"),
-                ("system_prompt", "TEXT NOT NULL DEFAULT ''"),
-                ("stream_enabled", "INTEGER NOT NULL DEFAULT 1"),
-                ("provider_id", "TEXT NOT NULL DEFAULT ''"),
-                ("model_key", "TEXT NOT NULL DEFAULT ''"),
-                ("agent_id", "TEXT NOT NULL DEFAULT ''"),
-                ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
-                ("permission_mode", "TEXT NOT NULL DEFAULT 'confirm'"),
-            ):
-                try:
-                    db.execute(f"SELECT {column} FROM conversations LIMIT 1")
-                except sqlite3.OperationalError:
-                    db.execute(f"ALTER TABLE conversations ADD COLUMN {column} {definition}")
-            # 旧会话回填 model_key：legacy 仅使用 online 前缀（provider_id 一律按 online 处理）。
-            try:
-                db.execute(
-                    "UPDATE conversations SET model_key = 'online:' || provider_id "
-                    "WHERE model_key = '' AND provider_id != ''"
-                )
-            except sqlite3.OperationalError:
-                pass
-            for column, definition in (
-                ("kind", "TEXT NOT NULL DEFAULT 'chat'"),
-                ("interaction_mode", "TEXT NOT NULL DEFAULT 'craft'"),
-                ("input_message_id", "TEXT NOT NULL DEFAULT ''"),
-                ("plan_id", "TEXT NOT NULL DEFAULT ''"),
-            ):
-                try:
-                    db.execute(f"SELECT {column} FROM background_tasks LIMIT 1")
-                except sqlite3.OperationalError:
-                    db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
-            # Harness Job 字段（增量迁移，沿用现有 background_tasks 表，不新建平行表）
-            for column, definition in (
-                ("parent_job_id", "TEXT NOT NULL DEFAULT ''"),
-                ("owner_session_id", "TEXT NOT NULL DEFAULT ''"),
-                ("progress", "REAL NOT NULL DEFAULT 0"),
-                ("current_step", "TEXT NOT NULL DEFAULT ''"),
-                ("attempt", "INTEGER NOT NULL DEFAULT 0"),
-                ("checkpoint", "TEXT NOT NULL DEFAULT '{}'"),
-                ("result", "TEXT NOT NULL DEFAULT '{}'"),
-            ):
-                try:
-                    db.execute(f"SELECT {column} FROM background_tasks LIMIT 1")
-                except sqlite3.OperationalError:
-                    db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
+            # 增量迁移（列新增 / 旧数据回填）由 apply_pending_migrations() 在重启清理之后统一执行。
             now = int(time.time() * 1000)
             interrupted = db.execute(
                 "SELECT id FROM background_tasks "
@@ -210,6 +242,76 @@ class ChatStorage:
                     "UPDATE plans SET status = 'cancelled', error = '服务重启，执行已中断', steps = ?, updated_at = ? WHERE id = ?",
                     (json.dumps(steps, ensure_ascii=False), now, plan_row["id"]),
                 )
+        # Schema 创建 + 重启清理完成后，应用尚未执行的版本化迁移。
+        self.apply_pending_migrations()
+        # Keep legacy data repair idempotent after the schema reaches v1.
+        # Older builds may have written rows after the version was recorded.
+        self._repair_legacy_model_keys()
+
+    def _repair_legacy_model_keys(self) -> None:
+        with self._connect() as db:
+            db.execute(
+                "UPDATE conversations SET model_key = 'online:' || provider_id "
+                "WHERE model_key = '' AND provider_id != ''"
+            )
+
+    def apply_pending_migrations(self) -> None:
+        """依次应用尚未执行的迁移，直到 user_version == CURRENT_SCHEMA_VERSION。"""
+        with self._connect() as db:
+            while int(db.execute("PRAGMA user_version").fetchone()[0]) < CURRENT_SCHEMA_VERSION:
+                target = int(db.execute("PRAGMA user_version").fetchone()[0]) + 1
+                migration = MIGRATIONS.get(target)
+                if migration is None:
+                    # 没有对应迁移定义则向前跳版本，避免死循环。
+                    db.execute(f"PRAGMA user_version = {int(target)}")
+                    continue
+                migration(db)
+                db.execute(f"PRAGMA user_version = {int(target)}")
+
+    def get_user_version(self) -> int:
+        with self._connect() as db:
+            return int(db.execute("PRAGMA user_version").fetchone()[0])
+
+    def set_user_version(self, version: int) -> None:
+        with self._connect() as db:
+            db.execute(f"PRAGMA user_version = {int(version)}")
+
+    def check_integrity(self) -> dict[str, Any]:
+        with self._connect() as db:
+            rows = db.execute("PRAGMA integrity_check").fetchall()
+        details = [str(row[0]) for row in rows]
+        return {"ok": all(d == "ok" for d in details), "details": details}
+
+    def backup_for_migration(self, backup_dir: Path) -> dict[str, Any]:
+        files: list[str] = []
+        error: str | None = None
+        try:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            for suffix in ("", "-wal", "-shm"):
+                source = Path(str(self.db_path) + suffix)
+                if source.exists():
+                    destination = backup_dir / source.name
+                    shutil.copy2(source, destination)
+                    files.append(str(destination))
+        except Exception as exc:  # noqa: BLE001 - 备份失败需要以 error 形式返回
+            error = str(exc)
+        return {"backup_dir": str(backup_dir), "files": files, "error": error}
+
+    @property
+    def data_dir(self) -> Path:
+        return self.db_path.parent
+
+    @property
+    def health(self) -> dict[str, Any]:
+        db_version = self.get_user_version()
+        healthy = self.check_integrity()["ok"]
+        applied = [v for v in sorted(MIGRATIONS) if v <= CURRENT_SCHEMA_VERSION]
+        return {
+            "db_version": db_version,
+            "data_dir": str(self.data_dir),
+            "healthy": healthy,
+            "migrations": applied,
+        }
 
     def create_conversation(
         self,
@@ -219,6 +321,7 @@ class ChatStorage:
         interaction_mode: str = "craft",
         model_key: str = "",
         permission_mode: str = "confirm",
+        web_search_enabled: bool = False,
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
@@ -231,13 +334,14 @@ class ChatStorage:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
                     "online",
                     permission_mode,
+                    1 if web_search_enabled else 0,
                     0,
                     "",
                     1,
@@ -255,13 +359,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [dict(row) for row in rows]
@@ -269,7 +373,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -296,6 +400,7 @@ class ChatStorage:
         agent_id: str | None = None,
         interaction_mode: str | None = None,
         permission_mode: str | None = None,
+        web_search_enabled: bool | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -335,6 +440,8 @@ class ChatStorage:
             if permission_mode not in ("confirm", "auto", "full"):
                 raise ValueError("permission_mode 必须是 confirm / auto / full")
             values["permission_mode"] = permission_mode
+        if web_search_enabled is not None:
+            values["web_search_enabled"] = 1 if bool(web_search_enabled) else 0
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)

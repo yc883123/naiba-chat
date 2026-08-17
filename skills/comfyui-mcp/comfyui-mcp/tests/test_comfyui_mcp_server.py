@@ -21,7 +21,7 @@ class _FakeFastMCP:
     def __init__(self, name):
         self.name = name
 
-    def tool(self):
+    def tool(self, **_kwargs):
         return lambda function: function
 
     def run(self):
@@ -30,11 +30,14 @@ class _FakeFastMCP:
 
 def _load_server(environment):
     mcp_module = types.ModuleType("mcp")
+    types_module = types.ModuleType("mcp.types")
     server_module = types.ModuleType("mcp.server")
     fastmcp_module = types.ModuleType("mcp.server.fastmcp")
     fastmcp_module.FastMCP = _FakeFastMCP
+    types_module.ToolAnnotations = lambda **values: types.SimpleNamespace(**values)
     modules = {
         "mcp": mcp_module,
+        "mcp.types": types_module,
         "mcp.server": server_module,
         "mcp.server.fastmcp": fastmcp_module,
     }

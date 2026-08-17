@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 import traceback
@@ -19,6 +20,38 @@ VISION_READONLY_TOOLS = (
 VISION_WRITING_TOOLS = ("vision_crop", "vision_pixel_diff")
 SYSTEM_TOOLS_CRAFT = JOB_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("web_search",)
 SYSTEM_TOOLS_READONLY = VISION_READONLY_TOOLS + ("web_search",)
+
+
+def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Extract normalized, deduplicated citations from successful search calls."""
+    sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for run in tool_runs:
+        if run.get("tool") != "web_search" or not run.get("success"):
+            continue
+        try:
+            payload = json.loads(str(run.get("result") or "{}"))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        items = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url.startswith(("http://", "https://")) or url in seen:
+                continue
+            seen.add(url)
+            sources.append({
+                "title": str(item.get("title") or url).strip(),
+                "url": url,
+                "snippet": str(item.get("snippet") or "").strip(),
+                "published_at": str(
+                    item.get("published_at") or item.get("published") or ""
+                ).strip(),
+            })
+    return sources[:20]
 
 
 class ActiveRunError(RuntimeError):
@@ -164,7 +197,7 @@ class ConversationRunManager:
             plan_id = ""
             if mode == "plan":
                 plan_id = str(self.app.plans.ensure_active_plan(conversation_id, message)["id"])
-            web_search_enabled = bool(body.get("web_search_enabled", False))
+            web_search_enabled = bool(conversation.get("web_search_enabled", 0))
             allowed_tools = self._resolve_allowed_tools(mode, agent, web_search_enabled)
             snapshot = {
                 "agent": agent,
@@ -211,6 +244,7 @@ class ConversationRunManager:
             conversation = self.app.storage.get_conversation(conversation_id)
             if not conversation:
                 raise LookupError("发起计划的对话已删除")
+            web_search_enabled = bool(conversation.get("web_search_enabled", 0))
             agent = self.app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
             agent = {
                 "id": str(agent.get("id") or ""),
@@ -331,6 +365,7 @@ class ConversationRunManager:
         plan_id = str(snapshot.get("plan_id") or run.get("plan_id") or "")
         sink = _RunEventSink(self, run_id, cancel_event)
         skills: list[dict[str, str]] = []
+        search_sources: list[dict[str, str]] = []
 
         def event(payload: dict[str, Any]) -> None:
             nonlocal skills
@@ -341,6 +376,18 @@ class ConversationRunManager:
                     if isinstance(item, dict)
                 ]
             sink(payload)
+
+        def log_tool_run(tool: str, args: dict[str, Any], result: str, success: bool) -> None:
+            self.app.storage.log_tool_run(conversation_id, tool, args, result, success)
+            if tool != "web_search" or not success:
+                return
+            known = {item["url"] for item in search_sources}
+            for source in _search_sources([{
+                "tool": tool, "result": result, "success": success,
+            }]):
+                if source["url"] not in known:
+                    known.add(source["url"])
+                    search_sources.append(source)
 
         try:
             if cancel_event.is_set():
@@ -406,14 +453,18 @@ class ConversationRunManager:
                 prompt,
                 [str(item) for item in snapshot.get("allowed_tools") or []],
                 event,
-                lambda tool, args, result, success: self.app.storage.log_tool_run(
-                    conversation_id, tool, args, result, success
-                ),
+                log_tool_run,
                 cancel_event,
                 max_steps=int(self.app.config.data.get("agent_max_steps", 32)),
                 tool_registry=self.app.tool_registry,
                 run_context={"run_id": run_id, "executor": executor},
             )
+            if usage:
+                usage["context_limit"] = max(0, int(profile.get("context_window") or 0))
+                usage["context_limit_source"] = str(
+                    profile.get("context_window_source") or "unknown"
+                )
+                usage["model_key"] = model_key
             sink.flush()
             if cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
@@ -428,6 +479,7 @@ class ConversationRunManager:
                 "reasoning": reasonings,
                 "usage": usage,
                 "attachments": extract_attachments(runs),
+                "sources": search_sources[:20],
                 "choices": choice_groups[0]["choices"] if choice_groups else [],
                 "choice_groups": choice_groups,
                 "run_id": run_id,

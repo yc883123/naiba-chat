@@ -46,6 +46,10 @@ class MCPServerConnection:
         self.backoff_base = 2.0
         self.on_event: Callable[[str, str, dict[str, Any]], None] | None = None
         self.on_tools_discovered: Callable[[str, list[dict[str, Any]]], None] | None = None
+        # 运行期活动状态（供 UI 显示 calling/idle）
+        self.active_calls = 0
+        self.activity: str = "idle"  # 取值 "calling" | "idle"
+        self.last_used_at: float | None = None
 
     def _emit(self, kind: str, **payload: Any) -> None:
         if self.on_event:
@@ -147,49 +151,56 @@ class MCPServerConnection:
 
     def call(self, tool_name: str, arguments: dict[str, Any], timeout: int = 620) -> tuple[bool, str]:
         with self._call_lock:
-            if self.error and "已注销" in self.error:
-                return False, self.error
-            if self.error or not self._session or not self._loop:
-                # 调用时发现断线：先执行一次有界重连，再返回明确的启动/调用错误。
-                if self._thread is None and not self.error:
-                    return False, "MCP 服务尚未连接"
-                if not self.reconnect_once():
-                    return False, self.error or "MCP 服务重连失败"
-                if not self._session or not self._loop:
-                    return False, self.error or "MCP 服务尚未连接"
-            future = asyncio.run_coroutine_threadsafe(
-                self._session.call_tool(
-                    tool_name,
-                    arguments,
-                    read_timeout_seconds=timedelta(seconds=timeout),
-                ),
-                self._loop,
-            )
+            self.active_calls += 1
+            self.activity = "calling"
+            self.last_used_at = time.time()
             try:
-                result = future.result(timeout=timeout)
-            except FutureTimeoutError:
-                future.cancel()
-                return False, f"MCP 工具调用超过 {timeout} 秒"
-            except Exception as exc:
-                future.cancel()
-                # 连接类错误尝试重连
-                if "Session" in type(exc).__name__ or "closed" in str(exc).lower():
-                    try:
-                        self.reconnect_with_backoff()
-                    except MCPError as reconn_exc:
-                        return False, str(reconn_exc)
-                return False, f"{type(exc).__name__}: {exc}"
-            blocks = []
-            for item in result.content:
-                text = getattr(item, "text", None)
-                if text is not None:
-                    blocks.append(text)
-                    continue
+                if self.error and "已注销" in self.error:
+                    return False, self.error
+                if self.error or not self._session or not self._loop:
+                    # 调用时发现断线：先执行一次有界重连，再返回明确的启动/调用错误。
+                    if self._thread is None and not self.error:
+                        return False, "MCP 服务尚未连接"
+                    if not self.reconnect_once():
+                        return False, self.error or "MCP 服务重连失败"
+                    if not self._session or not self._loop:
+                        return False, self.error or "MCP 服务尚未连接"
+                future = asyncio.run_coroutine_threadsafe(
+                    self._session.call_tool(
+                        tool_name,
+                        arguments,
+                        read_timeout_seconds=timedelta(seconds=timeout),
+                    ),
+                    self._loop,
+                )
                 try:
-                    blocks.append(item.model_dump_json())
-                except Exception:
-                    blocks.append(str(item))
-            return not bool(result.isError), "\n".join(blocks)
+                    result = future.result(timeout=timeout)
+                except FutureTimeoutError:
+                    future.cancel()
+                    return False, f"MCP 工具调用超过 {timeout} 秒"
+                except Exception as exc:
+                    future.cancel()
+                    # 连接类错误尝试重连
+                    if "Session" in type(exc).__name__ or "closed" in str(exc).lower():
+                        try:
+                            self.reconnect_with_backoff()
+                        except MCPError as reconn_exc:
+                            return False, str(reconn_exc)
+                    return False, f"{type(exc).__name__}: {exc}"
+                blocks = []
+                for item in result.content:
+                    text = getattr(item, "text", None)
+                    if text is not None:
+                        blocks.append(text)
+                        continue
+                    try:
+                        blocks.append(item.model_dump_json())
+                    except Exception:
+                        blocks.append(str(item))
+                return not bool(result.isError), "\n".join(blocks)
+            finally:
+                self.active_calls = 0
+                self.activity = "idle"
 
     def reconnect_with_backoff(self) -> None:
         """指数退避重连；达到最大重试次数后注销该 Server 的工具。"""
@@ -262,6 +273,9 @@ class MCPServerConnection:
             "error": self.error,
             "tools": self.tools,
             "reconnect_attempts": self._reconnect_attempts,
+            "active_calls": self.active_calls,
+            "activity": self.activity,
+            "last_used_at": self.last_used_at,
         }
 
 
@@ -384,6 +398,25 @@ class MCPRegistry:
         with self._lock:
             connections = list(self.connections.values())
         return [connection.state() for connection in connections]
+
+    def lightweight_status(self) -> list[dict[str, Any]]:
+        """廉价轮询端点：仅返回连接级状态，不含 tools 明细。"""
+        with self._lock:
+            connections = list(self.connections.values())
+        result: list[dict[str, Any]] = []
+        for connection in connections:
+            conn_state = connection.state()
+            result.append(
+                {
+                    "id": connection.server_id,
+                    "status": conn_state["status"],
+                    "connected": conn_state["connected"],
+                    "active_calls": connection.active_calls,
+                    "activity": connection.activity,
+                    "last_used_at": connection.last_used_at,
+                }
+            )
+        return result
 
     def tool_guide(self) -> str:
         rows = []

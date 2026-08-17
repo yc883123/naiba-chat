@@ -32,6 +32,7 @@ const state = {
   interactionMode: localStorage.getItem('naibaChatInteractionMode') || 'craft',
   planEditingId: '',
   webSearchEnabled: false,
+  contextUsage: null,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -166,16 +167,100 @@ function usageMarkup(usage) {
   const input = Number(usage.input_tokens || 0);
   const output = Number(usage.output_tokens || 0);
   const cached = Number(usage.cached_tokens || 0);
+  const total = Number(usage.total_tokens || input + output);
   if (!input && !output) return '';
   const rate = input ? Number(usage.cache_hit_rate ?? (cached / input * 100)).toFixed(1) : '0.0';
   const requests = Number(usage.requests || 1);
-  return `<div class="usage-line" title="本轮 ${requests} 次模型请求">输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存 ${cached.toLocaleString()}/${input.toLocaleString()}（${rate}%）</div>`;
+  return `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存 ${cached.toLocaleString()}/${input.toLocaleString()}（${rate}%）</div>`;
+}
+
+function updateContextUsage(messages = null, message = null) {
+  let target = message;
+  if (!target && Array.isArray(messages)) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.role === 'assistant' && messages[index]?.metadata?.usage) {
+        target = messages[index];
+        break;
+      }
+    }
+  }
+  state.contextUsage = target?.metadata?.usage || null;
+  renderContextUsage();
+}
+
+function renderContextUsage() {
+  const button = $('#contextUsageButton');
+  const ring = $('#contextUsageRing');
+  const summary = $('#contextUsageSummary');
+  const turn = $('#lastTurnUsageSummary');
+  if (!button || !ring || !summary || !turn) return;
+  const usage = state.contextUsage;
+  if (!usage) {
+    ring.style.setProperty('--context-percent', '0');
+    ring.classList.remove('warning', 'danger');
+    button.title = '上下文用量：暂无数据';
+    summary.textContent = '暂无模型用量数据';
+    turn.textContent = '完成一次回复后显示本轮消耗';
+    return;
+  }
+  const input = Number(usage.input_tokens || 0);
+  const output = Number(usage.output_tokens || 0);
+  const total = Number(usage.total_tokens || input + output);
+  const context = Number(usage.context_tokens || 0);
+  const profiles = state.bootstrap?.model_profiles || state.bootstrap?.providers || [];
+  const profile = profiles.find((item) => item.model_key === usage.model_key)
+    || selectedProvider();
+  const profileLimit = Number(profile?.context_window || 0);
+  const trustedStoredLimit = usage.context_limit_source
+    ? Number(usage.context_limit || 0)
+    : 0;
+  const limit = profileLimit || trustedStoredLimit;
+  const percent = limit > 0 ? Math.min(100, Math.max(0, context / limit * 100)) : 0;
+  ring.style.setProperty('--context-percent', percent.toFixed(1));
+  ring.classList.toggle('warning', percent >= 70 && percent < 90);
+  ring.classList.toggle('danger', percent >= 90);
+  const contextText = limit
+    ? `${context.toLocaleString()} / ${limit.toLocaleString()}（${percent.toFixed(1)}%）`
+    : context ? `${context.toLocaleString()} / 上限未知` : '上下文上限未知';
+  button.title = `上下文用量：${contextText}`;
+  summary.textContent = `上下文 ${contextText}`;
+  turn.textContent = `最近一轮：输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 总计 ${total.toLocaleString()} tokens`;
+}
+
+function toggleContextUsagePopover(event) {
+  event.stopPropagation();
+  const popover = $('#contextUsagePopover');
+  const button = $('#contextUsageButton');
+  const open = popover.hidden;
+  popover.hidden = !open;
+  button.setAttribute('aria-expanded', String(open));
+}
+
+function closeContextUsagePopover() {
+  const popover = $('#contextUsagePopover');
+  const button = $('#contextUsageButton');
+  if (!popover || popover.hidden) return;
+  popover.hidden = true;
+  button?.setAttribute('aria-expanded', 'false');
 }
 
 function skillMarkup(skills = []) {
   if (!Array.isArray(skills) || !skills.length) return '';
   const names = skills.map((skill) => escapeHtml(skill?.name || skill)).filter(Boolean);
   return names.length ? `<div class="skill-usage">已启用 Skill：${names.join('、')}</div>` : '';
+}
+
+function sourcesMarkup(sources = []) {
+  if (!Array.isArray(sources) || !sources.length) return '';
+  const items = sources.map((source) => {
+    const url = String(source?.url || '');
+    if (!/^https?:\/\//i.test(url)) return '';
+    const title = escapeHtml(source?.title || url);
+    const snippet = escapeHtml(source?.snippet || '');
+    const published = escapeHtml(source?.published_at || '');
+    return `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${title}</a>${published ? `<time>${published}</time>` : ''}${snippet ? `<p>${snippet}</p>` : ''}</li>`;
+  }).filter(Boolean).join('');
+  return items ? `<details class="message-sources"><summary>联网来源（${sources.length}）</summary><ol>${items}</ol></details>` : '';
 }
 
 function messageElement(message, temporary = false) {
@@ -193,6 +278,7 @@ function messageElement(message, temporary = false) {
         ${reasoningMarkup(metadata.reasoning)}
         ${toolMarkup(metadata.tool_runs)}
         <div class="answer-content">${temporary ? '<div class="activity">正在准备</div>' : markdown(message.content)}</div>
+        ${temporary ? '' : sourcesMarkup(metadata.sources)}
         ${metadata.plan_id ? `<div class="plan-card" data-plan-card="${escapeHtml(metadata.plan_id)}"></div>` : ''}
         ${mediaMarkup(metadata.attachments)}
         ${temporary ? '' : usageMarkup(metadata.usage)}
@@ -308,6 +394,7 @@ function renderMessages(messages) {
     }
     else hideChoiceButtons();
     fillPlanCards();
+    updateContextUsage(messages);
   } catch (error) {
     console.error('[naiba] renderMessages 渲染崩溃:', error, '消息数=', messages.length);
   }
@@ -385,6 +472,7 @@ async function initialize() {
   startTaskSync();
   startConversationSync();
   startPlanSync();
+  startMcpPoll();
 }
 
 const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
@@ -701,7 +789,6 @@ function renderUpdateStatus(status) {
   const notes = Array.isArray(status.release_notes)
     ? status.release_notes.filter((note) => String(note || '').trim())
     : (status.release_notes ? [String(status.release_notes)] : []);
-  const notesToggle = $('#updateNotesToggle');
   const notesPanel = $('#updateNotes');
   const notesList = $('#updateNotesList');
   notesList.replaceChildren(...notes.map((note) => {
@@ -709,9 +796,8 @@ function renderUpdateStatus(status) {
     item.textContent = note;
     return item;
   }));
-  notesToggle.hidden = notes.length === 0;
-  notesPanel.hidden = true;
-  notesToggle.setAttribute('aria-expanded', 'false');
+  // 仅根据是否存在更新内容显示/隐藏详情；不重置用户已展开/收起状态
+  notesPanel.hidden = notes.length === 0;
   const messages = {
     idle: '启动后会自动从 GitHub 检查并安装更新。',
     checking: '正在检查更新…',
@@ -729,15 +815,6 @@ function renderUpdateStatus(status) {
   }
   $('#installUpdate').hidden = !status.update_available || ['downloading', 'restarting'].includes(status.phase);
   $('#checkUpdate').disabled = ['checking', 'downloading', 'restarting'].includes(status.phase);
-}
-
-function toggleUpdateNotes() {
-  const toggle = $('#updateNotesToggle');
-  const panel = $('#updateNotes');
-  if (toggle.hidden) return;
-  const expanded = toggle.getAttribute('aria-expanded') === 'true';
-  toggle.setAttribute('aria-expanded', String(!expanded));
-  panel.hidden = expanded;
 }
 
 async function checkUpdate() {
@@ -1031,7 +1108,7 @@ async function createConversation() {
   hideChoiceButtons();
   const conversation = await api('/api/conversations', {
     method: 'POST',
-    body: { interaction_mode: state.interactionMode, permission_mode: 'confirm' },
+    body: { interaction_mode: state.interactionMode, permission_mode: 'confirm', web_search_enabled: false },
   });
   state.conversationId = conversation.id;
   state.conversations.unshift(conversation);
@@ -1039,6 +1116,8 @@ async function createConversation() {
   renderConversations();
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
+  state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
+  updateWebSearchButton();
   renderMessages([]);
   renderModeSwitch();
   renderPermissionModeSwitch();
@@ -1064,8 +1143,8 @@ async function openConversation(id) {
   renderMessages(conversation.messages || []);
   renderModeSwitch();
   renderPermissionModeSwitch();
-  // 联网搜索开关：按对话保存（默认关闭），不同对话互不影响。
-  state.webSearchEnabled = localStorage.getItem(`naibaWebSearch:${id}`) === 'true';
+  // 联网搜索开关由对话数据库字段恢复，不依赖当前浏览器。
+  state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
   updateWebSearchButton();
   await loadPlans();
   await resumeConversationRun(id);
@@ -1094,6 +1173,8 @@ async function syncCurrentConversation() {
     renderConversations();
     renderMessages(conversation.messages || []);
     renderPermissionModeSwitch();
+    state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
+    updateWebSearchButton();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
@@ -1287,9 +1368,6 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   $('#providerBaseUrl').value = provider.base_url || '';
   $('#providerContextSize').value = provider.context_size || '';
   $('#providerReasoningEffort').value = provider.reasoning_effort || 'auto';
-  $('#providerSupportsImages').value = provider.supports_images_explicit === true
-    ? 'true'
-    : provider.supports_images_explicit === false ? 'false' : 'auto';
   setProviderModelOptions([], provider.model || '');
   $('#providerFormat').value = provider.request_format || 'openai_chat';
   $('#providerApiKey').value = '';
@@ -1318,10 +1396,19 @@ function updateProviderFormatGuide() {
 function updateProviderContextField() {
   const field = $('#providerContextField');
   const input = $('#providerContextSize');
+  const label = $('#providerContextLabel');
+  const hint = $('#providerContextHint');
   const active = Boolean($('#providerId').value) || state.providerIsNew;
-  const ollama = $('#providerFormat').value === 'ollama';
-  field.hidden = !active || !ollama;
-  input.disabled = !state.providerEditing || !ollama;
+  const format = $('#providerFormat').value;
+  const local = ['ollama', 'lm_studio'].includes(format);
+  field.hidden = !active || !local;
+  input.disabled = !state.providerEditing || !local;
+  if (label) label.textContent = format === 'lm_studio'
+    ? 'LM Studio 上下文 Tokens（可选）'
+    : 'Ollama 上下文 Tokens（可选）';
+  if (hint) hint.textContent = format === 'lm_studio'
+    ? '仅此 LM Studio 配置有效；请求时发送为 context_length。'
+    : '仅此 Ollama 配置有效；请求时发送为 num_ctx。';
 }
 
 function setProviderEditMode(editing, isNew = false) {
@@ -1333,7 +1420,6 @@ function setProviderEditMode(editing, isNew = false) {
   [
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
     '#providerModel', '#providerModelCustom', '#providerContextSize', '#providerReasoningEffort',
-    '#providerSupportsImages',
   ].forEach((selector) => { $(selector).disabled = !editing; });
   $('#providerSelect').disabled = editing;
   $('#addProvider').disabled = editing;
@@ -1379,7 +1465,6 @@ function toggleCustomModel() {
 
 function providerFormValue() {
   const selectedModel = $('#providerModel').value;
-  const imageSupport = $('#providerSupportsImages').value;
   return {
     id: $('#providerId').value,
     name: $('#providerName').value.trim(),
@@ -1387,11 +1472,10 @@ function providerFormValue() {
     model: selectedModel === '__custom__' ? $('#providerModelCustom').value.trim() : selectedModel,
     api_key: $('#providerApiKey').value.trim(),
     request_format: $('#providerFormat').value,
-    context_size: $('#providerFormat').value === 'ollama' && $('#providerContextSize').value.trim()
+    context_size: ['ollama', 'lm_studio'].includes($('#providerFormat').value) && $('#providerContextSize').value.trim()
       ? Number($('#providerContextSize').value)
       : undefined,
     reasoning_effort: $('#providerReasoningEffort').value,
-    supports_images: imageSupport === 'true' ? true : imageSupport === 'false' ? false : null,
   };
 }
 
@@ -1412,7 +1496,7 @@ async function loadProviderModels({ automatic = false } = {}) {
     if (!result.models?.length) throw new Error('接口没有返回可用模型，请选择"手动输入模型名称"');
     const current = $('#providerModel').value;
     setProviderModelOptions(result.models, current && current !== '__custom__' ? current : '');
-    $('#providerError').textContent = '';
+    $('#providerError').textContent = '模型目录可访问；请继续点击“测试连接”验证实际推理。';
     toast(`已找到 ${result.models.length} 个模型`);
   } catch (error) {
     $('#providerError').textContent = `模型检查失败：${error.message}`;
@@ -1472,9 +1556,9 @@ async function testProvider() {
   $('#providerError').textContent = '正在测试连接…';
   try {
     const result = await api('/api/providers/test', { method: 'POST', body: providerFormValue() });
-    $('#providerError').textContent = `连接成功：${result.response}`;
+    $('#providerError').textContent = `推理连接成功：${result.response}`;
   } catch (error) {
-    $('#providerError').textContent = error.message;
+    $('#providerError').textContent = `模型目录可能可访问，但推理服务不可用：${error.message}`;
   }
 }
 
@@ -1504,25 +1588,48 @@ function populateRuntimeSettings() {
   const settings = state.bootstrap.settings;
   $('#temperature').value = settings.temperature;
   $('#maxTokens').value = settings.max_tokens;
-  $('#contextSize').value = settings.context_size;
   $('#commandTimeout').value = settings.command_timeout;
   $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
   $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  renderWorkspaceControl();
+}
+
+function renderWorkspaceControl() {
+  const resolved = String(state.bootstrap?.resolved_workspace_dir || '').trim();
+  const raw = String(state.bootstrap?.settings?.workspace_dir || 'workspace').trim() || 'workspace';
+  const label = raw === 'workspace' ? 'workspace' : (raw.split(/[\\/]/).filter(Boolean).pop() || raw);
+  const button = $('#workspaceLabel');
+  if (button) button.textContent = label;
+  const detail = $('#workspaceDialogResolved');
+  if (detail) detail.textContent = resolved || '保存后显示解析路径';
+  const input = $('#workspaceDialogInput');
+  if (input && document.activeElement !== input) input.value = raw === 'workspace' ? '' : raw;
 }
 
 function populateVisionSettings() {
   const settings = state.bootstrap.settings || {};
   const vision = settings.vision || {};
   const select = $('#visionProvider');
-  if (select && !select.dataset.populated) {
-    // 视觉设置只显示明确支持图片输入的模型（supports_images === true）。
-    const providers = (state.bootstrap.model_profiles || state.bootstrap.providers || [])
-      .filter((p) => p.supports_images);
-    select.innerHTML = '<option value="">OVH 免费视觉链（默认兜底）</option>'
-      + providers.map((p) => `<option value="${escapeHtml(p.model_key || p.id)}">${escapeHtml(p.name || p.id)}</option>`).join('');
-    select.dataset.populated = '1';
+  if (select) {
+    const providers = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+    const previous = select.value;
+    select.replaceChildren(new Option('OVH 免费视觉链（默认）', ''));
+    for (const kind of ['online', 'local']) {
+      const list = providers.filter((p) => (p.kind || 'online') === kind);
+      if (!list.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = kind === 'local' ? '本地 API / 模型' : '在线 API';
+      for (const provider of list) {
+        const option = new Option(`${provider.name || provider.id} · ${provider.model || ''}`, provider.model_key || provider.id);
+        group.append(option);
+      }
+      select.append(group);
+    }
+    const target = vision.provider_model_key || previous || '';
+    if ([...select.options].some((option) => option.value === target)) select.value = target;
+    const deleteButton = $('#deleteVisionProvider');
+    if (deleteButton) deleteButton.disabled = !select.value;
   }
-  if (select) select.value = vision.provider_model_key || '';
   const auto = $('#visionAutoRoute'); if (auto) auto.checked = vision.auto_route !== false;
   const timeout = $('#visionTimeout'); if (timeout) timeout.value = vision.timeout_ms || 120000;
   const maxImages = $('#visionMaxImages'); if (maxImages) maxImages.value = vision.max_images || 4;
@@ -1531,14 +1638,53 @@ function populateVisionSettings() {
 function populateSearchSettings() {
   const settings = state.bootstrap.settings || {};
   const search = settings.search || {};
-  const enabled = $('#searchEnabled'); if (enabled) enabled.checked = Boolean(search.enabled);
-  const provider = $('#searchProvider'); if (provider) provider.value = search.provider || 'custom';
-  const endpoint = $('#searchEndpoint'); if (endpoint) endpoint.value = search.endpoint || '';
-  const key = $('#searchApiKey'); if (key) key.value = search.api_key || '';
-  const max = $('#searchMaxResults'); if (max) max.value = search.max_results || 5;
+  const profiles = searchProfiles(search);
+  const select = $('#searchProfileSelect');
+  if (!select) return;
+  select.replaceChildren(...profiles.map((profile) => new Option(profile.name || profile.endpoint || '未命名搜索 API', profile.id)));
+  if (!profiles.length) select.append(new Option('尚未添加搜索 API', ''));
+  const target = profiles.some((profile) => profile.id === search.provider_id)
+    ? search.provider_id
+    : (profiles[0]?.id || '');
+  select.value = target;
+  renderSearchProfileFields(profiles.find((profile) => profile.id === target) || {});
+  $('#deleteSearchProfile').disabled = !target;
 }
 
-async function saveVisionSettings() {
+function searchProfiles(search = state.bootstrap?.settings?.search || {}) {
+  if (Array.isArray(search.profiles) && search.profiles.length) {
+    return search.profiles.map((profile) => ({ ...profile }));
+  }
+  if (search.endpoint) {
+    return [{
+      id: 'legacy-search',
+      name: '搜索 API',
+      endpoint: search.endpoint,
+      api_key: search.api_key || '',
+      max_results: search.max_results || 5,
+    }];
+  }
+  return [];
+}
+
+function renderSearchProfileFields(profile) {
+  $('#searchProfileName').value = profile.name || '';
+  $('#searchEndpoint').value = profile.endpoint || '';
+  $('#searchApiKey').value = profile.api_key || '';
+  $('#searchMaxResults').value = profile.max_results || 5;
+}
+
+function searchProfileFormValue(id = '') {
+  return {
+    id: id || `search_${Date.now().toString(36)}`,
+    name: $('#searchProfileName')?.value.trim() || '搜索 API',
+    endpoint: $('#searchEndpoint')?.value.trim() || '',
+    api_key: $('#searchApiKey')?.value.trim() || '',
+    max_results: Number($('#searchMaxResults')?.value || 5),
+  };
+}
+
+async function saveVisionSettings(options = {}) {
   const payload = {
     vision: {
       provider_model_key: $('#visionProvider')?.value || '',
@@ -1547,31 +1693,94 @@ async function saveVisionSettings() {
       max_images: Number($('#visionMaxImages')?.value || 4),
     },
   };
-  const result = await api('/api/settings', { method: 'POST', body: payload });
-  Object.assign(state.bootstrap.settings, result.settings);
-  toast('视觉设置已保存');
+  try {
+    const result = await api('/api/settings', { method: 'POST', body: payload });
+    Object.assign(state.bootstrap.settings, result.settings);
+    const deleteButton = $('#deleteVisionProvider');
+    if (deleteButton) deleteButton.disabled = !payload.vision.provider_model_key;
+    if (!options.quiet) toast('视觉设置已保存');
+  } catch (error) {
+    toast(`视觉设置保存失败：${error.message}`);
+  }
 }
 
-async function saveSearchSettings() {
-  const payload = {
-    search: {
-      enabled: $('#searchEnabled')?.checked === true,
-      provider: $('#searchProvider')?.value || 'custom',
-      endpoint: $('#searchEndpoint')?.value.trim() || '',
-      api_key: $('#searchApiKey')?.value.trim() || '',
-      max_results: Number($('#searchMaxResults')?.value || 5),
-    },
-  };
+function selectedVisionProvider() {
+  const key = $('#visionProvider')?.value || '';
+  return (state.bootstrap.model_profiles || state.bootstrap.providers || [])
+    .find((provider) => (provider.model_key || provider.id) === key) || null;
+}
+
+function openVisionProviderForm() {
+  switchSettingsTab('models');
+  addProvider();
+}
+
+async function deleteVisionProvider() {
+  const provider = selectedVisionProvider();
+  if (!provider) return;
+  if (!confirm(`删除 API 供应商“${provider.name || provider.id}”？这会同时移除模型配置。`)) return;
+  try {
+    await api(`/api/providers/${encodeURIComponent(provider.id)}`, { method: 'DELETE' });
+    const data = await api('/api/bootstrap');
+    state.bootstrap = { ...state.bootstrap, ...data };
+    populateModels();
+    renderProviders();
+    populateVisionSettings();
+    toast('API 供应商已删除');
+  } catch (error) {
+    toast(`删除 API 失败：${error.message}`);
+  }
+}
+
+async function persistSearchProfiles(profiles, providerId, quiet = false) {
+  const payload = { search: { provider_id: providerId || '', profiles } };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
-  toast('搜索设置已保存');
+  populateSearchSettings();
+  if (!quiet) toast('搜索 API 已保存');
+}
+
+async function saveSearchSettings(options = {}) {
+  const search = state.bootstrap.settings.search || {};
+  const profiles = searchProfiles(search);
+  let id = $('#searchProfileSelect')?.value || '';
+  const profile = searchProfileFormValue(id);
+  id = profile.id;
+  const index = profiles.findIndex((item) => item.id === id);
+  if (index >= 0) profiles[index] = profile;
+  else profiles.push(profile);
+  await persistSearchProfiles(profiles, id, options.quiet === true);
+}
+
+function addSearchProfile() {
+  const search = state.bootstrap.settings.search || {};
+  const profiles = searchProfiles(search);
+  const profile = { id: `search_${Date.now().toString(36)}`, name: '新搜索 API', endpoint: '', api_key: '', max_results: 5 };
+  profiles.push(profile);
+  state.bootstrap.settings.search = { provider_id: profile.id, profiles };
+  populateSearchSettings();
+  $('#searchProfileName').select();
+}
+
+async function deleteSearchProfile() {
+  const id = $('#searchProfileSelect')?.value || '';
+  if (!id) return;
+  const search = state.bootstrap.settings.search || {};
+  const profiles = searchProfiles(search);
+  const current = profiles.find((profile) => profile.id === id);
+  if (!confirm(`删除搜索 API“${current?.name || ''}”？`)) return;
+  const remaining = profiles.filter((profile) => profile.id !== id);
+  await persistSearchProfiles(remaining, remaining[0]?.id || '');
 }
 
 async function testVisionConnection() {
   const el = $('#visionTestResult');
   if (el) el.textContent = '测试中…';
   try {
-    const result = await api('/api/vision/test', { method: 'POST', body: {} });
+    const result = await api('/api/vision/test', {
+      method: 'POST',
+      body: { provider_model_key: $('#visionProvider')?.value || '' },
+    });
     if (el) el.textContent = result.ok
       ? `可用（延迟 ${result.latency_ms ?? '?'}ms，${result.backend || result.model || ''}）`
       : `不可用：${result.reason || ''}`;
@@ -1584,7 +1793,10 @@ async function testSearchConnection() {
   const el = $('#searchTestResult');
   if (el) el.textContent = '测试中…';
   try {
-    const result = await api('/api/search/test', { method: 'POST', body: {} });
+    const result = await api('/api/search/test', {
+      method: 'POST',
+      body: searchProfileFormValue($('#searchProfileSelect')?.value || ''),
+    });
     if (el) el.textContent = result.ok ? `可用（provider=${result.provider || ''}）` : `不可用：${result.reason || ''}`;
   } catch (error) {
     if (el) el.textContent = `测试失败：${error.message}`;
@@ -1705,7 +1917,6 @@ async function saveRuntimeSettings() {
   const payload = {
     temperature: Number($('#temperature').value),
     max_tokens: Number($('#maxTokens').value),
-    context_size: Number($('#contextSize').value),
     command_timeout: Number($('#commandTimeout').value),
     workspace_dir: $('#workspaceDir').value.trim(),
   };
@@ -1713,7 +1924,23 @@ async function saveRuntimeSettings() {
   Object.assign(state.bootstrap.settings, result.settings);
   state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
   $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  renderWorkspaceControl();
   toast('运行参数已保存');
+}
+
+async function saveWorkspaceSettings() {
+  const value = $('#workspaceDialogInput')?.value.trim() || '';
+  try {
+    const result = await api('/api/settings', { method: 'POST', body: { workspace_dir: value } });
+    Object.assign(state.bootstrap.settings, result.settings);
+    state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
+    $('#workspaceDir').value = value;
+    renderWorkspaceControl();
+    $('#workspaceDialog').close();
+    toast('工作区已保存');
+  } catch (error) {
+    toast(`工作区保存失败：${error.message}`);
+  }
 }
 
 async function saveAccessToken() {
@@ -1736,17 +1963,54 @@ async function saveAccessToken() {
   toast('口令已更新，其他设备需用新口令登录');
 }
 
+function mcpServerState(server) {
+  if (server.status === 'error' || server.error) return { text: '错误', color: '#e45e55' };
+  if (server.activity === 'calling' || (server.active_calls && server.active_calls > 0)) return { text: '使用中', color: '#3ecf8e' };
+  if (server.status === 'connecting' || server.status === 'reconnecting') return { text: '连接中', color: '#e0a13a' };
+  if (server.connected) return { text: '已就绪', color: '#7d867d' };
+  return { text: '待机', color: '#7d867d' };
+}
+
 function renderMcp() {
-  const servers = state.bootstrap.mcp_servers;
-  const connected = servers.length && servers.every((server) => server.connected);
-  const failed = servers.some((server) => server.status === 'error' || server.error);
-  $('#mcpStatus').classList.toggle('connected', connected);
-  $('#mcpStatus').classList.toggle('error', failed);
-  $('#mcpList').innerHTML = servers.map((server) => `
-    <div class="connection-item">
-      <span><b>${escapeHtml(server.id)} · ${server.connected ? '已连接' : (server.status === 'idle' ? '待机' : '不可用')}</b><small>${server.connected ? `${server.tools.length} 个工具` : (server.status === 'idle' ? '仅在本轮激活的 Skill 需要 MCP 时连接' : escapeHtml(server.error))}</small></span>
-      <span class="status-mark" style="background:${server.connected ? '#3ecf8e' : (server.status === 'idle' ? '#7d867d' : '#e45e55')}"></span>
-    </div>`).join('') || '<p class="activity">没有注册 MCP 服务</p>';
+  const servers = state.bootstrap.mcp_servers || [];
+  // Top-bar status light: priority error > in-use > connection-change > idle
+  const mcpButton = $('#mcpStatus');
+  const dot = mcpButton.querySelector('i');
+  const label = mcpButton.querySelector('span');
+  const anyError = servers.some((s) => s.status === 'error' || s.error);
+  const anyCalling = servers.some((s) => s.activity === 'calling' || (s.active_calls && s.active_calls > 0));
+  const anyConnecting = servers.some((s) => s.status === 'connecting' || s.status === 'reconnecting');
+  let topText;
+  if (anyError) {
+    mcpButton.classList.remove('connected', 'calling', 'connecting'); mcpButton.classList.add('error');
+    if (dot) dot.style.background = '#e45e55'; topText = 'MCP · 错误';
+  } else if (anyCalling) {
+    mcpButton.classList.remove('error', 'connecting'); mcpButton.classList.add('calling');
+    if (dot) dot.style.background = '#3ecf8e'; topText = 'MCP · 使用中';
+  } else if (anyConnecting) {
+    mcpButton.classList.remove('error', 'calling'); mcpButton.classList.add('connecting');
+    if (dot) dot.style.background = '#e0a13a'; topText = 'MCP · 连接中';
+  } else {
+    mcpButton.classList.remove('error', 'calling', 'connecting');
+    if (servers.length && servers.every((s) => s.connected)) {
+      mcpButton.classList.add('connected');
+      if (dot) dot.style.background = '#3ecf8e'; topText = 'MCP · 已就绪';
+    } else {
+      if (dot) dot.style.background = '#7d867d'; topText = servers.length ? 'MCP · 待机' : 'MCP';
+    }
+  }
+  if (label) label.textContent = topText;
+
+  $('#mcpList').innerHTML = servers.map((server) => {
+    const st = mcpServerState(server);
+    const detail = server.connected
+      ? `${server.tools?.length ?? 0} 个工具`
+      : (server.status === 'idle' ? '仅在本轮激活的 Skill 需要 MCP 时连接' : escapeHtml(server.error || st.text));
+    return `<div class="connection-item">
+      <span><b>${escapeHtml(server.id)} · ${st.text}</b><small>${detail}</small></span>
+      <span class="status-mark" style="background:${st.color}"></span>
+    </div>`;
+  }).join('') || '<p class="activity">没有注册 MCP 服务</p>';
   $$('#mcpList .connection-item').forEach((item, index) => {
     const server = servers[index];
     if (!server) return;
@@ -1777,6 +2041,35 @@ async function mcpAction(serverId, action) {
   } catch (error) {
     toast('MCP 操作失败：' + error.message);
   }
+}
+
+// 轻量轮询：仅刷新状态相关字段（status/connected/active_calls/activity/last_used_at），
+// 保留 bootstrap 中已有的 tools 与 error 信息，使"使用中/已就绪"状态实时反映。
+async function pollMcpStatus() {
+  try {
+    const data = await api('/api/mcp/status/light');
+    const servers = data.servers || [];
+    const prev = state.bootstrap.mcp_servers || [];
+    const byId = {};
+    for (const s of prev) byId[s.id] = s;
+    for (const s of servers) {
+      const cur = byId[s.id];
+      if (!cur) continue;
+      cur.status = s.status;
+      cur.connected = s.connected;
+      cur.active_calls = s.active_calls;
+      cur.activity = s.activity;
+      cur.last_used_at = s.last_used_at;
+    }
+    renderMcp();
+  } catch (_error) {
+    /* 轮询失败不阻断界面 */
+  }
+}
+
+function startMcpPoll() {
+  if (state.mcpPollTimer) return;
+  state.mcpPollTimer = window.setInterval(pollMcpStatus, 2000);
 }
 
 async function uploadFiles(files) {
@@ -1994,13 +2287,24 @@ function updateWebSearchButton() {
   btn.title = state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭';
 }
 
-function toggleWebSearch() {
-  state.webSearchEnabled = !state.webSearchEnabled;
-  if (state.conversationId) {
-    localStorage.setItem(`naibaWebSearch:${state.conversationId}`, String(state.webSearchEnabled));
-  }
+async function toggleWebSearch() {
+  if (!state.conversationId) await createConversation();
+  const previous = state.webSearchEnabled;
+  state.webSearchEnabled = !previous;
   updateWebSearchButton();
-  toast(state.webSearchEnabled ? '联网搜索已开启（本对话）' : '联网搜索已关闭（本对话）');
+  try {
+    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
+      method: 'POST',
+      body: { web_search_enabled: state.webSearchEnabled },
+    });
+    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    toast(state.webSearchEnabled ? '联网搜索已开启（本对话）' : '联网搜索已关闭（本对话）');
+  } catch (error) {
+    state.webSearchEnabled = previous;
+    updateWebSearchButton();
+    toast(`联网搜索设置保存失败：${error.message}`);
+  }
 }
 
 async function handlePasteImage(event) {
@@ -2098,6 +2402,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     if (event.message) {
       try {
         row.replaceWith(messageElement(event.message));
+        updateContextUsage(null, event.message);
       } catch (error) {
         console.error('[naiba] done 事件渲染崩溃:', error, 'message=', event.message);
       }
@@ -2385,11 +2690,28 @@ function bindEvents() {
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
   $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
   $('#webSearchButton').addEventListener('click', toggleWebSearch);
+  $('#contextUsageButton').addEventListener('click', toggleContextUsagePopover);
+  $('#contextUsagePopover').addEventListener('click', (event) => event.stopPropagation());
+  document.addEventListener('click', closeContextUsagePopover);
   $('#messageInput').addEventListener('paste', handlePasteImage);
   $('#saveVision').addEventListener('click', saveVisionSettings);
   $('#testVision').addEventListener('click', testVisionConnection);
+  $('#visionProvider').addEventListener('change', () => saveVisionSettings({ quiet: true }));
+  $('#addVisionProvider').addEventListener('click', openVisionProviderForm);
+  $('#deleteVisionProvider').addEventListener('click', deleteVisionProvider);
   $('#saveSearch').addEventListener('click', saveSearchSettings);
   $('#testSearch').addEventListener('click', testSearchConnection);
+  $('#searchProfileSelect').addEventListener('change', (event) => {
+    const profile = searchProfiles().find((item) => item.id === event.target.value) || {};
+    renderSearchProfileFields(profile);
+    $('#deleteSearchProfile').disabled = !event.target.value;
+    if (event.target.value) {
+      const profiles = searchProfiles();
+      persistSearchProfiles(profiles, event.target.value, true).catch((error) => toast(`搜索 API 切换失败：${error.message}`));
+    }
+  });
+  $('#addSearchProfile').addEventListener('click', addSearchProfile);
+  $('#deleteSearchProfile').addEventListener('click', deleteSearchProfile);
   $('#pendingFiles').addEventListener('click', (event) => {
     const button = event.target.closest('[data-remove-file]');
     if (!button) return;
@@ -2444,6 +2766,12 @@ function bindEvents() {
   $('#openSidebar').addEventListener('click', openSidebar);
   $('#closeSidebar').addEventListener('click', closeSidebar);
   $('#sidebarBackdrop').addEventListener('click', closeSidebar);
+  $('#openWorkspace').addEventListener('click', () => {
+    renderWorkspaceControl();
+    $('#workspaceDialog').showModal();
+    $('#workspaceDialogInput').focus();
+  });
+  $('#saveWorkspace').addEventListener('click', saveWorkspaceSettings);
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => switchSettingsTab(button.dataset.settingsTab)));
   $('#addProvider').addEventListener('click', addProvider);
   $('#providerSelect').addEventListener('change', (event) => {
@@ -2470,11 +2798,13 @@ function bindEvents() {
     if (!providerId) return;
     const provider = state.bootstrap.providers.find((item) => item.id === providerId);
     if (!confirm(`删除供应商"${provider?.name || ''}"？`)) return;
-    await api(`/api/providers/${providerId}`, { method: 'DELETE' });
-    state.bootstrap.providers = state.bootstrap.providers.filter((item) => item.id !== providerId);
+    await api(`/api/providers/${encodeURIComponent(providerId)}`, { method: 'DELETE' });
+    const data = await api('/api/bootstrap');
+    state.bootstrap = { ...state.bootstrap, ...data };
     $('#providerId').value = '';
     renderProviders();
     populateModels();
+    populateVisionSettings();
     toast('供应商已删除');
   });
   $('#saveAgent').addEventListener('click', saveAgentSettings);
@@ -2500,82 +2830,142 @@ function bindEvents() {
   $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
   $('#saveToken').addEventListener('click', saveAccessToken);
   $('#checkUpdate').addEventListener('click', checkUpdate);
-  $('#updateNotesToggle').addEventListener('click', toggleUpdateNotes);
   $('#installUpdate').addEventListener('click', installUpdate);
-  $('#addSkillDir').addEventListener('click', addSkillDir);
-  $('#installSkill').addEventListener('click', installSkill);
-  $('#installSkillFolder').addEventListener('click', () => $('#skillFolder').click());
-  $('#skillFolder').addEventListener('change', installSkillFolder);
-  $('#refreshSkills').addEventListener('click', () => loadInstalledSkills(true));
+  $('#openSkillImport').addEventListener('click', () => {
+    setSkillImportStatus('');
+    $('#skillImportDialog').showModal();
+  });
+  $('#skillImportFolder').addEventListener('click', () => $('#skillImportFolderInput').click());
+  $('#skillImportFiles').addEventListener('click', () => $('#skillImportFileInput').click());
+  $('#skillImportFolderInput').addEventListener('change', (event) => { skillImportFolderFiles(event.target.files); event.target.value = ''; });
+  $('#skillImportFileInput').addEventListener('change', (event) => {
+    const file = event.target.files[0];
+    event.target.value = '';
+    if (!file) return;
+    const lower = file.name.toLowerCase();
+    if (lower.endsWith('.zip')) skillImportZipFile(file);
+    else if (lower.endsWith('.md')) skillImportMdFile(file);
+    else setSkillImportStatus('仅支持 .zip 或 .md 文件', 'error');
+  });
+  const dropZone = $('#skillDropZone');
+  if (dropZone) {
+    dropZone.addEventListener('dragover', (event) => { event.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (event) => {
+      event.preventDefault();
+      dropZone.classList.remove('dragover');
+      const dt = event.dataTransfer;
+      if (!dt) return;
+      const folderEntry = [...dt.items].find((it) => it.kind === 'file' && it.webkitGetAsEntry && it.webkitGetAsEntry() && it.webkitGetAsEntry().isDirectory);
+      if (folderEntry && folderEntry.webkitGetAsEntry) {
+        readDirectoryEntry(folderEntry.webkitGetAsEntry()).then((files) => skillImportFolderFiles(files));
+        return;
+      }
+      const files = [...dt.files];
+      const zip = files.find((f) => f.name.toLowerCase().endsWith('.zip'));
+      const md = files.find((f) => f.name.toLowerCase().endsWith('.md'));
+      if (files.length === 1 && (zip || md)) {
+        if (zip) skillImportZipFile(zip); else skillImportMdFile(md);
+      } else if (files.length) {
+        skillImportFolderFiles(files);
+      }
+    });
+  }
+  $('#backupData').addEventListener('click', backupData);
+  $('#runMigration').addEventListener('click', runMigration);
+  $('#mergeData').addEventListener('click', mergeData);
 }
 
-async function addSkillDir() {
-  const input = $('#skillDirInput');
-  const raw = input.value.trim();
-  if (!raw) return;
-  try {
-    const data = await api('/api/install/dir', { method: 'POST', body: { dir: raw } });
-    input.value = '';
-    renderSkillDirs(data.configured);
-    renderInstalledSkills(data.skills || []);
-    toast('已添加目录并扫描 Skill');
-  } catch (error) {
-    toast(`添加失败：${error.message}`);
-  }
+function setSkillImportStatus(message, kind) {
+  const el = $('#skillImportStatus');
+  if (!el) return;
+  el.textContent = message;
+  el.className = 'skill-import-status' + (kind ? ' ' + kind : '');
 }
 
-async function installSkill() {
-  const fileInput = $('#skillZip');
-  const file = fileInput.files[0];
-  if (!file) {
-    toast('请先选择要安装的 .zip 文件');
-    return;
-  }
-  try {
-    const data = await readAsDataUrl(file);
-    const result = await api('/api/skills/install', { method: 'POST', body: { name: file.name, data } });
-    fileInput.value = '';
-    renderInstalledSkills(result.skills || []);
-    if (result.configured) renderSkillDirs(result.configured);
-    toast(`已安装到 ${result.dir}`);
-  } catch (error) {
-    toast(`安装失败：${error.message}`);
-  }
+function hasSkillFrontmatter(text) {
+  const m = text.match(/^---\s*\n([\s\S]*?)\n---/);
+  if (!m) return false;
+  const block = m[1];
+  return /^\s*name\s*:/im.test(block) && /^\s*description\s*:/im.test(block);
 }
 
-async function installSkillFolder(event) {
-  const input = event.target;
-  const files = [...input.files];
-  input.value = '';
+async function skillImportFolderFiles(fileList) {
+  const files = [...fileList];
   if (!files.length) return;
-  if (files.length > 2000) {
-    toast('文件夹内文件数量过多（超过 2000）');
-    return;
-  }
-  const totalSize = files.reduce((sum, file) => sum + file.size, 0);
-  if (totalSize > 80 * 1024 * 1024) {
-    toast('文件夹总大小不能超过 80 MB');
-    return;
-  }
-  toast(`正在上传 ${files.length} 个文件…`);
+  if (files.length > 2000) { setSkillImportStatus('文件夹内文件数量过多（超过 2000）', 'error'); return; }
+  const totalSize = files.reduce((sum, f) => sum + f.size, 0);
+  if (totalSize > 80 * 1024 * 1024) { setSkillImportStatus('文件夹总大小不能超过 80 MB', 'error'); return; }
+  setSkillImportStatus(`正在上传 ${files.length} 个文件…`);
   try {
     const payload = [];
     for (const file of files) {
       const data = await readAsDataUrl(file);
-      payload.push({ path: file.webkitRelativePath || file.name, data });
+      payload.push({ path: file._relPath || file.webkitRelativePath || file.name, data });
     }
     const result = await api('/api/skills/install_folder', { method: 'POST', body: { files: payload } });
+    if (result.configured) state.skillDirs = result.configured;
     renderInstalledSkills(result.skills || []);
-    if (result.configured) renderSkillDirs(result.configured);
-    toast(`已安装 ${result.files} 个文件到 ${result.dir}`);
+    setSkillImportStatus(`已安装 ${result.files} 个文件到 ${result.dir}`, 'ok');
   } catch (error) {
-    toast(`安装失败：${error.message}`);
+    setSkillImportStatus(`安装失败：${error.message}`, 'error');
   }
+}
+
+async function skillImportZipFile(file) {
+  setSkillImportStatus(`正在上传 ${file.name}…`);
+  try {
+    const data = await readAsDataUrl(file);
+    const result = await api('/api/skills/install', { method: 'POST', body: { name: file.name, data } });
+    if (result.configured) state.skillDirs = result.configured;
+    renderInstalledSkills(result.skills || []);
+    setSkillImportStatus(`已安装到 ${result.dir}`, 'ok');
+  } catch (error) {
+    setSkillImportStatus(`安装失败：${error.message}`, 'error');
+  }
+}
+
+async function skillImportMdFile(file) {
+  setSkillImportStatus(`正在读取 ${file.name}…`);
+  try {
+    const text = await file.text();
+    if (!hasSkillFrontmatter(text)) {
+      setSkillImportStatus('该 .md 缺少 name + description 的 YAML 头，无法作为 Skill 安装。', 'error');
+      return;
+    }
+    const data = await readAsDataUrl(file);
+    const result = await api('/api/skills/install_folder', { method: 'POST', body: { files: [{ path: 'SKILL.md', data }] } });
+    if (result.configured) state.skillDirs = result.configured;
+    renderInstalledSkills(result.skills || []);
+    setSkillImportStatus(`已作为 Skill 安装到 ${result.dir}`, 'ok');
+  } catch (error) {
+    setSkillImportStatus(`安装失败：${error.message}`, 'error');
+  }
+}
+
+function readDirectoryEntry(entry) {
+  const files = [];
+  const walk = (ent, prefix) => new Promise((res) => {
+    if (ent.isFile) {
+      ent.file((file) => { file._relPath = prefix + file.name; files.push(file); res(); });
+    } else if (ent.isDirectory) {
+      const reader = ent.createReader();
+      const readBatch = () => reader.readEntries((batch) => {
+        if (!batch.length) { res(); return; }
+        Promise.all(batch.map((b) => walk(b, prefix + ent.name + '/'))).then(readBatch);
+      });
+      readBatch();
+    } else {
+      res();
+    }
+  });
+  return walk(entry, '').then(() => files);
 }
 
 async function loadInstalledSkills(showToast) {
   try {
     const data = await api('/api/skills/scan', { method: 'POST', body: {} });
+    if (data.configured) state.skillDirs = data.configured;
     renderInstalledSkills(data.skills || []);
     if (showToast) toast('已重新扫描 Skill');
   } catch (error) {
@@ -2583,41 +2973,14 @@ async function loadInstalledSkills(showToast) {
   }
 }
 
-function renderSkillDirs(configured) {
-  const list = $('#skillDirList');
-  list.innerHTML = '';
-  if (!configured.length) {
-    list.innerHTML = '<div class="connection-item"><small>尚未配置任何 Skill 目录</small></div>';
-    return;
-  }
-  configured.forEach((dir, idx) => {
-    const item = document.createElement('div');
-    item.className = 'connection-item';
-    const info = document.createElement('div');
-    const b = document.createElement('b');
-    b.textContent = dir;
-    const small = document.createElement('small');
-    small.textContent = '扫描目录';
-    info.append(b, small);
-    const remove = document.createElement('button');
-    remove.className = 'danger-button';
-    remove.textContent = '移除';
-    remove.addEventListener('click', async () => {
-      try {
-        const data = await api('/api/install/dir/remove', { method: 'POST', body: { dir } });
-        renderSkillDirs(data.configured || []);
-        renderInstalledSkills(data.skills || []);
-        toast('已移除目录');
-      } catch (error) {
-        toast(`移除失败：${error.message}`);
-      }
-    });
-    item.append(info, remove);
-    list.append(item);
-  });
+let lastInstalledSkills = [];
+
+function isSkillBuiltin(skill) {
+  return skill.source === 'builtin';
 }
 
 function renderInstalledSkills(skills) {
+  lastInstalledSkills = skills || [];
   const list = $('#installedSkillList');
   list.innerHTML = '';
   $('#installedSkillCount').textContent = String(skills.length);
@@ -2636,25 +2999,116 @@ function renderInstalledSkills(skills) {
     small.className = 'desc';
     info.append(b, small);
     item.append(info);
+    if (skill.source === 'builtin' || skill.source === 'external') {
+      const tag = document.createElement('span');
+      tag.className = 'skill-tag';
+      tag.textContent = skill.source === 'builtin' ? '内置' : '外部';
+      item.append(tag);
+    }
+    const del = document.createElement('button');
+    del.className = 'skill-delete';
+    del.type = 'button';
+    del.title = skill.source === 'managed' ? '删除 Skill（移动到回收目录）' : '隐藏 Skill（可恢复原文件）';
+    del.textContent = '删除';
+    del.addEventListener('click', () => deleteInstalledSkill(skill));
+    item.append(del);
     list.append(item);
   });
 }
 
-async function loadSkillDirs() {
+async function deleteInstalledSkill(skill) {
+  const refs = (state.bootstrap.agents || [])
+    .filter((a) => (a.skill_ids || []).map(String).includes(String(skill.id)))
+    .map((a) => a.name);
+  const dir = skill.root || skill.path || '';
+  const msg = `删除 Skill「${skill.name}」？\n目录：${dir}\n${refs.length ? `被以下 Agent 引用：${refs.join('、')}（引用将被移除）` : '未被任何 Agent 引用'}`;
+  if (!confirm(msg)) return;
   try {
-    const data = await api('/api/install/dirs');
-    renderSkillDirs(data.configured || []);
+    const result = await api(`/api/skills/${encodeURIComponent(skill.id)}`, { method: 'DELETE' });
+    state.selectedSkills = state.selectedSkills.filter((id) => id !== skill.id);
+    localStorage.setItem('naibaChatSkillIds', JSON.stringify(state.selectedSkills));
+    if (result.skills) state.bootstrap.skills = result.skills;
+    if (result.agents) state.bootstrap.agents = result.agents;
+    renderInstalledSkills(result.skills || lastInstalledSkills.filter((s) => s.id !== skill.id));
+    renderSkills($('#skillSearch')?.value || '');
+    toast(result.hidden ? '已删除 Skill（原文件保留并隐藏）' : `已删除，回收位置：${result.recycled_to || '未知'}`);
   } catch (error) {
-    toast(`加载目录失败：${error.message}`);
+    toast(`删除失败：${error.message}`);
   }
-  await loadInstalledSkills(false);
+}
+
+function renderDataMigration() {
+  const m = state.bootstrap?.data_migration || {};
+  $('#migrationDbVersion').textContent = m.db_version != null ? String(m.db_version) : '-';
+  $('#migrationDataDir').textContent = m.data_dir || '-';
+  $('#migrationHealthy').textContent = m.healthy === true ? '✓ 健康' : (m.healthy === false ? '✗ 异常' : '-');
+  $('#migrationApplied').textContent = Array.isArray(m.applied_versions)
+    ? (m.applied_versions.length ? m.applied_versions.join(', ') : '无')
+    : '-';
+  $('#migrationBackup').textContent = m.backup_location || '-';
+}
+
+async function loadDataMigrationHealth() {
+  try {
+    const m = await api('/api/migration/health');
+    state.bootstrap.data_migration = m;
+    renderDataMigration();
+  } catch (error) {
+    toast(`读取迁移状态失败：${error.message}`);
+  }
+}
+
+async function backupData() {
+  try {
+    const r = await api('/api/migration/backup', { method: 'POST', body: {} });
+    if (r.error) { $('#migrationMessage').textContent = '备份失败：' + r.error; return; }
+    const files = Array.isArray(r.files) ? `（${r.files.length} 个文件）` : '';
+    $('#migrationMessage').textContent = `已备份到：${r.backup_dir || ''}${files}`;
+    if (r.backup_location) { state.bootstrap.data_migration = state.bootstrap.data_migration || {}; state.bootstrap.data_migration.backup_location = r.backup_location; }
+    renderDataMigration();
+  } catch (error) {
+    $('#migrationMessage').textContent = '备份失败：' + error.message;
+  }
+}
+
+async function runMigration() {
+  try {
+    const r = await api('/api/migration/run', { method: 'POST', body: {} });
+    if (r.ok) {
+      $('#migrationMessage').textContent = `迁移完成（数据库版本 ${r.db_version ?? '-'}，${r.healthy ? '健康' : '异常'}）`;
+      state.bootstrap.data_migration = r;
+    } else {
+      $('#migrationMessage').textContent = '迁移失败：' + (r.error || '未知错误');
+    }
+    renderDataMigration();
+  } catch (error) {
+    $('#migrationMessage').textContent = '迁移失败：' + error.message;
+  }
+}
+
+async function mergeData() {
+  const source = $('#mergeSource').value.trim();
+  if (!source) { $('#mergeMessage').textContent = '请填写旧数据目录路径'; return; }
+  try {
+    const r = await api('/api/migration/merge', { method: 'POST', body: { source } });
+    if (r.ok) {
+      $('#mergeMessage').textContent = '合并完成：' + (r.report || (r.db_version != null ? `数据库版本 ${r.db_version}` : ''));
+      if (r.data_migration) state.bootstrap.data_migration = r.data_migration;
+      renderDataMigration();
+    } else {
+      $('#mergeMessage').textContent = '合并失败：' + (r.error || '未知错误');
+    }
+  } catch (error) {
+    $('#mergeMessage').textContent = '合并失败：' + error.message;
+  }
 }
 
 function switchSettingsTab(name) {
   $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsTab === name));
   $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
   if (name === 'agent') renderAgentManager();
-  if (name === 'skills') loadSkillDirs();
+  if (name === 'skills') loadInstalledSkills(false);
+  if (name === 'datamigration') loadDataMigrationHealth();
   if (name === 'updates') api('/api/update').then((status) => {
     state.bootstrap.update = status;
     renderUpdateStatus(status);

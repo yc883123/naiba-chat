@@ -49,7 +49,14 @@ if str(EXE_DIR) not in sys.path and str(EXE_DIR) != str(APP_DIR):
 from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
 from plan_runtime import ASK_MODE_PROMPT, CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
-from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor
+from skill_runtime import (
+    SkillAgent,
+    SkillCatalog,
+    TaskCancelled,
+    ToolExecutor,
+    delete_skill,
+    remove_skill_references,
+)
 from async_tasks import ActiveRunError, ConversationRunManager
 from storage import ChatStorage
 from updater import UpdateManager
@@ -353,6 +360,7 @@ def default_config() -> dict[str, Any]:
         "port": 8765,
         "access_token": f"{secrets.randbelow(1000000):06d}",
         "skills_dirs": ["skills"],
+        "hidden_skill_ids": [],
         "workspace_dir": "workspace",
         "provider_id": "",
         "temperature": 0.7,
@@ -406,8 +414,8 @@ def default_config() -> dict[str, Any]:
         },
         # 联网搜索（PLAN4 §联网搜索）：完全可选；endpoint/Key/模型/启用状态由用户配置。
         "search": {
-            "enabled": False,
-            "provider": "custom",
+            "provider_id": "",
+            "profiles": [],
             "endpoint": "",
             "api_key": "",
             "model": "",
@@ -580,6 +588,22 @@ class ConfigStore:
         with self.lock:
             return list(self.data.get("skills_dirs", []))
 
+    def get_hidden_skill_ids(self) -> list[str]:
+        with self.lock:
+            values = self.data.get("hidden_skill_ids", [])
+            return [str(item) for item in values] if isinstance(values, list) else []
+
+    def hide_skill(self, skill_id: str) -> list[str]:
+        skill_id = str(skill_id or "").strip()
+        if not skill_id:
+            return self.get_hidden_skill_ids()
+        with self.lock:
+            hidden = self.data.setdefault("hidden_skill_ids", [])
+            if skill_id not in hidden:
+                hidden.append(skill_id)
+                self.save()
+            return list(hidden)
+
     def add_skills_dir(self, raw: str) -> str:
         raw = (raw or "").strip()
         if not raw:
@@ -660,6 +684,8 @@ class ConfigStore:
                     **provider,
                     "api_key": "",
                     "has_api_key": bool(provider.get("api_key")),
+                    "context_window": _infer_context_window(provider),
+                    "context_window_source": _context_window_source(provider),
                 }
                 for provider in self.data.get("providers", [])
             ]
@@ -779,6 +805,9 @@ class ConfigStore:
                 )
             if self.data.get("provider_id") == provider_id:
                 self.data["provider_id"] = ""
+            vision = self.data.get("vision")
+            if isinstance(vision, dict) and str(vision.get("provider_model_key") or "").endswith(f":{provider_id}"):
+                vision["provider_model_key"] = ""
             self.save()
             return removed
 
@@ -884,6 +913,8 @@ class ConfigStore:
                     explicit_images if isinstance(explicit_images, bool) else None
                 )
                 entry["supports_images"] = _infer_supports_images(provider)
+                entry["context_window"] = _infer_context_window(provider)
+                entry["context_window_source"] = _context_window_source(provider)
                 result.append(entry)
             if kind:
                 result = [item for item in result if item.get("kind") == kind]
@@ -938,12 +969,11 @@ class ConfigStore:
                     raise ValueError("supports_images 必须是布尔值或 null")
             if kind == "local":
                 payload["local_backend"] = local_backend
-                if local_backend == "ollama":
-                    raw_context_size = values.get("context_size")
-                    if raw_context_size not in (None, ""):
-                        payload["context_size"] = self._positive_context_size(
-                            raw_context_size, "Ollama context_size"
-                        )
+                raw_context_size = values.get("context_size")
+                if raw_context_size not in (None, ""):
+                    payload["context_size"] = self._positive_context_size(
+                        raw_context_size, f"{local_backend} context_size"
+                    )
             else:
                 payload.pop("local_backend", None)
             if not payload["base_url"] or not payload["model"]:
@@ -975,6 +1005,8 @@ class ConfigStore:
                 explicit_images if isinstance(explicit_images, bool) else None
             ),
             "supports_images": _infer_supports_images(stored),
+            "context_window": _infer_context_window(stored),
+            "context_window_source": _context_window_source(stored),
         }
 
     def delete_model_profile(self, model_key: str) -> bool:
@@ -996,6 +1028,9 @@ class ConfigStore:
                 )
             if self.data.get("provider_id") == model_id:
                 self.data["provider_id"] = ""
+            vision = self.data.get("vision")
+            if isinstance(vision, dict) and vision.get("provider_model_key") == key:
+                vision["provider_model_key"] = ""
             self.save()
             return removed
 
@@ -1025,6 +1060,8 @@ class ConfigStore:
                 "kind": provider.get("kind", kind),
                 **provider,
                 "supports_images": _infer_supports_images(provider),
+                "context_window": _infer_context_window(provider),
+                "context_window_source": _context_window_source(provider),
             }
 
     def generation_options(self) -> dict[str, Any]:
@@ -1340,6 +1377,38 @@ def _infer_supports_images(provider: dict[str, Any]) -> bool:
         return False
 
 
+def _infer_context_window(provider: dict[str, Any]) -> int:
+    """Return a trustworthy context limit, or 0 when the API does not expose one."""
+    kind = str(provider.get("kind") or "online").strip().lower()
+    if kind == "local":
+        try:
+            return max(0, int(provider.get("context_size") or 0))
+        except (TypeError, ValueError):
+            return 0
+
+    try:
+        explicit = int(provider.get("context_window") or 0)
+    except (TypeError, ValueError):
+        explicit = 0
+    if explicit > 0:
+        return explicit
+
+    hostname = (urllib.parse.urlparse(str(provider.get("base_url") or "")).hostname or "").lower()
+    if hostname == "api.deepseek.com":
+        return 128_000
+    return 0
+
+
+def _context_window_source(provider: dict[str, Any]) -> str:
+    if not _infer_context_window(provider):
+        return "unknown"
+    if str(provider.get("kind") or "online").strip().lower() == "local":
+        return "local_config"
+    if provider.get("context_window"):
+        return "provider_config"
+    return "model_capability"
+
+
 class NaibaChatApp:
     def __init__(self):
         # 冻结版首次启动：从 EXE 相邻旧目录迁移配置与数据到 %LOCALAPPDATA%\NaibaChat。
@@ -1361,7 +1430,9 @@ class NaibaChatApp:
         self.catalog = SkillCatalog(
             [Path(path) for path in skills_dirs],
             base_dir=APP_DIR,
+            hidden_ids=self.config.get_hidden_skill_ids(),
         )
+        self._refresh_persisted_comfyui_mcp()
         self.mcp = MCPRegistry(self.config.data.get("mcp_servers", []))
         self.executor = ToolExecutor(
             self.config.resolve_workspace_dir(),
@@ -1431,6 +1502,26 @@ class NaibaChatApp:
             values = self._persist_comfyui_mcp(values)
         config = self.config.upsert_mcp_server(values)
         return {"saved": True, "server": self.mcp.upsert(config)}
+
+    def _refresh_persisted_comfyui_mcp(self) -> None:
+        """升级后用随程序分发的新脚本刷新持久化 MCP 副本。"""
+        source = RESOURCE_DIR / "skills" / "comfyui-mcp" / "comfyui-mcp" / "scripts" / "comfyui_mcp_server.py"
+        if not source.is_file():
+            return
+        for server in self.config.data.get("mcp_servers", []):
+            if not isinstance(server, dict) or server.get("id") != "comfyui":
+                continue
+            target = next(
+                (Path(str(item)) for item in server.get("args", []) if Path(str(item)).name == source.name),
+                None,
+            )
+            if not target or not target.is_file() or target.resolve() == source.resolve():
+                continue
+            try:
+                if target.read_bytes() != source.read_bytes():
+                    shutil.copy2(source, target)
+            except OSError as exc:
+                print(f"刷新 ComfyUI MCP 脚本失败：{exc}")
 
     @staticmethod
     def _persist_comfyui_mcp(values: dict[str, Any]) -> dict[str, Any]:
@@ -1522,6 +1613,7 @@ class NaibaChatApp:
                 "exe_dir": str(EXE_DIR),
                 "migration": self.data_migration,
             },
+            "data_migration": self.migration_health(),
             "resolved_workspace_dir": str(self.config.resolve_workspace_dir()),
         }
 
@@ -1534,6 +1626,49 @@ class NaibaChatApp:
                 path = (APP_DIR / path).resolve()
             resolved.append(str(path))
         return {"configured": configured, "resolved": resolved}
+
+    # ---- 数据与迁移（PLAN7 §数据与迁移） ----
+    def migration_health(self) -> dict[str, Any]:
+        """返回数据库版本、健康状态、已应用迁移与备份位置。"""
+        integrity = self.storage.check_integrity()
+        version = self.storage.get_user_version()
+        return {
+            "db_version": version,
+            "data_dir": str(self.storage.data_dir),
+            "healthy": bool(integrity.get("ok")),
+            "integrity_details": integrity.get("details", []),
+            "applied_versions": [version],
+            "backup_location": str(DATA_DIR / "backups"),
+        }
+
+    def migration_backup(self) -> dict[str, Any]:
+        """迁移前备份数据库及其 WAL/SHM  siblings。"""
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        backup_dir = DATA_DIR / "backups" / f"migration-{stamp}"
+        return self.storage.backup_for_migration(backup_dir)
+
+    def migration_run(self) -> dict[str, Any]:
+        """执行待应用的数据迁移；执行前禁止存在活动 Run。"""
+        if self.storage.list_background_tasks(active_only=True):
+            return {"ok": False, "error": "存在活动的 Run，请先等待其完成或取消后再执行迁移"}
+        try:
+            self.storage.apply_pending_migrations()
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": f"迁移失败：{exc}", **self.migration_health()}
+        return {"ok": True, **self.migration_health()}
+
+    def migration_merge(self, body: dict[str, Any]) -> dict[str, Any]:
+        """手动迁移：从用户指定的旧数据目录合并配置与对话（当前数据优先）。"""
+        source = Path(str(body.get("source") or "").strip()).expanduser().resolve()
+        if not source.is_dir():
+            return {"ok": False, "error": "旧数据目录不存在"}
+        try:
+            report = self.import_legacy_data(source)
+            self.storage.apply_pending_migrations()
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "error": str(exc), **self.migration_health()}
+        return {"ok": True, "report": report, **self.migration_health()}
+
 
 
 APP: NaibaChatApp
@@ -1662,6 +1797,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._serve_local_file(query.get("path", [""])[0])
         elif path == "/api/install/dirs":
             self._json(APP.list_skill_dirs())
+        elif path == "/api/mcp/status/light":
+            self._json({"servers": APP.mcp.lightweight_status()})
+        elif path == "/api/migration/health":
+            self._json(APP.migration_health())
         elif path.startswith("/api/"):
             self._json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
         else:
@@ -1688,17 +1827,22 @@ class RequestHandler(BaseHTTPRequestHandler):
             agent_id = str(body.get("agent_id") or APP.config.default_agent_id())
             interaction_mode = str(body.get("interaction_mode") or "craft")
             permission_mode = str(body.get("permission_mode") or "confirm")
+            web_search_enabled = body.get("web_search_enabled", False)
             if interaction_mode not in ("craft", "plan", "ask"):
                 self._json({"error": "interaction_mode 必须是 craft / plan / ask"}, HTTPStatus.BAD_REQUEST)
                 return
             if permission_mode not in ("confirm", "auto", "full"):
                 self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
                 return
+            if not isinstance(web_search_enabled, bool):
+                self._json({"error": "web_search_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
+                return
             self._json(
                 APP.storage.create_conversation(
                     title=title, provider_id=provider_id, agent_id=agent_id,
                     interaction_mode=interaction_mode, model_key=model_key,
                     permission_mode=permission_mode,
+                    web_search_enabled=web_search_enabled,
                 ),
                 HTTPStatus.CREATED,
             )
@@ -1741,6 +1885,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if not isinstance(permission_mode, str) or permission_mode not in ("confirm", "auto", "full"):
                     self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
                     return
+            web_search_enabled = body.get("web_search_enabled")
+            if web_search_enabled is not None and not isinstance(web_search_enabled, bool):
+                self._json({"error": "web_search_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
+                return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
                 title=title,
@@ -1751,6 +1899,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 interaction_mode=interaction_mode,
                 model_key=model_key,
                 permission_mode=permission_mode,
+                web_search_enabled=web_search_enabled,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
         elif path == "/api/agents":
@@ -1830,12 +1979,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/vision/test":
             try:
-                self._json(APP.vision.probe())
+                selected = body.get("provider_model_key")
+                self._json(APP.vision.probe(str(selected) if selected is not None else None))
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "reason": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/search/test":
             try:
-                self._json(APP.web_search.probe())
+                self._json(APP.web_search.probe(body))
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "reason": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/update/check":
@@ -1857,6 +2007,14 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._install_folder(body)
         elif path == "/api/skills/scan":
             self._json({"skills": APP.catalog.scan(), "configured": APP.config.get_skills_dirs()})
+        elif path == "/api/skills/delete":
+            self._delete_skill(body)
+        elif path == "/api/migration/backup":
+            self._json(APP.migration_backup())
+        elif path == "/api/migration/run":
+            self._json(APP.migration_run())
+        elif path == "/api/migration/merge":
+            self._json(APP.migration_merge(body))
         elif path == "/api/chat/cancel":
             run_id = str(body.get("run_id") or "").strip()
             if not run_id:
@@ -2000,6 +2158,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/providers/"):
             deleted = APP.config.delete_provider(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+        elif path.startswith("/api/skills/"):
+            skill_id = path.rsplit("/", 1)[-1]
+            self._delete_skill_by_id(skill_id)
         else:
             self._json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
 
@@ -2268,6 +2429,64 @@ class RequestHandler(BaseHTTPRequestHandler):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
         self._finish_install(dest_raw, dest, {"files": len(pending)})
+
+    def _delete_skill(self, body: dict[str, Any]) -> None:
+        skill_id = str(body.get("skill_id") or "").strip()
+        if not skill_id:
+            self._json({"error": "skill_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            return
+        self._delete_skill_by_id(skill_id)
+
+    def _delete_skill_by_id(self, skill_id: str) -> None:
+        """可恢复删除：移动到应用托管的回收目录，并从 Agent 固定 Skill 中清理引用。"""
+        skills = APP.catalog.by_id()
+        skill = skills.get(skill_id)
+        if not skill:
+            self._json({"error": "Skill 不存在"}, HTTPStatus.NOT_FOUND)
+            return
+        root = Path(str(skill.get("root") or skill.get("path") or "")).expanduser().resolve()
+        if not root.exists():
+            self._json({"error": "Skill 目录不存在"}, HTTPStatus.NOT_FOUND)
+            return
+        managed_dir = root.parent
+        recycle_dir = DATA_DIR / "skills_recycle"
+        agents = APP.config.public_agents()
+        try:
+            result = delete_skill(
+                skill_id,
+                str(recycle_dir),
+                agents,
+                str(managed_dir),
+                skills_by_id=skills,
+            )
+        except Exception as exc:  # noqa: BLE001
+            self._json({"error": f"删除失败：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        if not result.get("success"):
+            self._json({"error": result.get("error", "删除失败")}, HTTPStatus.BAD_REQUEST)
+            return
+        if result.get("hidden"):
+            APP.config.hide_skill(skill_id)
+            APP.catalog.hidden_ids.add(skill_id)
+        updated_agents = remove_skill_references(skill_id, agents)
+        for agent in updated_agents:
+            if agent.get("id") in built_in_agent_ids():
+                continue
+            try:
+                APP.config.upsert_agent(agent)
+            except Exception:  # noqa: BLE001
+                pass
+        self._json(
+            {
+                "ok": True,
+                "recycled_to": result.get("recycled_to"),
+                "hidden": bool(result.get("hidden")),
+                "cleaned_agent_refs": result.get("cleaned_agent_refs", []),
+                "skills": APP.catalog.scan(),
+                "agents": APP.config.public_agents(),
+            }
+        )
+
 
     def _test_provider(self, body: dict[str, Any]) -> None:
         try:

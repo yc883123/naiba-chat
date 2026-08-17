@@ -5,6 +5,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import zipfile
 import subprocess
 import sys
 import threading
@@ -59,9 +61,15 @@ def _frontmatter_value(text: str, key: str) -> str:
 
 
 class SkillCatalog:
-    def __init__(self, directories: list[Path], base_dir: Path | None = None):
+    def __init__(
+        self,
+        directories: list[Path],
+        base_dir: Path | None = None,
+        hidden_ids: list[str] | set[str] | None = None,
+    ):
         self.base_dir = base_dir or Path.cwd()
         self.directories = [self._resolve(directory) for directory in directories]
+        self.hidden_ids = {str(item) for item in (hidden_ids or [])}
 
     def _resolve(self, directory: Path) -> Path:
         directory = Path(directory).expanduser()
@@ -99,7 +107,15 @@ class SkillCatalog:
     def scan(self) -> list[dict[str, Any]]:
         found: dict[str, dict[str, Any]] = {}
         seen_files: set[str] = set()
-        for directory in self.directories:
+        for directory_index, directory in enumerate(self.directories):
+            # 目录 0 为内置（bundled）Skill 目录；目录 1 为应用托管（安装目标）目录；
+            # 其余为用户额外添加的扫描目录（外部）。
+            if directory_index == 0:
+                directory_source = "builtin"
+            elif directory_index == 1:
+                directory_source = "managed"
+            else:
+                directory_source = "external"
             if not directory.exists():
                 continue
             for skill_file in self._iter_skill_files(directory):
@@ -132,6 +148,8 @@ class SkillCatalog:
                     stable_path = skill_file
                 identity = f"{name}/{stable_path}".replace("\\", "/").lower()
                 skill_id = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:16]
+                if skill_id in self.hidden_ids:
+                    continue
                 scripts_dir = skill_file.parent / "scripts"
                 script_count = sum(1 for item in scripts_dir.rglob("*") if item.is_file()) if scripts_dir.exists() else 0
                 found[skill_id] = {
@@ -142,6 +160,7 @@ class SkillCatalog:
                     "root": str(skill_file.parent),
                     "script_count": script_count,
                     "requires_mcp": requires_mcp,
+                    "source": directory_source,
                 }
         return sorted(found.values(), key=lambda item: item["name"].lower())
 
@@ -159,7 +178,6 @@ class ToolExecutor:
         "call_mcp": "调用MCP工具",
         "register_mcp": "注册MCP服务",
     }
-
     def __init__(
         self,
         workspace: Path,
@@ -703,6 +721,8 @@ class SkillAgent:
         step = 0
         repeat_key = ""
         repeat_count = 0
+        no_progress_signature = ""
+        no_progress_count = 0
         while step < max_steps:
             if cancel_event and cancel_event.is_set():
                 event({"type": "run_cancelled", "reason": "用户取消"})
@@ -774,6 +794,21 @@ class SkillAgent:
                 return (
                     f"工具 {tool} 连续失败且重复，已停止执行。", runs, reasonings, self._summarize_usage(usages)
                 )
+
+            # A model can repeatedly issue the same successful call without
+            # making progress. Treat an identical tool+arguments+result triplet
+            # as a loop and stop before the global 32-step ceiling.
+            signature_source = f"{key}\n{success}\n{result}"
+            signature = hashlib.sha256(signature_source.encode("utf-8", errors="replace")).hexdigest()
+            if success and signature == no_progress_signature:
+                no_progress_count += 1
+            else:
+                no_progress_signature = signature if success else ""
+                no_progress_count = 1 if success else 0
+            if success and no_progress_count >= 3:
+                error = f"工具 {tool} 连续返回相同结果，任务没有进展，已停止执行"
+                event({"type": "run_failed", "error": error})
+                return f"{error}。", runs, reasonings, self._summarize_usage(usages)
 
             messages.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
             messages.append(
@@ -861,6 +896,10 @@ class SkillAgent:
             for key in ("input_tokens", "output_tokens", "total_tokens", "cached_tokens")
         }
         summary["requests"] = len(records)
+        last = records[-1]
+        summary["last_input_tokens"] = max(0, int(last.get("input_tokens") or 0))
+        summary["last_output_tokens"] = max(0, int(last.get("output_tokens") or 0))
+        summary["context_tokens"] = summary["last_input_tokens"] + summary["last_output_tokens"]
         summary["cache_hit_rate"] = (
             round(summary["cached_tokens"] / summary["input_tokens"] * 100, 1)
             if summary["input_tokens"]
@@ -963,6 +1002,13 @@ class SkillAgent:
         probe = (text or "").lstrip()
         if not probe:
             return False
+        # Models sometimes emit a short natural-language preface before the
+        # action. Still classify the embedded protocol as an action so it is
+        # never persisted as the assistant's visible answer.
+        if re.search(r"<(?:tool_calls|invoke|tool)\b", probe, flags=re.IGNORECASE):
+            return True
+        if re.search(r'\{[\s\S]{0,96}"(?:type|tool)"\s*:', probe, flags=re.IGNORECASE):
+            return True
         first = probe[0]
         if first in "{[":
             # JSON/array action schema: only treat as a protocol when it
@@ -1091,3 +1137,259 @@ class SkillAgent:
             except json.JSONDecodeError:
                 continue
         return None
+
+
+# --------------------------------------------------------------------------
+# Skill import (folder / ZIP / single .md) validation + recoverable delete
+# --------------------------------------------------------------------------
+
+# Validation constants
+MAX_FILE_COUNT = 2000
+MAX_TOTAL_SIZE = 50 * 1024 * 1024          # 50 MB
+ZIP_BOMB_RATIO = 100                        # uncompressed > 100x compressed
+MAX_UNCOMPRESSED_ENTRY = 50 * 1024 * 1024  # 50 MB single entry
+
+
+class _SkillInstallError(RuntimeError):
+    pass
+
+
+def _path_within(path: Any, root: Any) -> bool:
+    try:
+        Path(path).resolve().relative_to(Path(root).resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _unique_dir(parent: Path, base_name: str) -> Path:
+    base = re.sub(r"[^\w.\-]+", "_", str(base_name).strip()) or "skill"
+    candidate = parent / base
+    if not candidate.exists():
+        return candidate
+    index = 2
+    while (parent / f"{base}_{index}").exists():
+        index += 1
+    return parent / f"{base}_{index}"
+
+
+def _folder_has_skill_md(directory: Path) -> bool:
+    """SKILL.md present at top level or exactly one level down."""
+    if (directory / "SKILL.md").is_file():
+        return True
+    for child in directory.iterdir():
+        if child.is_dir() and (child / "SKILL.md").is_file():
+            return True
+    return False
+
+
+def _zip_has_skill_md(archive: zipfile.ZipFile) -> bool:
+    for info in archive.infolist():
+        parts = Path(info.filename).parts
+        if len(parts) in (1, 2) and parts[-1] == "SKILL.md":
+            return True
+    return False
+
+
+def _finalize_install(dest: Path, display_name: str | None = None) -> dict[str, Any]:
+    catalog = SkillCatalog([dest])
+    skills = catalog.scan()
+    if not skills:
+        raise _SkillInstallError("未能在来源中识别到有效的 Skill 定义")
+    skill = skills[0]
+    return {
+        "success": True,
+        "skill_id": skill["id"],
+        "name": skill["name"],
+        "path": skill["path"],
+        "source": "managed",
+        "error": None,
+    }
+
+
+def _install_folder(src: Path, managed_dir: Path, name: str | None) -> dict[str, Any]:
+    file_count = 0
+    total = 0
+    for item in src.rglob("*"):
+        if item.is_file():
+            file_count += 1
+            total += item.stat().st_size
+    if file_count > MAX_FILE_COUNT:
+        raise _SkillInstallError(f"文件夹内文件数量过多（超过 {MAX_FILE_COUNT}）")
+    if total > MAX_TOTAL_SIZE:
+        raise _SkillInstallError("文件夹总大小超过 50 MB")
+    if not _folder_has_skill_md(src):
+        raise _SkillInstallError("文件夹缺少 SKILL.md（需位于顶层或下一级目录）")
+    dest = _unique_dir(managed_dir, name or src.name)
+    shutil.copytree(src, dest)
+    return _finalize_install(dest, name)
+
+
+def _install_zip(src: Path, managed_dir: Path, name: str | None) -> dict[str, Any]:
+    try:
+        archive = zipfile.ZipFile(src)
+    except zipfile.BadZipFile as exc:
+        raise _SkillInstallError(f"不是有效的 zip 压缩包：{exc}")
+    with archive:
+        bad = archive.testzip()
+        if bad is not None:
+            raise _SkillInstallError(f"压缩包损坏：{bad}")
+        members = archive.infolist()
+        if len(members) > MAX_FILE_COUNT:
+            raise _SkillInstallError(f"压缩包内文件数量过多（超过 {MAX_FILE_COUNT}）")
+        total_uncompressed = sum(member.file_size for member in members)
+        if total_uncompressed > MAX_TOTAL_SIZE:
+            raise _SkillInstallError("压缩包解压后体积过大（超过 50 MB）")
+        compressed = src.stat().st_size
+        if compressed > 0 and total_uncompressed > ZIP_BOMB_RATIO * compressed:
+            raise _SkillInstallError("检测到可能的 zip 炸弹（解压体积远超压缩体积）")
+        for member in members:
+            if member.file_size > MAX_UNCOMPRESSED_ENTRY:
+                raise _SkillInstallError(f"压缩包单文件解压后过大（超过 50 MB）：{member.filename}")
+            filename = member.filename
+            parts = Path(filename).parts
+            if (
+                Path(filename).is_absolute()
+                or filename.startswith("/")
+                or ".." in parts
+                or any(":" in part for part in parts)
+            ):
+                raise _SkillInstallError(f"压缩包包含非法或越界路径：{filename}")
+        if not _zip_has_skill_md(archive):
+            raise _SkillInstallError("压缩包缺少 SKILL.md（需位于顶层或下一级目录）")
+        dest = _unique_dir(managed_dir, name or src.stem)
+        dest.mkdir(parents=True, exist_ok=True)
+        for member in members:
+            target = (dest / member.filename).resolve()
+            if target != dest and not _path_within(target, dest):
+                raise _SkillInstallError(f"压缩包包含越界路径：{member.filename}")
+        archive.extractall(dest)
+    return _finalize_install(dest, name)
+
+
+def _install_single_md(src: Path, managed_dir: Path, name: str | None) -> dict[str, Any]:
+    try:
+        text = src.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise _SkillInstallError(f"无法读取 .md 文件：{exc}")
+    md_name = _frontmatter_value(text, "name")
+    md_desc = _frontmatter_value(text, "description")
+    if not md_name or not md_desc:
+        raise _SkillInstallError("单个 .md 必须包含有效的 YAML frontmatter，且同时具备 name 与 description 字段")
+    dest = _unique_dir(managed_dir, name or md_name or src.stem)
+    dest.mkdir(parents=True, exist_ok=True)
+    (dest / "SKILL.md").write_text(text, encoding="utf-8")
+    return _finalize_install(dest, name or md_name)
+
+
+def validate_and_install_skill(
+    source_path: Any,
+    managed_dir: Any,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """校验并安装一个 Skill 来源（文件夹 / ZIP / 单个 .md）。
+
+    Args:
+        source_path: 本地来源路径（文件夹、.zip 或 .md）。
+        managed_dir: 应用托管的 skills 目录，安装目标。
+        name: 可选的目标目录名覆盖。
+
+    Returns:
+        {"success": True, "skill_id", "name", "path", "source": "managed", "error": None}
+        或 {"success": False, "error": str}
+    """
+    src = Path(source_path).expanduser().resolve()
+    managed = Path(managed_dir).expanduser().resolve()
+    managed.mkdir(parents=True, exist_ok=True)
+    try:
+        if src.is_dir():
+            return _install_folder(src, managed, name)
+        if src.suffix.lower() == ".zip":
+            return _install_zip(src, managed, name)
+        if src.suffix.lower() == ".md":
+            return _install_single_md(src, managed, name)
+        return {"success": False, "error": "不支持的来源类型：仅支持文件夹、ZIP 或单个 .md 文件"}
+    except _SkillInstallError as exc:
+        return {"success": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def remove_skill_references(
+    skill_id: str,
+    agent_configs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """返回一个新的 agent_configs 列表，移除每个 agent 对 skill_id 的引用。
+
+    不修改传入的列表（调用方负责持久化）。
+    """
+    updated: list[dict[str, Any]] = []
+    for agent in agent_configs:
+        new_agent = dict(agent)
+        skill_ids = list(agent.get("skill_ids", []))
+        if skill_id in skill_ids:
+            skill_ids.remove(skill_id)
+        new_agent["skill_ids"] = skill_ids
+        updated.append(new_agent)
+    return updated
+
+
+def delete_skill(
+    skill_id: str,
+    recycle_dir: Any,
+    agent_configs: list[dict[str, Any]],
+    managed_dir: Any,
+    skills_by_id: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """可恢复删除（移动到回收目录，而非永久删除）一个托管 Skill。
+
+    Args:
+        skill_id: 目标 Skill id。
+        recycle_dir: 应用托管的回收目录。
+        agent_configs: agent 配置列表，每项含 'id' 与 'skill_ids'。
+        managed_dir: 应用托管的 skills 目录（用于校验路径归属）。
+        skills_by_id: 可选，预构建的 {id: skill}；缺省时扫描 managed_dir。
+
+    Returns:
+        {"success": True, "skill_id", "name", "recycled_to", "cleaned_agent_refs": [...], "error": None}
+        或 {"success": False, "error": str}
+    """
+    if skills_by_id is None:
+        managed = Path(managed_dir).expanduser().resolve()
+        skills_by_id = SkillCatalog([managed]).by_id()
+    skill = skills_by_id.get(skill_id)
+    if not skill:
+        return {"success": False, "error": "Skill 不存在或未被托管"}
+    cleaned = [
+        str(agent["id"])
+        for agent in agent_configs
+        if skill_id in agent.get("skill_ids", [])
+    ]
+    # 托管 Skill 移入回收目录；内置/外部 Skill 由上层持久化隐藏，不移动原文件。
+    if skill.get("source") != "managed":
+        return {
+            "success": True,
+            "skill_id": skill_id,
+            "name": str(skill.get("name") or ""),
+            "hidden": True,
+            "recycled_to": None,
+            "cleaned_agent_refs": cleaned,
+            "error": None,
+        }
+
+    root = Path(str(skill.get("root") or skill.get("path") or "")).expanduser().resolve()
+    recycle = Path(recycle_dir).expanduser().resolve()
+    recycle.mkdir(parents=True, exist_ok=True)
+    dest = _unique_dir(recycle, root.name)
+    try:
+        shutil.move(str(root), str(dest))
+    except OSError as exc:
+        return {"success": False, "error": f"移动失败：{exc}"}
+    return {
+        "success": True,
+        "skill_id": skill_id,
+        "name": str(skill.get("name", root.name)),
+        "recycled_to": str(dest),
+        "cleaned_agent_refs": cleaned,
+        "error": None,
+    }

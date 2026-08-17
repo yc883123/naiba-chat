@@ -274,9 +274,12 @@ class RuntimeDispatchTests(unittest.TestCase):
         self.assertNotIn("/v1/chat/completions", _MockModelHandler.routes)
 
     def test_lm_studio_hits_local_endpoint_only(self) -> None:
-        out = ModelRuntime().complete(self._lm_studio(), self._messages(), {"stream": False})
+        profile = self._lm_studio()
+        profile["context_size"] = 32768
+        out = ModelRuntime().complete(profile, self._messages(), {"stream": False})
         self.assertEqual(out, "mock-ok")
         self.assertIn("/api/v1/chat", _MockModelHandler.routes)
+        self.assertEqual(32768, json.loads(_MockModelHandler.last_body)["context_length"])
 
     def test_cross_mode_fallback_forbidden(self) -> None:
         bad = self._online()

@@ -77,6 +77,25 @@ class SupportsImagesTest(TestCase):
             cfg = server.ConfigStore(path)
             self.assertFalse(cfg.profile("online:ds")["supports_images"])
 
+    def test_context_window_uses_known_capability_only(self):
+        self.assertEqual(128000, server._infer_context_window(self._provider()))
+        self.assertEqual(
+            0,
+            server._infer_context_window(
+                self._provider(base_url="https://api.example.com/v1", model="unknown")
+            ),
+        )
+
+    def test_local_context_window_comes_from_provider_config(self):
+        provider = self._provider(
+            kind="local",
+            request_format="lm_studio",
+            local_backend="lm_studio",
+            base_url="http://127.0.0.1:1234/v1",
+            context_size=65536,
+        )
+        self.assertEqual(65536, server._infer_context_window(provider))
+
     def test_upsert_persists_and_clears_explicit_capability(self):
         with tempfile.TemporaryDirectory() as tmp:
             cfg = server.ConfigStore(Path(tmp) / "config.json")
@@ -246,6 +265,28 @@ class VisionProbeTest(TestCase):
         self.assertIn("boom", result["reason"])
         self.assertIn("backend", result)
 
+    def test_explicit_provider_does_not_fall_back_to_anonymous_ovh(self):
+        profile = {
+            "kind": "online",
+            "request_format": "openai_chat",
+            "base_url": "https://vision.example.com/v1",
+            "model": "vision-model",
+            "name": "Selected Vision",
+        }
+        app = types.SimpleNamespace(
+            config=types.SimpleNamespace(
+                data={"vision": {}},
+                profile=lambda key: profile if key == "online:selected" else None,
+                resolve_workspace_dir=lambda: Path(tempfile.gettempdir()),
+            )
+        )
+        router = vision_runtime.VisionRouter(app)
+
+        backends = router.vision_backends("online:selected")
+
+        self.assertEqual(["Selected Vision"], [item["name"] for item in backends])
+        self.assertFalse(any("OVH" in item["name"] for item in backends))
+
     def test_backend_passes_timeout_and_attempt_overrides_to_runtime(self):
         router = self._router()
         captured = {}
@@ -374,7 +415,7 @@ class RunChatVisionFailClosedTest(TestCase):
 class VisionSettingsFrontendTest(TestCase):
     def test_visual_provider_uses_full_model_key(self):
         app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
-        self.assertIn("p.model_key || p.id", app_js)
+        self.assertIn("provider.model_key || provider.id", app_js)
 
     def test_web_search_button_is_immediately_left_of_send(self):
         index_html = (Path(__file__).parents[1] / "public" / "index.html").read_text(
