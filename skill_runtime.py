@@ -624,10 +624,26 @@ class SkillAgent:
             remaining_skill_chars -= allowance
 
         allowed = set(allowed_tools)
-        tool_guide = "\n".join(
-            line for line in self.TOOL_GUIDE.splitlines()
-            if not line.startswith("- ") or line.split(":", 1)[0][2:] in allowed
-        )
+        if tool_registry is not None:
+            # 动态工具清单：基于统一工具表的真实 schema，按 allowed 过滤。
+            # 这样视觉/搜索/子 Agent/MCP 等扩展工具对模型可见，且始终与注册表一致。
+            tool_lines = []
+            for spec in tool_registry.schemas():
+                if spec["name"] in allowed:
+                    props = spec.get("parameters", {}).get("properties", {})
+                    tool_lines.append(f"- {spec['name']}: {json.dumps(props, ensure_ascii=False)}")
+            tool_guide = "\n".join([
+                "可用工具（需要操作时一次只调用一个）：",
+                *tool_lines,
+                "只有确实需要调用工具时，才只输出一个 JSON 对象，不要 Markdown。",
+                "不需要工具或任务完成后，直接输出给用户的自然语言答复，不要再包 JSON。",
+                "不要照抄示例，不要使用不存在的工具。工具结果会在下一轮发给你，最多执行有限步数，不要重复无效操作。",
+            ])
+        else:
+            tool_guide = "\n".join(
+                line for line in self.TOOL_GUIDE.splitlines()
+                if not line.startswith("- ") or line.split(":", 1)[0][2:] in allowed
+            )
         system = (
             "你是运行在用户个人电脑上的 AI 助手。准确完成用户任务。"
             "用户已明确授权自动执行已选择技能和必要工具；但如果技能自身规定必须收集或确认工作流输入，仍须遵守该输入门槛。"

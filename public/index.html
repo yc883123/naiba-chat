@@ -72,6 +72,7 @@
           <input id="fileInput" type="file" multiple hidden>
           <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">＋</button>
           <textarea id="messageInput" rows="1" placeholder="输入消息" aria-label="消息"></textarea>
+          <button class="icon-button web-search-button" type="button" id="webSearchButton" title="联网搜索：关闭" aria-label="联网搜索" aria-pressed="false">🌐</button>
           <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
         </form>
         <div class="composer-meta">
@@ -150,6 +151,8 @@
         <button data-settings-tab="agent">Agent</button>
         <button data-settings-tab="runtime">生成参数</button>
         <button data-settings-tab="connections">连接状态</button>
+        <button data-settings-tab="vision">视觉</button>
+        <button data-settings-tab="search">联网搜索</button>
         <button data-settings-tab="skills">Skills 管理</button>
         <button data-settings-tab="updates">软件更新</button>
       </nav>
@@ -297,6 +300,45 @@
           </div>
           <div class="form-actions"><button class="primary-button" id="saveToken" type="button">保存口令</button></div>
           <p class="hint">保存后所有设备需用新口令重新登录。</p>
+        </section>
+        <section data-settings-panel="vision" hidden>
+          <h3>视觉（给纯文本大脑装眼睛）</h3>
+          <p class="hint">未配置视觉供应商时，自动使用内置 OVH 免费匿名视觉链兜底（限流严格，仅作默认）。生产建议配置自己的视觉 API（Qwen-VL / Gemini / GPT-4o 等）。</p>
+          <div class="field-grid">
+            <label class="field-wide">视觉供应商（留空 = OVH 免费链）
+              <select id="visionProvider"></select>
+            </label>
+            <label>自动路由<input id="visionAutoRoute" type="checkbox"></label>
+            <label>超时（毫秒）<input id="visionTimeout" type="number" min="1000" step="1000"></label>
+            <label>最大图片数<input id="visionMaxImages" type="number" min="1" max="20" step="1"></label>
+          </div>
+          <div class="form-actions">
+            <button class="control-button" id="testVision" type="button">测试视觉连接</button>
+            <button class="primary-button" id="saveVision" type="button">保存视觉设置</button>
+          </div>
+          <p class="hint" id="visionTestResult"></p>
+        </section>
+        <section data-settings-panel="search" hidden>
+          <h3>联网搜索（可选）</h3>
+          <p class="hint">完全可选。未启用或无端点时发送不会被阻止；开启且 provider 可用时才允许 web_search 工具。搜索结果属于不可信数据。</p>
+          <div class="field-grid">
+            <label class="field-wide">启用联网搜索<input id="searchEnabled" type="checkbox"></label>
+            <label class="field-wide">提供商
+              <select id="searchProvider">
+                <option value="custom">自定义端点</option>
+                <option value="duckduckgo">DuckDuckGo（免 Key）</option>
+                <option value="serper">Serper.dev（需 Key）</option>
+              </select>
+            </label>
+            <label class="field-wide">端点 URL<input id="searchEndpoint" type="text" placeholder="https://..."></label>
+            <label class="field-wide">API Key<input id="searchApiKey" type="text" placeholder="可选，留空不发送"></label>
+            <label>最大结果数<input id="searchMaxResults" type="number" min="1" max="20" step="1"></label>
+          </div>
+          <div class="form-actions">
+            <button class="control-button" id="testSearch" type="button">测试搜索连接</button>
+            <button class="primary-button" id="saveSearch" type="button">保存搜索设置</button>
+          </div>
+          <p class="hint" id="searchTestResult"></p>
         </section>
         <section data-settings-panel="skills" hidden>
           <h3>Skill 扫描目录</h3>

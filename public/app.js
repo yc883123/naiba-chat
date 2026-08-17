@@ -31,6 +31,7 @@ const state = {
   plans: [],
   interactionMode: localStorage.getItem('naibaChatInteractionMode') || 'craft',
   planEditingId: '',
+  webSearchEnabled: false,
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -372,6 +373,8 @@ async function initialize() {
   $$('.mode-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.mode === state.mode));
   populateRuntimeSettings();
   populateAgentSettings();
+  populateVisionSettings();
+  populateSearchSettings();
   renderSkills();
   renderProviders();
   renderMcp();
@@ -577,7 +580,10 @@ function planCardMarkup(plan) {
 
 async function executePlan(planId) {
   try {
-    const run = await api(`/api/plans/${planId}/execute`, { method: 'POST', body: {} });
+    const run = await api(`/api/plans/${planId}/execute`, {
+      method: 'POST',
+      body: { web_search_enabled: state.webSearchEnabled },
+    });
     if (run?.id && run.conversation_id === state.conversationId) {
       await resumeRun(run);
     }
@@ -1016,6 +1022,9 @@ async function openConversation(id) {
   applyConversationAgent(conversation);
   renderMessages(conversation.messages || []);
   renderModeSwitch();
+  // 联网搜索开关：按对话保存（默认关闭），不同对话互不影响。
+  state.webSearchEnabled = localStorage.getItem(`naibaWebSearch:${id}`) === 'true';
+  updateWebSearchButton();
   await loadPlans();
   await resumeConversationRun(id);
   closeSidebar();
@@ -1446,6 +1455,83 @@ function populateRuntimeSettings() {
   $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
 }
 
+function populateVisionSettings() {
+  const settings = state.bootstrap.settings || {};
+  const vision = settings.vision || {};
+  const select = $('#visionProvider');
+  if (select && !select.dataset.populated) {
+    const providers = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+    select.innerHTML = '<option value="">OVH 免费视觉链（默认兜底）</option>'
+      + providers.map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.name || p.id)}</option>`).join('');
+    select.dataset.populated = '1';
+  }
+  if (select) select.value = vision.provider_model_key || '';
+  const auto = $('#visionAutoRoute'); if (auto) auto.checked = vision.auto_route !== false;
+  const timeout = $('#visionTimeout'); if (timeout) timeout.value = vision.timeout_ms || 120000;
+  const maxImages = $('#visionMaxImages'); if (maxImages) maxImages.value = vision.max_images || 4;
+}
+
+function populateSearchSettings() {
+  const settings = state.bootstrap.settings || {};
+  const search = settings.search || {};
+  const enabled = $('#searchEnabled'); if (enabled) enabled.checked = Boolean(search.enabled);
+  const provider = $('#searchProvider'); if (provider) provider.value = search.provider || 'custom';
+  const endpoint = $('#searchEndpoint'); if (endpoint) endpoint.value = search.endpoint || '';
+  const key = $('#searchApiKey'); if (key) key.value = search.api_key || '';
+  const max = $('#searchMaxResults'); if (max) max.value = search.max_results || 5;
+}
+
+async function saveVisionSettings() {
+  const payload = {
+    vision: {
+      provider_model_key: $('#visionProvider')?.value || '',
+      auto_route: $('#visionAutoRoute')?.checked !== false,
+      timeout_ms: Number($('#visionTimeout')?.value || 120000),
+      max_images: Number($('#visionMaxImages')?.value || 4),
+    },
+  };
+  const result = await api('/api/settings', { method: 'POST', body: payload });
+  Object.assign(state.bootstrap.settings, result.settings);
+  toast('视觉设置已保存');
+}
+
+async function saveSearchSettings() {
+  const payload = {
+    search: {
+      enabled: $('#searchEnabled')?.checked === true,
+      provider: $('#searchProvider')?.value || 'custom',
+      endpoint: $('#searchEndpoint')?.value.trim() || '',
+      api_key: $('#searchApiKey')?.value.trim() || '',
+      max_results: Number($('#searchMaxResults')?.value || 5),
+    },
+  };
+  const result = await api('/api/settings', { method: 'POST', body: payload });
+  Object.assign(state.bootstrap.settings, result.settings);
+  toast('搜索设置已保存');
+}
+
+async function testVisionConnection() {
+  const el = $('#visionTestResult');
+  if (el) el.textContent = '测试中…';
+  try {
+    const result = await api('/api/vision/test', { method: 'POST', body: {} });
+    if (el) el.textContent = result.ok ? `可用（延迟 ${result.latency_ms ?? '?'}ms，模型 ${result.model || ''}）` : `不可用：${result.reason || ''}`;
+  } catch (error) {
+    if (el) el.textContent = `测试失败：${error.message}`;
+  }
+}
+
+async function testSearchConnection() {
+  const el = $('#searchTestResult');
+  if (el) el.textContent = '测试中…';
+  try {
+    const result = await api('/api/search/test', { method: 'POST', body: {} });
+    if (el) el.textContent = result.ok ? `可用（provider=${result.provider || ''}）` : `不可用：${result.reason || ''}`;
+  } catch (error) {
+    if (el) el.textContent = `测试失败：${error.message}`;
+  }
+}
+
 function populateAgentSettings() {
   const settings = state.bootstrap.settings;
   const permissionMode = settings.permission_mode || 'confirm';
@@ -1823,6 +1909,7 @@ async function sendChatMessage(textOverride = '') {
         model_key: $('#modelSelect').value,
         auto_skills: state.autoSkills,
         skill_ids: state.selectedSkills,
+        web_search_enabled: state.webSearchEnabled,
       }),
       signal: controller.signal,
     });
@@ -1848,6 +1935,39 @@ async function sendChatMessage(textOverride = '') {
 
 async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
+}
+
+function updateWebSearchButton() {
+  const btn = $('#webSearchButton');
+  if (!btn) return;
+  btn.classList.toggle('active', state.webSearchEnabled);
+  btn.setAttribute('aria-pressed', String(state.webSearchEnabled));
+  btn.title = state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭';
+}
+
+function toggleWebSearch() {
+  state.webSearchEnabled = !state.webSearchEnabled;
+  if (state.conversationId) {
+    localStorage.setItem(`naibaWebSearch:${state.conversationId}`, String(state.webSearchEnabled));
+  }
+  updateWebSearchButton();
+  toast(state.webSearchEnabled ? '联网搜索已开启（本对话）' : '联网搜索已关闭（本对话）');
+}
+
+async function handlePasteImage(event) {
+  const items = (event.clipboardData && event.clipboardData.items) || [];
+  const imageFiles = [];
+  for (const item of items) {
+    if (item.type && item.type.startsWith('image/') && item.kind === 'file') {
+      const file = item.getAsFile();
+      if (file) imageFiles.push(file);
+    }
+  }
+  if (!imageFiles.length) return;
+  event.preventDefault();
+  if (!state.conversationId) await createConversation();
+  await uploadFiles(imageFiles);
+  toast('已粘贴图片，可发送');
 }
 
 function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
@@ -2214,6 +2334,12 @@ function bindEvents() {
   });
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
   $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
+  $('#webSearchButton').addEventListener('click', toggleWebSearch);
+  $('#messageInput').addEventListener('paste', handlePasteImage);
+  $('#saveVision').addEventListener('click', saveVisionSettings);
+  $('#testVision').addEventListener('click', testVisionConnection);
+  $('#saveSearch').addEventListener('click', saveSearchSettings);
+  $('#testSearch').addEventListener('click', testSearchConnection);
   $('#pendingFiles').addEventListener('click', (event) => {
     const button = event.target.closest('[data-remove-file]');
     if (!button) return;

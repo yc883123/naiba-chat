@@ -392,7 +392,109 @@ def default_config() -> dict[str, Any]:
             },
         ],
         "default_agent_id": "general",
+        # 视觉（Phase 0-3）：provider 缺省时使用内置 OVH 免费匿名视觉链兜底。
+        "vision": {
+            "auto_route": True,
+            "provider_model_key": "",
+            "fallback_models": [],
+            "brain_supports_image": False,
+            "timeout_ms": 120000,
+            "cache": True,
+            "cache_ttl_seconds": 3600,
+            "cache_max_entries": 200,
+            "max_images": 4,
+        },
+        # 联网搜索（PLAN4 §联网搜索）：完全可选；endpoint/Key/模型/启用状态由用户配置。
+        "search": {
+            "enabled": False,
+            "provider": "custom",
+            "endpoint": "",
+            "api_key": "",
+            "model": "",
+            "max_results": 5,
+        },
     }
+
+
+# 内置 Agent（PLAN4 §Agent 与权限）：不可覆盖/删除，可复制为用户自定义 Agent。
+# tool_scope 定义该 Agent 允许的最大工具集合；运行流中与对话权限（allowed_tools）取交集，
+# 权限切换不能扩大 preset 本身的工具集合。内置 Agent 使用当前对话选择的模型。
+_BUILT_IN_SCOPE_FULL = (
+    "read_file", "write_file", "list_directory", "search_files", "run_command",
+    "run_skill_script", "http_request", "register_mcp", "call_mcp",
+    "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+    "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
+    "vision_colors", "vision_pixel_diff", "web_search",
+)
+_BUILT_IN_SCOPE_CODE = (
+    "read_file", "write_file", "list_directory", "search_files", "run_command",
+    "run_skill_script", "http_request", "run_in_background", "job_output", "job_status",
+    "job_wait", "job_kill", "subagent",
+    "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
+    "vision_colors", "vision_pixel_diff", "web_search",
+)
+_BUILT_IN_SCOPE_MINIMAL = (
+    "read_file", "list_directory", "search_files", "write_file", "run_command",
+)
+_BUILT_IN_SCOPE_CORDIS = (
+    "read_file", "write_file", "list_directory", "search_files", "run_command",
+    "run_skill_script", "http_request", "subagent",
+    "vision_describe", "vision_ground", "vision_ocr", "vision_colors", "web_search",
+)
+
+
+def built_in_agents() -> list[dict[str, Any]]:
+    """返回内置 Agent 定义清单（含 tool_scope）。每次调用返回新副本，防止被外部篡改。"""
+    return [
+        {
+            "id": "dsh-standard",
+            "name": "dsh-standard（全能）",
+            "system_prompt": (
+                "你是 naiba-chat 的全能内置 Agent，拥有完整工具、Skill、计划、MCP、联网搜索与子任务能力。"
+                "根据用户意图自主选择工具与子 Agent 完成多步任务；涉及文件改动先说明范围。"
+            ),
+            "skill_ids": [],
+            "tool_scope": list(_BUILT_IN_SCOPE_FULL),
+            "built_in": True,
+        },
+        {
+            "id": "dsh-code",
+            "name": "dsh-code（编程）",
+            "system_prompt": (
+                "你是专注编程的内置 Agent，适合多步编码、测试与批量修改。"
+                "优先用读取/编辑/搜索/命令工具完成任务；复杂任务可拆给子 Agent。"
+            ),
+            "skill_ids": [],
+            "tool_scope": list(_BUILT_IN_SCOPE_CODE),
+            "built_in": True,
+        },
+        {
+            "id": "dsh-minimal",
+            "name": "dsh-minimal（极简编码）",
+            "system_prompt": (
+                "你是极简编码 Agent，只开放读取、列出目录、搜索、写入与必要的测试命令。"
+                "不要调用 MCP、视觉或联网搜索等扩展能力。"
+            ),
+            "skill_ids": [],
+            "tool_scope": list(_BUILT_IN_SCOPE_MINIMAL),
+            "built_in": True,
+        },
+        {
+            "id": "dsh-cordis",
+            "name": "dsh-cordis（创作工坊）",
+            "system_prompt": (
+                "你是创作工坊 Agent，用于生成与维护自定义 Agent、Skill、提示词与工作流。"
+                "擅长阅读/编写技能目录与脚本，必要时用子 Agent 拆分复杂创作任务。"
+            ),
+            "skill_ids": [],
+            "tool_scope": list(_BUILT_IN_SCOPE_CORDIS),
+            "built_in": True,
+        },
+    ]
+
+
+def built_in_agent_ids() -> set[str]:
+    return {agent["id"] for agent in built_in_agents()}
 
 
 # 在线请求协议集合（首期本地后端仅支持 ollama / lm_studio）。
@@ -419,6 +521,28 @@ class ConfigStore:
                     defaults.update(loaded)
             except (OSError, json.JSONDecodeError):
                 pass
+        # 嵌套默认值合并：用户配置若只写了部分子字段，补齐缺失键。
+        for key in ("vision", "search"):
+            merged = dict(default_config().get(key, {}))
+            if isinstance(defaults.get(key), dict):
+                merged.update(defaults[key])
+            defaults[key] = merged
+        # MCP 配置去重：重复 server id 只保留首个（PLAN4 §MCP）。
+        servers = defaults.get("mcp_servers")
+        if isinstance(servers, list):
+            seen: dict[str, int] = {}
+            deduped = []
+            for server in servers:
+                if not isinstance(server, dict):
+                    continue
+                sid = str(server.get("id") or "").strip()
+                if not sid or sid in seen:
+                    if sid:
+                        print(f"[配置] 已忽略重复的 MCP 服务 id：{sid}")
+                    continue
+                seen[sid] = 1
+                deduped.append(server)
+            defaults["mcp_servers"] = deduped
         self.data = defaults
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
@@ -552,6 +676,8 @@ class ConfigStore:
             "command_timeout",
             "access_token",
             "workspace_dir",
+            "vision",
+            "search",
         }
         with self.lock:
             for key in allowed:
@@ -587,6 +713,15 @@ class ConfigStore:
                         resolved = self.resolve_workspace_dir(raw)
                         self.ensure_workspace_writable(resolved)
                         self.data[key] = raw
+                    elif key in ("vision", "search"):
+                        incoming = values[key]
+                        if not isinstance(incoming, dict):
+                            raise ValueError(f"{key} 必须是对象")
+                        # 合并到现有子配置，避免丢失其他子字段。
+                        merged = dict(self.data.get(key, {}))
+                        for sub_key, sub_value in incoming.items():
+                            merged[str(sub_key)] = sub_value
+                        self.data[key] = merged
                     else:
                         self.data[key] = values[key]
             self.save()
@@ -888,7 +1023,10 @@ class ConfigStore:
 
     def public_agents(self) -> list[dict[str, Any]]:
         with self.lock:
-            return [dict(agent) for agent in self.data.get("agents", [])]
+            custom = [dict(agent) for agent in self.data.get("agents", [])]
+            # 内置 Agent 追加在用户自定义之后，标记 built_in 且不可覆盖。
+            built_in = [dict(agent) for agent in built_in_agents()]
+            return custom + built_in
 
     def default_agent_id(self) -> str:
         with self.lock:
@@ -907,12 +1045,20 @@ class ConfigStore:
                 (item for item in self.data.get("agents", []) if item.get("id") == agent_id),
                 None,
             )
+            if agent is None:
+                agent = next(
+                    (item for item in built_in_agents() if item.get("id") == agent_id),
+                    None,
+                )
             return dict(agent) if agent else None
 
     def upsert_agent(self, values: dict[str, Any]) -> dict[str, Any]:
         agent_id = str(values.get("id") or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", agent_id):
             raise ValueError("Agent ID 只能包含字母、数字、下划线或连字符")
+        # 内置 Agent 不可覆盖或删除（PLAN4 §Agent 与权限）。
+        if agent_id in built_in_agent_ids():
+            raise ValueError("内置 Agent 不可覆盖，请复制为用户自定义 Agent 后修改")
         name = str(values.get("name") or "").strip()
         if not name:
             raise ValueError("Agent 名称不能为空")
@@ -941,6 +1087,9 @@ class ConfigStore:
 
     def delete_agent(self, agent_id: str) -> bool:
         agent_id = str(agent_id or "").strip()
+        if agent_id in built_in_agent_ids():
+            # 内置 Agent 不可删除：静默视为成功，避免前端报错。
+            return False
         with self.lock:
             agents = self.data.setdefault("agents", [])
             before = len(agents)
@@ -1202,7 +1351,20 @@ class NaibaChatApp:
         self.tool_registry.register_system_handler("subagent", subagent_handler_factory(self))
         for _name, _handler in job_tool_handler_factory(self).items():
             self.tool_registry.register_system_handler(_name, _handler)
-        self.updater = UpdateManager(APP_DIR, DATA_DIR)
+        # 视觉运行时（Phase 1-3）：注册 7 个视觉工具处理器。文本大脑看不到图时自动路由。
+        from vision_runtime import VisionRouter
+
+        self.vision = VisionRouter(self)
+        for _vname, _vhandler in self.vision.tool_handlers().items():
+            self.tool_registry.register_system_handler(_vname, _vhandler)
+        # 联网搜索运行时（PLAN4 §联网搜索）：搜索开关开启且 provider 可用时才被加入 allowed_tools。
+        from web_search_runtime import WebSearchRuntime
+
+        self.web_search = WebSearchRuntime(self)
+        self.tool_registry.register_system_handler("web_search", self._web_search_handler)
+        # Local smoke/test builds can opt out without changing persisted user settings.
+        auto_update = os.environ.get("NAIBA_DISABLE_AUTO_UPDATE", "").strip().lower() not in {"1", "true", "yes"}
+        self.updater = UpdateManager(APP_DIR, DATA_DIR, auto_update=auto_update)
         self.update_restart_callback = None
 
     def stop(self) -> None:
@@ -1210,6 +1372,11 @@ class NaibaChatApp:
         self.plans.shutdown()
         self.jobs.shutdown()
         self.mcp.stop()
+
+    def _web_search_handler(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
+        query = str(args.get("query") or args.get("q") or "")
+        max_results = args.get("max_results")
+        return self.web_search.search(query, int(max_results) if isinstance(max_results, (int, float)) else None)
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         if str(values.get("id") or "").strip() == "comfyui":
@@ -1602,6 +1769,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json(result)
             except (OSError, ValueError, RuntimeError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/vision/test":
+            try:
+                self._json(APP.vision.probe())
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "reason": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/search/test":
+            try:
+                self._json(APP.web_search.probe())
+            except Exception as exc:  # noqa: BLE001
+                self._json({"ok": False, "reason": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/update/check":
             self._json(APP.updater.start_check(force=True))
         elif path == "/api/update/install":
@@ -1687,7 +1864,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path.startswith("/api/plans/") and path.endswith("/execute"):
             plan_id = path.split("/")[-2]
             try:
-                self._json(APP.runs.submit_plan(plan_id), HTTPStatus.ACCEPTED)
+                self._json(
+                    APP.runs.submit_plan(
+                        plan_id,
+                        web_search_enabled=bool(body.get("web_search_enabled", False)),
+                    ),
+                    HTTPStatus.ACCEPTED,
+                )
             except ActiveRunError as exc:
                 self._json(
                     {"error": str(exc), "active_run_id": exc.run_id},

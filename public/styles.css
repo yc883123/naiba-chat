@@ -55,6 +55,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 .icon-button { width: 36px; height: 36px; border: 0; border-radius: var(--radius); background: transparent; color: inherit; display: inline-grid; place-items: center; font-size: 19px; flex: none; }
 .icon-button:hover { background: rgba(127, 127, 127, .13); }
+.web-search-button { font-size: 17px; opacity: .55; }
+.web-search-button.active { opacity: 1; background: var(--green); color: #fff; box-shadow: 0 0 0 2px rgba(18,100,64,.25); }
 .chat-main { min-width: 0; width: 100%; overflow: hidden; display: grid; grid-template-rows: 60px minmax(0, 1fr) auto; }
 .topbar { display: flex; align-items: center; gap: 14px; justify-content: space-between; padding: 0 20px; background: rgba(255, 255, 255, .93); border-bottom: 1px solid var(--line); }
 .model-control { min-width: 0; display: flex; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }

@@ -459,7 +459,7 @@ class FrontendIntegrationTests(unittest.TestCase):
         self.assertIn('path.endswith("/execute")', server_source)
         self.assertIn('path.endswith("/cancel")', server_source)
         self.assertIn("def do_PUT(self)", server_source)
-        self.assertIn("APP.runs.submit_plan(plan_id)", server_source)
+        self.assertIn("APP.runs.submit_plan(", server_source)
         self.assertIn('path == "/api/runs"', server_source)
         self.assertIn('path.endswith("/events")', server_source)
         self.assertIn("APP.plans.edit_plan(", server_source)

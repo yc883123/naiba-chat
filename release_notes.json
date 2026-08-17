@@ -1,8 +1,8 @@
 [
-  "修复 LM Studio 协议：为 /api/v1/chat 增加独立序列化器，文本使用 {type:text,content}、图片使用 {type:image,data_url}、system 消息写入 system_prompt，不再发送 OpenAI messages 或 image_url；按 LM Studio 原生 SSE 解析 message.delta、reasoning.delta、error 与 chat.end，非流式响应从 output[] 提取正文与推理。",
-  "数据与升级迁移：冻结版配置、对话库和 MCP 文件固定到 %LOCALAPPDATA%\\NaibaChat；首次启动自动从旧 EXE 相邻的 config.json / data/ 迁移并保留旧文件；设置页显示实际数据位置并提供旧数据目录导入；修复会话设置接口遗漏的 model_key，确保每个对话所选模型可正确恢复。",
-  "工作区设置：设置页新增工作区目录输入框、目录选择按钮、当前解析后的绝对路径与打开目录按钮；默认值统一为 workspace 并解析为 EXE所在目录\\workspace，不依赖快捷方式或进程启动目录；支持自定义目录、校验可读写、拒绝根目录/系统目录/数据目录等危险路径；切换不自动移动旧文件；已运行的后台任务沿用启动工作区。",
-  "MCP 生命周期：应用启动后在后台连接所有已启用 MCP 并保持到退出；调用时发现断线先执行一次有界重连，再返回明确的启动或调用错误；保留 MCP 工具 annotations（ComfyUI 查询工具只读、run_workflow 有副作用）；Plan/Ask 可调用 ComfyUI 环境与工作流查询等只读工具，但不能调用 run_workflow；设置页新增 MCP 测试与重新连接，并展示 stdio 状态与 ComfyUI HTTP 可达性。",
-  "思维强度 reasoning_effort：每个模型配置新增 auto/off/low/medium/high；协议映射为 LM Studio reasoning、Ollama think、OpenAI Chat reasoning_effort、Responses/Codex reasoning.effort；auto 不发送任何参数，Gemini 与 Claude 首期保持自动。",
-  "更新应用管理的 ComfyUI MCP 脚本，保留用户已有工作流，并为查询工具标注只读、run_workflow 标注有副作用。"
+  "修复 Build 35 升级后的旧数据恢复：当 %LOCALAPPDATA%\\NaibaChat 中已生成空配置或空对话库时，自动恢复 EXE 相邻目录里的旧配置和对话，同时绝不覆盖已有的新对话。",
+  "新增四个内置 Agent：全能、编程、极简编码和创作工坊；内置工具范围不可被对话权限扩大，Plan 确认后进入 Craft 执行时继续保持相同约束。",
+  "集成视觉自动路由与视觉工具：纯文本模型可通过独立视觉后端理解图片，并支持描述、定位、检测、裁剪、OCR、颜色分析和像素差异比较。",
+  "新增可选联网搜索，支持 DuckDuckGo、Serper 和自定义端点；搜索结果按不可信外部数据处理，不会在未启用或未配置时影响普通对话。",
+  "扩展异步作业、子 Agent、MCP 与前端设置，统一按交互模式、Agent 工具范围和运行时可用性冻结每次执行的工具权限。",
+  "发布版本统一为 build-38，并生成与提交版本及 Windows 可执行文件 SHA-256 完全匹配的更新清单，避免误把旧 Build 36 识别为更新。"
 ]
