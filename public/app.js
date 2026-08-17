@@ -28,6 +28,7 @@ const state = {
   tasks: [],
   taskTimer: null,
   planTimer: null,
+  planLoadSeq: 0,
   plans: [],
   interactionMode: localStorage.getItem('naibaChatInteractionMode') || 'craft',
   planEditingId: '',
@@ -599,15 +600,20 @@ function planStatusLabel(status) {
 }
 
 async function loadPlans() {
+  const requestSeq = ++state.planLoadSeq;
+  const conversationId = state.conversationId;
   if (!state.conversationId) {
     state.plans = [];
     renderPlanBar();
     return;
   }
   try {
-    const result = await api(`/api/plans?conversation_id=${encodeURIComponent(state.conversationId)}`);
+    const result = await api(`/api/plans?conversation_id=${encodeURIComponent(conversationId)}`);
+    // Timers and run completion may overlap; ignore responses for an older state.
+    if (requestSeq !== state.planLoadSeq || conversationId !== state.conversationId) return;
     state.plans = result.plans || [];
   } catch (error) {
+    if (requestSeq !== state.planLoadSeq || conversationId !== state.conversationId) return;
     console.debug('[naiba] 计划同步失败:', error.message);
   }
   renderPlanBar();
@@ -615,14 +621,18 @@ async function loadPlans() {
 }
 
 function activePlan() {
-  return state.plans.find((plan) => ['prepare', 'ready', 'building', 'failed', 'cancelled'].includes(plan.status)) || null;
+  // Older plans are history and must not restore actions after the newest plan ends.
+  const plan = state.plans[0];
+  return plan && ['prepare', 'ready', 'building', 'failed', 'cancelled'].includes(plan.status)
+    ? plan
+    : null;
 }
 
 function renderPlanBar() {
   const bar = $('#planBar');
   if (!bar) return;
   const plan = activePlan();
-  if (!plan || !state.conversationId) {
+  if (!plan || !state.conversationId || currentInteractionMode() !== 'plan') {
     bar.hidden = true;
     bar.innerHTML = '';
     return;
@@ -711,6 +721,13 @@ async function executePlan(planId) {
       method: 'POST',
       body: { web_search_enabled: state.webSearchEnabled },
     });
+    const plan = state.plans.find((item) => item.id === planId);
+    if (plan) {
+      plan.status = 'building';
+      plan.detail = { ...(plan.detail || {}), message: '准备执行计划', run_id: run?.id || '' };
+      renderPlanBar();
+      fillPlanCards();
+    }
     if (run?.id && run.conversation_id === state.conversationId) {
       await resumeRun(run);
     }
@@ -2392,8 +2409,9 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'choice') {
     // AI回复包含可选项，显示选择按钮
     showChoiceButtons(event.choices, event.choice_groups);
-    } else if (event.type === 'cancelled') {
+  } else if (event.type === 'cancelled') {
     answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
+    if (row.dataset.runKind === 'plan_execute') void loadPlans();
   } else if (event.type === 'run_failed') {
     // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
@@ -2409,9 +2427,18 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     } else {
       answer.innerHTML = '<p>计划执行完成</p>';
     }
+    if (event.plan?.id) {
+      const index = state.plans.findIndex((plan) => plan.id === event.plan.id);
+      if (index >= 0) state.plans[index] = event.plan;
+      else state.plans.unshift(event.plan);
+      renderPlanBar();
+      fillPlanCards();
+    }
+    if (event.plan || row.dataset.runKind === 'plan_execute') void loadPlans();
     $('#runtimeStatus').textContent = '就绪';
   } else if (event.type === 'error') {
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.message)}</p>`;
+    if (row.dataset.runKind === 'plan_execute') void loadPlans();
     $('#runtimeStatus').textContent = '执行失败';
   }
   scrollToBottom();

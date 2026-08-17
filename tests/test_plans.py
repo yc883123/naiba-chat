@@ -461,6 +461,11 @@ class FrontendIntegrationTests(unittest.TestCase):
         self.assertIn("function renderPlanBar()", source)
         self.assertIn("function fillPlanCards()", source)
         self.assertIn("method: 'PUT'", source)
+        self.assertIn("planLoadSeq: 0", source)
+        self.assertIn("requestSeq !== state.planLoadSeq", source)
+        self.assertIn("currentInteractionMode() !== 'plan'", source)
+        self.assertIn("const plan = state.plans[0]", source)
+        self.assertIn("if (event.plan?.id)", source)
 
     def test_plan_api_routes_exist(self) -> None:
         server_source = Path("server.py").read_text(encoding="utf-8")
