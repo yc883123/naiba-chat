@@ -506,6 +506,96 @@ class LocalModelUnloadTests(unittest.TestCase):
 
 
 class OllamaFormatTests(unittest.TestCase):
+    def test_ollama_stream_retries_without_thinking_when_first_response_has_no_text(self) -> None:
+        requests: list[dict[str, object]] = []
+        statuses: list[dict[str, object]] = []
+
+        class Response:
+            headers = {"Content-Type": "application/x-ndjson"}
+
+            def __init__(self, lines):
+                self.lines = lines
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                return iter(self.lines)
+
+        responses = [
+            Response([
+                json.dumps({"message": {"thinking": "still thinking", "content": ""}}).encode("utf-8"),
+                json.dumps({"done": True, "eval_count": 12}).encode("utf-8"),
+            ]),
+            Response([
+                json.dumps({"message": {"content": "final answer"}}).encode("utf-8"),
+                json.dumps({"done": True, "eval_count": 3}).encode("utf-8"),
+            ]),
+        ]
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            requests.append(json.loads(request.data.decode("utf-8")))
+            return responses.pop(0)
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            content, reasoning, usage = ModelRuntime._complete_online(
+                {
+                    "base_url": "http://127.0.0.1:11434/v1",
+                    "model": "qwen3:8b",
+                    "request_format": "ollama",
+                },
+                [{"role": "user", "content": "hello"}],
+                {"temperature": 0, "max_tokens": 64, "stream": True},
+                statuses.append,
+            )
+
+        self.assertEqual("final answer", content)
+        self.assertEqual("", reasoning)
+        self.assertEqual(3, usage["output_tokens"])
+        self.assertNotIn("think", requests[0])
+        self.assertIs(False, requests[1]["think"])
+        self.assertTrue(any("关闭思考" in str(item.get("message") or "") for item in statuses))
+
+    def test_ollama_stream_does_not_retry_when_thinking_is_explicitly_off(self) -> None:
+        calls = 0
+
+        class Response:
+            headers = {"Content-Type": "application/x-ndjson"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def __iter__(self):
+                return iter([json.dumps({"done": True}).encode("utf-8")])
+
+        def fake_urlopen(_request, timeout):
+            nonlocal calls
+            del timeout
+            calls += 1
+            return Response()
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            with self.assertRaisesRegex(RuntimeError, "Ollama 流式响应中没有文本内容"):
+                ModelRuntime._complete_online(
+                    {
+                        "base_url": "http://127.0.0.1:11434/v1",
+                        "model": "qwen3:8b",
+                        "request_format": "ollama",
+                        "reasoning_effort": "off",
+                    },
+                    [{"role": "user", "content": "hello"}],
+                    {"temperature": 0, "max_tokens": 64, "stream": True},
+                )
+
+        self.assertEqual(1, calls)
+
     def test_ollama_chat_uses_native_endpoint_and_response(self) -> None:
         captured: dict[str, object] = {}
 

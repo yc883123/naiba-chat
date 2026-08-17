@@ -575,7 +575,26 @@ class ModelRuntime:
                             content = ModelRuntime._reasoning_action(reasoning)
                             if content:
                                 reasoning = ""
-                            else:
+                            elif payload.get("think") is not False:
+                                if status:
+                                    status({"type": "status", "message": "Ollama 未返回正文，正在关闭思考后重试"})
+                                retry_payload = dict(payload)
+                                retry_payload["think"] = False
+                                retry_request = urllib.request.Request(
+                                    endpoint,
+                                    data=json.dumps(retry_payload, ensure_ascii=False).encode("utf-8"),
+                                    headers=headers,
+                                    method="POST",
+                                )
+                                with urllib.request.urlopen(retry_request, timeout=request_timeout) as retry_response:
+                                    streamed = ModelRuntime._read_ollama_stream(retry_response, status)
+                                content = ModelRuntime._clean_content(streamed["content"])
+                                reasoning = streamed["reasoning"]
+                                if not content:
+                                    content = ModelRuntime._reasoning_action(reasoning)
+                                    if content:
+                                        reasoning = ""
+                            if not content:
                                 raise RuntimeError("Ollama 流式响应中没有文本内容")
                         return content, reasoning, streamed["usage"]
                     if stream_enabled and request_format == "lm_studio":

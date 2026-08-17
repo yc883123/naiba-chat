@@ -371,7 +371,6 @@ class ConversationRunManager:
                 if vision_note:
                     event({"type": "status", "message": vision_note})
             except Exception as exc:  # noqa: BLE001 - 视觉不可用不应阻断普通聊天
-                print(f"视觉自动路由跳过：{exc}")
                 history, removed = self.app.vision.strip_images_for_text_model(
                     history, f"视觉路由异常：{exc}"
                 )
