@@ -1292,6 +1292,13 @@ class PublicRepositoryHygieneTests(unittest.TestCase):
         self.assertIn("release_notes.json | ConvertFrom-Json", workflow)
         self.assertIn('root / "release_notes.json"', spec)
 
+    def test_release_notes_are_a_valid_non_empty_json_array(self) -> None:
+        notes = json.loads(Path("release_notes.json").read_text(encoding="utf-8-sig"))
+
+        self.assertIsInstance(notes, list)
+        self.assertTrue(notes)
+        self.assertTrue(all(isinstance(note, str) and note.strip() for note in notes))
+
     def test_update_check_has_timeout_recovery(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
 
@@ -1331,6 +1338,27 @@ class UpdateManifestTests(unittest.TestCase):
 
             self.assertFalse(status["update_available"])
             self.assertEqual("current", status["phase"])
+
+    def test_build_42_detects_build_45_update(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            manager = UpdateManager(Path(root), Path(root) / "data")
+            manager.build = {"version": "build-42", "commit": "c" * 40}
+            manifest = {
+                "repository": "yc883123/naiba-chat",
+                "commit": "d" * 40,
+                "sha256": "e" * 64,
+                "asset": "naiba-chat.exe",
+                "version": "build-45",
+            }
+            with (
+                patch.object(UpdateManager, "mode", new_callable=PropertyMock, return_value="executable"),
+                patch.object(UpdateManager, "_request_json", return_value=manifest),
+            ):
+                status = manager.check(force=True)
+
+            self.assertTrue(status["update_available"])
+            self.assertEqual("available", status["phase"])
+            self.assertEqual("build-45", status["latest_version"])
 
     def test_frozen_update_restart_resets_pyinstaller_environment(self) -> None:
         source = Path("updater.py").read_text(encoding="utf-8")
