@@ -161,6 +161,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .attachment-image figcaption { font-size: 11px; color: var(--muted); margin-top: 4px; word-break: break-all; }
 
 .composer-wrap { padding: 8px max(20px, calc((100% - 880px) / 2)) max(12px, env(safe-area-inset-bottom)); background: var(--bg); }
+.composer-wrap.dragover { background: var(--green-soft); }
+.composer-wrap.dragover .composer { border-color: var(--green); box-shadow: 0 0 0 2px rgba(71, 133, 83, .14); }
 .active-task-bar { margin: 0 0 7px; padding: 7px 9px; border-left: 2px solid var(--green); background: var(--green-soft); color: var(--text); font-size: 12px; line-height: 1.4; }
 .active-task-bar button { border: 0; background: transparent; color: var(--green); padding: 0; font-weight: 600; }
 .composer { min-height: 52px; display: flex; align-items: flex-end; gap: 6px; padding: 6px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: 0 6px 24px rgba(22, 31, 23, .08); }
@@ -285,6 +287,9 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .connection-item small { color: var(--muted); overflow-wrap: anywhere; }
 .provider-form { display: grid; gap: 13px; }
 .provider-field[hidden] { display: none; }
+.provider-kind-control { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; gap: 10px; align-items: center; }
+.provider-kind-control input[type="range"] { width: 100%; accent-color: var(--green); }
+.provider-kind-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .provider-current { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 9px; align-items: end; }
 .provider-current .control-button, .provider-current .danger-button { height: 40px; }
 .workspace-dialog-body { padding: 16px 18px; }

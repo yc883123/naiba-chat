@@ -248,7 +248,7 @@ class ModelRuntime:
         return converted
 
     @staticmethod
-    def list_online_models(profile: dict[str, Any]) -> list[dict[str, str]]:
+    def list_online_models(profile: dict[str, Any]) -> list[dict[str, Any]]:
         base_url = str(profile.get("base_url") or "").rstrip("/")
         api_key = str(profile.get("api_key") or "").strip()
         request_format = str(profile.get("request_format") or "openai_chat")
@@ -328,7 +328,29 @@ class ModelRuntime:
             if not model_id or model_id in seen:
                 continue
             seen.add(model_id)
-            models.append({"id": model_id, "name": display_name.strip() or model_id})
+            capability: dict[str, Any] = {}
+            if isinstance(item, dict):
+                for target, keys in {
+                    "context_window": (
+                        "context_window", "contextWindow", "context_length", "contextLength",
+                        "max_context_length", "maxContextLength", "inputTokenLimit",
+                    ),
+                    "max_output_tokens": (
+                        "max_output_tokens", "maxOutputTokens", "outputTokenLimit",
+                        "max_completion_tokens", "maxCompletionTokens",
+                    ),
+                }.items():
+                    for key in keys:
+                        raw = item.get(key)
+                        if raw not in (None, ""):
+                            try:
+                                parsed = int(raw)
+                            except (TypeError, ValueError):
+                                continue
+                            if parsed > 0:
+                                capability[target] = parsed
+                                break
+            models.append({"id": model_id, "name": display_name.strip() or model_id, **capability})
         return models[:500]
 
     @staticmethod
@@ -391,8 +413,10 @@ class ModelRuntime:
         if not base_url or not model:
             raise ValueError("在线模型需要 Base URL 和模型名称")
         request_format = str(profile.get("request_format") or "openai_chat")
-        temperature = float(options.get("temperature", 0.7))
-        max_tokens = int(options.get("max_tokens", 8192))
+        temperature_raw = options.get("temperature", profile.get("temperature"))
+        temperature = None if temperature_raw in (None, "") else float(temperature_raw)
+        max_tokens_raw = options.get("max_tokens", profile.get("max_output_tokens"))
+        max_tokens = None if max_tokens_raw in (None, "") else int(max_tokens_raw)
         stream_enabled = bool(options.get("stream", False))
         reasoning_effort = str(profile.get("reasoning_effort") or "auto").strip().lower()
         headers = {"Content-Type": "application/json"}
@@ -402,10 +426,12 @@ class ModelRuntime:
             payload = {
                 "model": model,
                 "messages": ModelRuntime._openai_messages(messages),
-                "temperature": temperature,
-                "max_tokens": max_tokens,
                 "stream": stream_enabled,
             }
+            if temperature is not None:
+                payload["temperature"] = temperature
+            if max_tokens is not None:
+                payload["max_tokens"] = max_tokens
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
             if reasoning_params:
                 payload.update(reasoning_params)
@@ -428,10 +454,12 @@ class ModelRuntime:
                     }
                     for item in messages if item.get("role") != "system"
                 ],
-                "temperature": temperature,
-                "max_output_tokens": max_tokens,
                 "stream": stream_enabled,
             }
+            if temperature is not None:
+                payload["temperature"] = temperature
+            if max_tokens is not None:
+                payload["max_output_tokens"] = max_tokens
             if instructions:
                 payload["instructions"] = instructions
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
@@ -464,10 +492,14 @@ class ModelRuntime:
                 }
                 for item in messages if item.get("role") != "system"
             ]
-            payload = {
-                "contents": contents,
-                "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens},
-            }
+            generation_config = {}
+            if temperature is not None:
+                generation_config["temperature"] = temperature
+            if max_tokens is not None:
+                generation_config["maxOutputTokens"] = max_tokens
+            payload = {"contents": contents}
+            if generation_config:
+                payload["generationConfig"] = generation_config
             if system_parts:
                 payload["systemInstruction"] = {"parts": system_parts}
             if api_key:
@@ -478,6 +510,8 @@ class ModelRuntime:
                 ModelRuntime._content_text(item.get("content"))
                 for item in messages if item.get("role") == "system"
             )
+            # Anthropic requires max_tokens; use its compatibility floor only
+            # when the provider did not expose a limit and the user left it blank.
             payload = {
                 "model": model,
                 "messages": [
@@ -500,10 +534,11 @@ class ModelRuntime:
                     }
                     for item in messages if item.get("role") != "system"
                 ],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
+                "max_tokens": max_tokens if max_tokens is not None else 4096,
                 "stream": stream_enabled,
             }
+            if temperature is not None:
+                payload["temperature"] = temperature
             if system:
                 payload["system"] = system
             if api_key:
@@ -511,17 +546,21 @@ class ModelRuntime:
             headers["anthropic-version"] = "2023-06-01"
         elif request_format == "ollama":
             endpoint = ModelRuntime._local_endpoint(base_url, "/api/chat")
+            ollama_options = {}
+            if temperature is not None:
+                ollama_options["temperature"] = temperature
+            if max_tokens is not None:
+                ollama_options["num_predict"] = max_tokens
             payload = {
                 "model": model,
                 "messages": ModelRuntime._ollama_messages(messages),
                 "stream": stream_enabled,
-                "options": {
-                    "temperature": temperature,
-                    "num_predict": max_tokens,
-                },
             }
-            if profile.get("context_size"):
-                payload["options"]["num_ctx"] = int(profile["context_size"])
+            context_window = profile.get("context_window") or profile.get("context_size")
+            if context_window:
+                ollama_options["num_ctx"] = int(context_window)
+            if ollama_options:
+                payload["options"] = ollama_options
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
@@ -534,12 +573,15 @@ class ModelRuntime:
                 "model": model,
                 "system_prompt": system_prompt,
                 "input": lm_input,
-                "temperature": temperature,
-                "max_output_tokens": max_tokens,
                 "stream": stream_enabled,
             }
-            if profile.get("context_size"):
-                payload["context_length"] = int(profile["context_size"])
+            if temperature is not None:
+                payload["temperature"] = temperature
+            if max_tokens is not None:
+                payload["max_output_tokens"] = max_tokens
+            context_window = profile.get("context_window") or profile.get("context_size")
+            if context_window:
+                payload["context_length"] = int(context_window)
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
             if reasoning_params:
                 payload.update(reasoning_params)

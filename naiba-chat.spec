@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from PyInstaller.building.datastruct import Tree
 
 
 root = Path(SPECPATH).resolve()
@@ -29,7 +30,14 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(root / "public"), "public"),
-        (str(root / "skills"), "skills"),
+        Tree(
+            str(root / "skills"),
+            prefix="skills",
+            excludes=[
+                "H3擦边导演_动作库增强版_v5.4",
+                "minnimax-h",
+            ],
+        ),
         (str(build_info), "."),
         (str(root / "release_notes.json"), "."),
         (str(icon_path), "."),

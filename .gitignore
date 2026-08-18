@@ -132,6 +132,10 @@ setup.bat
 !skills/
 !skills/**
 
+# Private local Skills: keep available on developer machines, never sync or ship.
+skills/H3擦边导演_动作库增强版_v5.4/
+skills/minnimax-h/
+
 # Runtime output inside bundled Skills must never be published.
 skills/**/output/
 skills/**/scripts/_err.txt

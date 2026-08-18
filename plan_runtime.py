@@ -309,6 +309,48 @@ class PlanManager:
             )
         return prompt
 
+    @staticmethod
+    def needs_plan_compilation(plan: dict[str, Any] | None, response: str) -> bool:
+        """Return true when a Plan reply ignored the required plan envelope.
+
+        Genuine clarification questions stay conversational. A direct answer,
+        or any reply after one clarification round, is compiled into a plan so
+        the UI cannot remain stuck in the prepare state indefinitely.
+        """
+        if not plan or PLAN_BLOCK_RE.search(response or ""):
+            return False
+        rounds = int((plan.get("detail") or {}).get("clarification_round") or 0)
+        if rounds >= 1:
+            return True
+        text = str(response or "").strip()
+        return bool(text) and "?" not in text and "？" not in text
+
+    @staticmethod
+    def plan_compilation_messages(
+        plan: dict[str, Any], response: str
+    ) -> list[dict[str, str]]:
+        """Build a tool-free repair request that only emits a plan document."""
+        question = str(plan.get("question") or "").strip()
+        draft = str(response or "").strip()[:20000]
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "你是实施计划编译器。只输出一个完整的 <plan>...</plan> 块，"
+                    "不得调用工具，不得添加标签外说明。计划必须包含 Markdown 一级标题、"
+                    "方案概述，以及 3 到 8 条按顺序编号且可执行的实施步骤。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"用户目标：\n{question}\n\n"
+                    f"上一轮模型提供的材料：\n{draft}\n\n"
+                    "信息不足之处请列为明确假设，不要继续提问，直接生成实施计划。"
+                ),
+            },
+        ]
+
     def process_response(self, plan_id: str, response: str) -> tuple[str, dict[str, Any] | None]:
         """处理 Plan 模式的模型回复：检测到 <plan> 块则落库为就绪计划。"""
         plan = self.app.storage.get_plan(plan_id)
@@ -645,7 +687,17 @@ class PlanManager:
             provider_id = str(frozen.get("provider_id") or conversation.get("provider_id") or "")
             model_key = f"online:{provider_id}" if provider_id else ""
         profile = self.app.config.profile(model_key)
-        options = dict(frozen.get("generation_options") or self.app.config.generation_options())
+        if frozen.get("generation_options"):
+            options = dict(frozen["generation_options"])
+        else:
+            getter = self.app.config.generation_options
+            try:
+                options = dict(getter(model_key))
+            except TypeError as first_error:
+                try:
+                    options = dict(getter())
+                except TypeError:
+                    raise first_error
         options["stream"] = bool(frozen.get("stream_enabled", conversation.get("stream_enabled", 1)))
         agent = frozen.get("agent") or self.app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
         agent_prompt = str(agent.get("system_prompt") or "").strip() or str(

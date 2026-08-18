@@ -70,7 +70,14 @@ def run_subagent_agent(
         provider_id = str(conversation.get("provider_id") or "")
         model_key = f"online:{provider_id}" if provider_id else ""
     profile = app.config.profile(model_key)
-    options = dict(app.config.generation_options())
+    getter = app.config.generation_options
+    try:
+        options = dict(getter(model_key))
+    except TypeError as first_error:
+        try:
+            options = dict(getter())
+        except TypeError:
+            raise first_error
     options["stream"] = bool(conversation.get("stream_enabled", 1))
     agent = app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
     agent_prompt = str(agent.get("system_prompt") or "").strip() or str(

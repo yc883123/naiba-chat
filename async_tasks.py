@@ -54,6 +54,28 @@ def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
     return sources[:20]
 
 
+def _merge_usage_summary(
+    summary: dict[str, Any], latest: dict[str, Any]
+) -> dict[str, Any]:
+    """Append one provider response to an existing per-run usage summary."""
+    if not latest:
+        return dict(summary or {})
+    if not summary:
+        return SkillAgent._summarize_usage([latest])
+    merged = dict(summary)
+    for key in ("input_tokens", "output_tokens", "total_tokens", "cached_tokens"):
+        merged[key] = max(0, int(summary.get(key) or 0)) + max(0, int(latest.get(key) or 0))
+    merged["requests"] = max(0, int(summary.get("requests") or 0)) + 1
+    merged["last_input_tokens"] = max(0, int(latest.get("input_tokens") or 0))
+    merged["last_output_tokens"] = max(0, int(latest.get("output_tokens") or 0))
+    merged["context_tokens"] = merged["last_input_tokens"] + merged["last_output_tokens"]
+    merged["cache_hit_rate"] = (
+        round(merged["cached_tokens"] / merged["input_tokens"] * 100, 1)
+        if merged["input_tokens"] else 0.0
+    )
+    return merged
+
+
 class ActiveRunError(RuntimeError):
     def __init__(self, run_id: str):
         super().__init__("当前对话已有运行中的任务")
@@ -153,6 +175,18 @@ class ConversationRunManager:
             return self._conditions.setdefault(run_id, threading.Condition(self._lock))
 
     @staticmethod
+    def _generation_options(config: Any, model_key: str = "") -> dict[str, Any]:
+        """Read provider-scoped options while tolerating legacy adapters."""
+        getter = config.generation_options
+        try:
+            return dict(getter(model_key))
+        except TypeError as first_error:
+            try:
+                return dict(getter())
+            except TypeError:
+                raise first_error
+
+    @staticmethod
     def _active_error(exc: RuntimeError) -> ActiveRunError | None:
         text = str(exc)
         if text.startswith("ACTIVE_RUN:"):
@@ -199,13 +233,16 @@ class ConversationRunManager:
                 plan_id = str(self.app.plans.ensure_active_plan(conversation_id, message)["id"])
             web_search_enabled = bool(conversation.get("web_search_enabled", 0))
             allowed_tools = self._resolve_allowed_tools(mode, agent, web_search_enabled)
+            model_key = str(body.get("model_key") or conversation.get("model_key") or "")
+            if not model_key and conversation.get("provider_id"):
+                model_key = f"online:{conversation['provider_id']}"
             snapshot = {
                 "agent": agent,
                 "conversation_system_prompt": str(conversation.get("system_prompt") or ""),
                 "provider_id": str(conversation.get("provider_id") or ""),
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
-                "model_key": str(body.get("model_key") or ""),
-                "generation_options": self.app.config.generation_options(),
+                "model_key": model_key,
+                "generation_options": self._generation_options(self.app.config, model_key),
                 "auto_skills": bool(body.get("auto_skills", False)),
                 "skill_ids": [str(item) for item in body.get("skill_ids", [])],
                 "attachments": attachments,
@@ -266,7 +303,7 @@ class ConversationRunManager:
                 "provider_id": str(conversation.get("provider_id") or ""),
                 "model_key": model_key,
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
-                "generation_options": self.app.config.generation_options(),
+                "generation_options": self._generation_options(self.app.config, model_key),
                 "web_search_enabled": bool(web_search_enabled),
                 "allowed_tools": self._resolve_allowed_tools(
                     "craft", agent, bool(web_search_enabled)
@@ -423,7 +460,7 @@ class ConversationRunManager:
                 )
                 if removed:
                     event({"type": "status", "message": f"视觉路由异常，已安全移除 {removed} 张图片"})
-            options = dict(snapshot.get("generation_options") or self.app.config.generation_options())
+            options = dict(snapshot.get("generation_options") or self._generation_options(self.app.config, model_key))
             options["stream"] = bool(snapshot.get("stream_enabled", True))
             agent = snapshot.get("agent") or {}
             selected = list(dict.fromkeys(agent.get("skill_ids", []) + snapshot.get("skill_ids", [])))
@@ -470,6 +507,33 @@ class ConversationRunManager:
                 raise TaskCancelled("任务已取消")
             plan_status = ""
             if sink.failure_message is None and mode == "plan" and plan_id:
+                current_plan = self.app.plans.get(plan_id)
+                if self.app.plans.needs_plan_compilation(current_plan, response):
+                    event({"type": "status", "message": "正在整理为可执行计划"})
+                    try:
+                        compile_options = dict(options)
+                        compile_options["stream"] = False
+                        response = self.app.models.complete(
+                            profile,
+                            self.app.plans.plan_compilation_messages(current_plan, response),
+                            compile_options,
+                            None,
+                        )
+                        compile_reasoning = str(
+                            getattr(self.app.models, "last_reasoning", "") or ""
+                        )
+                        if compile_reasoning:
+                            reasonings.append(compile_reasoning)
+                            event({"type": "reasoning", "content": compile_reasoning})
+                        usage = _merge_usage_summary(
+                            usage,
+                            dict(getattr(self.app.models, "last_usage", {}) or {}),
+                        )
+                    except Exception as exc:  # noqa: BLE001 - keep the original reply available
+                        event({
+                            "type": "status",
+                            "message": f"计划整理未完成，将保留原回复：{exc}",
+                        })
                 response, plan = self.app.plans.process_response(plan_id, response)
                 plan_status = str((plan or {}).get("status") or "")
             choice_groups = _detect_choice_groups(response)

@@ -1910,6 +1910,32 @@ class ToolProtocolAgentLoopTests(unittest.TestCase):
         # The raw protocol must not be saved as the assistant message.
         self.assertNotIn('<tool name="read_file">', content)
 
+    def test_incomplete_tool_action_is_retried_and_recovered(self) -> None:
+        events: list[dict[str, Any]] = []
+        calls = {"n": 0}
+
+        def complete(profile, messages, options, event):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return '<tool name="read_file"><parameter name="path">D:\\x'
+            if calls["n"] == 2:
+                return json.dumps({
+                    "type": "tool",
+                    "tool": "read_file",
+                    "arguments": {"path": "x"},
+                })
+            return "done"
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, False, [], "", ["read_file"],
+            lambda event: events.append(event), lambda *_args: None,
+        )
+        self.assertEqual("done", content)
+        self.assertEqual(1, len(runs))
+        self.assertGreaterEqual(calls["n"], 3)
+        self.assertIn("retry", [event.get("type") for event in events])
+
     def test_persisted_assistant_message_excludes_protocol(self) -> None:
         def complete(profile, messages, options, event):
             if not getattr(complete, "step", 0):

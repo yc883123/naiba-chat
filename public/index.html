@@ -208,7 +208,7 @@
       <nav class="settings-nav">
         <button class="active" data-settings-tab="models">API 供应商</button>
         <button data-settings-tab="agent">Agent</button>
-        <button data-settings-tab="runtime">生成参数</button>
+        <button data-settings-tab="runtime">运行设置</button>
         <button data-settings-tab="connections">连接状态</button>
         <button data-settings-tab="vision">视觉</button>
         <button data-settings-tab="search">联网搜索</button>
@@ -237,6 +237,14 @@
                 <span class="secret-actions"><span id="providerKeyStatus">未配置</span><button id="toggleProviderKey" type="button" title="显示 API Key">显示</button></span>
               </span>
             </label>
+            <label class="provider-field provider-kind-field">API 类型
+              <span class="provider-kind-control">
+                <span class="provider-kind-label">在线 API</span>
+                <input id="providerKind" type="range" min="0" max="1" step="1" value="0" aria-label="API 类型">
+                <span class="provider-kind-label">本地 API</span>
+              </span>
+              <small class="hint" id="providerKindHint">在线 API 使用远程模型服务。</small>
+            </label>
             <label class="provider-field">请求格式
               <select id="providerFormat">
                 <option value="openai_chat">OpenAI Chat /v1/chat/completions</option>
@@ -255,9 +263,18 @@
               </span>
               <input id="providerModelCustom" hidden placeholder="输入模型名称，例如 gpt-5-mini">
             </label>
-            <label class="provider-field" id="providerContextField"><span id="providerContextLabel">本地上下文 Tokens（可选）</span>
-              <input id="providerContextSize" type="number" min="1" max="1048576" step="1" placeholder="留空则使用本地服务默认值">
-              <small class="hint" id="providerContextHint">仅本地模型有效。</small>
+            <label class="provider-field" id="providerContextField">上下文窗口 Tokens（可选）
+              <input id="providerContextWindow" type="number" min="1" max="1048576" step="1" placeholder="留空则使用供应商默认值">
+              <span id="providerContextSize" hidden aria-hidden="true"></span>
+              <small class="hint" id="providerContextHint">在线与本地模型有效；只限制上下文容量，不限制单次输出长度。</small>
+            </label>
+            <label class="provider-field" id="providerMaxOutputField">最大输出 Tokens（可选）
+              <input id="providerMaxOutputTokens" type="number" min="1" max="1048576" step="1" placeholder="留空则使用供应商默认值">
+              <small class="hint" id="providerMaxOutputHint">在线模型使用供应商自身的模型上限；只限制单次回复长度，不改变上下文窗口。</small>
+            </label>
+            <label class="provider-field" id="providerTemperatureField">温度（可选）
+              <input id="providerTemperature" type="number" min="0" max="2" step="0.1" placeholder="留空则使用供应商默认值">
+              <small class="hint">留空时不发送温度字段。</small>
             </label>
             <label class="provider-field">思维强度
               <select id="providerReasoningEffort">
@@ -318,13 +335,11 @@
           <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存工具范围</button></div>
         </section>
         <section data-settings-panel="runtime" hidden>
-          <h3>生成参数</h3>
+          <h3>运行设置</h3>
           <div class="field-grid">
-            <label>温度<input id="temperature" type="number" min="0" max="2" step="0.1"><small class="hint">在线与本地模型有效；控制输出随机性，供应商可能限制取值范围。</small></label>
-            <label>最大输出 Tokens<input id="maxTokens" type="number" min="64" max="32768" step="64"><small class="hint">在线与本地模型有效；限制单次回复长度，最终仍受模型和供应商上限约束。</small></label>
             <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"><small class="hint">仅工具与命令执行有效；不控制在线或本地模型的响应超时。</small></label>
           </div>
-          <p class="hint">本地模型的上下文长度请在“API 供应商”中按 Ollama 或 LM Studio 单独设置；在线模型使用供应商自身的模型上限。</p>
+          <p class="hint">模型温度、上下文窗口和最大输出 Tokens 请在“API 供应商”中按供应商单独设置。</p>
           <h3 class="subheading">工作区</h3>
           <label class="field-wide">工作区目录
             <input id="workspaceDir" type="text" placeholder="留空使用程序目录下的 workspace">

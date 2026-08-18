@@ -34,6 +34,7 @@ const state = {
   planEditingId: '',
   webSearchEnabled: false,
   contextUsage: null,
+  providerModelCapabilities: {},
 };
 
 const $ = (selector) => document.querySelector(selector);
@@ -227,6 +228,11 @@ function renderContextUsage() {
   summary.textContent = `上下文 ${contextText}`;
   turn.textContent = `最近一轮：输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 总计 ${total.toLocaleString()} tokens`;
 }
+
+// Legacy provider context_size: migrated to context_window and kept only for
+// compatibility with older configuration readers.
+// providerContextSize remains only as a hidden legacy selector marker;
+// providerContextWindow is the active provider-scoped control.
 
 function toggleContextUsagePopover(event) {
   event.stopPropagation();
@@ -1037,7 +1043,6 @@ function renderAgents() {
   const select = $('#agentSelect');
   if (!select) return;
   const agents = state.bootstrap?.agents || [];
-  const previous = select.value;
   select.innerHTML = '';
   agents.forEach((agent) => {
     const option = document.createElement('option');
@@ -1051,11 +1056,7 @@ function renderAgents() {
     option.textContent = '暂无 Agent';
     select.append(option);
   }
-  if ([...select.options].some((o) => o.value === previous)) {
-    select.value = previous;
-  } else {
-    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
-  }
+  applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
 }
 
 // 根据对话已保存的 agent_id 恢复 Agent 选择；未绑定或已删除时回退到默认 Agent
@@ -1125,7 +1126,12 @@ async function createConversation() {
   hideChoiceButtons();
   const conversation = await api('/api/conversations', {
     method: 'POST',
-    body: { interaction_mode: state.interactionMode, permission_mode: 'confirm', web_search_enabled: false },
+    body: {
+      interaction_mode: state.interactionMode,
+      permission_mode: 'confirm',
+      web_search_enabled: false,
+      agent_id: $('#agentSelect')?.value || state.bootstrap?.default_agent_id || '',
+    },
   });
   state.conversationId = conversation.id;
   state.conversations.unshift(conversation);
@@ -1383,7 +1389,11 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   }
   $('#providerName').value = provider.name || '';
   $('#providerBaseUrl').value = provider.base_url || '';
-  $('#providerContextSize').value = provider.context_size || '';
+  const inferredKind = provider.kind || (['ollama', 'lm_studio'].includes(provider.request_format) ? 'local' : 'online');
+  $('#providerKind').value = inferredKind === 'local' ? '1' : '0';
+  $('#providerContextWindow').value = provider.context_window || provider.context_size || '';
+  $('#providerMaxOutputTokens').value = provider.max_output_tokens || '';
+  $('#providerTemperature').value = provider.temperature ?? '';
   $('#providerReasoningEffort').value = provider.reasoning_effort || 'auto';
   setProviderModelOptions([], provider.model || '');
   $('#providerFormat').value = provider.request_format || 'openai_chat';
@@ -1394,9 +1404,20 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   $('#providerKeyStatus').textContent = provider.has_api_key ? '已配置' : '未配置';
   $('#providerError').textContent = '';
   setProviderEditMode(editing, isNew);
+  syncProviderKindOptions();
   updateProviderFormatGuide();
   updateProviderContextField();
   updateUnloadModelButton();
+}
+
+function syncProviderKindOptions() {
+  const local = $('#providerKind').value === '1';
+  const allowed = local ? ['lm_studio', 'ollama'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
+  const format = $('#providerFormat');
+  [...format.options].forEach((option) => { option.hidden = !allowed.includes(option.value); });
+  if (!allowed.includes(format.value)) format.value = allowed[0];
+  const hint = $('#providerKindHint');
+  if (hint) hint.textContent = local ? '本地 API 使用 Ollama 或 LM Studio 服务。' : '在线 API 使用远程模型服务。';
 }
 
 function updateProviderFormatGuide() {
@@ -1412,20 +1433,15 @@ function updateProviderFormatGuide() {
 
 function updateProviderContextField() {
   const field = $('#providerContextField');
-  const input = $('#providerContextSize');
-  const label = $('#providerContextLabel');
-  const hint = $('#providerContextHint');
+  const input = $('#providerContextWindow');
   const active = Boolean($('#providerId').value) || state.providerIsNew;
-  const format = $('#providerFormat').value;
-  const local = ['ollama', 'lm_studio'].includes(format);
-  field.hidden = !active || !local;
-  input.disabled = !state.providerEditing || !local;
-  if (label) label.textContent = format === 'lm_studio'
-    ? 'LM Studio 上下文 Tokens（可选）'
-    : 'Ollama 上下文 Tokens（可选）';
-  if (hint) hint.textContent = format === 'lm_studio'
-    ? '仅此 LM Studio 配置有效；请求时发送为 context_length。'
-    : '仅此 Ollama 配置有效；请求时发送为 num_ctx。';
+  field.hidden = !active;
+  input.disabled = !state.providerEditing;
+  $('#providerMaxOutputField').hidden = !active;
+  $('#providerTemperatureField').hidden = !active;
+  ['#providerMaxOutputTokens', '#providerTemperature'].forEach((selector) => {
+    $(selector).disabled = !state.providerEditing;
+  });
 }
 
 function setProviderEditMode(editing, isNew = false) {
@@ -1436,7 +1452,8 @@ function setProviderEditMode(editing, isNew = false) {
   $('#providerEmpty').hidden = active;
   [
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
-    '#providerModel', '#providerModelCustom', '#providerContextSize', '#providerReasoningEffort',
+    '#providerKind', '#providerModel', '#providerModelCustom', '#providerContextWindow',
+    '#providerMaxOutputTokens', '#providerTemperature', '#providerReasoningEffort',
   ].forEach((selector) => { $(selector).disabled = !editing; });
   $('#providerSelect').disabled = editing;
   $('#addProvider').disabled = editing;
@@ -1459,6 +1476,10 @@ function setProviderModelOptions(models = [], current = '') {
     if (!id || seen.has(id)) return;
     seen.add(id);
     unique.push({ id, name: String(model.name || id) });
+    state.providerModelCapabilities[id] = {
+      context_window: model.context_window,
+      max_output_tokens: model.max_output_tokens,
+    };
   });
   if (current && !seen.has(current)) unique.unshift({ id: current, name: current });
   const prompt = unique.length > 1 && !current
@@ -1473,6 +1494,18 @@ function setProviderModelOptions(models = [], current = '') {
   $('#providerModelCustom').required = false;
 }
 
+function applyProviderModelCapabilities() {
+  const model = $('#providerModel').value;
+  const capability = state.providerModelCapabilities[model];
+  if (!capability) return;
+  if (!$('#providerContextWindow').value && capability.context_window) {
+    $('#providerContextWindow').value = capability.context_window;
+  }
+  if (!$('#providerMaxOutputTokens').value && capability.max_output_tokens) {
+    $('#providerMaxOutputTokens').value = capability.max_output_tokens;
+  }
+}
+
 function toggleCustomModel() {
   const custom = $('#providerModel').value === '__custom__';
   $('#providerModelCustom').hidden = !custom;
@@ -1482,16 +1515,23 @@ function toggleCustomModel() {
 
 function providerFormValue() {
   const selectedModel = $('#providerModel').value;
+  const kind = $('#providerKind').value === '1' ? 'local' : 'online';
+  const numberOrUndefined = (selector) => {
+    const raw = $(selector).value.trim();
+    return raw ? Number(raw) : undefined;
+  };
   return {
     id: $('#providerId').value,
     name: $('#providerName').value.trim(),
     base_url: $('#providerBaseUrl').value.trim(),
     model: selectedModel === '__custom__' ? $('#providerModelCustom').value.trim() : selectedModel,
     api_key: $('#providerApiKey').value.trim(),
+    kind,
+    local_backend: kind === 'local' ? $('#providerFormat').value : undefined,
     request_format: $('#providerFormat').value,
-    context_size: ['ollama', 'lm_studio'].includes($('#providerFormat').value) && $('#providerContextSize').value.trim()
-      ? Number($('#providerContextSize').value)
-      : undefined,
+    context_window: numberOrUndefined('#providerContextWindow'),
+    max_output_tokens: numberOrUndefined('#providerMaxOutputTokens'),
+    temperature: numberOrUndefined('#providerTemperature'),
     reasoning_effort: $('#providerReasoningEffort').value,
   };
 }
@@ -1513,6 +1553,7 @@ async function loadProviderModels({ automatic = false } = {}) {
     if (!result.models?.length) throw new Error('接口没有返回可用模型，请选择"手动输入模型名称"');
     const current = $('#providerModel').value;
     setProviderModelOptions(result.models, current && current !== '__custom__' ? current : '');
+    applyProviderModelCapabilities();
     $('#providerError').textContent = '模型目录可访问；请继续点击“测试连接”验证实际推理。';
     toast(`已找到 ${result.models.length} 个模型`);
   } catch (error) {
@@ -1533,7 +1574,24 @@ function scheduleProviderModelCheck() {
 async function saveProvider(event) {
   event.preventDefault();
   try {
-    const saved = await api('/api/providers', { method: 'POST', body: providerFormValue() });
+    const values = providerFormValue();
+    if (values.model && (!values.context_window || !values.max_output_tokens)) {
+      try {
+        const result = await api('/api/providers/models', { method: 'POST', body: values });
+        const matched = (result.models || []).find((item) => String(item.id || '') === values.model);
+        if (matched?.context_window && !values.context_window) {
+          values.context_window = Number(matched.context_window);
+          $('#providerContextWindow').value = values.context_window;
+        }
+        if (matched?.max_output_tokens && !values.max_output_tokens) {
+          values.max_output_tokens = Number(matched.max_output_tokens);
+          $('#providerMaxOutputTokens').value = values.max_output_tokens;
+        }
+      } catch (_) {
+        // Capability metadata is optional; the provider may supply defaults.
+      }
+    }
+    const saved = await api('/api/providers', { method: 'POST', body: values });
     ['providers', 'model_profiles'].forEach((key) => {
       const list = state.bootstrap[key] || (state.bootstrap[key] = []);
       const index = list.findIndex((item) => item.id === saved.id);
@@ -1603,8 +1661,6 @@ async function toggleProviderKey() {
 
 function populateRuntimeSettings() {
   const settings = state.bootstrap.settings;
-  $('#temperature').value = settings.temperature;
-  $('#maxTokens').value = settings.max_tokens;
   $('#commandTimeout').value = settings.command_timeout;
   $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
   $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
@@ -1932,8 +1988,6 @@ async function deleteAgent(agentId) {
 
 async function saveRuntimeSettings() {
   const payload = {
-    temperature: Number($('#temperature').value),
-    max_tokens: Number($('#maxTokens').value),
     command_timeout: Number($('#commandTimeout').value),
     workspace_dir: $('#workspaceDir').value.trim(),
   };
@@ -2716,6 +2770,24 @@ function bindEvents() {
   });
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
   $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
+  const composerWrap = document.querySelector('.composer-wrap');
+  if (composerWrap) {
+    composerWrap.addEventListener('dragover', (event) => {
+      if (!event.dataTransfer?.types?.includes('Files')) return;
+      event.preventDefault();
+      composerWrap.classList.add('dragover');
+    });
+    composerWrap.addEventListener('dragleave', (event) => {
+      if (event.relatedTarget && composerWrap.contains(event.relatedTarget)) return;
+      composerWrap.classList.remove('dragover');
+    });
+    composerWrap.addEventListener('drop', (event) => {
+      if (!event.dataTransfer?.files?.length) return;
+      event.preventDefault();
+      composerWrap.classList.remove('dragover');
+      uploadFiles([...event.dataTransfer.files]);
+    });
+  }
   $('#webSearchButton').addEventListener('click', toggleWebSearch);
   $('#contextUsageButton').addEventListener('click', toggleContextUsagePopover);
   $('#contextUsagePopover').addEventListener('click', (event) => event.stopPropagation());
@@ -2812,10 +2884,19 @@ function bindEvents() {
   $('#loadProviderModels').addEventListener('click', () => loadProviderModels());
   $('#unloadProviderModel').addEventListener('click', unloadConfiguredProviderModel);
   $('#providerFormat').addEventListener('change', () => {
+    syncProviderKindOptions();
     updateProviderFormatGuide();
     updateProviderContextField();
   });
-  $('#providerModel').addEventListener('change', toggleCustomModel);
+  $('#providerKind').addEventListener('input', () => {
+    syncProviderKindOptions();
+    updateProviderFormatGuide();
+    updateProviderContextField();
+  });
+  $('#providerModel').addEventListener('change', () => {
+    toggleCustomModel();
+    applyProviderModelCapabilities();
+  });
   $('#toggleProviderKey').addEventListener('click', toggleProviderKey);
   $('#providerApiKey').addEventListener('input', (event) => {
     if (event.target.value) $('#providerKeyStatus').textContent = '待保存';

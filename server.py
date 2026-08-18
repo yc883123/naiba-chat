@@ -363,6 +363,8 @@ def default_config() -> dict[str, Any]:
         "hidden_skill_ids": [],
         "workspace_dir": "workspace",
         "provider_id": "",
+        # Deprecated compatibility fields. They are retained for old config
+        # files but are never used to build model requests.
         "temperature": 0.7,
         "max_tokens": 8192,
         "context_size": 8192,
@@ -554,12 +556,6 @@ class ConfigStore:
         self.data = defaults
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
-        try:
-            self.data["context_size"] = self._positive_context_size(
-                self.data.get("context_size", 8192), "context_size"
-            )
-        except ValueError:
-            self.data["context_size"] = 8192
         tools = self.data.get("agent_tools")
         if isinstance(tools, list) and "call_mcp" in tools and "register_mcp" not in tools:
             tools.insert(tools.index("call_mcp"), "register_mcp")
@@ -579,7 +575,10 @@ class ConfigStore:
             result = {
                 key: value
                 for key, value in self.data.items()
-                if key not in {"access_token", "providers", "mcp_servers"}
+                if key not in {
+                    "access_token", "providers", "mcp_servers",
+                    "temperature", "max_tokens", "context_size",
+                }
             }
             result["resolved_workspace_dir"] = str(self.resolve_workspace_dir())
             return result
@@ -729,8 +728,6 @@ class ConfigStore:
                         }
                         requested = values[key] if isinstance(values[key], list) else []
                         self.data[key] = [tool for tool in requested if tool in valid_tools]
-                    elif key == "context_size":
-                        self.data[key] = self._positive_context_size(values[key], "context_size")
                     elif key == "workspace_dir":
                         raw = str(values[key] or "").strip()
                         if not raw:
@@ -739,6 +736,8 @@ class ConfigStore:
                         resolved = self.resolve_workspace_dir(raw)
                         self.ensure_workspace_writable(resolved)
                         self.data[key] = raw
+                    elif key == "context_size":
+                        self.data[key] = self._positive_context_size(values[key], "context_size")
                     elif key in ("vision", "search"):
                         incoming = values[key]
                         if not isinstance(incoming, dict):
@@ -751,7 +750,13 @@ class ConfigStore:
                     else:
                         self.data[key] = values[key]
             self.save()
-            return self.public()
+            result = self.public()
+            # Keep the legacy response field for older clients that still
+            # validate context_size. It is excluded from bootstrap settings
+            # and is never used to build model requests.
+            if "context_size" in values:
+                result["context_size"] = self.data["context_size"]
+            return result
 
     def upsert_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         server_id = str(values.get("id") or "").strip()
@@ -782,10 +787,11 @@ class ConfigStore:
         return payload
 
     def upsert_provider(self, values: dict[str, Any]) -> dict[str, Any]:
-        """兼容别名：按请求格式推断类别后转发到统一模型配置保存。"""
+        """兼容旧接口，同时尊重显式 online/local 类型。"""
         request_format = str(values.get("request_format") or "openai_chat").strip().lower()
         payload = dict(values)
-        payload["kind"] = _infer_kind_for_request_format(request_format)
+        kind = str(values.get("kind") or "").strip().lower()
+        payload["kind"] = kind if kind in VALID_MODEL_KINDS else _infer_kind_for_request_format(request_format)
         if payload["kind"] == "local":
             payload["local_backend"] = request_format
         return self.upsert_model_profile(payload)
@@ -841,6 +847,14 @@ class ConfigStore:
             if effort not in {"auto", "off", "low", "medium", "high"}:
                 effort = "auto"
             provider["reasoning_effort"] = effort
+            if provider.get("context_window") in (None, "") and provider.get("context_size") not in (None, ""):
+                try:
+                    provider["context_window"] = self._positive_context_size(
+                        provider.get("context_size"), "context_window"
+                    )
+                except ValueError:
+                    pass
+            provider.pop("context_size", None)
         # 计算 default_model_key：旧 provider_id 指向的条目决定前缀。
         default_key = str(self.data.get("default_model_key") or "").strip()
         if not default_key:
@@ -915,6 +929,8 @@ class ConfigStore:
                 entry["supports_images"] = _infer_supports_images(provider)
                 entry["context_window"] = _infer_context_window(provider)
                 entry["context_window_source"] = _context_window_source(provider)
+                if provider.get("context_window"):
+                    entry["context_size"] = provider.get("context_window")
                 result.append(entry)
             if kind:
                 result = [item for item in result if item.get("kind") == kind]
@@ -958,6 +974,30 @@ class ConfigStore:
             if raw_effort not in {"auto", "off", "low", "medium", "high"}:
                 raise ValueError("思维强度必须是 auto / off / low / medium / high 之一")
             payload["reasoning_effort"] = raw_effort
+            optional_fields = {
+                "context_window": self._positive_context_size,
+                "max_output_tokens": self._positive_context_size,
+            }
+            for field, parser in optional_fields.items():
+                raw_value = values.get(field)
+                if field == "context_window" and raw_value in (None, ""):
+                    raw_value = values.get("context_size")
+                if raw_value not in (None, ""):
+                    payload[field] = parser(
+                        raw_value,
+                        "context_size" if field == "context_window" and "context_size" in values else field,
+                    )
+            raw_temperature = values.get("temperature")
+            if raw_temperature not in (None, ""):
+                if isinstance(raw_temperature, bool):
+                    raise ValueError("temperature 必须是 0 到 2 之间的数字")
+                try:
+                    temperature = float(raw_temperature)
+                except (TypeError, ValueError):
+                    raise ValueError("temperature 必须是 0 到 2 之间的数字") from None
+                if temperature < 0 or temperature > 2:
+                    raise ValueError("temperature 必须是 0 到 2 之间的数字")
+                payload["temperature"] = temperature
             clear_supports_images = False
             if "supports_images" in values:
                 raw_supports_images = values.get("supports_images")
@@ -969,11 +1009,6 @@ class ConfigStore:
                     raise ValueError("supports_images 必须是布尔值或 null")
             if kind == "local":
                 payload["local_backend"] = local_backend
-                raw_context_size = values.get("context_size")
-                if raw_context_size not in (None, ""):
-                    payload["context_size"] = self._positive_context_size(
-                        raw_context_size, f"{local_backend} context_size"
-                    )
             else:
                 payload.pop("local_backend", None)
             if not payload["base_url"] or not payload["model"]:
@@ -982,8 +1017,9 @@ class ConfigStore:
                 # 空 API Key 表示保留已有 Key（不覆盖、不清除）。
                 if not payload["api_key"]:
                     payload["api_key"] = existing.get("api_key", "")
-                if "context_size" not in payload:
-                    existing.pop("context_size", None)
+                for field in ("context_window", "max_output_tokens", "temperature"):
+                    if field not in payload:
+                        existing.pop(field, None)
                 if clear_supports_images:
                     existing.pop("supports_images", None)
                 existing.update(payload)
@@ -995,7 +1031,7 @@ class ConfigStore:
                 self.data["default_model_key"] = f"{kind}:{model_id}"
             self.save()
         explicit_images = stored.get("supports_images")
-        return {
+        result = {
             **stored,
             "model_key": f"{kind}:{model_id}",
             "api_key": "",
@@ -1008,6 +1044,9 @@ class ConfigStore:
             "context_window": _infer_context_window(stored),
             "context_window_source": _context_window_source(stored),
         }
+        if stored.get("context_window"):
+            result["context_size"] = stored["context_window"]
+        return result
 
     def delete_model_profile(self, model_key: str) -> bool:
         with self.lock:
@@ -1056,20 +1095,36 @@ class ConfigStore:
             )
             if not provider:
                 raise ValueError(f"找不到模型配置：{key}")
-            return {
+            result = {
                 "kind": provider.get("kind", kind),
                 **provider,
                 "supports_images": _infer_supports_images(provider),
                 "context_window": _infer_context_window(provider),
                 "context_window_source": _context_window_source(provider),
             }
+            if provider.get("context_window"):
+                result["context_size"] = provider.get("context_window")
+            return result
 
-    def generation_options(self) -> dict[str, Any]:
+    def generation_options(self, selection: str = "") -> dict[str, Any]:
         with self.lock:
-            return {
-                key: self.data[key]
-                for key in ("temperature", "max_tokens", "context_size")
-            }
+            key = self._normalize_model_key(selection) or str(self.data.get("default_model_key") or "")
+            if not key:
+                return {
+                    "context_size": self._positive_context_size(
+                        self.data.get("context_size", 8192), "context_size"
+                    )
+                }
+            try:
+                profile = self.profile(key)
+            except ValueError:
+                return {}
+            options: dict[str, Any] = {}
+            if profile.get("temperature") not in (None, ""):
+                options["temperature"] = float(profile["temperature"])
+            if profile.get("max_output_tokens") not in (None, ""):
+                options["max_tokens"] = int(profile["max_output_tokens"])
+            return options
 
     @staticmethod
     def _positive_context_size(value: Any, field: str) -> int:
@@ -1094,7 +1149,7 @@ class ConfigStore:
 
     def default_agent_id(self) -> str:
         with self.lock:
-            agents = self.data.get("agents", [])
+            agents = [*self.data.get("agents", []), *built_in_agents()]
             configured = str(self.data.get("default_agent_id") or "").strip()
             if configured and any(agent.get("id") == configured for agent in agents):
                 return configured
@@ -1144,7 +1199,7 @@ class ConfigStore:
                 agents.append(payload)
             else:
                 agents[index] = payload
-            if not any(item.get("id") == self.data.get("default_agent_id") for item in agents):
+            if not self.get_agent(str(self.data.get("default_agent_id") or "")):
                 self.data["default_agent_id"] = agents[0].get("id", "general") if agents else "general"
             self.save()
         return payload
@@ -1379,15 +1434,8 @@ def _infer_supports_images(provider: dict[str, Any]) -> bool:
 
 def _infer_context_window(provider: dict[str, Any]) -> int:
     """Return a trustworthy context limit, or 0 when the API does not expose one."""
-    kind = str(provider.get("kind") or "online").strip().lower()
-    if kind == "local":
-        try:
-            return max(0, int(provider.get("context_size") or 0))
-        except (TypeError, ValueError):
-            return 0
-
     try:
-        explicit = int(provider.get("context_window") or 0)
+        explicit = int(provider.get("context_window") or provider.get("context_size") or 0)
     except (TypeError, ValueError):
         explicit = 0
     if explicit > 0:
@@ -1824,7 +1872,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             title = str(body.get("title") or "新对话")
             provider_id = str(body.get("provider_id") or APP.config.data.get("provider_id") or "")
             model_key = str(body.get("model_key") or "")
-            agent_id = str(body.get("agent_id") or APP.config.default_agent_id())
+            raw_agent_id = body.get("agent_id")
+            agent_id = str(raw_agent_id or APP.config.default_agent_id())
+            if raw_agent_id is not None and not APP.config.get_agent(agent_id):
+                self._json({"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST)
+                return
             interaction_mode = str(body.get("interaction_mode") or "craft")
             permission_mode = str(body.get("permission_mode") or "confirm")
             web_search_enabled = body.get("web_search_enabled", False)
@@ -1870,6 +1922,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if agent_id is not None and not isinstance(agent_id, str):
                 self._json({"error": "agent_id 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
+            if agent_id is not None and not APP.config.get_agent(str(agent_id)):
+                self._json({"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST)
                 return
             model_key = body.get("model_key")
             if model_key is not None and not isinstance(model_key, str):
@@ -2536,7 +2591,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             )
             if stored:
                 provider = {**stored, **{key: value for key, value in provider.items() if value}}
-        provider["kind"] = "online"
+        request_format = str(provider.get("request_format") or "openai_chat").strip().lower()
+        provider["kind"] = (
+            str(provider.get("kind") or "").strip().lower()
+            if str(provider.get("kind") or "").strip().lower() in VALID_MODEL_KINDS
+            else _infer_kind_for_request_format(request_format)
+        )
         return provider
 
     def _edit_message(self, body: dict[str, Any]) -> None:

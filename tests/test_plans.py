@@ -294,6 +294,15 @@ class PlanManagerTests(unittest.TestCase):
         self.assertEqual(1, updated["detail"]["clarification_round"])
         self.assertIn("不要继续提问", manager.prepare_prompt(updated))
 
+    def test_direct_plan_answer_is_marked_for_compilation(self) -> None:
+        manager = self.make_manager()
+        plan = manager.ensure_active_plan(self.conversation["id"], "生成一个 CSV 文件")
+        self.assertTrue(PlanManager.needs_plan_compilation(plan, "我会生成 CSV 文件。"))
+        self.assertFalse(PlanManager.needs_plan_compilation(plan, "请确认文件保存目录？"))
+        messages = PlanManager.plan_compilation_messages(plan, "我会生成 CSV 文件。")
+        self.assertEqual("system", messages[0]["role"])
+        self.assertIn("<plan>", messages[0]["content"])
+
     def test_process_response_rejects_plan_without_steps(self) -> None:
         manager = self.make_manager()
         plan = manager.ensure_active_plan(self.conversation["id"], "需求")

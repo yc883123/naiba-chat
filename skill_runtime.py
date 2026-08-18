@@ -704,10 +704,13 @@ class SkillAgent:
             )
 
         messages: list[dict[str, Any]] = [{"role": "system", "content": system}]
-        for item in history[-16:]:
+        selected_history = self._select_history(
+            history, profile, options, system
+        )
+        for item in selected_history:
             if item.get("role") in {"user", "assistant"} and item.get("content"):
                 messages.append(
-                    {"role": item["role"], "content": self._trim_message_content(item["content"], 12000)}
+                    {"role": item["role"], "content": item["content"]}
                 )
         if not messages or messages[-1].get("role") != "user":
             messages.append({"role": "user", "content": user_message})
@@ -723,6 +726,7 @@ class SkillAgent:
         repeat_count = 0
         no_progress_signature = ""
         no_progress_count = 0
+        parse_error_count = 0
         while step < max_steps:
             if cancel_event and cancel_event.is_set():
                 event({"type": "run_cancelled", "reason": "用户取消"})
@@ -744,14 +748,44 @@ class SkillAgent:
                 event({"type": "reasoning", "content": reasoning})
             action = self._parse_action(raw)
             if action.get("type") == "parse_error":
-                # Model clearly intended a tool call but the protocol was
-                # incomplete or malformed; surface a readable error instead of
-                # the raw protocol. Do not forward the original text.
-                logger.warning("工具调用解析失败：模型返回的工具协议不完整或格式错误（不展示原文）")
-                event({"type": "run_failed", "error": "工具调用解析失败：模型返回的工具协议不完整或格式错误"})
+                # Compatible APIs occasionally finish a stream while a JSON/XML
+                # tool action is still malformed. Give the same model a bounded
+                # chance to emit a clean action instead of aborting an otherwise
+                # healthy agent run on the first protocol error.
+                parse_error_count += 1
+                if parse_error_count <= 2:
+                    logger.warning(
+                        "工具调用解析失败：请求模型重新输出规范动作（第 %d/2 次）",
+                        parse_error_count,
+                    )
+                    event({
+                        "type": "retry",
+                        "attempt": parse_error_count,
+                        "reason": "工具调用格式不完整，正在自动纠正",
+                    })
+                    messages.append({
+                        "role": "assistant",
+                        "content": "上一个工具动作未能通过格式校验。",
+                    })
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "请继续当前任务。若仍需调用工具，只输出一个完整、合法的 JSON 对象："
+                            '{"type":"tool","tool":"工具名","arguments":{...}}。'
+                            "不要添加说明、Markdown 或 XML；若任务已完成，直接输出最终答复。"
+                        ),
+                    })
+                    event({"type": "step_finished", "step": step})
+                    continue
+                logger.warning("工具调用解析失败：连续三次无法得到完整工具动作（不展示原文）")
+                event({"type": "run_failed", "error": "工具调用格式连续三次无法自动纠正"})
                 return (
-                    "工具调用解析失败，已停止执行。", runs, reasonings, self._summarize_usage(usages)
+                    "工具调用格式连续三次无法自动纠正，已停止执行。",
+                    runs,
+                    reasonings,
+                    self._summarize_usage(usages),
                 )
+            parse_error_count = 0
             if action.get("type") != "tool":
                 event({"type": "assistant_response", "content": str(action.get("content") or raw or "")[:2000], "is_tool": False})
                 content = str(action.get("content") or raw or "任务已完成").strip()
@@ -906,6 +940,109 @@ class SkillAgent:
             else 0.0
         )
         return summary
+
+    @classmethod
+    def _select_history(
+        cls,
+        history: list[dict[str, Any]],
+        profile: dict[str, Any],
+        options: dict[str, Any],
+        system_prompt: str,
+    ) -> list[dict[str, Any]]:
+        """Keep recent complete history within the provider context window.
+
+        An unknown window deliberately means "let the provider decide". This
+        avoids silently applying the retired global 8K limit. When a provider
+        exposes a window, output capacity is reserved separately and is never
+        treated as the context-window value itself.
+        """
+        valid = [
+            item for item in history
+            if item.get("role") in {"user", "assistant"} and item.get("content")
+        ]
+        try:
+            context_window = max(0, int(profile.get("context_window") or 0))
+        except (TypeError, ValueError):
+            context_window = 0
+        if not context_window:
+            return valid
+
+        try:
+            configured_output = max(
+                0,
+                int(options.get("max_tokens") or profile.get("max_output_tokens") or 0),
+            )
+        except (TypeError, ValueError):
+            configured_output = 0
+        output_reserve = configured_output or min(8192, max(1024, context_window // 8))
+        fixed_tokens = cls._estimate_content_tokens(system_prompt) + 512
+        history_budget = max(256, context_window - output_reserve - fixed_tokens)
+
+        selected: list[dict[str, Any]] = []
+        remaining = history_budget
+        for item in reversed(valid):
+            cost = cls._estimate_content_tokens(item.get("content")) + 8
+            if cost <= remaining:
+                selected.append(item)
+                remaining -= cost
+                continue
+            if not selected and remaining > 64:
+                trimmed = cls._trim_content_to_token_budget(item.get("content"), remaining - 8)
+                if trimmed:
+                    selected.append({**item, "content": trimmed})
+            break
+        selected.reverse()
+        return selected
+
+    @staticmethod
+    def _estimate_content_tokens(content: Any) -> int:
+        """Conservative tokenizer-free estimate for mixed Chinese/ASCII text."""
+        if isinstance(content, list):
+            return sum(
+                1024 if part.get("type") == "image" else SkillAgent._estimate_content_tokens(
+                    str(part.get("text") or "")
+                )
+                for part in content if isinstance(part, dict)
+            )
+        text = str(content or "")
+        ascii_chars = sum(1 for char in text if ord(char) < 128)
+        return max(1, (ascii_chars + 3) // 4 + (len(text) - ascii_chars)) if text else 0
+
+    @classmethod
+    def _trim_content_to_token_budget(cls, content: Any, budget: int) -> Any:
+        if budget <= 0:
+            return ""
+        if isinstance(content, str):
+            low, high = 0, len(content)
+            while low < high:
+                middle = (low + high + 1) // 2
+                if cls._estimate_content_tokens(content[:middle]) <= budget:
+                    low = middle
+                else:
+                    high = middle - 1
+            return content[:low]
+        if not isinstance(content, list):
+            return cls._trim_content_to_token_budget(str(content or ""), budget)
+        trimmed: list[dict[str, Any]] = []
+        remaining = budget
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "image":
+                if remaining < 1024:
+                    break
+                trimmed.append(part)
+                remaining -= 1024
+                continue
+            if part.get("type") != "text":
+                continue
+            text = cls._trim_content_to_token_budget(str(part.get("text") or ""), remaining)
+            if text:
+                trimmed.append({**part, "text": text})
+                remaining -= cls._estimate_content_tokens(text)
+            if remaining <= 0:
+                break
+        return trimmed
 
     @staticmethod
     def _trim_message_content(content: Any, max_chars: int) -> Any:
