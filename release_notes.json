@@ -11,4 +11,5 @@
   "修复 Plan/Ask/Craft 切换和计划执行状态竞态：旧轮询响应不再恢复过期的编辑/执行按钮；执行开始、完成、取消会即时刷新计划栏，切换到 Craft/Ask 时隐藏 Plan 操作。",
   "全量 232 项自动化测试通过。",
   "修复工具协议解析失败导致任务直接停止的问题；Plan 模式现在会自动整理计划并稳定完成执行。"
+  ,"Build46: add local llama.cpp routing and disable vision reasoning for image reverse inference."
 ]

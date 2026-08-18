@@ -1389,7 +1389,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   }
   $('#providerName').value = provider.name || '';
   $('#providerBaseUrl').value = provider.base_url || '';
-  const inferredKind = provider.kind || (['ollama', 'lm_studio'].includes(provider.request_format) ? 'local' : 'online');
+  const inferredKind = provider.kind || (['ollama', 'lm_studio', 'llama_cpp'].includes(provider.request_format) ? 'local' : 'online');
   $('#providerKind').value = inferredKind === 'local' ? '1' : '0';
   $('#providerContextWindow').value = provider.context_window || provider.context_size || '';
   $('#providerMaxOutputTokens').value = provider.max_output_tokens || '';
@@ -1412,7 +1412,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
 
 function syncProviderKindOptions() {
   const local = $('#providerKind').value === '1';
-  const allowed = local ? ['lm_studio', 'ollama'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
+  const allowed = local ? ['lm_studio', 'ollama', 'llama_cpp'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
   const format = $('#providerFormat');
   [...format.options].forEach((option) => { option.hidden = !allowed.includes(option.value); });
   if (!allowed.includes(format.value)) format.value = allowed[0];
@@ -1426,6 +1426,7 @@ function updateProviderFormatGuide() {
   const guides = {
     ollama: '先启动 Ollama。API URL 通常填写 http://127.0.0.1:11434/v1；API Key 可留空；模型名称可通过 ollama list 查看，然后点击“检查模型”。',
     lm_studio: '先在 LM Studio 的 Developer / Local Server 页面启动服务并加载模型。API URL 通常填写 http://127.0.0.1:1234/v1；API Key 可留空，然后点击“检查模型”。',
+    llama_cpp: '先启动 llama.cpp server。API URL 通常填写 http://127.0.0.1:8080/v1；API Key 可留空，然后点击“检查模型”。',
   };
   guide.textContent = guides[format] || '';
   guide.hidden = !guides[format];
@@ -1539,7 +1540,7 @@ function providerFormValue() {
 async function loadProviderModels({ automatic = false } = {}) {
   if (!state.providerEditing) return;
   const values = providerFormValue();
-  const localFormat = ['lm_studio', 'ollama'].includes(values.request_format);
+  const localFormat = ['lm_studio', 'ollama', 'llama_cpp'].includes(values.request_format);
   if (!values.base_url || (!values.api_key && !values.id && !localFormat)) {
     if (!automatic) $('#providerError').textContent = '请先填写 API URL 和 API Key';
     return;

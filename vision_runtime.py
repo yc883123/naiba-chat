@@ -347,16 +347,19 @@ class VisionRouter:
             options["request_attempts"] = max(1, int(attempts))
         if connection_test:
             options["connection_test"] = True
+        # Image reverse-inference is a perception pass. Do not inherit the
+        # brain/provider's reasoning setting: thinking tokens add latency and
+        # can leave some vision endpoints with no usable final description.
+        vision_profile = {**profile, "reasoning_effort": "off"}
         try:
-            return self._runtime.complete(profile, messages, options, None)
+            return self._runtime.complete(vision_profile, messages, options, None)
         finally:
             # Vision calls are short-lived probes/operations. Release a local
             # vision model after the call so it does not occupy VRAM/RAM while
             # the regular chat model is answering. Ordinary chat requests do
             # not pass through this method and therefore remain loaded.
             request_format = str(profile.get("request_format") or "").strip().lower()
-            kind = str(profile.get("kind") or "").strip().lower()
-            if kind == "local" or request_format in {"ollama", "lm_studio"}:
+            if request_format in {"ollama", "lm_studio"}:
                 try:
                     ModelRuntime.unload_local_model(profile)
                 except Exception as exc:  # noqa: BLE001 - cleanup must not mask result

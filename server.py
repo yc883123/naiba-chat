@@ -507,11 +507,11 @@ def built_in_agent_ids() -> set[str]:
     return {agent["id"] for agent in built_in_agents()}
 
 
-# 在线请求协议集合（首期本地后端仅支持 ollama / lm_studio）。
+# 在线请求协议集合；llama.cpp 提供 OpenAI 兼容接口，但服务进程仍在本机。
 ONLINE_REQUEST_FORMATS = {"openai_chat", "codex_responses", "gemini", "claude"}
-LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio"}
+LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp"}
 VALID_MODEL_KINDS = {"online", "local"}
-VALID_LOCAL_BACKENDS = {"ollama", "lm_studio"}
+VALID_LOCAL_BACKENDS = {"ollama", "lm_studio", "llama_cpp"}
 
 
 def _infer_kind_for_request_format(request_format: str) -> str:
@@ -947,7 +947,7 @@ class ConfigStore:
                 values.get("local_backend") or values.get("request_format") or ""
             ).strip().lower()
             if local_backend not in VALID_LOCAL_BACKENDS:
-                raise ValueError("本地后端必须是 ollama 或 lm_studio")
+                raise ValueError("本地后端必须是 ollama、LM Studio 或 llama.cpp")
             request_format = local_backend
         else:
             request_format = str(values.get("request_format") or "openai_chat").strip().lower()
