@@ -63,8 +63,23 @@ from updater import UpdateManager
 
 
 PUBLIC_DIR = RESOURCE_DIR / "public"
-DATA_DIR = APP_DIR / "data"
 CONFIG_PATH = APP_DIR / "config.json"
+
+
+def _configured_data_dir() -> Path:
+    """Resolve the persistent data directory before ConfigStore is initialized."""
+    try:
+        loaded = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        raw = loaded.get("data_dir") if isinstance(loaded, dict) else ""
+    except (OSError, json.JSONDecodeError):
+        raw = ""
+    path = Path(str(raw or "data")).expanduser()
+    if not path.is_absolute():
+        path = APP_DIR / path
+    return path.resolve()
+
+
+DATA_DIR = _configured_data_dir()
 STATUS_PATH = DATA_DIR / "server.json"
 LOCK_PATH = DATA_DIR / "server.lock"
 
@@ -371,6 +386,7 @@ def default_config() -> dict[str, Any]:
         "skills_dirs": ["skills"],
         "hidden_skill_ids": [],
         "workspace_dir": "workspace",
+        "data_dir": "data",
         "provider_id": "",
         # Deprecated compatibility fields. They are retained for old config
         # files but are never used to build model requests.
@@ -590,6 +606,7 @@ class ConfigStore:
                 }
             }
             result["resolved_workspace_dir"] = str(self.resolve_workspace_dir())
+            result["resolved_data_dir"] = str(self.resolve_data_dir())
             return result
 
     def get_skills_dirs(self) -> list[str]:
@@ -649,6 +666,40 @@ class ConfigStore:
         if not path.is_absolute():
             path = (EXE_DIR / path).resolve()
         return path.resolve()
+
+    def resolve_data_dir(self, raw: str | None = None) -> Path:
+        """Resolve persistent data storage; relative paths are relative to APP_DIR."""
+        value = raw if raw is not None else self.data.get("data_dir", "data")
+        path = Path(str(value or "data")).expanduser()
+        if not path.is_absolute():
+            path = APP_DIR / path
+        return path.resolve()
+
+    def validate_data_dir(self, resolved: Path) -> None:
+        resolved = resolved.resolve()
+        if resolved.parent == resolved:
+            raise ValueError("不能把磁盘根目录作为数据目录")
+        system_roots = [Path(os.environ.get("SystemRoot", r"C:\Windows"))]
+        for env_name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+            value = os.environ.get(env_name)
+            if value:
+                system_roots.append(Path(value))
+        for root in system_roots:
+            root = root.resolve()
+            if resolved == root or path_within(resolved, root):
+                raise ValueError(f"不允许使用系统目录作为数据目录：{root}")
+        if resolved == PUBLIC_DIR.resolve() or resolved == EXE_DIR.resolve():
+            raise ValueError("不能把程序目录作为数据目录，请选择独立目录")
+
+    def ensure_data_dir_writable(self, resolved: Path) -> None:
+        self.validate_data_dir(resolved)
+        resolved.mkdir(parents=True, exist_ok=True)
+        probe = resolved / ".naiba_data_write_test"
+        try:
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+        except OSError as exc:
+            raise ValueError(f"数据目录不可写：{resolved}（{exc}）")
 
     def validate_workspace_dir(self, resolved: Path) -> None:
         """拒绝磁盘根目录、系统目录、程序数据目录等过宽或危险路径。"""
@@ -710,6 +761,7 @@ class ConfigStore:
             "command_timeout",
             "access_token",
             "workspace_dir",
+            "data_dir",
             "vision",
             "search",
         }
@@ -744,6 +796,11 @@ class ConfigStore:
                             raw = "workspace"
                         resolved = self.resolve_workspace_dir(raw)
                         self.ensure_workspace_writable(resolved)
+                        self.data[key] = raw
+                    elif key == "data_dir":
+                        raw = str(values[key] or "").strip() or "data"
+                        resolved = self.resolve_data_dir(raw)
+                        self.ensure_data_dir_writable(resolved)
                         self.data[key] = raw
                     elif key == "context_size":
                         self.data[key] = self._positive_context_size(values[key], "context_size")
@@ -1704,6 +1761,8 @@ class NaibaChatApp:
         return {
             "db_version": version,
             "data_dir": str(self.storage.data_dir),
+            "configured_data_dir": str(self.config.resolve_data_dir()),
+            "restart_required": self.config.resolve_data_dir() != self.storage.data_dir.resolve(),
             "healthy": bool(integrity.get("ok")),
             "integrity_details": integrity.get("details", []),
             "applied_versions": [version],
@@ -1725,6 +1784,45 @@ class NaibaChatApp:
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": f"迁移失败：{exc}", **self.migration_health()}
         return {"ok": True, **self.migration_health()}
+
+    def migration_move_data(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Copy the current data directory to a new location and switch on restart."""
+        if self.storage.list_background_tasks(active_only=True):
+            return {"ok": False, "error": "存在活动任务，请先等待完成或取消后再迁移数据"}
+        target = self.config.resolve_data_dir(str(body.get("data_dir") or "data"))
+        self.config.ensure_data_dir_writable(target)
+        source = self.storage.data_dir.resolve()
+        if target == source:
+            return {"ok": True, "message": "数据目录未改变", **self.migration_health()}
+        if path_within(target, source) or path_within(source, target):
+            return {"ok": False, "error": "目标数据目录不能是当前数据目录的父目录或子目录"}
+        existing_db = target / "chat.db"
+        if existing_db.exists() and _database_has_conversations(existing_db):
+            return {"ok": False, "error": f"目标目录已有对话数据：{target}"}
+        try:
+            with self.storage._connect() as db:
+                db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            target.mkdir(parents=True, exist_ok=True)
+            for item in source.iterdir():
+                if item.name in {"server.lock", "backups"}:
+                    continue
+                destination = target / item.name
+                if destination.exists():
+                    continue
+                if item.is_dir():
+                    shutil.copytree(item, destination)
+                else:
+                    shutil.copy2(item, destination)
+            self.config.update_settings({"data_dir": str(target)})
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            return {"ok": False, "error": f"迁移数据失败：{exc}"}
+        return {
+            "ok": True,
+            "message": "数据已复制到新目录，请重启后生效",
+            "target_data_dir": str(target),
+            "restart_required": True,
+            **self.migration_health(),
+        }
 
     def migration_merge(self, body: dict[str, Any]) -> dict[str, Any]:
         """手动迁移：从用户指定的旧数据目录合并配置与对话（当前数据优先）。"""
@@ -2012,6 +2110,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/settings":
             try:
+                if "data_dir" in body:
+                    requested = APP.config.resolve_data_dir(str(body.get("data_dir") or "data"))
+                    if requested != DATA_DIR.resolve() and APP.storage.list_background_tasks(active_only=True):
+                        self._json({"error": "存在活动任务，请先等待完成或取消后再切换数据目录"}, HTTPStatus.CONFLICT)
+                        return
                 settings = APP.config.update_settings(body)
                 model_key = str(body.get("model_key") or body.get("default_model_key") or "").strip()
                 if model_key:
@@ -2027,6 +2130,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "settings": settings,
                         "default_model_key": APP.config.default_model_key(),
                         "resolved_workspace_dir": str(APP.config.resolve_workspace_dir()),
+                        "resolved_data_dir": str(APP.config.resolve_data_dir()),
+                        "restart_required": "data_dir" in body and APP.config.resolve_data_dir() != DATA_DIR.resolve(),
                     }
                 )
             except (OSError, ValueError) as exc:
@@ -2092,6 +2197,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(APP.migration_backup())
         elif path == "/api/migration/run":
             self._json(APP.migration_run())
+        elif path == "/api/migration/move-data":
+            self._json(APP.migration_move_data(body))
         elif path == "/api/migration/merge":
             self._json(APP.migration_merge(body))
         elif path == "/api/chat/cancel":

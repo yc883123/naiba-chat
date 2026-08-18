@@ -410,6 +410,14 @@
         </section>
         <section data-settings-panel="datamigration" hidden>
           <h3>数据与迁移</h3>
+          <label class="field-wide data-dir-field">数据库与上传数据目录
+            <input id="dataDir" type="text" placeholder="例如 D:\\NaibaChatData">
+            <small class="hint">默认位于 %LOCALAPPDATA%\\NaibaChat\\data。修改后需要重启 NaibaChat，现有数据不会自动搬迁。</small>
+          </label>
+          <div class="form-actions">
+            <button class="primary-button" id="saveDataDir" type="button">保存数据目录</button>
+            <button class="control-button" id="moveDataDir" type="button">复制现有数据并切换</button>
+          </div>
           <div class="update-status">
             <div><span>数据库版本</span><b id="migrationDbVersion">-</b></div>
             <div><span>数据目录</span><b id="migrationDataDir">-</b></div>
@@ -419,7 +427,7 @@
           </div>
           <div class="form-actions">
             <button class="control-button" id="backupData" type="button">备份数据</button>
-            <button class="primary-button" id="runMigration" type="button">执行迁移</button>
+            <button class="primary-button" id="runMigration" type="button" title="只应用 SQLite 结构迁移，不改变数据目录">应用数据库结构迁移</button>
           </div>
           <p class="hint" id="migrationMessage"></p>
           <details class="advanced-settings">

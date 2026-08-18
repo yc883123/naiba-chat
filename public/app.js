@@ -3055,6 +3055,8 @@ function bindEvents() {
     });
   }
   $('#backupData').addEventListener('click', backupData);
+  $('#saveDataDir').addEventListener('click', saveDataDir);
+  $('#moveDataDir').addEventListener('click', moveDataDir);
   $('#runMigration').addEventListener('click', runMigration);
   $('#mergeData').addEventListener('click', mergeData);
 }
@@ -3222,13 +3224,57 @@ async function deleteInstalledSkill(skill) {
 
 function renderDataMigration() {
   const m = state.bootstrap?.data_migration || {};
+  const configured = m.configured_data_dir || state.bootstrap?.settings?.resolved_data_dir || m.data_dir || '';
+  if ($('#dataDir') && document.activeElement !== $('#dataDir')) $('#dataDir').value = configured;
   $('#migrationDbVersion').textContent = m.db_version != null ? String(m.db_version) : '-';
-  $('#migrationDataDir').textContent = m.data_dir || '-';
+  $('#migrationDataDir').textContent = m.restart_required
+    ? `${m.data_dir || '-'}（重启后切换到 ${configured}）`
+    : (m.data_dir || '-');
   $('#migrationHealthy').textContent = m.healthy === true ? '✓ 健康' : (m.healthy === false ? '✗ 异常' : '-');
   $('#migrationApplied').textContent = Array.isArray(m.applied_versions)
     ? (m.applied_versions.length ? m.applied_versions.join(', ') : '无')
     : '-';
   $('#migrationBackup').textContent = m.backup_location || '-';
+}
+
+async function saveDataDir() {
+  const value = $('#dataDir')?.value.trim() || '';
+  try {
+    const result = await api('/api/settings', { method: 'POST', body: { data_dir: value } });
+    Object.assign(state.bootstrap.settings, result.settings || {});
+    const target = result.resolved_data_dir || value;
+    state.bootstrap.data_migration = {
+      ...(state.bootstrap.data_migration || {}),
+      configured_data_dir: target,
+      restart_required: Boolean(result.restart_required),
+    };
+    renderDataMigration();
+    $('#migrationMessage').textContent = result.restart_required
+      ? `数据目录已保存为 ${target}，请完全退出并重新启动 NaibaChat 后生效。`
+      : '数据目录未改变。';
+  } catch (error) {
+    $('#migrationMessage').textContent = `保存数据目录失败：${error.message}`;
+  }
+}
+
+async function moveDataDir() {
+  const value = $('#dataDir')?.value.trim() || '';
+  if (!value) {
+    $('#migrationMessage').textContent = '请先填写目标数据目录';
+    return;
+  }
+  if (!confirm('将当前数据库、上传文件和相关数据复制到新目录，完成后需要重启。继续？')) return;
+  try {
+    const result = await api('/api/migration/move-data', { method: 'POST', body: { data_dir: value } });
+    if (!result.ok) {
+      $('#migrationMessage').textContent = `迁移失败：${result.error || '未知错误'}`;
+      return;
+    }
+    $('#migrationMessage').textContent = `数据已复制到 ${result.target_data_dir || value}，请完全退出并重新启动 NaibaChat。`;
+    await loadDataMigrationHealth();
+  } catch (error) {
+    $('#migrationMessage').textContent = `迁移失败：${error.message}`;
+  }
 }
 
 async function loadDataMigrationHealth() {

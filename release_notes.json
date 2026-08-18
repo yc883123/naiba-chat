@@ -14,4 +14,5 @@
   ,"Build46: add local llama.cpp routing and disable vision reasoning for image reverse inference."
   ,"Build47: align Plan with DeepSeek harness review flow; remove Ask/Craft mode choices and replace them with a Plan checkbox."
   ,"Build48: show a live local vision progress indicator with backend name and elapsed wait time before the main model continues."
+  ,"Build49: allow choosing a custom persistent database/data directory and clarify that schema migration does not move data."
 ]
