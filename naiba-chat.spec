@@ -30,7 +30,7 @@ a = Analysis(
     binaries=[],
     datas=[
         (str(root / "public"), "public"),
-        Tree(
+        *Tree(
             str(root / "skills"),
             prefix="skills",
             excludes=[
