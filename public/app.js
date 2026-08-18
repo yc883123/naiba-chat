@@ -27,6 +27,8 @@ const state = {
   agentFormSkillIds: [],
   tasks: [],
   taskTimer: null,
+  visionTimer: null,
+  visionStartedAt: 0,
   planTimer: null,
   planLoadSeq: 0,
   plans: [],
@@ -2199,11 +2201,34 @@ function renderPendingFiles() {
 
 function detachRunSubscription() {
   state.abortController?.abort();
+  clearVisionProgress();
   state.abortController = null;
   state.chatRunId = '';
   state.runConversationId = '';
   state.runSequence = 0;
   setBusy(false);
+}
+
+function clearVisionProgress() {
+  if (state.visionTimer) window.clearInterval(state.visionTimer);
+  state.visionTimer = null;
+  state.visionStartedAt = 0;
+}
+
+function renderVisionProgress(answer, event) {
+  clearVisionProgress();
+  const startedAt = Number(event.started_at || Date.now());
+  state.visionStartedAt = startedAt;
+  const backend = String(event.backend || '视觉模型');
+  const update = () => {
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    const label = answer.querySelector('.vision-progress-elapsed');
+    if (label) label.textContent = `已等待 ${elapsed} 秒`;
+    $('#runtimeStatus').textContent = `${backend} · 已等待 ${elapsed} 秒`;
+  };
+  answer.innerHTML = `<div class="vision-progress"><span class="vision-spinner" aria-hidden="true"></span><span class="vision-progress-label">正在调用 ${escapeHtml(backend)}</span><span class="vision-progress-elapsed">已等待 0 秒</span></div>`;
+  update();
+  state.visionTimer = window.setInterval(update, 1000);
 }
 
 function createRunRow(run) {
@@ -2424,9 +2449,23 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     state.chatRunId = String(event.run_id || '');
     state.runConversationId = conversationId;
     row.dataset.runId = state.chatRunId;
+  } else if (event.type === 'vision_start') {
+    renderVisionProgress(answer, event);
+  } else if (event.type === 'vision_done') {
+    clearVisionProgress();
+    answer.innerHTML = `<div class="activity">${escapeHtml(event.message || '视觉识别完成，正在交给主模型处理')}</div>`;
+    $('#runtimeStatus').textContent = event.message || '视觉识别完成，正在交给主模型处理';
+  } else if (event.type === 'vision_error') {
+    clearVisionProgress();
+    answer.innerHTML = `<div class="activity">${escapeHtml(event.message || '视觉识别失败，已降级处理')}</div>`;
+    $('#runtimeStatus').textContent = '视觉识别失败，已降级处理';
   } else if (event.type === 'status') {
-    answer.innerHTML = `<div class="activity">${escapeHtml(event.message)}</div>`;
-    $('#runtimeStatus').textContent = event.message;
+    clearVisionProgress();
+    const statusMessage = String(event.message || '').startsWith('已自动识图')
+      ? `视觉识别完成，正在交给主模型处理（${event.message}）`
+      : event.message;
+    answer.innerHTML = `<div class="activity">${escapeHtml(statusMessage)}</div>`;
+    $('#runtimeStatus').textContent = statusMessage;
   } else if (event.type === 'skills') {
     answer.innerHTML = `<div class="activity">已启用 ${event.skills.map((skill) => escapeHtml(skill.name)).join('、')}</div>`;
   } else if (event.type === 'delta') {
@@ -2487,13 +2526,16 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     // AI回复包含可选项，显示选择按钮
     showChoiceButtons(event.choices, event.choice_groups);
   } else if (event.type === 'cancelled') {
+    clearVisionProgress();
     answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
     if (row.dataset.runKind === 'plan_execute') void loadPlans();
   } else if (event.type === 'run_failed') {
+    clearVisionProgress();
     // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
     $('#runtimeStatus').textContent = '执行失败';
   } else if (event.type === 'done') {
+    clearVisionProgress();
     if (event.message) {
       try {
         const completedRow = messageElement(event.message);
@@ -2520,6 +2562,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     if (event.plan || row.dataset.runKind === 'plan_execute') void loadPlans();
     $('#runtimeStatus').textContent = '就绪';
   } else if (event.type === 'error') {
+    clearVisionProgress();
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.message)}</p>`;
     if (row.dataset.runKind === 'plan_execute') void loadPlans();
     $('#runtimeStatus').textContent = '执行失败';

@@ -450,15 +450,58 @@ class ConversationRunManager:
             history = build_model_history(snapshot.get("conversation_messages") or [])
             # 视觉自动路由（Phase 1）：文本大脑不支持看图时，把图片改写为不可信描述注入；
             # 纯文本大脑绝不会收到原始 image_url。
+            image_pending = any(
+                isinstance(item.get("content"), list)
+                and any(
+                    isinstance(part, dict) and part.get("type") == "image"
+                    for part in item.get("content") or []
+                )
+                for item in history
+                if isinstance(item, dict)
+            )
+            vision_config_getter = getattr(self.app.vision, "config", None)
+            vision_config = vision_config_getter() if callable(vision_config_getter) else {}
+            brain_supports_getter = getattr(self.app.vision, "brain_supports_images", None)
+            brain_supports_images = (
+                bool(brain_supports_getter(profile)) if callable(brain_supports_getter) else False
+            )
+            vision_backend_name = "视觉模型"
+            if image_pending and not brain_supports_images and vision_config.get("auto_route", True):
+                selected_vision_key = str(vision_config.get("provider_model_key") or "")
+                try:
+                    vision_profile = self.app.config.profile(selected_vision_key) if selected_vision_key else {}
+                    request_format = str(vision_profile.get("request_format") or "").lower()
+                    if request_format == "llama_cpp":
+                        vision_backend_name = "本地视觉模型（llama.cpp）"
+                    elif vision_profile.get("kind") == "local":
+                        vision_backend_name = "本地视觉模型"
+                    elif vision_profile.get("name"):
+                        vision_backend_name = f"视觉模型（{vision_profile['name']}）"
+                except (KeyError, ValueError, TypeError):
+                    pass
+                event({
+                    "type": "vision_start",
+                    "backend": vision_backend_name,
+                    "image_count": sum(
+                        sum(1 for part in item.get("content") or []
+                            if isinstance(part, dict) and part.get("type") == "image")
+                        for item in history if isinstance(item, dict)
+                    ),
+                    "started_at": int(time.time() * 1000),
+                })
             try:
                 history, vision_note = self.app.vision.prepare_history(
                     history, profile, cancel_event=cancel_event
                 )
+                if image_pending and vision_backend_name != "视觉模型":
+                    event({"type": "vision_done", "message": "视觉识别完成，正在交给主模型处理"})
                 if vision_note:
                     event({"type": "status", "message": vision_note})
             except Exception as exc:  # noqa: BLE001 - 视觉不可用不应阻断普通聊天
                 if cancel_event.is_set():
                     raise TaskCancelled("任务已取消")
+                if image_pending and vision_backend_name != "视觉模型":
+                    event({"type": "vision_error", "message": f"视觉识别失败，已安全降级：{exc}"})
                 history, removed = self.app.vision.strip_images_for_text_model(
                     history, f"视觉路由异常：{exc}"
                 )
