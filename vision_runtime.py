@@ -41,7 +41,7 @@ DEFAULT_VISION_CHAIN = [
 
 # 1x1 透明 PNG：用于视觉连接真实探活（最小图片请求），不依赖 /models 可达性冒充能力。
 MINIMAL_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLv"
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4"
     "AAAAAElFTkSuQmCC"
 )
 
@@ -105,9 +105,11 @@ def _encode_image_bytes(raw: bytes, media_type: str, name: str = "") -> dict[str
     try:
         with Image.open(io.BytesIO(raw)) as opened:
             source_format = opened.format
+            source_mode = opened.mode
             image = ImageOps.exif_transpose(opened).convert("RGB")
             needs_conversion = (
-                max(image.size) > MAX_EDGE
+                source_mode != "RGB"
+                or max(image.size) > MAX_EDGE
                 or len(raw) > TARGET_BYTES
                 or source_format == "GIF"
             )
@@ -325,6 +327,7 @@ class VisionRouter:
         timeout_seconds: float | None = None,
         attempts: int | None = None,
         connection_test: bool = False,
+        cancel_event: threading.Event | None = None,
     ) -> str:
         content: list[dict[str, Any]] = [{"type": "text", "text": question}]
         for part in image_parts:
@@ -347,6 +350,8 @@ class VisionRouter:
             options["request_attempts"] = max(1, int(attempts))
         if connection_test:
             options["connection_test"] = True
+        if cancel_event is not None:
+            options["cancel_event"] = cancel_event
         # Image reverse-inference is a perception pass. Do not inherit the
         # brain/provider's reasoning setting: thinking tokens add latency and
         # can leave some vision endpoints with no usable final description.
@@ -370,6 +375,7 @@ class VisionRouter:
         image_parts: list[dict[str, Any]],
         question: str = "",
         json_mode: bool = False,
+        cancel_event: threading.Event | None = None,
     ) -> str:
         """对内存中的 image 部件做看图问答，带链式 failover。"""
         if not image_parts:
@@ -381,9 +387,15 @@ class VisionRouter:
                 "layout（主要布局区域列表）、entities（实体清单）、text（图片中原文逐字转写，没有则空字符串）。"
                 "不要输出 JSON 以外的任何文字或 Markdown 代码块。"
             )
-        return self._describe_with_chain(image_parts, prompt, json_mode)
+        return self._describe_with_chain(image_parts, prompt, json_mode, cancel_event)
 
-    def describe_files(self, paths: list[str], question: str = "", json_mode: bool = False) -> str:
+    def describe_files(
+        self,
+        paths: list[str],
+        question: str = "",
+        json_mode: bool = False,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         parts = []
         for path in paths:
             part = encode_image_file(str(path))
@@ -391,9 +403,15 @@ class VisionRouter:
                 parts.append(part)
         if not parts:
             raise ValueError("vision: 无法读取任何图片文件")
-        return self.describe_parts(parts, question, json_mode)
+        return self.describe_parts(parts, question, json_mode, cancel_event)
 
-    def _describe_with_chain(self, image_parts: list[dict[str, Any]], prompt: str, json_mode: bool) -> str:
+    def _describe_with_chain(
+        self,
+        image_parts: list[dict[str, Any]],
+        prompt: str,
+        json_mode: bool,
+        cancel_event: threading.Event | None = None,
+    ) -> str:
         cache_key = ""
         cfg = self.config()
         if cfg.get("cache"):
@@ -409,8 +427,12 @@ class VisionRouter:
 
         errors: list[str] = []
         for profile in self.vision_backends():
+            if cancel_event and cancel_event.is_set():
+                raise RuntimeError("任务已取消")
             try:
-                content = self._call_backend(profile, image_parts, prompt)
+                content = self._call_backend(
+                    profile, image_parts, prompt, cancel_event=cancel_event
+                )
                 if content and content.strip():
                     self._cache_put(cache_key, content, cfg)
                     return content
@@ -446,7 +468,10 @@ class VisionRouter:
 
     # ---- 自动路由：图片轮改写 ----
     def prepare_history(
-        self, history: list[dict[str, Any]], brain_profile: dict[str, Any]
+        self,
+        history: list[dict[str, Any]],
+        brain_profile: dict[str, Any],
+        cancel_event: threading.Event | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
         """把历史里的 image 部件改写成文本描述，让文本大脑能「看见」图片。
 
@@ -484,8 +509,10 @@ class VisionRouter:
             paths = [str(p.get("path") or p.get("name") or "") for p in selected]
             if auto_route:
                 try:
-                    description = self.describe_parts(selected, text)
+                    description = self.describe_parts(selected, text, cancel_event=cancel_event)
                 except Exception as exc:  # noqa: BLE001 - 视觉不可用时降级为占位标记
+                    if cancel_event and cancel_event.is_set():
+                        raise
                     description = f"（自动识图失败，视觉后端不可用：{exc}）"
                 # Phase 3 记忆：缓存本轮图片的描述，供后续轮次复用。
                 with self._path_lock:
@@ -579,12 +606,13 @@ class VisionRouter:
 
     def _tool_describe(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
         try:
+            cancel_event = _ctx.get("cancel_event") if isinstance(_ctx, dict) else None
             paths = self._resolve_paths(args)
             if not paths:
                 return False, "vision_describe: 请提供 paths 或 image 参数（图片文件路径）"
             question = str(args.get("question") or "")
             json_mode = bool(args.get("json"))
-            result = self.describe_files(paths, question, json_mode)
+            result = self.describe_files(paths, question, json_mode, cancel_event)
             return True, result
         except Exception as exc:  # noqa: BLE001
             return False, f"vision_describe 失败：{exc}"
@@ -612,6 +640,7 @@ class VisionRouter:
 
     def _tool_ground(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
         try:
+            cancel_event = self._context_cancel_event(_ctx)
             paths = self._resolve_paths(args)
             if not paths:
                 return False, "vision_ground: 请提供 image 参数"
@@ -628,7 +657,7 @@ class VisionRouter:
             part = encode_image_file(paths[0])
             if not part:
                 return False, "vision_ground: 图片编码失败"
-            raw = self._call_with_first_backend([part], prompt, 1024)
+            raw = self._call_with_first_backend([part], prompt, 1024, cancel_event)
             box = self._extract_json(raw)
             if isinstance(box, dict):
                 x1, y1, x2, y2 = (
@@ -650,6 +679,7 @@ class VisionRouter:
 
     def _tool_detect(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
         try:
+            cancel_event = self._context_cancel_event(_ctx)
             paths = self._resolve_paths(args)
             if not paths:
                 return False, "vision_detect: 请提供 image 参数"
@@ -666,7 +696,7 @@ class VisionRouter:
             part = encode_image_file(paths[0])
             if not part:
                 return False, "vision_detect: 图片编码失败"
-            raw = self._call_with_first_backend([part], prompt, 1600)
+            raw = self._call_with_first_backend([part], prompt, 1600, cancel_event)
             parsed = self._extract_json(raw)
             if not isinstance(parsed, list):
                 return False, f"vision_detect: 视觉模型未返回有效清单：{str(raw)[:400]}"
@@ -721,6 +751,7 @@ class VisionRouter:
 
     def _tool_ocr(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
         try:
+            cancel_event = self._context_cancel_event(_ctx)
             paths = self._resolve_paths(args)
             if not paths:
                 return False, "vision_ocr: 请提供 image 参数"
@@ -732,7 +763,7 @@ class VisionRouter:
             if not parts:
                 return False, "vision_ocr: 图片编码失败"
             prompt = "请逐字转写图片中的所有文字，保持原有顺序与换行。只输出文字本身，不要任何解释或前后缀。"
-            return True, self._call_with_first_backend(parts, prompt, 2048)
+            return True, self._call_with_first_backend(parts, prompt, 2048, cancel_event)
         except Exception as exc:  # noqa: BLE001
             return False, f"vision_ocr 失败：{exc}"
 
@@ -821,13 +852,25 @@ class VisionRouter:
             return False, f"vision_pixel_diff 失败：{exc}"
 
     # ---- 内部工具 ----
+    @staticmethod
+    def _context_cancel_event(ctx: Any) -> threading.Event | None:
+        return ctx.get("cancel_event") if isinstance(ctx, dict) else None
+
     def _call_with_first_backend(
-        self, parts: list[dict[str, Any]], prompt: str, max_tokens: int
+        self,
+        parts: list[dict[str, Any]],
+        prompt: str,
+        max_tokens: int,
+        cancel_event: threading.Event | None = None,
     ) -> str:
         errors: list[str] = []
         for profile in self.vision_backends():
+            if cancel_event and cancel_event.is_set():
+                raise RuntimeError("任务已取消")
             try:
-                content = self._call_backend(profile, parts, prompt, max_tokens)
+                content = self._call_backend(
+                    profile, parts, prompt, max_tokens, cancel_event=cancel_event
+                )
                 if content and content.strip():
                     return content
                 errors.append(f"{profile.get('name')}：空响应")

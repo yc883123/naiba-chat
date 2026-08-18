@@ -178,6 +178,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .mode-select { display: inline-flex; align-items: center; gap: 3px; padding: 2px 3px 2px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 .mode-select > span { color: var(--muted); white-space: nowrap; }
 .mode-select select { min-height: 20px; border: 0; outline: 0; border-radius: 4px; background: var(--surface); color: var(--green); font-size: 11px; font-weight: 600; padding: 1px 20px 1px 7px; }
+.plan-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 2px 8px 2px 5px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--muted); cursor: pointer; user-select: none; }
+.plan-toggle:hover { border-color: var(--line-strong); background: var(--surface-2); }
+.plan-toggle input { width: 15px; height: 15px; margin: 0; accent-color: var(--green); }
+.plan-toggle input:checked + span { color: var(--green); font-weight: 700; }
+.plan-toggle input:disabled { cursor: not-allowed; }
 .mode-select select:focus-visible { box-shadow: 0 0 0 2px rgba(23, 122, 80, .18); }
 .permission-mode-switch { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 .permission-mode-switch > span { padding: 0 4px; color: var(--muted); white-space: nowrap; }

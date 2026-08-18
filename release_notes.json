@@ -12,4 +12,5 @@
   "全量 232 项自动化测试通过。",
   "修复工具协议解析失败导致任务直接停止的问题；Plan 模式现在会自动整理计划并稳定完成执行。"
   ,"Build46: add local llama.cpp routing and disable vision reasoning for image reverse inference."
+  ,"Build47: align Plan with DeepSeek harness review flow; remove Ask/Craft mode choices and replace them with a Plan checkbox."
 ]

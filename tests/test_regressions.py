@@ -39,6 +39,19 @@ class DummyMCPRegistry:
 
 
 class ChoiceDetectionTests(unittest.TestCase):
+    def test_numbered_prompt_heading_does_not_break_following_choices(self) -> None:
+        text = """**1. 请选择视频时长：**
+1. 5秒
+2. 10秒
+3. 15秒
+
+**2. 请描述你想要的画面内容：**
+"""
+        self.assertEqual(
+            [{"prompt": "请选择视频时长：", "choices": ["5秒", "10秒", "15秒"]}],
+            _detect_choice_groups(text),
+        )
+
     def test_detects_multiple_prompted_groups(self) -> None:
         text = """请选择视频时长：
 1. 10秒
@@ -703,6 +716,46 @@ class OllamaFormatTests(unittest.TestCase):
 
 
 class ProviderConnectionTestTests(unittest.TestCase):
+    def test_cancelable_urlopen_returns_without_waiting_for_provider(self) -> None:
+        cancel_event = threading.Event()
+        started = threading.Event()
+
+        def blocking_urlopen(_request, timeout):
+            del timeout
+            started.set()
+            while not cancel_event.is_set():
+                time.sleep(0.01)
+            raise OSError("closed")
+
+        request = model_runtime.urllib.request.Request("http://127.0.0.1:9")
+        with patch.object(model_runtime.urllib.request, "urlopen", blocking_urlopen):
+            result = []
+            worker = threading.Thread(
+                target=lambda: result.append(
+                    self._capture_error(
+                        ModelRuntime._urlopen_cancelable,
+                        request,
+                        30,
+                        cancel_event,
+                    )
+                )
+            )
+            worker.start()
+            self.assertTrue(started.wait(1))
+            cancel_event.set()
+            worker.join(1)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual("任务已取消", result[0])
+
+    @staticmethod
+    def _capture_error(fn, *args):
+        try:
+            fn(*args)
+        except Exception as exc:  # noqa: BLE001
+            return str(exc)
+        return ""
+
     def test_html_http_errors_are_summarized_without_markup(self) -> None:
         html = """<!DOCTYPE html><html><head><title>Error - Request Blocked</title></head>
         <body><h1>Request Blocked</h1><p>Access denied</p><script>secret()</script></body></html>"""

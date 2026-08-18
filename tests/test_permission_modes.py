@@ -226,13 +226,12 @@ class PermissionModeFrontendTests(unittest.TestCase):
         self.assertNotIn('name="permissionMode"', html)
         self.assertIn("保存工具范围", agent)
 
-    def test_interaction_modes_use_collapsed_select(self) -> None:
+    def test_interaction_modes_use_plan_checkbox(self) -> None:
         html = Path("public/index.html").read_text(encoding="utf-8")
-        self.assertIn('<select id="modeSwitch"', html)
-        self.assertIn('<option value="craft"', html)
-        self.assertIn('<option value="plan"', html)
-        self.assertIn('<option value="ask"', html)
-        self.assertNotIn('<button type="button" data-mode="craft"', html)
+        self.assertIn('id="planModeSwitch"', html)
+        self.assertIn('type="checkbox"', html)
+        self.assertNotIn('id="modeSwitch"', html)
+        self.assertNotIn('value="ask"', html)
 
     def test_frontend_persists_conversation_permission_mode(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")

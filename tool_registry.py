@@ -404,7 +404,7 @@ def build_vision_tool_specs() -> list[ToolSpec]:
                     "required": [],
                 },
                 side_effect=False,
-                retryable=True,
+                retryable=False,
                 timeout=180,
                 permission="confirm",
             )
@@ -573,6 +573,23 @@ def build_job_tool_specs() -> list[ToolSpec]:
 def build_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_many(build_core_tool_specs())
+    registry.register(
+        ToolSpec(
+            name="exit_plan_mode",
+            description="提交完整 Markdown 实施计划，供用户批准或继续规划。仅在 Plan 模式下生效。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "plan": {"type": "string", "description": "完整 Markdown 计划，必须以 # 标题开头"},
+                },
+                "required": ["plan"],
+            },
+            side_effect=True,
+            retryable=False,
+            timeout=30,
+            permission="confirm",
+        )
+    )
     registry.register_many(build_job_tool_specs())
     registry.register_many(build_vision_tool_specs())
     registry.register_many(build_search_tool_specs())

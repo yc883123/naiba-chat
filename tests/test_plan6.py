@@ -309,6 +309,32 @@ class VisionProbeTest(TestCase):
         self.assertEqual(1, captured["request_attempts"])
         self.assertTrue(captured["connection_test"])
 
+    def test_backend_propagates_cancel_event(self):
+        router = self._router()
+        cancel_event = threading.Event()
+        captured = {}
+
+        def fake_complete(_profile, _messages, options, _status):
+            captured.update(options)
+            return "OK"
+
+        with mock.patch.object(router._runtime, "complete", side_effect=fake_complete):
+            router._call_backend(
+                {"model": "vision", "base_url": "https://api.example.com"},
+                [{"type": "image", "media_type": "image/png", "data": "x"}],
+                "test",
+                cancel_event=cancel_event,
+            )
+        self.assertIs(captured["cancel_event"], cancel_event)
+
+    def test_probe_image_is_rgb_png(self):
+        from PIL import Image
+        import base64
+        import io
+
+        image = Image.open(io.BytesIO(base64.b64decode(vision_runtime.MINIMAL_PNG_B64)))
+        self.assertEqual("RGB", image.mode)
+
 
 class RunChatVisionFailClosedTest(TestCase):
     def test_prepare_history_exception_never_reaches_agent_as_image(self):

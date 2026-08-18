@@ -325,8 +325,7 @@ class ChatStorage:
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
-        if interaction_mode not in ("craft", "plan", "ask"):
-            interaction_mode = "craft"
+        interaction_mode = "plan" if str(interaction_mode or "").strip().lower() == "plan" else "craft"
         if permission_mode not in ("confirm", "auto", "full"):
             permission_mode = "confirm"
         resolved_model_key = str(model_key or "").strip()
@@ -368,7 +367,7 @@ class ChatStorage:
                     "SELECT id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._conversation_dict(row) for row in rows]
 
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
@@ -379,7 +378,7 @@ class ChatStorage:
             ).fetchone()
             if not row:
                 return None
-            result = dict(row)
+            result = self._conversation_dict(row)
             if include_messages:
                 messages = db.execute(
                     "SELECT id, role, content, metadata, created_at FROM messages "
@@ -433,9 +432,12 @@ class ChatStorage:
         if agent_id is not None:
             values["agent_id"] = str(agent_id or "")
         if interaction_mode is not None:
-            if interaction_mode not in ("craft", "plan", "ask"):
-                raise ValueError("interaction_mode 必须是 craft / plan / ask")
-            values["interaction_mode"] = interaction_mode
+            if not isinstance(interaction_mode, str):
+                raise ValueError("interaction_mode 必须是文本")
+            normalized = interaction_mode.strip().lower()
+            if normalized not in {"plan", "craft", "ask"}:
+                raise ValueError("interaction_mode 必须是 plan 或普通模式")
+            values["interaction_mode"] = "plan" if normalized == "plan" else "craft"
         if permission_mode is not None:
             if permission_mode not in ("confirm", "auto", "full"):
                 raise ValueError("permission_mode 必须是 confirm / auto / full")
@@ -986,6 +988,14 @@ class ChatStorage:
             if cursor.rowcount == 0:
                 return None
         return self.get_plan(plan_id)
+
+    @staticmethod
+    def _conversation_dict(row: sqlite3.Row) -> dict[str, Any]:
+        result = dict(row)
+        result["interaction_mode"] = (
+            "plan" if str(result.get("interaction_mode") or "").strip().lower() == "plan" else "craft"
+        )
+        return result
 
     @staticmethod
     def _plan_dict(row: sqlite3.Row) -> dict[str, Any]:

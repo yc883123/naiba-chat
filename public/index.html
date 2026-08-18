@@ -90,13 +90,9 @@
         </form>
         <div class="composer-meta">
           <div class="composer-meta-left">
-            <label class="mode-select" title="选择交互模式">
-              <span>模式</span>
-              <select id="modeSwitch" aria-label="交互模式">
-                <option value="craft" data-mode="craft">Craft</option>
-                <option value="plan" data-mode="plan">Plan</option>
-                <option value="ask" data-mode="ask">Ask</option>
-              </select>
+            <label class="plan-toggle" title="勾选后进入 Plan 模式">
+              <input id="planModeSwitch" type="checkbox" aria-label="Plan 模式">
+              <span>Plan</span>
             </label>
             <div class="permission-mode-switch" id="permissionModeSwitch" role="radiogroup" aria-label="当前对话审批模式">
               <span>审批</span>

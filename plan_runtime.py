@@ -1,9 +1,8 @@
-"""交互模式（Craft / Plan / Ask）与 Plan 模式生命周期管理。
+"""交互模式（普通 / Plan）与 Plan 模式生命周期管理。
 
 模式语义：
-- craft：默认模式，可用全部已启用工具。
-- ask：只读模式，仅允许读取/搜索文件、列目录、GET/HEAD 请求。
-- plan：准备阶段与 ask 相同（只读）；用户确认执行后，执行器按 craft 能力逐步执行。
+- craft：内部兼容名称，代表普通模式，可用全部已启用工具。
+- plan：准备阶段只读；用户确认执行后，执行器按普通模式能力逐步执行。
 
 Plan 生命周期：prepare → ready → building → finished / failed / cancelled。
 SQLite 保存权威状态，同时把计划归档到配置工作区的 `.naiba-chat/plans/`。
@@ -20,7 +19,12 @@ from typing import Any, Callable
 
 from skill_runtime import SkillAgent, TaskCancelled, ToolExecutor
 
-INTERACTION_MODES = ("craft", "plan", "ask")
+INTERACTION_MODES = ("craft", "plan")
+
+
+def normalize_interaction_mode(value: Any) -> str:
+    """Normalize persisted/UI values to the two supported interaction modes."""
+    return "plan" if str(value or "").strip().lower() == "plan" else "craft"
 
 ALL_TOOLS = (
     "read_file",
@@ -34,13 +38,6 @@ ALL_TOOLS = (
     "call_mcp",
 )
 READONLY_TOOLS = {"read_file", "list_directory", "search_files", "http_request"}
-
-ASK_MODE_PROMPT = (
-    "## Ask 问答模式\n"
-    "当前处于 Ask 模式：你只能读取/搜索文件、列目录，以及发起 GET/HEAD 请求；"
-    "禁止修改文件、执行命令、运行脚本或调用 MCP 等任何有副作用的操作。"
-    "请基于只读探索回答用户问题。如果用户要求实际改动，提醒其切换到 Craft 模式。"
-)
 
 PLAN_PREPARE_PROMPT = (
     "## Plan 计划模式\n"
@@ -71,13 +68,14 @@ STEPS_HEADING_RE = re.compile(r"步骤|实施|流程|安排")
 def resolve_mode_tools(
     mode: str, agent_tools: list[str], readonly_mcp_tools: list[str] | None = None
 ) -> list[str]:
-    """按交互模式解析可用工具：与全局 agent_tools 取交集，ask/plan 再过滤为只读。
+    """按交互模式解析可用工具：与全局 agent_tools 取交集，Plan 再过滤为只读。
 
-    ask/plan 额外允许标注为只读的 MCP 工具（如 ComfyUI 的环境/模型/工作流查询），
+    Plan 额外允许标注为只读的 MCP 工具（如 ComfyUI 的环境/模型/工作流查询），
     但 ``run_workflow`` 等有副作用工具始终排除。
     """
     configured = [tool for tool in (agent_tools or []) if tool in ALL_TOOLS]
-    if mode in ("ask", "plan"):
+    # Keep legacy persisted Ask runs read-only while the UI/API no longer expose Ask.
+    if str(mode or "").strip().lower() in {"ask", "plan"}:
         result = [tool for tool in configured if tool in READONLY_TOOLS]
         for mcp_tool in readonly_mcp_tools or []:
             if mcp_tool and mcp_tool not in result and not mcp_tool.endswith("__run_workflow"):
@@ -423,6 +421,20 @@ class PlanManager:
         if not updated:
             raise LookupError("计划不存在")
         self.archive(updated)
+        return updated
+
+    def keep_planning(self, plan_id: str) -> dict[str, Any]:
+        """Return a reviewed plan to preparation so the next user note is feedback."""
+        plan = self.app.storage.get_plan(plan_id)
+        if not plan:
+            raise LookupError("计划不存在")
+        if plan.get("status") not in {"ready", "prepare"}:
+            raise ValueError("当前计划不能继续规划")
+        detail = dict(plan.get("detail") or {})
+        detail.update({"message": "继续规划中，等待用户补充意见", "review": "keep_planning"})
+        updated = self.app.storage.update_plan(plan_id, status="prepare", detail=detail, error="")
+        if not updated:
+            raise LookupError("计划不存在")
         return updated
 
     # ---- 执行 ----

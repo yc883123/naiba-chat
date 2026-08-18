@@ -184,6 +184,74 @@ class ModelRuntime:
         return content
 
     @staticmethod
+    def _urlopen_cancelable(
+        request: urllib.request.Request,
+        timeout: float,
+        cancel_event: threading.Event | None = None,
+    ):
+        """Run urllib in a daemon worker so a cancelled vision call returns promptly."""
+        if cancel_event is None:
+            return urllib.request.urlopen(request, timeout=timeout)
+        if cancel_event.is_set():
+            raise RuntimeError("任务已取消")
+        done = threading.Event()
+        result: dict[str, Any] = {}
+
+        def worker() -> None:
+            try:
+                result["response"] = urllib.request.urlopen(request, timeout=timeout)
+            except BaseException as exc:  # noqa: BLE001 - propagate worker errors
+                result["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=worker, name="naiba-http-request", daemon=True).start()
+        while not done.wait(0.1):
+            if cancel_event.is_set():
+                raise RuntimeError("任务已取消")
+        if cancel_event.is_set():
+            response = result.get("response")
+            if response is not None:
+                response.close()
+            raise RuntimeError("任务已取消")
+        error = result.get("error")
+        if error is not None:
+            raise error
+        return result["response"]
+
+    @staticmethod
+    def _read_response_cancelable(response: Any, cancel_event: threading.Event | None = None) -> bytes:
+        if cancel_event is None:
+            return response.read()
+        if cancel_event.is_set():
+            raise RuntimeError("任务已取消")
+        done = threading.Event()
+        result: dict[str, Any] = {}
+
+        def worker() -> None:
+            try:
+                result["data"] = response.read()
+            except BaseException as exc:  # noqa: BLE001
+                result["error"] = exc
+            finally:
+                done.set()
+
+        threading.Thread(target=worker, name="naiba-http-read", daemon=True).start()
+        while not done.wait(0.1):
+            if cancel_event.is_set():
+                try:
+                    response.close()
+                except Exception:
+                    pass
+                raise RuntimeError("任务已取消")
+        if cancel_event.is_set():
+            raise RuntimeError("任务已取消")
+        error = result.get("error")
+        if error is not None:
+            raise error
+        return result.get("data", b"")
+
+    @staticmethod
     def _content_parts(content: Any) -> list[dict[str, Any]]:
         if isinstance(content, str):
             return [{"type": "text", "text": content}]
@@ -609,6 +677,9 @@ class ModelRuntime:
             or configured_format in LOCAL_REQUEST_FORMATS
         )
         connection_test = bool(options.get("connection_test", False))
+        cancel_event = options.get("cancel_event")
+        if not isinstance(cancel_event, threading.Event):
+            cancel_event = None
         provider_name = str(profile.get("name") or "").strip()
         parsed_endpoint = urllib.parse.urlsplit(endpoint)
         endpoint_host = parsed_endpoint.hostname or parsed_endpoint.netloc or endpoint
@@ -630,7 +701,7 @@ class ModelRuntime:
             attempts = min(attempts_override, 5)
         for attempt in range(attempts):
             try:
-                with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                with ModelRuntime._urlopen_cancelable(request, request_timeout, cancel_event) as response:
                     if stream_enabled and request_format == "ollama":
                         streamed = ModelRuntime._read_ollama_stream(response, status)
                         content = ModelRuntime._clean_content(streamed["content"])
@@ -650,7 +721,9 @@ class ModelRuntime:
                                     headers=headers,
                                     method="POST",
                                 )
-                                with urllib.request.urlopen(retry_request, timeout=request_timeout) as retry_response:
+                                with ModelRuntime._urlopen_cancelable(
+                                    retry_request, request_timeout, cancel_event
+                                ) as retry_response:
                                     streamed = ModelRuntime._read_ollama_stream(retry_response, status)
                                 content = ModelRuntime._clean_content(streamed["content"])
                                 reasoning = streamed["reasoning"]
@@ -683,7 +756,9 @@ class ModelRuntime:
                             else:
                                 raise RuntimeError("在线模型流式响应中没有文本内容")
                         return content, reasoning, streamed["usage"]
-                    raw_response = response.read().decode("utf-8", errors="replace")
+                    raw_response = ModelRuntime._read_response_cancelable(
+                        response, cancel_event
+                    ).decode("utf-8", errors="replace")
                     content_type = response.headers.get("Content-Type", "") if hasattr(response, "headers") else ""
                     try:
                         result = json.loads(raw_response)
@@ -720,7 +795,8 @@ class ModelRuntime:
                     and exc.code in {429, 502, 503, 504}
                     and attempt + 1 < attempts
                 ):
-                    time.sleep(1.5 * (attempt + 1))
+                    if cancel_event and cancel_event.wait(1.5 * (attempt + 1)):
+                        raise RuntimeError("任务已取消")
                     continue
                 raise RuntimeError(f"{target_detail}返回 HTTP {exc.code}: {detail}") from exc
             except (urllib.error.URLError, OSError) as exc:
@@ -728,7 +804,9 @@ class ModelRuntime:
                 error_code = _network_error_code(exc)
                 retryable_test_error = connection_test and error_code in FAST_RETRY_NETWORK_ERRORS
                 if not is_local and attempt + 1 < attempts and (not connection_test or retryable_test_error):
-                    time.sleep((0.5 if connection_test else 1.5) * (attempt + 1))
+                    delay = (0.5 if connection_test else 1.5) * (attempt + 1)
+                    if cancel_event and cancel_event.wait(delay):
+                        raise RuntimeError("任务已取消")
                     continue
                 if isinstance(reason, TimeoutError):
                     duration = f"{request_timeout // 60} 分钟" if request_timeout >= 60 else f"{request_timeout} 秒"

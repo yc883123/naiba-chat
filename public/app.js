@@ -30,7 +30,7 @@ const state = {
   planTimer: null,
   planLoadSeq: 0,
   plans: [],
-  interactionMode: localStorage.getItem('naibaChatInteractionMode') || 'craft',
+  interactionMode: localStorage.getItem('naibaChatInteractionMode') === 'plan' ? 'plan' : 'craft',
   planEditingId: '',
   webSearchEnabled: false,
   contextUsage: null,
@@ -510,24 +510,23 @@ function taskStatusLabel(status) {
   return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消' })[status] || status;
 }
 
-// ---- 交互模式（Craft / Plan / Ask） ----
+// ---- 交互模式（普通 / Plan） ----
 
 function currentInteractionMode() {
   const conversation = state.conversations.find((item) => item.id === state.conversationId);
   const mode = conversation?.interaction_mode || state.interactionMode || 'craft';
-  return ['craft', 'plan', 'ask'].includes(mode) ? mode : 'craft';
+  return mode === 'plan' ? 'plan' : 'craft';
 }
 
 function renderModeSwitch() {
   const mode = currentInteractionMode();
-  const switcher = $('#modeSwitch');
-  if (switcher) switcher.value = mode;
+  const switcher = $('#planModeSwitch');
+  if (switcher) switcher.checked = mode === 'plan';
   const input = $('#messageInput');
   if (input) {
     const hints = {
       craft: '输入消息',
       plan: '描述需求，先只读澄清并生成计划，确认后逐步执行',
-      ask: '输入问题，只读探索，不做任何修改',
     };
     input.placeholder = hints[mode] || '输入消息';
   }
@@ -573,8 +572,14 @@ async function switchPermissionMode(mode) {
   }
 }
 
-async function switchInteractionMode(mode) {
-  if (!['craft', 'plan', 'ask'].includes(mode) || mode === currentInteractionMode()) return;
+async function switchPlanMode(enabled) {
+  const mode = enabled ? 'plan' : 'craft';
+  if (mode === currentInteractionMode()) return;
+  if (state.chatRunId || state.abortController || state.taskSubmitting) {
+    renderModeSwitch();
+    toast('当前 Run 正在执行，请先停止后再切换模式');
+    return;
+  }
   if (!state.conversationId) {
     state.interactionMode = mode;
     localStorage.setItem('naibaChatInteractionMode', mode);
@@ -592,9 +597,9 @@ async function switchInteractionMode(mode) {
     localStorage.setItem('naibaChatInteractionMode', mode);
     renderModeSwitch();
     renderPlanBar();
-    const names = { craft: 'Craft（直接执行）', plan: 'Plan（先出计划）', ask: 'Ask（只读问答）' };
-    toast(`已切换到 ${names[mode]} 模式`);
+    toast(mode === 'plan' ? '已进入 Plan 模式' : '已退出 Plan 模式');
   } catch (error) {
+    renderModeSwitch();
     toast(`切换模式失败：${error.message}`);
   }
 }
@@ -653,10 +658,10 @@ function renderPlanBar() {
     text = '计划准备中：正在澄清需求或生成方案，请直接回复我的问题';
     actions = `<button type="button" data-plan-action="cancel" data-plan-id="${planId}">取消计划</button>`;
   } else if (plan.status === 'ready') {
-    text = `方案已就绪：《${escapeHtml(plan.title || '实施计划')}》（${steps.length} 步），确认后开始执行`;
-    actions = `<button type="button" data-plan-action="edit" data-plan-id="${planId}">编辑计划</button>`
-      + `<button type="button" class="plan-primary" data-plan-action="execute" data-plan-id="${planId}">开始执行</button>`
-      + `<button type="button" data-plan-action="cancel" data-plan-id="${planId}">取消</button>`;
+    text = `方案已就绪：《${escapeHtml(plan.title || '实施计划')}》（${steps.length} 步），请审阅`;
+    actions = `<button type="button" data-plan-action="keep-planning" data-plan-id="${planId}">Keep planning</button>`
+      + `<button type="button" data-plan-action="edit" data-plan-id="${planId}">编辑计划</button>`
+      + `<button type="button" class="plan-primary" data-plan-action="execute" data-plan-id="${planId}">Approve</button>`;
   } else if (plan.status === 'building') {
     const current = steps.find((step) => step.status === 'running');
     text = `正在执行《${escapeHtml(plan.title || '实施计划')}》 ${done}/${steps.length} 步`
@@ -737,11 +742,27 @@ async function executePlan(planId) {
     if (run?.id && run.conversation_id === state.conversationId) {
       await resumeRun(run);
     }
+    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], interaction_mode: 'craft' };
+    state.interactionMode = 'craft';
+    localStorage.setItem('naibaChatInteractionMode', 'craft');
+    renderModeSwitch();
     toast('计划已开始执行');
   } catch (error) {
     toast(`执行失败：${error.message}`);
   }
   await loadPlans();
+}
+
+async function keepPlanning(planId) {
+  try {
+    await api(`/api/plans/${planId}/keep-planning`, { method: 'POST', body: {} });
+    await loadPlans();
+    $('#messageInput').focus();
+    toast('已保留计划，继续规划');
+  } catch (error) {
+    toast(`继续规划失败：${error.message}`);
+  }
 }
 
 async function cancelPlan(planId) {
@@ -1195,6 +1216,7 @@ async function syncCurrentConversation() {
     state.conversationSnapshot = snapshot;
     renderConversations();
     renderMessages(conversation.messages || []);
+    renderModeSwitch();
     renderPermissionModeSwitch();
     state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
     updateWebSearchButton();
@@ -1216,7 +1238,7 @@ function startConversationSync() {
 
 function taskModeLabel(task) {
   if (task.kind === 'plan_execute') return 'Plan 执行';
-  return ({ craft: 'Craft', plan: 'Plan 准备', ask: 'Ask' })[task.interaction_mode] || 'Run';
+  return task.interaction_mode === 'plan' ? 'Plan' : '普通';
 }
 
 function taskElapsed(task) {
@@ -2474,8 +2496,14 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'done') {
     if (event.message) {
       try {
-        row.replaceWith(messageElement(event.message));
+        const completedRow = messageElement(event.message);
+        row.replaceWith(completedRow);
         updateContextUsage(null, event.message);
+        const metadata = event.message.metadata || {};
+        if ((Array.isArray(metadata.choice_groups) && metadata.choice_groups.length)
+          || (Array.isArray(metadata.choices) && metadata.choices.length)) {
+          showChoiceButtons(metadata.choices, metadata.choice_groups);
+        }
       } catch (error) {
         console.error('[naiba] done 事件渲染崩溃:', error, 'message=', event.message);
       }
@@ -2652,6 +2680,8 @@ function setBusy(busy) {
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
   sendBtn.setAttribute('aria-label', busy ? '停止当前请求' : '发送');
   $('#messageInput').disabled = false;
+  const modeSwitch = $('#planModeSwitch');
+  if (modeSwitch) modeSwitch.disabled = busy;
   updateUnloadModelButton();
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
 }
@@ -2710,7 +2740,7 @@ function bindEvents() {
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
   });
-  $('#modeSwitch').addEventListener('change', (event) => switchInteractionMode(event.target.value));
+  $('#planModeSwitch').addEventListener('change', (event) => switchPlanMode(event.target.checked));
   $('#permissionModeSwitch').addEventListener('click', (event) => {
     const button = event.target.closest('[data-permission-mode]');
     if (button) switchPermissionMode(button.dataset.permissionMode);
@@ -2722,6 +2752,7 @@ function bindEvents() {
     if (type === 'confirm') resolvePlanConfirmation(action.dataset.confirmId, true);
     else if (type === 'reject') resolvePlanConfirmation(action.dataset.confirmId, false);
     else if (type === 'execute') executePlan(action.dataset.planId);
+    else if (type === 'keep-planning') keepPlanning(action.dataset.planId);
     else if (type === 'cancel') cancelPlan(action.dataset.planId);
     else if (type === 'edit') openPlanEditor(action.dataset.planId);
   });

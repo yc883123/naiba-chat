@@ -48,7 +48,7 @@ if str(EXE_DIR) not in sys.path and str(EXE_DIR) != str(APP_DIR):
 
 from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
-from plan_runtime import ASK_MODE_PROMPT, CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
+from plan_runtime import CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
 from skill_runtime import (
     SkillAgent,
     SkillCatalog,
@@ -283,6 +283,15 @@ def _detect_choice_groups(text: str) -> list[dict[str, Any]]:
             match = bullet_pattern.match(line)
             if match:
                 parsed = ("bullet", len(current_items), clean(match.group(1)))
+
+        # A numbered heading such as "**1. 请选择时长：**" introduces the
+        # following choices; it is not itself an option. Treat it as the
+        # prompt so the option markers remain consecutive.
+        if parsed and parsed[0] in {"numbered", "lettered"} and choice_cue.search(parsed[2]):
+            finish_group()
+            preceding_prompt = clean(parsed[2])
+            recent_cue_prompt = preceding_prompt
+            continue
 
         if parsed and parsed[2]:
             kind, marker, value = parsed
@@ -1529,6 +1538,7 @@ class NaibaChatApp:
 
         self.web_search = WebSearchRuntime(self)
         self.tool_registry.register_system_handler("web_search", self._web_search_handler)
+        self.tool_registry.register_system_handler("exit_plan_mode", self._exit_plan_mode_handler)
         # Local smoke/test builds can opt out without changing persisted user settings.
         auto_update = os.environ.get("NAIBA_DISABLE_AUTO_UPDATE", "").strip().lower() not in {"1", "true", "yes"}
         self.updater = UpdateManager(APP_DIR, DATA_DIR, auto_update=auto_update)
@@ -1544,6 +1554,17 @@ class NaibaChatApp:
         query = str(args.get("query") or args.get("q") or "")
         max_results = args.get("max_results")
         return self.web_search.search(query, int(max_results) if isinstance(max_results, (int, float)) else None)
+
+    def _exit_plan_mode_handler(
+        self, args: dict[str, Any], _skills: Any, run_context: dict[str, Any] | None
+    ) -> tuple[bool, str]:
+        content = str((args or {}).get("plan") or "").strip()
+        if not content.startswith("#"):
+            return False, "计划必须是完整 Markdown，并以 # 标题开头"
+        if not isinstance(run_context, dict) or str(run_context.get("interaction_mode") or "") != "plan":
+            return False, "exit_plan_mode 只能在 Plan 模式下调用"
+        run_context["plan_exit_content"] = content[:100000]
+        return True, "计划已提交，等待用户 Approve 或 Keep planning"
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         if str(values.get("id") or "").strip() == "comfyui":
@@ -1877,12 +1898,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             if raw_agent_id is not None and not APP.config.get_agent(agent_id):
                 self._json({"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST)
                 return
-            interaction_mode = str(body.get("interaction_mode") or "craft")
+            interaction_mode = "plan" if str(body.get("interaction_mode") or "").strip().lower() == "plan" else "craft"
             permission_mode = str(body.get("permission_mode") or "confirm")
             web_search_enabled = body.get("web_search_enabled", False)
-            if interaction_mode not in ("craft", "plan", "ask"):
-                self._json({"error": "interaction_mode 必须是 craft / plan / ask"}, HTTPStatus.BAD_REQUEST)
-                return
+            # Only Plan is user-selectable; all other values mean ordinary mode.
             if permission_mode not in ("confirm", "auto", "full"):
                 self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
                 return
@@ -1932,9 +1951,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             interaction_mode = body.get("interaction_mode")
             if interaction_mode is not None:
-                if not isinstance(interaction_mode, str) or interaction_mode not in ("craft", "plan", "ask"):
-                    self._json({"error": "interaction_mode 必须是 craft / plan / ask"}, HTTPStatus.BAD_REQUEST)
+                if not isinstance(interaction_mode, str):
+                    self._json({"error": "interaction_mode 必须是文本"}, HTTPStatus.BAD_REQUEST)
                     return
+                normalized_interaction_mode = interaction_mode.strip().lower()
+                if normalized_interaction_mode not in {"plan", "craft", "ask"}:
+                    self._json({"error": "interaction_mode 必须是 plan 或普通模式"}, HTTPStatus.BAD_REQUEST)
+                    return
+                interaction_mode = "plan" if normalized_interaction_mode == "plan" else "craft"
             permission_mode = body.get("permission_mode")
             if permission_mode is not None:
                 if not isinstance(permission_mode, str) or permission_mode not in ("confirm", "auto", "full"):
@@ -2156,6 +2180,14 @@ class RequestHandler(BaseHTTPRequestHandler):
             plan_id = path.split("/")[-2]
             try:
                 self._json(APP.plans.cancel(plan_id))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path.startswith("/api/plans/") and path.endswith("/keep-planning"):
+            plan_id = path.split("/")[-2]
+            try:
+                self._json(APP.plans.keep_planning(plan_id))
             except LookupError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
             except ValueError as exc:

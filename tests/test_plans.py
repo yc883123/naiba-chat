@@ -58,7 +58,7 @@ class InteractionModeStorageTests(unittest.TestCase):
             conversation = storage.create_conversation()
 
             updated = storage.update_conversation_settings(conversation["id"], interaction_mode="ask")
-            self.assertEqual("ask", updated["interaction_mode"])
+            self.assertEqual("craft", updated["interaction_mode"])
             with self.assertRaisesRegex(ValueError, "interaction_mode"):
                 storage.update_conversation_settings(conversation["id"], interaction_mode="turbo")
             with self.assertRaisesRegex(ValueError, "非法的计划状态"):
@@ -453,13 +453,12 @@ class FrontendIntegrationTests(unittest.TestCase):
         source = Path("public/app.js").read_text(encoding="utf-8")
         server_source = Path("server.py").read_text(encoding="utf-8")
 
-        self.assertIn('id="modeSwitch"', html)
-        self.assertIn('data-mode="craft"', html)
-        self.assertIn('data-mode="plan"', html)
-        self.assertIn('data-mode="ask"', html)
+        self.assertIn('id="planModeSwitch"', html)
+        self.assertIn('type="checkbox"', html)
+        self.assertNotIn('data-mode="ask"', html)
         self.assertIn('id="planBar"', html)
         self.assertIn('id="planEditDialog"', html)
-        self.assertIn("function switchInteractionMode(mode)", source)
+        self.assertIn("async function switchPlanMode(enabled)", source)
         self.assertIn("interaction_mode: state.interactionMode", source)
         self.assertIn("async function sendChatMessage", source)
         self.assertIn("await sendChatMessage(textOverride)", source)
