@@ -283,69 +283,79 @@ def _detect_choice_groups(text: str) -> list[dict[str, Any]]:
         current_items = []
         current_prompt = ""
 
-    for line in lines:
-        parsed: tuple[str, Any, str] | None = None
-        match = numbered_pattern.match(line)
-        if match:
-            parsed = ("numbered", int(match.group(1)), clean(match.group(2)))
-        if not parsed:
-            match = lettered_pattern.match(line)
+    for raw_line in lines:
+        # Models frequently put compact choices on one line, for example
+        # "1. 文生视频 2. 图生视频 3. 参考生视频". Split only at a
+        # choice marker preceded by whitespace so decimal numbers in prose
+        # are left untouched.
+        expanded_lines = re.sub(
+            r"\s+(?=\d{1,2}\s*[.、):：）\]】])",
+            "\n",
+            raw_line,
+        ).splitlines() or [""]
+        for line in expanded_lines:
+            parsed: tuple[str, Any, str] | None = None
+            match = numbered_pattern.match(line)
             if match:
-                parsed = ("lettered", match.group(1).upper(), clean(match.group(2)))
-        if not parsed:
-            match = named_pattern.match(line)
-            if match:
-                parsed = ("named", len(current_items), clean(match.group(1)))
-        stripped = line.strip()
-        if not parsed and stripped and stripped[0] in circled_numbers:
-            value = clean(stripped[1:].lstrip(".、):：） "))
-            if value:
-                parsed = ("numbered", circled_numbers[stripped[0]], value)
-        if not parsed:
-            match = bullet_pattern.match(line)
-            if match:
-                parsed = ("bullet", len(current_items), clean(match.group(1)))
+                parsed = ("numbered", int(match.group(1)), clean(match.group(2)))
+            if not parsed:
+                match = lettered_pattern.match(line)
+                if match:
+                    parsed = ("lettered", match.group(1).upper(), clean(match.group(2)))
+            if not parsed:
+                match = named_pattern.match(line)
+                if match:
+                    parsed = ("named", len(current_items), clean(match.group(1)))
+            stripped = line.strip()
+            if not parsed and stripped and stripped[0] in circled_numbers:
+                value = clean(stripped[1:].lstrip(".、):：） "))
+                if value:
+                    parsed = ("numbered", circled_numbers[stripped[0]], value)
+            if not parsed:
+                match = bullet_pattern.match(line)
+                if match:
+                    parsed = ("bullet", len(current_items), clean(match.group(1)))
 
-        # A numbered heading such as "**1. 请选择时长：**" introduces the
-        # following choices; it is not itself an option. Treat it as the
-        # prompt so the option markers remain consecutive.
-        if parsed and parsed[0] in {"numbered", "lettered"} and choice_cue.search(parsed[2]):
-            finish_group()
-            preceding_prompt = clean(parsed[2])
-            recent_cue_prompt = preceding_prompt
-            continue
-
-        if parsed and parsed[2]:
-            kind, marker, value = parsed
-            if kind == "named":
+            # A numbered heading such as "**1. 请选择时长：**" introduces the
+            # following choices; it is not itself an option. Treat it as the
+            # prompt so the option markers remain consecutive.
+            if parsed and parsed[0] in {"numbered", "lettered"} and choice_cue.search(parsed[2]):
                 finish_group()
-                if not named_group_added:
-                    named_prompt = (
+                preceding_prompt = clean(parsed[2])
+                recent_cue_prompt = preceding_prompt
+                continue
+
+            if parsed and parsed[2]:
+                kind, marker, value = parsed
+                if kind == "named":
+                    finish_group()
+                    if not named_group_added:
+                        named_prompt = (
+                            preceding_prompt
+                            if choice_cue.search(preceding_prompt)
+                            else recent_cue_prompt
+                        )
+                        groups.append(("named", named_items, named_prompt))
+                        named_group_added = True
+                    named_items.append((len(named_items), value))
+                    continue
+                if current_items and kind != current_kind:
+                    finish_group()
+                if not current_items:
+                    current_kind = kind
+                    current_prompt = (
                         preceding_prompt
                         if choice_cue.search(preceding_prompt)
                         else recent_cue_prompt
                     )
-                    groups.append(("named", named_items, named_prompt))
-                    named_group_added = True
-                named_items.append((len(named_items), value))
+                current_items.append((marker, value))
                 continue
-            if current_items and kind != current_kind:
-                finish_group()
-            if not current_items:
-                current_kind = kind
-                current_prompt = (
-                    preceding_prompt
-                    if choice_cue.search(preceding_prompt)
-                    else recent_cue_prompt
-                )
-            current_items.append((marker, value))
-            continue
 
-        finish_group()
-        if stripped:
-            preceding_prompt = clean(re.sub(r"^(?:#{1,6}\s*)", "", stripped))
-            if choice_cue.search(preceding_prompt):
-                recent_cue_prompt = preceding_prompt
+            finish_group()
+            if stripped:
+                preceding_prompt = clean(re.sub(r"^(?:#{1,6}\s*)", "", stripped))
+                if choice_cue.search(preceding_prompt):
+                    recent_cue_prompt = preceding_prompt
 
     finish_group()
 

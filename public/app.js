@@ -392,6 +392,18 @@ function scrollToBottom() {
   messages.scrollTop = messages.scrollHeight;
 }
 
+function scheduleStreamingMarkdown(element, raw) {
+  if (!element) return;
+  element.dataset.raw = raw;
+  if (element.dataset.renderScheduled === '1') return;
+  element.dataset.renderScheduled = '1';
+  window.setTimeout(() => {
+    element.dataset.renderScheduled = '0';
+    element.innerHTML = markdown(element.dataset.raw || '');
+    scrollToBottom();
+  }, 40);
+}
+
 function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
@@ -2480,8 +2492,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     setActivity('');
     const current = answer.dataset.raw || '';
     const next = current + String(event.content || '');
-    answer.dataset.raw = next;
-    answer.innerHTML = markdown(next);
+    scheduleStreamingMarkdown(answer, next);
   } else if (event.type === 'reasoning_start') {
     row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => { block.dataset.active = 'false'; });
     const block = document.createElement('details');
@@ -2503,8 +2514,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       answer.before(block);
     }
     const content = block.querySelector('.reasoning-content');
-    content.dataset.raw = (content.dataset.raw || '') + String(event.content || '');
-    content.innerHTML = markdown(content.dataset.raw);
+    scheduleStreamingMarkdown(content, (content.dataset.raw || '') + String(event.content || ''));
     row.dataset.reasoningStreamed = 'true';
   } else if (event.type === 'reasoning_end') {
     row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
