@@ -86,8 +86,12 @@ def run_subagent_agent(
     conversation_prompt = str(conversation.get("system_prompt") or "").strip()
     combined_prompt = "\n\n".join(item for item in (agent_prompt, conversation_prompt) if item)
     requested = [str(t) for t in (params.get("allowed_tools") or [])]
-    allowed_tools = [t for t in requested if t not in SUBAGENT_BLOCKED_TOOLS] or SUBAGENT_ALLOWED_TOOLS
+    if "allowed_tools" in params:
+        allowed_tools = [t for t in requested if t not in SUBAGENT_BLOCKED_TOOLS]
+    else:
+        allowed_tools = list(SUBAGENT_ALLOWED_TOOLS)
     allowed_tools = [t for t in allowed_tools if t not in SUBAGENT_BLOCKED_TOOLS]
+    skill_policy = params.get("skill_policy") or {"mode": "auto", "skill_ids": []}
 
     emit({"type": "job_status", "status": "running", "current_step": "子 Agent 推理中"})
     worker = SkillAgent(app.catalog, CraftToolExecutor(app.executor), app.models.complete)
@@ -98,6 +102,9 @@ def run_subagent_agent(
         "owner_session_id": spec.owner_session_id or conversation_id,
         "parent_job_id": spec.parent_job_id or "",
         "depth": 1,
+        "allowed_tools": list(allowed_tools),
+        "skill_policy": dict(skill_policy),
+        "job_registry": app.jobs,
     }
     try:
         content, runs, reasonings, usage = worker.run(
@@ -105,8 +112,8 @@ def run_subagent_agent(
             history,
             profile,
             options,
-            False,
-            [str(i) for i in agent.get("skill_ids", [])],
+            skill_policy,
+            [],
             combined_prompt,
             allowed_tools,
             emit,
@@ -160,13 +167,21 @@ def subagent_handler_factory(app: Any) -> Callable[..., tuple[bool, str]]:
         instruction = str((arguments or {}).get("instruction") or "").strip()
         if not instruction:
             return False, "缺少 instruction 参数"
+        parent_allowed = [str(tool) for tool in ctx.get("allowed_tools") or []]
+        requested_tools = [str(tool) for tool in (arguments or {}).get("allowed_tools", [])]
+        child_tools = requested_tools or parent_allowed
+        child_tools = [
+            tool for tool in child_tools
+            if tool in parent_allowed and tool not in SUBAGENT_BLOCKED_TOOLS
+        ]
         label = str((arguments or {}).get("label") or "")[:120] or "子 Agent 任务"
         spec = JobSpec(
             kind="subagent",
             conversation_id=conversation_id,
             params={
                 "instruction": instruction,
-                "allowed_tools": [str(t) for t in (arguments or {}).get("allowed_tools", [])],
+                "allowed_tools": child_tools,
+                "skill_policy": dict(ctx.get("skill_policy") or {"mode": "auto", "skill_ids": []}),
             },
             label=label,
             parent_job_id=parent_job_id or None,
@@ -195,10 +210,13 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         if not isinstance(spec_dict, dict) or not spec_dict.get("kind"):
             return False, "spec 必须包含 kind"
         owner = _owner(ctx)
+        params = dict(spec_dict.get("params", {}))
+        params.setdefault("skill_policy", dict(ctx.get("skill_policy") or {"mode": "auto", "skill_ids": []}))
+        params.setdefault("allowed_tools", [str(tool) for tool in ctx.get("allowed_tools") or []])
         spec = JobSpec(
             kind=str(spec_dict["kind"]),
             conversation_id=conversation_id,
-            params=dict(spec_dict.get("params", {})),
+            params=params,
             label=str(spec_dict.get("label") or "")[:120],
             parent_job_id=str(ctx.get("run_id") or ctx.get("job_id") or "") or None,
             owner_session_id=owner,

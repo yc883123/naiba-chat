@@ -2000,6 +2000,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         if body is None:
             return
         if path == "/api/auth":
+            if self._is_local_request():
+                self._json({"ok": True, "local": True})
+                return
             valid = secrets.compare_digest(str(body.get("token") or ""), str(APP.config.data["access_token"]))
             self._json({"ok": valid}, HTTPStatus.OK if valid else HTTPStatus.UNAUTHORIZED)
             return
@@ -2389,12 +2392,18 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"error": "接口不存在"}, HTTPStatus.NOT_FOUND)
 
     def _authorized(self, parsed: urllib.parse.ParseResult) -> bool:
+        # Desktop/localhost requests do not need the LAN access token.
+        if self._is_local_request():
+            return True
         expected = str(APP.config.data["access_token"])
         header = self.headers.get("Authorization", "")
         provided = header[7:] if header.startswith("Bearer ") else ""
         if not provided:
             provided = urllib.parse.parse_qs(parsed.query).get("token", [""])[0]
         return bool(provided) and secrets.compare_digest(provided, expected)
+
+    def _is_local_request(self) -> bool:
+        return self.client_address[0] in {"127.0.0.1", "::1", "localhost"}
 
     def _read_json(self, max_size: int = 2 * 1024 * 1024) -> dict[str, Any] | None:
         try:

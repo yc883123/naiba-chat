@@ -141,9 +141,13 @@
       <div><h2>Skills</h2><p id="skillsSummary"></p></div>
       <button class="icon-button" data-close="skillsDialog" title="关闭" aria-label="关闭">×</button>
     </div>
-    <label class="toggle-row">
-      <span><b>自动选择</b><small>根据当前消息选择相关 Skill</small></span>
-      <input id="autoSkills" type="checkbox">
+    <label class="skill-policy-row">
+      <span><b>Skill 策略</b><small id="skillPolicyHint">根据当前消息自动选择相关 Skill</small></span>
+      <select id="skillPolicyMode" aria-label="Skill 策略">
+        <option value="auto">自动选择</option>
+        <option value="pinned">固定使用所选 Skill</option>
+        <option value="exclusive">仅允许所选 Skill</option>
+      </select>
     </label>
     <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
     <div class="skill-list" id="skillList"></div>
@@ -245,7 +249,7 @@
             </label>
             <label class="provider-field">请求格式
               <select id="providerFormat">
-                <option value="openai_chat">OpenAI Chat /v1/chat/completions</option>
+                <option value="openai_chat">OpenAI 兼容（OpenAI / DeepSeek / Grok）/v1/chat/completions</option>
                 <option value="codex_responses">Codex /v1/responses</option>
                 <option value="gemini">Gemini /v1beta/models/模型名:streamGenerateContent</option>
                 <option value="claude">Claude /v1/messages</option>

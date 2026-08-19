@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 import threading
 import time
 import traceback
-from pathlib import Path
 from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
-from skill_runtime import SkillAgent, TaskCancelled
+from skill_runtime import SkillAgent, TaskCancelled, normalize_skill_policy
 
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
@@ -79,182 +75,6 @@ def _merge_usage_summary(
         if merged["input_tokens"] else 0.0
     )
     return merged
-
-
-def _completion_contract(message: str) -> dict[str, Any]:
-    """Infer a contract only when the user explicitly requests a file/产物.
-
-    Merely mentioning a medium (for example, asking for a video prompt or
-    selecting T2VA) is not a request to deliver a generated media file.
-    """
-    import re
-    text = str(message or "")
-    lower = text.lower()
-    media_terms = (
-        "视频", "短剧", "片段", "图片", "图像", "音频", "文档", "报告", "表格",
-        "文件", "产物", "artifact", ".mp4", ".png", ".jpg", ".jpeg", ".pdf",
-        ".docx", ".xlsx", ".pptx", ".zip",
-    )
-    delivery_verbs = (
-        "生成", "制作", "输出", "导出", "交付", "提供", "保存", "下载", "渲染",
-        "创建", "写入", "返回", "提交", "deliver", "export", "save", "download",
-        "generate", "create", "render",
-    )
-    # Require a delivery verb near a file/media term. This excludes text such
-    # as “视频提示词” and “选择输入模式：T2VA” from artifact validation.
-    delivery_intent = any(
-        re.search(rf"{re.escape(verb)}[^。！？!?\n]{{0,18}}(?:{'|'.join(map(re.escape, media_terms))})", lower, re.I)
-        or re.search(rf"(?:{'|'.join(map(re.escape, media_terms))})[^。！？!?\n]{{0,18}}{re.escape(verb)}", lower, re.I)
-        for verb in delivery_verbs
-    )
-    prompt_only = re.search(r"(?:视频|图片|图像|音频)?[^。！？!?\n]{0,24}(?:提示词|prompt|脚本|分镜|方案)", lower, re.I)
-    explicit_file_phrase = re.search(r"(?:文件|产物|artifact|导出|交付|下载|保存).{0,8}(?:视频|图片|音频|文档|报告|表格)?", lower, re.I)
-    if prompt_only and not explicit_file_phrase:
-        delivery_intent = False
-    kind = ""
-    if delivery_intent:
-        if any(token in lower for token in ("视频", "短剧", "片段", ".mp4")):
-            kind = "video"
-        elif any(token in lower for token in ("图片", "图像", ".png", ".jpg", ".jpeg")):
-            kind = "image"
-        elif any(token in lower for token in ("音频", ".mp3", ".wav", ".m4a")):
-            kind = "audio"
-        else:
-            kind = "file"
-    count = 0
-    m = re.search(r"(\d+)\s*(?:个|段|条)?\s*(?:视频|片段)", text)
-    if not m:
-        m = re.search(r"(\d+)\s*(?:个|张|份|条|段)?\s*(?:文件|产物|视频|片段|图片|图像|音频|文档|报告|表格)", text)
-    if m:
-        count = int(m.group(1))
-    else:
-        for word, value in (
-            ("两个", 2), ("两张", 2), ("两份", 2), ("两段", 2),
-            ("三个", 3), ("三张", 3), ("三份", 3), ("三段", 3),
-            ("一个", 1), ("一张", 1), ("一份", 1), ("一段", 1),
-        ):
-            if word in text:
-                count = value
-                break
-    duration_min = duration_max = 0
-    m = re.search(r"(\d+(?:\.\d+)?)\s*[-~至到]\s*(\d+(?:\.\d+)?)\s*秒", text)
-    if m:
-        duration_min, duration_max = float(m.group(1)), float(m.group(2))
-    else:
-        m = re.search(r"(\d+(?:\.\d+)?)\s*秒", text)
-        if m:
-            duration_min = duration_max = float(m.group(1))
-    return {
-        "required": bool(kind),
-        "kind": kind,
-        "count": count,
-        "duration_min_sec": duration_min,
-        "duration_max_sec": duration_max,
-        "source": text[:1000],
-    }
-
-
-def _probe_video_duration(path: str) -> tuple[float | None, str | None]:
-    """Read a media duration from the delivered file, never from a model claim."""
-    file_path = Path(path)
-    if not file_path.is_file():
-        return None, "视频文件不存在"
-    configured = os.environ.get("NAIBA_FFPROBE", "").strip()
-    candidates = [
-        configured,
-        r"D:\comfyuibyte\ComfyUI_portable_TE_v260619\ffprobe\ffprobe.exe",
-        shutil.which("ffprobe") or "",
-    ]
-    executable = next((candidate for candidate in candidates if candidate and Path(candidate).is_file()), "")
-    if not executable:
-        return None, "未找到 ffprobe，无法验证视频时长"
-    try:
-        result = subprocess.run(
-            [executable, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(file_path)],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=20,
-        )
-        duration = float(json.loads(result.stdout)["format"]["duration"])
-        if duration <= 0:
-            return None, "ffprobe 未返回有效视频时长"
-        return duration, None
-    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
-        return None, f"无法读取视频时长: {exc}"
-
-
-def _validate_completion(contract: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any]:
-    """Validate real artifacts only for an explicit file-delivery contract."""
-    import os
-    artifacts: list[dict[str, Any]] = []
-    for run in runs:
-        if not isinstance(run, dict) or not run.get("success"):
-            continue
-        try:
-            payload = json.loads(str(run.get("result") or ""))
-        except (TypeError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, dict):
-            items = payload.get("artifacts") or []
-            if isinstance(items, list):
-                artifacts.extend(item for item in items if isinstance(item, dict))
-    kind = str(contract.get("kind") or "")
-    if not contract.get("required") and not kind:
-        return {"required": False, "passed": True, "artifacts": artifacts, "issues": []}
-    video_exts = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".gif"}
-    actual = []
-    for item in artifacts:
-        path = str(item.get("local_path") or "")
-        ext = os.path.splitext(path or str(item.get("filename") or ""))[1].lower()
-        item_kind = str(item.get("kind") or "").lower()
-        if kind == "video" and (item_kind in {"videos", "gifs", "video"} or ext in video_exts):
-            actual.append(item)
-        elif kind == "image" and (item_kind in {"images", "image"} or ext in {".png", ".jpg", ".jpeg", ".webp", ".gif"}):
-            actual.append(item)
-        elif kind == "audio" and (item_kind in {"audio", "audios"} or ext in {".mp3", ".wav", ".m4a", ".flac", ".aac"}):
-            actual.append(item)
-        elif kind == "file":
-            actual.append(item)
-    issues = []
-    expected = int(contract.get("count") or 0)
-    if not actual:
-        label = {"video": "视频", "image": "图片", "audio": "音频", "file": "交付产物"}.get(kind, "交付产物")
-        if kind == "video":
-            issues.append("未找到可验证的视频产物（PNG/JPG 图片不能替代视频）")
-        else:
-            issues.append(f"未找到可验证的{label}")
-    if expected and len(actual) < expected:
-        label = {"video": "视频片段", "image": "图片", "audio": "音频", "file": "交付文件"}.get(kind, "交付文件")
-        issues.append(f"需要 {expected} 个{label}，实际仅找到 {len(actual)} 个")
-    missing_paths = [
-        str(item.get("filename") or item)
-        for item in actual
-        if not item.get("local_path") or not os.path.exists(str(item["local_path"]))
-    ]
-    if missing_paths:
-        issues.append("部分交付文件路径不存在: " + ", ".join(missing_paths[:3]))
-    duration_min = float(contract.get("duration_min_sec") or 0)
-    duration_max = float(contract.get("duration_max_sec") or 0)
-    if kind == "video" and (duration_min or duration_max):
-        lower = duration_min or 0
-        upper = duration_max or float("inf")
-        tolerance = 0.75
-        for item in actual:
-            local_path = str(item.get("local_path") or "")
-            if not local_path or not os.path.isfile(local_path):
-                continue
-            duration, error = _probe_video_duration(local_path)
-            if error:
-                issues.append(f"无法验证视频 {item.get('filename') or local_path} 的时长: {error}")
-                continue
-            item["duration_sec"] = round(duration, 3)
-            if duration < lower - tolerance or duration > upper + tolerance:
-                expected_range = f"{lower:g}-{upper:g}" if duration_min and duration_max else f">={lower:g}"
-                issues.append(
-                    f"视频 {item.get('filename') or local_path} 时长 {duration:.2f} 秒，不符合要求 {expected_range} 秒"
-                )
-    return {"required": True, "passed": not issues, "artifacts": actual, "issues": issues}
 
 
 class ActiveRunError(RuntimeError):
@@ -342,9 +162,28 @@ class ConversationRunManager:
         )
         system_tools = SYSTEM_TOOLS_READONLY if normalize_interaction_mode(mode) == "plan" else SYSTEM_TOOLS_CRAFT
         allowed_tools = list(dict.fromkeys([*base_tools, *system_tools]))
+        names_getter = getattr(self.app.tool_registry, "names", None)
+        registry_names = names_getter() if callable(names_getter) else []
+        direct_mcp = [
+            name for name in registry_names
+            if name.startswith("mcp__")
+            and (
+                normalize_interaction_mode(mode) != "plan"
+                or name in self.app.tool_registry.readonly_mcp_tools()
+            )
+        ]
+        if "call_mcp" in allowed_tools:
+            allowed_tools.extend(name for name in direct_mcp if name not in allowed_tools)
         scope = set(agent.get("tool_scope") or [])
         if scope:
-            allowed_tools = [tool for tool in allowed_tools if tool in scope]
+            allowed_tools = [
+                tool for tool in allowed_tools
+                if tool in scope or (tool.startswith("mcp__") and "call_mcp" in scope)
+            ]
+            allowed_tools.extend(
+                name for name in direct_mcp
+                if name in scope and name not in allowed_tools
+            )
         if "web_search" in allowed_tools and not (
             web_search_enabled and self.app.web_search.is_available()
         ):
@@ -411,6 +250,15 @@ class ConversationRunManager:
             plan_id = ""
             web_search_enabled = bool(conversation.get("web_search_enabled", 0))
             allowed_tools = self._resolve_allowed_tools(mode, agent, web_search_enabled)
+            catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
+            catalog = catalog_getter() if callable(catalog_getter) else []
+            skill_policy = normalize_skill_policy(
+                body.get("skill_policy"),
+                legacy_auto=body.get("auto_skills"),
+                legacy_ids=body.get("skill_ids"),
+                fixed_ids=agent.get("skill_ids"),
+                catalog=catalog,
+            )
             model_key = str(body.get("model_key") or conversation.get("model_key") or "")
             if not model_key and conversation.get("provider_id"):
                 model_key = f"online:{conversation['provider_id']}"
@@ -421,8 +269,7 @@ class ConversationRunManager:
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
                 "model_key": model_key,
                 "generation_options": self._generation_options(self.app.config, model_key),
-                "auto_skills": bool(body.get("auto_skills", False)),
-                "skill_ids": [str(item) for item in body.get("skill_ids", [])],
+                "skill_policy": skill_policy,
                 "attachments": attachments,
                 "interaction_mode": mode,
                 "plan_id": plan_id,
@@ -475,6 +322,8 @@ class ConversationRunManager:
             if not model_key:
                 provider_id = str(conversation.get("provider_id") or "")
                 model_key = f"online:{provider_id}" if provider_id else ""
+            catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
+            catalog = catalog_getter() if callable(catalog_getter) else []
             snapshot = {
                 "plan_id": plan_id,
                 "interaction_mode": "plan",
@@ -491,6 +340,11 @@ class ConversationRunManager:
                     "craft", agent, bool(web_search_enabled)
                 ),
                 "permission_mode": str(conversation.get("permission_mode") or "confirm"),
+                "skill_policy": normalize_skill_policy(
+                    None,
+                    fixed_ids=agent.get("skill_ids"),
+                    catalog=catalog,
+                ),
             }
             try:
                 run = self.app.storage.create_run(
@@ -620,7 +474,6 @@ class ConversationRunManager:
             from server import _detect_choice_groups, build_model_history, extract_attachments
 
             message = str(run.get("message") or "")
-            completion_contract = _completion_contract(message)
             uploads = snapshot.get("attachments") or []
             extra = [f"[用户上传文件：{item.get('path')}]" for item in uploads if item.get("path")]
             effective = message + (("\n" + "\n".join(extra)) if extra else "")
@@ -714,7 +567,6 @@ class ConversationRunManager:
                 ],
             })
             agent = snapshot.get("agent") or {}
-            selected = list(dict.fromkeys(agent.get("skill_ids", []) + snapshot.get("skill_ids", [])))
             prompt = "\n\n".join(
                 item for item in (
                     str(agent.get("system_prompt") or "").strip(),
@@ -723,8 +575,6 @@ class ConversationRunManager:
             )
             if mode == "plan":
                 prompt = (prompt + "\n\n" + self.app.plans.prepare_prompt(self.app.plans.get(plan_id))).strip()
-            if completion_contract.get("required"):
-                prompt = (prompt + "\n\n本次运行的不可变验收契约（不得自行降级或改写）：\n" + json.dumps(completion_contract, ensure_ascii=False)).strip()
             # 联网搜索提示（PLAN4 §联网搜索）：开关开启且 provider 可用时引导模型按需调用。
             if snapshot.get("web_search_enabled") and self.app.web_search.is_available():
                 prompt = (prompt + "\n\n联网搜索已开启：需要实时/外部信息时调用 web_search 工具；"
@@ -733,18 +583,23 @@ class ConversationRunManager:
             worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
             run_context = {
                 "run_id": run_id,
+                "conversation_id": conversation_id,
+                "owner_session_id": conversation_id,
+                "depth": 0,
+                "allowed_tools": list(allowed_tools),
+                "job_registry": getattr(self.app, "jobs", None),
                 "executor": executor,
                 "cancel_event": cancel_event,
                 "interaction_mode": mode,
-                "completion_contract": completion_contract,
+                "skill_policy": dict(snapshot.get("skill_policy") or {"mode": "auto", "skill_ids": []}),
             }
             response, runs, reasonings, usage = worker.run(
                 effective,
                 history,
                 profile,
                 options,
-                bool(snapshot.get("auto_skills")),
-                selected,
+                snapshot.get("skill_policy") or {"mode": "auto", "skill_ids": []},
+                [],
                 prompt,
                 allowed_tools,
                 event,
@@ -798,14 +653,6 @@ class ConversationRunManager:
                         })
                 response, plan = self.app.plans.process_response(plan_id, response)
                 plan_status = str((plan or {}).get("status") or "")
-            completion_validation = _validate_completion(completion_contract, runs)
-            if completion_validation["required"] and not completion_validation["passed"]:
-                missing = "；".join(completion_validation["issues"])
-                sink.failure_message = "产物验收未通过：" + missing
-                response = (
-                    "任务未完成。产物验收未通过：" + missing
-                    + "。已保留真实工具结果，未将替代图片或提交记录当作完成。"
-                )
             choice_groups = _detect_choice_groups(response)
             metadata = {
                 "skills": skills,
@@ -824,8 +671,7 @@ class ConversationRunManager:
                 "interaction_mode": mode,
                 "plan_id": plan_id,
                 "plan_status": plan_status,
-                "completion_contract": completion_contract,
-                "completion_validation": completion_validation,
+                "skill_policy": dict(snapshot.get("skill_policy") or {"mode": "auto", "skill_ids": []}),
                 **({"error": sink.failure_message} if sink.failure_message else {}),
             }
             saved = self.app.storage.add_message(conversation_id, "assistant", response, metadata)

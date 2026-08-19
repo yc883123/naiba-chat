@@ -177,11 +177,13 @@ class ToolRegistry:
         active_skills: list[dict[str, Any]],
         run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
-        if tool in self._system_handlers:
-            return self._system_handlers[tool](arguments, active_skills, run_context)
         executor = self._executor
         if isinstance(run_context, dict) and run_context.get("executor") is not None:
             executor = run_context["executor"]
+        if tool.startswith("mcp__") and executor is not None:
+            return executor.execute(tool, arguments, active_skills)
+        if tool in self._system_handlers:
+            return self._system_handlers[tool](arguments, active_skills, run_context)
         if tool in self._specs and executor is not None:
             return executor.execute(tool, arguments, active_skills)
         # MCP 工具形如 server.tool，ToolExecutor 内部处理

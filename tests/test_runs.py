@@ -8,8 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from async_tasks import ConversationRunManager, _completion_contract, _validate_completion
+import model_runtime
+from async_tasks import ConversationRunManager
+from model_runtime import ModelRuntime
+from skill_runtime import SkillAgent, normalize_skill_policy
 from storage import ChatStorage
+from subagent import job_tool_handler_factory, subagent_handler_factory
 
 
 class RunStorageTests(unittest.TestCase):
@@ -110,75 +114,408 @@ class RunStorageTests(unittest.TestCase):
             gc.collect()
 
 
-class CompletionValidationTests(unittest.TestCase):
-    @staticmethod
-    def run_with_artifacts(artifacts):
-        return [{"success": True, "result": json.dumps({"artifacts": artifacts})}]
+class SkillPolicyTests(unittest.TestCase):
+    skills = [{"id": "a"}, {"id": "b"}, {"id": "fixed"}]
 
-    def test_png_cannot_satisfy_two_requested_videos(self) -> None:
-        result = _validate_completion(
-            {"kind": "video", "count": 2, "duration_min_sec": 0, "duration_max_sec": 0},
-            self.run_with_artifacts([{"kind": "images", "filename": "preview.png", "local_path": "preview.png"}]),
+    def test_missing_policy_defaults_to_auto_and_keeps_agent_fixed_skills(self) -> None:
+        self.assertEqual(
+            {"mode": "auto", "skill_ids": ["fixed"]},
+            normalize_skill_policy(None, fixed_ids=["fixed"], catalog=self.skills),
         )
 
-        self.assertFalse(result["passed"])
-        self.assertTrue(any("PNG/JPG" in issue for issue in result["issues"]))
-        self.assertTrue(any("需要 2 个" in issue for issue in result["issues"]))
-
-    def test_video_prompt_does_not_require_a_video_artifact(self) -> None:
-        contract = _completion_contract("请生成一个 15 秒视频提示词")
-
-        self.assertFalse(contract["required"])
-        self.assertEqual("", contract["kind"])
-        self.assertTrue(_validate_completion(contract, [])["passed"])
-
-    def test_explicit_media_file_delivery_requires_matching_artifact(self) -> None:
-        contract = _completion_contract("请生成一个 15 秒视频文件")
-
-        self.assertTrue(contract["required"])
-        self.assertEqual("video", contract["kind"])
-        self.assertEqual(1, contract["count"])
-
-    def test_two_existing_videos_with_valid_durations_pass(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            first = Path(root) / "segment-1.mp4"
-            second = Path(root) / "segment-2.mp4"
-            first.write_bytes(b"video")
-            second.write_bytes(b"video")
-            artifacts = [
-                {"kind": "videos", "filename": first.name, "local_path": str(first)},
-                {"kind": "videos", "filename": second.name, "local_path": str(second)},
-            ]
-            with patch("async_tasks._probe_video_duration", return_value=(15.1, None)):
-                result = _validate_completion(
-                    {"kind": "video", "count": 2, "duration_min_sec": 15, "duration_max_sec": 15},
-                    self.run_with_artifacts(artifacts),
-                )
-
-        self.assertTrue(result["passed"])
-        self.assertEqual([15.1, 15.1], [item["duration_sec"] for item in result["artifacts"]])
-
-    def test_video_without_artifact_fails(self) -> None:
-        result = _validate_completion(
-            {"kind": "video", "count": 1, "duration_min_sec": 15, "duration_max_sec": 15},
-            self.run_with_artifacts([]),
+    def test_legacy_selection_migrates_to_pinned(self) -> None:
+        self.assertEqual(
+            {"mode": "pinned", "skill_ids": ["fixed", "a"]},
+            normalize_skill_policy(
+                None, legacy_auto=True, legacy_ids=["a"], fixed_ids=["fixed"], catalog=self.skills
+            ),
         )
 
-        self.assertFalse(result["passed"])
-        self.assertTrue(any("未找到" in issue for issue in result["issues"]))
+    def test_exclusive_accepts_multiple_and_ignores_agent_fixed_skills(self) -> None:
+        self.assertEqual(
+            {"mode": "exclusive", "skill_ids": ["a", "b"]},
+            normalize_skill_policy(
+                {"mode": "exclusive", "skill_ids": ["a", "b"]},
+                fixed_ids=["fixed"],
+                catalog=self.skills,
+            ),
+        )
 
-    def test_wrong_duration_fails(self) -> None:
+    def test_exclusive_rejects_empty_and_unknown_skills(self) -> None:
+        with self.assertRaisesRegex(ValueError, "至少需要"):
+            normalize_skill_policy({"mode": "exclusive", "skill_ids": []}, catalog=self.skills)
+        with self.assertRaisesRegex(ValueError, "未知 Skill"):
+            normalize_skill_policy({"mode": "exclusive", "skill_ids": ["missing"]}, catalog=self.skills)
+
+    def test_exclusive_loads_all_selected_skills_without_auto_routing(self) -> None:
         with tempfile.TemporaryDirectory() as root:
-            video = Path(root) / "segment.mp4"
-            video.write_bytes(b"video")
-            with patch("async_tasks._probe_video_duration", return_value=(9.0, None)):
-                result = _validate_completion(
-                    {"kind": "video", "count": 1, "duration_min_sec": 15, "duration_max_sec": 15},
-                    self.run_with_artifacts([{"kind": "videos", "filename": video.name, "local_path": str(video)}]),
+            paths = []
+            skills = []
+            for skill_id in ("a", "b"):
+                path = Path(root) / f"{skill_id}.md"
+                path.write_text(f"# {skill_id}", encoding="utf-8")
+                paths.append(path)
+                skills.append({
+                    "id": skill_id,
+                    "name": skill_id,
+                    "description": skill_id,
+                    "path": str(path),
+                    "root": root,
+                    "requires_mcp": False,
+                })
+
+            catalog = SimpleNamespace(scan=lambda: skills)
+            mcp = SimpleNamespace(connections={}, acquire=lambda: None, release=lambda: None)
+            executor = SimpleNamespace(mcp_registry=mcp, mcp_tool_guide=lambda: "")
+            events = []
+            agent = SkillAgent(catalog, executor, lambda *_args: "done")
+            with patch.object(agent, "_route_skills", side_effect=AssertionError("must not route")):
+                content, _runs, _reasoning, _usage = agent.run(
+                    "work", [], {}, {},
+                    {"mode": "exclusive", "skill_ids": ["a", "b"]}, [], "", [],
+                    lambda event: events.append(event), lambda *_args: None,
+                    run_context={},
                 )
 
-        self.assertFalse(result["passed"])
-        self.assertTrue(any("时长 9.00 秒" in issue for issue in result["issues"]))
+            enabled = next(event["skills"] for event in events if event.get("type") == "skills")
+            self.assertEqual("done", content)
+            self.assertEqual(["a", "b"], [skill["id"] for skill in enabled])
+
+    def test_frozen_auto_policy_keeps_agent_fixed_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "fixed.md"
+            path.write_text("# fixed", encoding="utf-8")
+            skill = {
+                "id": "fixed", "name": "fixed", "description": "fixed",
+                "path": str(path), "root": root, "requires_mcp": False,
+            }
+            catalog = SimpleNamespace(scan=lambda: [skill])
+            mcp = SimpleNamespace(connections={}, acquire=lambda: None, release=lambda: None)
+            executor = SimpleNamespace(mcp_registry=mcp, mcp_tool_guide=lambda: "")
+            events = []
+            agent = SkillAgent(catalog, executor, lambda *_args: "done")
+
+            content, _runs, _reasoning, _usage = agent.run(
+                "work", [], {}, {}, {"mode": "auto", "skill_ids": ["fixed"]}, [], "", [],
+                lambda event: events.append(event), lambda *_args: None, run_context={},
+            )
+
+            enabled = next(event["skills"] for event in events if event.get("type") == "skills")
+            self.assertEqual("done", content)
+            self.assertEqual(["fixed"], [item["id"] for item in enabled])
+
+
+class NativeToolAndMcpTests(unittest.TestCase):
+    def test_openai_request_contains_native_tool_schema(self) -> None:
+        captured = {}
+
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"done"}}]}'
+
+        def fake_urlopen(request, timeout):
+            del timeout
+            captured.update(json.loads(request.data.decode("utf-8")))
+            return Response()
+
+        with patch.object(model_runtime.urllib.request, "urlopen", fake_urlopen):
+            content, _reasoning, _usage = ModelRuntime._complete_online(
+                {"base_url": "https://example.test", "model": "m", "request_format": "openai_chat"},
+                [{"role": "user", "content": "work"}],
+                {
+                    "stream": False,
+                    "tools": [{
+                        "name": "read_file",
+                        "description": "read",
+                        "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                    }],
+                },
+            )
+
+        self.assertEqual("done", content)
+        self.assertEqual("read_file", captured["tools"][0]["function"]["name"])
+        self.assertEqual("auto", captured["tool_choice"])
+        self.assertFalse(captured["parallel_tool_calls"])
+
+    def test_provider_native_tool_schema_shapes(self) -> None:
+        tool = [{
+            "name": "read_file",
+            "description": "read",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+        }]
+
+        codex = ModelRuntime._tool_schemas(tool, "codex_responses")[0]
+        gemini = ModelRuntime._tool_schemas(tool, "gemini")[0]
+        claude = ModelRuntime._tool_schemas(tool, "claude")[0]
+
+        self.assertEqual("read_file", codex["name"])
+        self.assertEqual("read_file", gemini["name"])
+        self.assertEqual(tool[0]["parameters"], gemini["parameters"])
+        self.assertEqual(tool[0]["parameters"], claude["input_schema"])
+
+    def test_provider_native_tool_results_are_serialized(self) -> None:
+        messages = [
+            {"role": "assistant", "content": "", "tool_calls": [{
+                "id": "call-1", "name": "read_file", "arguments": {"path": "a"}
+            }]},
+            {"role": "tool", "tool_call_id": "call-1", "name": "read_file", "content": '{"ok":true}'},
+        ]
+
+        openai = ModelRuntime._openai_messages(messages)
+        codex = ModelRuntime._responses_input(messages)
+        gemini = [ModelRuntime._gemini_message(item) for item in messages]
+        claude = [ModelRuntime._claude_message(item) for item in messages]
+        ollama = ModelRuntime._ollama_messages(messages)
+
+        self.assertEqual("call-1", openai[1]["tool_call_id"])
+        self.assertEqual("function_call_output", codex[1]["type"])
+        self.assertEqual("read_file", gemini[1]["parts"][0]["functionResponse"]["name"])
+        self.assertEqual("tool_result", claude[1]["content"][0]["type"])
+        self.assertEqual("tool", ollama[1]["role"])
+
+    def test_codex_gemini_and_claude_payloads_receive_native_tools(self) -> None:
+        payloads = {}
+        urls = {}
+        responses = {
+            "codex_responses": {"output_text": "done"},
+            "gemini": {"candidates": [{"content": {"parts": [{"text": "done"}]}}]},
+            "claude": {"content": [{"type": "text", "text": "done"}]},
+            "lm_studio": {"choices": [{"message": {"content": "done"}}]},
+        }
+
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return json.dumps(self.body).encode("utf-8")
+
+        current = {"format": ""}
+
+        def fake_urlopen(request, timeout, cancel_event=None):
+            del timeout, cancel_event
+            payloads[current["format"]] = json.loads(request.data.decode("utf-8"))
+            urls[current["format"]] = request.full_url
+            return Response(responses[current["format"]])
+
+        tool = [{
+            "name": "read_file",
+            "description": "read",
+            "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+        }]
+        with patch.object(ModelRuntime, "_urlopen_cancelable", side_effect=fake_urlopen):
+            for request_format in responses:
+                current["format"] = request_format
+                ModelRuntime._complete_online(
+                    {"base_url": "https://example.test", "model": "m", "request_format": request_format},
+                    [{"role": "user", "content": "work"}],
+                    {"stream": False, "tools": tool},
+                )
+
+        self.assertEqual("read_file", payloads["codex_responses"]["tools"][0]["name"])
+        self.assertEqual(
+            "read_file",
+            payloads["gemini"]["tools"][0]["functionDeclarations"][0]["name"],
+        )
+        self.assertEqual("read_file", payloads["claude"]["tools"][0]["name"])
+        self.assertEqual("read_file", payloads["lm_studio"]["tools"][0]["function"]["name"])
+        self.assertTrue(urls["lm_studio"].endswith("/v1/chat/completions"))
+
+    def test_codex_gemini_and_claude_native_calls_become_agent_actions(self) -> None:
+        codex, _ = ModelRuntime._online_response("codex_responses", {
+            "output": [{"type": "function_call", "name": "read_file", "arguments": '{"path":"a"}'}]
+        })
+        gemini, _ = ModelRuntime._online_response("gemini", {
+            "candidates": [{"content": {"parts": [{"functionCall": {"name": "read_file", "args": {"path": "b"}}}]}}]
+        })
+        claude, _ = ModelRuntime._online_response("claude", {
+            "content": [{"type": "tool_use", "id": "t1", "name": "read_file", "input": {"path": "c"}}]
+        })
+
+        self.assertEqual("a", json.loads(codex)["arguments"]["path"])
+        self.assertEqual("b", json.loads(gemini)["arguments"]["path"])
+        self.assertEqual("c", json.loads(claude)["arguments"]["path"])
+
+    def test_multiple_native_calls_are_preserved_for_the_agent_loop(self) -> None:
+        result = {
+            "choices": [{"message": {"tool_calls": [
+                {"function": {"name": "read_file", "arguments": '{"path":"a"}'}},
+                {"function": {"name": "read_file", "arguments": '{"path":"b"}'}},
+            ]}}]
+        }
+
+        content, _ = ModelRuntime._online_response("openai_chat", result)
+        action = json.loads(content)
+
+        self.assertEqual("tools", action["type"])
+        self.assertEqual(["a", "b"], [call["arguments"]["path"] for call in action["calls"]])
+
+    def test_openai_compatible_proxy_can_fall_back_when_tools_are_rejected(self) -> None:
+        import io
+        calls = []
+
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"done"}}]}'
+
+        def fake_urlopen(request, timeout, cancel_event=None):
+            del timeout, cancel_event
+            payload = json.loads(request.data.decode("utf-8"))
+            calls.append(payload)
+            if len(calls) == 1:
+                raise model_runtime.urllib.error.HTTPError(
+                    request.full_url,
+                    400,
+                    "Bad Request",
+                    {"Content-Type": "application/json"},
+                    io.BytesIO(b'{"error":"unsupported tools field"}'),
+                )
+            return Response()
+
+        with patch.object(ModelRuntime, "_urlopen_cancelable", side_effect=fake_urlopen):
+            content, _reasoning, _usage = ModelRuntime._complete_online(
+                {"base_url": "https://proxy.test", "model": "deepseek-chat", "request_format": "openai_chat"},
+                [{"role": "user", "content": "work"}],
+                {"stream": False, "tools": [{"name": "read_file", "parameters": {"type": "object"}}]},
+            )
+
+        self.assertEqual("done", content)
+        self.assertIn("tools", calls[0])
+        self.assertNotIn("tools", calls[1])
+
+    def test_direct_mcp_tools_follow_mode_and_call_mcp_scope(self) -> None:
+        registry = SimpleNamespace(
+            names=lambda: ["mcp__demo__read", "mcp__demo__write"],
+            readonly_mcp_tools=lambda: ["mcp__demo__read"],
+        )
+        app = SimpleNamespace(
+            config=SimpleNamespace(data={"agent_tools": ["call_mcp"]}),
+            tool_registry=registry,
+            web_search=SimpleNamespace(is_available=lambda: False),
+        )
+        manager = ConversationRunManager(app)
+        agent = {"tool_scope": ["call_mcp"]}
+
+        craft = manager._resolve_allowed_tools("craft", agent, False)
+        plan = manager._resolve_allowed_tools("plan", agent, False)
+
+        self.assertIn("mcp__demo__read", craft)
+        self.assertIn("mcp__demo__write", craft)
+        self.assertIn("mcp__demo__read", plan)
+        self.assertNotIn("mcp__demo__write", plan)
+
+    def test_agent_continues_with_native_tool_result_context(self) -> None:
+        calls = []
+
+        def complete(_profile, messages, options, _event):
+            calls.append((messages, options))
+            if len(calls) == 1:
+                return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "a"}})
+            self.assertEqual("tool", messages[-1]["role"])
+            self.assertEqual("read_file", messages[-1]["name"])
+            return "done"
+
+        registry = SimpleNamespace(
+            schemas=lambda: [{
+                "name": "read_file", "description": "read",
+                "parameters": {"type": "object", "properties": {}},
+            }],
+            execute=lambda tool, arguments, active, context: (True, "file content"),
+            retryable=lambda tool: False,
+        )
+        mcp = SimpleNamespace(connections={}, acquire=lambda: None, release=lambda: None)
+        executor = SimpleNamespace(mcp_registry=mcp, mcp_tool_guide=lambda: "")
+        agent = SkillAgent(SimpleNamespace(scan=lambda: []), executor, complete)
+
+        content, runs, _reasoning, _usage = agent.run(
+            "work", [], {}, {}, {"mode": "auto", "skill_ids": []}, [], "",
+            ["read_file"], lambda _event: None, lambda *_args: None,
+            tool_registry=registry, run_context={},
+        )
+
+        self.assertEqual("done", content)
+        self.assertEqual(1, len(runs))
+        self.assertEqual("read_file", calls[0][1]["tools"][0]["name"])
+
+
+class ChildPolicyInheritanceTests(unittest.TestCase):
+    class Jobs:
+        def __init__(self):
+            self.specs = []
+
+        def list(self, owner=""):
+            del owner
+            return []
+
+        def start(self, spec, owner=""):
+            del owner
+            self.specs.append(spec)
+            return "job-1"
+
+    def test_subagent_inherits_skill_policy_and_cannot_expand_tools(self) -> None:
+        jobs = self.Jobs()
+        app = SimpleNamespace(jobs=jobs)
+        handler = subagent_handler_factory(app)
+        context = {
+            "conversation_id": "conversation",
+            "run_id": "run",
+            "owner_session_id": "conversation",
+            "depth": 0,
+            "allowed_tools": ["read_file", "write_file", "subagent"],
+            "skill_policy": {"mode": "exclusive", "skill_ids": ["a", "b"]},
+        }
+
+        ok, _ = handler(
+            {"instruction": "work", "allowed_tools": ["read_file", "run_command"]},
+            [], context,
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(["read_file"], jobs.specs[0].params["allowed_tools"])
+        self.assertEqual(context["skill_policy"], jobs.specs[0].params["skill_policy"])
+
+    def test_background_job_inherits_frozen_policy_and_tools(self) -> None:
+        jobs = self.Jobs()
+        handlers = job_tool_handler_factory(SimpleNamespace(jobs=jobs))
+        context = {
+            "conversation_id": "conversation",
+            "run_id": "run",
+            "owner_session_id": "conversation",
+            "allowed_tools": ["read_file", "job_wait"],
+            "skill_policy": {"mode": "exclusive", "skill_ids": ["a", "b"]},
+        }
+
+        ok, _ = handlers["run_in_background"](
+            {"spec": {"kind": "shell", "params": {"command": "echo ok"}}}, [], context
+        )
+
+        self.assertTrue(ok)
+        self.assertEqual(context["allowed_tools"], jobs.specs[0].params["allowed_tools"])
+        self.assertEqual(context["skill_policy"], jobs.specs[0].params["skill_policy"])
 
 
 class RunFrontendTests(unittest.TestCase):
@@ -199,6 +536,16 @@ class RunFrontendTests(unittest.TestCase):
 
         self.assertNotIn("${toolAvailabilityMarkup(metadata.allowed_tools)}", source)
         self.assertNotIn("wrapper.innerHTML = toolAvailabilityMarkup(event.tools || [])", source)
+
+    def test_frontend_defaults_to_auto_and_sends_skill_policy(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("const initialSkillMode", source)
+        self.assertIn("skill_policy: {", source)
+        self.assertIn("mode: state.skillMode", source)
+        self.assertIn('value="exclusive"', html)
+        self.assertNotIn("completion_contract", source)
 
 
 if __name__ == "__main__":

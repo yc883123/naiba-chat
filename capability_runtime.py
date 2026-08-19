@@ -33,7 +33,7 @@ class CapabilityRuntime:
         self,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
-        _run_context: dict[str, Any] | None = None,
+        run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         requested_tools = [str(item) for item in arguments.get("tools") or []]
         requested_skills = [str(item) for item in arguments.get("skills") or []]
@@ -47,6 +47,10 @@ class CapabilityRuntime:
             for spec in schemas if spec.get("name")
         }
         skills = self.app.catalog.scan()
+        policy = (run_context or {}).get("skill_policy") or {}
+        if str(policy.get("mode") or "") == "exclusive":
+            allowed_ids = {str(item) for item in policy.get("skill_ids") or []}
+            skills = [skill for skill in skills if str(skill.get("id") or "") in allowed_ids]
         skill_names = {
             str(skill.get("name") or "").lower(): skill for skill in skills
         }
@@ -90,8 +94,11 @@ class CapabilityRuntime:
         self,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
-        _run_context: dict[str, Any] | None = None,
+        run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
+        policy = (run_context or {}).get("skill_policy") or {}
+        if str(policy.get("mode") or "") == "exclusive":
+            return False, "exclusive 模式禁止安装或激活白名单外 Skill"
         source = str(arguments.get("source_path") or "").strip()
         if not source:
             return False, "缺少 source_path"

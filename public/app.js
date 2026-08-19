@@ -4,13 +4,20 @@ if (urlToken) {
   history.replaceState(null, '', location.pathname);
 }
 
+const storedSkillIds = JSON.parse(localStorage.getItem('naibaChatSkillIds') || localStorage.getItem('lanSkillIds') || '[]');
+const storedSkillMode = localStorage.getItem('naibaChatSkillMode');
+const legacyAutoSkills = localStorage.getItem('naibaChatAutoSkills') ?? localStorage.getItem('lanAutoSkills');
+const initialSkillMode = ['auto', 'pinned', 'exclusive'].includes(storedSkillMode)
+  ? storedSkillMode
+  : (legacyAutoSkills === 'false' && storedSkillIds.length ? 'pinned' : 'auto');
+
 const state = {
   token: urlToken || localStorage.getItem('naibaChatToken') || localStorage.getItem('lanSkillToken') || '',
   bootstrap: null,
   conversations: [],
   conversationId: '',
-  selectedSkills: JSON.parse(localStorage.getItem('naibaChatSkillIds') || localStorage.getItem('lanSkillIds') || '[]'),
-  autoSkills: (localStorage.getItem('naibaChatAutoSkills') ?? localStorage.getItem('lanAutoSkills')) === 'true',
+  selectedSkills: storedSkillIds,
+  skillMode: initialSkillMode,
   pendingFiles: [],
   abortController: null,
   chatRunId: '',
@@ -442,10 +449,6 @@ async function authenticate(token) {
 }
 
 async function initialize() {
-  if (!state.token) {
-    $('#authDialog').showModal();
-    return;
-  }
   try {
     state.bootstrap = await api('/api/bootstrap');
   } catch (error) {
@@ -467,7 +470,7 @@ async function initialize() {
   $('#serverLabel').textContent = '服务已连接';
   $('#lanAddress').textContent = state.bootstrap.lan_url;
   $('#connectionAddress').textContent = state.bootstrap.lan_url;
-  $('#autoSkills').checked = state.autoSkills;
+  $('#skillPolicyMode').value = state.skillMode;
   populateModels();
   renderAgents();
   renderAgentManager();
@@ -1300,6 +1303,8 @@ function currentAgentFixedSkillIds() {
 
 // 有效启用的 Skill = Agent 固定 Skill + 手动勾选 Skill（去重）
 function effectiveSkillIds() {
+  if (state.skillMode === 'exclusive') return [...new Set(state.selectedSkills)];
+  if (state.skillMode === 'auto') return [...new Set(currentAgentFixedSkillIds())];
   return [...new Set([...currentAgentFixedSkillIds(), ...state.selectedSkills])];
 }
 
@@ -1308,13 +1313,15 @@ function renderSkills(filter = '') {
   const query = filter.trim().toLowerCase();
   const fixed = new Set(currentAgentFixedSkillIds());
   const effective = new Set(effectiveSkillIds());
+  const exclusive = state.skillMode === 'exclusive';
+  const automatic = state.skillMode === 'auto';
   const skills = state.bootstrap.skills.filter((skill) =>
     !query || `${skill.name} ${skill.description}`.toLowerCase().includes(query));
   $('#skillList').innerHTML = skills.map((skill) => `
-    <label class="skill-item${fixed.has(skill.id) ? ' fixed' : ''}">
-      <input type="checkbox" value="${skill.id}" ${effective.has(skill.id) ? 'checked' : ''} ${fixed.has(skill.id) ? 'disabled' : ''}>
+    <label class="skill-item${fixed.has(skill.id) && !exclusive ? ' fixed' : ''}">
+      <input type="checkbox" value="${skill.id}" ${effective.has(skill.id) ? 'checked' : ''} ${(fixed.has(skill.id) && !exclusive) || automatic ? 'disabled' : ''}>
       <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
-      ${fixed.has(skill.id) ? '<em>Agent 固定</em>' : (skill.script_count ? `<em>${skill.script_count} 脚本</em>` : '')}
+      ${fixed.has(skill.id) && !exclusive ? '<em>Agent 固定</em>' : (skill.script_count ? `<em>${skill.script_count} 脚本</em>` : '')}
     </label>`).join('');
   updateSkillSummary();
 }
@@ -1322,8 +1329,16 @@ function renderSkills(filter = '') {
 function updateSkillSummary() {
   const fixed = currentAgentFixedSkillIds().length;
   const effective = effectiveSkillIds().length;
-  $('#skillCount').textContent = state.autoSkills ? '自动' : String(effective);
-  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，${effective} 个启用${fixed ? `（含 ${fixed} 个 Agent 固定）` : ''}`;
+  const labels = { auto: '自动', pinned: '固定', exclusive: '仅限' };
+  const hints = {
+    auto: '根据当前消息自动选择相关 Skill',
+    pinned: '始终加载所选 Skill，并允许自动补充',
+    exclusive: '只允许所选的一个或多个 Skill',
+  };
+  $('#skillCount').textContent = state.skillMode === 'auto' ? '自动' : `${labels[state.skillMode]} ${effective}`;
+  $('#skillPolicyHint').textContent = hints[state.skillMode];
+  const fixedNote = fixed && state.skillMode !== 'exclusive' ? `（含 ${fixed} 个 Agent 固定）` : '';
+  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，${effective} 个启用${fixedNote}`;
 }
 
 function renderProviders() {
@@ -1373,14 +1388,19 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   updateUnloadModelButton();
 }
 
-function syncProviderKindOptions() {
+function syncProviderKindOptions(previousFormat = '') {
   const local = $('#providerKind').value === '1';
   const allowed = local ? ['lm_studio', 'ollama', 'llama_cpp'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
   const format = $('#providerFormat');
   [...format.options].forEach((option) => { option.hidden = !allowed.includes(option.value); });
-  if (!allowed.includes(format.value)) format.value = allowed[0];
+  if (!allowed.includes(format.value)) {
+    // A legacy llama.cpp endpoint was commonly configured as an online
+    // OpenAI-compatible API. Switching its type to local must keep the
+    // /v1 protocol instead of silently redirecting it to LM Studio's /api/v1.
+    format.value = local && previousFormat === 'openai_chat' ? 'llama_cpp' : allowed[0];
+  }
   const hint = $('#providerKindHint');
-  if (hint) hint.textContent = local ? '本地 API 使用 Ollama 或 LM Studio 服务。' : '在线 API 使用远程模型服务。';
+  if (hint) hint.textContent = local ? '本地 API 可使用 llama.cpp、Ollama 或 LM Studio 服务。' : '在线 API 使用远程模型服务。';
 }
 
 function updateProviderFormatGuide() {
@@ -2283,6 +2303,10 @@ async function sendChatMessage(textOverride = '') {
     toast('请等待文件上传完成');
     return;
   }
+  if (state.skillMode === 'exclusive' && !state.selectedSkills.length) {
+    toast('仅允许所选 Skill 时，请至少选择一个 Skill');
+    return;
+  }
   hideChoiceButtons();
   if (!state.conversationId) await createConversation();
   const conversationId = state.conversationId;
@@ -2307,8 +2331,10 @@ async function sendChatMessage(textOverride = '') {
         message: text,
         attachments,
         model_key: $('#modelSelect').value,
-        auto_skills: state.autoSkills,
-        skill_ids: state.selectedSkills,
+        skill_policy: {
+          mode: state.skillMode,
+          skill_ids: state.skillMode === 'auto' ? [] : state.selectedSkills,
+        },
         web_search_enabled: state.webSearchEnabled,
       }),
       signal: controller.signal,
@@ -2833,10 +2859,10 @@ function bindEvents() {
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
-  $('#autoSkills').addEventListener('change', (event) => {
-    state.autoSkills = event.target.checked;
-    localStorage.setItem('naibaChatAutoSkills', String(state.autoSkills));
-    updateSkillSummary();
+  $('#skillPolicyMode').addEventListener('change', (event) => {
+    state.skillMode = event.target.value;
+    localStorage.setItem('naibaChatSkillMode', state.skillMode);
+    renderSkills($('#skillSearch').value);
   });
   $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
   $('#skillList').addEventListener('change', (event) => {
@@ -2985,7 +3011,8 @@ function bindEvents() {
     updateProviderContextField();
   });
   $('#providerKind').addEventListener('input', () => {
-    syncProviderKindOptions();
+    const previousFormat = $('#providerFormat').value;
+    syncProviderKindOptions(previousFormat);
     updateProviderFormatGuide();
     updateProviderContextField();
   });

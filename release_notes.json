@@ -1,4 +1,5 @@
 [
+  "Build60: fix local llama.cpp protocol selection, include the model-list endpoint in connection errors, and stop local vision calls from implicitly unloading models.",
   "修复 Agent 工具协议泄漏和无进展循环：工具调用不再显示到聊天正文；同一工具、参数和结果连续重复三次时自动停止。",
   "发送区新增上下文与 Token 用量圆环，每条助手消息显示本轮输入、输出、缓存和总 Token；未知在线 API 不再错误显示 8192 上限。",
   "DeepSeek 官方模型按 128K 上下文能力展示；Ollama 与 LM Studio 改为供应商级本地上下文配置，并分别发送 num_ctx 与 context_length。",

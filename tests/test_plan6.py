@@ -327,6 +327,28 @@ class VisionProbeTest(TestCase):
             )
         self.assertIs(captured["cancel_event"], cancel_event)
 
+    def test_local_vision_call_does_not_unload_the_model(self):
+        router = self._router()
+        profile = {
+            "kind": "local",
+            "request_format": "ollama",
+            "base_url": "http://127.0.0.1:11434/v1",
+            "model": "qwen-vl",
+        }
+        with (
+            mock.patch.object(router._runtime, "complete", return_value="OK"),
+            mock.patch.object(vision_runtime.ModelRuntime, "unload_local_model") as unload,
+        ):
+            self.assertEqual(
+                "OK",
+                router._call_backend(
+                    profile,
+                    [{"type": "image", "media_type": "image/png", "data": "x"}],
+                    "test",
+                ),
+            )
+        unload.assert_not_called()
+
     def test_probe_image_is_rgb_png(self):
         from PIL import Image
         import base64
@@ -442,6 +464,10 @@ class VisionSettingsFrontendTest(TestCase):
     def test_visual_provider_uses_full_model_key(self):
         app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
         self.assertIn("provider.model_key || provider.id", app_js)
+
+    def test_switching_legacy_openai_llama_endpoint_to_local_keeps_v1_protocol(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+        self.assertIn("previousFormat === 'openai_chat' ? 'llama_cpp'", app_js)
 
     def test_web_search_button_is_immediately_left_of_send(self):
         index_html = (Path(__file__).parents[1] / "public" / "index.html").read_text(

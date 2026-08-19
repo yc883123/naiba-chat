@@ -356,19 +356,11 @@ class VisionRouter:
         # brain/provider's reasoning setting: thinking tokens add latency and
         # can leave some vision endpoints with no usable final description.
         vision_profile = {**profile, "reasoning_effort": "off"}
-        try:
-            return self._runtime.complete(vision_profile, messages, options, None)
-        finally:
-            # Vision calls are short-lived probes/operations. Release a local
-            # vision model after the call so it does not occupy VRAM/RAM while
-            # the regular chat model is answering. Ordinary chat requests do
-            # not pass through this method and therefore remain loaded.
-            request_format = str(profile.get("request_format") or "").strip().lower()
-            if request_format in {"ollama", "lm_studio"}:
-                try:
-                    ModelRuntime.unload_local_model(profile)
-                except Exception as exc:  # noqa: BLE001 - cleanup must not mask result
-                    logger.warning("vision: local model unload failed: %s", exc)
+        # Do not unload a local vision backend after a request. Unloading here
+        # is invisible to the user and can interrupt the next local turn or
+        # force an expensive reload. Explicit unload remains available in the
+        # model controls.
+        return self._runtime.complete(vision_profile, messages, options, None)
 
     def describe_parts(
         self,

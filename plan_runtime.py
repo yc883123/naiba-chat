@@ -746,14 +746,14 @@ class PlanManager:
         )]
         executor = CraftToolExecutor(run_executor or self.app.executor)
         worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
-        selected = [str(item) for item in agent.get("skill_ids", [])]
+        skill_policy = frozen.get("skill_policy") or {"mode": "auto", "skill_ids": []}
         content, runs, reasonings, usage = worker.run(
             instruction,
             history,
             profile,
             options,
-            False,
-            selected,
+            skill_policy,
+            [],
             combined_prompt,
             allowed_tools,
             event,
@@ -765,6 +765,12 @@ class PlanManager:
             tool_registry=self.app.tool_registry,
             run_context={
                 "run_id": str((plan.get("detail") or {}).get("run_id") or ""),
+                "conversation_id": conversation_id,
+                "owner_session_id": conversation_id,
+                "depth": 0,
+                "allowed_tools": list(allowed_tools),
+                "skill_policy": dict(skill_policy),
+                "job_registry": getattr(self.app, "jobs", None),
                 "executor": executor,
             },
         )

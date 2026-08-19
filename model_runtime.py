@@ -354,10 +354,99 @@ class ModelRuntime:
 
     @staticmethod
     def _openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {"role": item.get("role", "user"), "content": ModelRuntime._openai_content(item.get("content"))}
-            for item in messages
-        ]
+        converted = []
+        for item in messages:
+            role = str(item.get("role") or "user")
+            if role == "tool":
+                converted.append({
+                    "role": "tool",
+                    "tool_call_id": str(item.get("tool_call_id") or ""),
+                    "content": ModelRuntime._content_text(item.get("content")),
+                })
+                continue
+            message = {"role": role, "content": ModelRuntime._openai_content(item.get("content"))}
+            if role == "assistant" and isinstance(item.get("tool_calls"), list):
+                message["tool_calls"] = [
+                    {
+                        "id": str(call.get("id") or ""),
+                        "type": "function",
+                        "function": {
+                            "name": str(call.get("name") or ""),
+                            "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
+                        },
+                    }
+                    for call in item["tool_calls"] if isinstance(call, dict)
+                ]
+            converted.append(message)
+        return converted
+
+    @staticmethod
+    def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        converted = []
+        for item in messages:
+            role = str(item.get("role") or "user")
+            if role == "tool":
+                converted.append({
+                    "type": "function_call_output",
+                    "call_id": str(item.get("tool_call_id") or ""),
+                    "output": ModelRuntime._content_text(item.get("content")),
+                })
+                continue
+            if role == "assistant" and isinstance(item.get("tool_calls"), list):
+                converted.extend({
+                    "type": "function_call",
+                    "call_id": str(call.get("id") or ""),
+                    "name": str(call.get("name") or ""),
+                    "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
+                } for call in item["tool_calls"] if isinstance(call, dict))
+                continue
+            converted.append({
+                "role": role,
+                "content": ModelRuntime._responses_content(item.get("content"), role),
+            })
+        return converted
+
+    @staticmethod
+    def _tool_schemas(tools: Any, request_format: str) -> list[dict[str, Any]]:
+        """Convert ToolRegistry rows to the provider's native function schema."""
+        rows = tools if isinstance(tools, list) else []
+        converted: list[dict[str, Any]] = []
+        for row in rows:
+            if not isinstance(row, dict) or not str(row.get("name") or "").strip():
+                continue
+            name = str(row["name"])
+            description = str(row.get("description") or "")
+            parameters = row.get("parameters") or {"type": "object", "properties": {}}
+            if request_format == "codex_responses":
+                converted.append({
+                    "type": "function",
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                    "strict": False,
+                })
+            elif request_format == "gemini":
+                converted.append({
+                    "name": name,
+                    "description": description,
+                    "parameters": parameters,
+                })
+            elif request_format == "claude":
+                converted.append({
+                    "name": name,
+                    "description": description,
+                    "input_schema": parameters,
+                })
+            else:
+                converted.append({
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": description,
+                        "parameters": parameters,
+                    },
+                })
+        return converted
 
     @staticmethod
     def _responses_content(content: Any, role: str) -> Any:
@@ -433,9 +522,9 @@ class ModelRuntime:
             )
             raise RuntimeError(f"模型列表返回 HTTP {exc.code}: {detail}") from exc
         except urllib.error.URLError as exc:
-            raise RuntimeError(f"无法连接模型列表接口：{exc.reason}") from exc
+            raise RuntimeError(f"无法连接模型列表接口 {endpoint}：{exc.reason}") from exc
         except OSError as exc:
-            raise RuntimeError(f"模型列表连接被本机或远端中止：{exc}") from exc
+            raise RuntimeError(f"模型列表接口 {endpoint} 的连接被本机或远端中止：{exc}") from exc
 
         items = []
         if isinstance(result, dict):
@@ -562,6 +651,8 @@ class ModelRuntime:
         stream_enabled = bool(options.get("stream", False))
         reasoning_effort = str(profile.get("reasoning_effort") or "auto").strip().lower()
         headers = {"Content-Type": "application/json"}
+        native_tools = ModelRuntime._tool_schemas(options.get("tools"), request_format)
+        response_format = request_format
 
         if request_format == "openai_chat":
             endpoint = ModelRuntime._with_endpoint(base_url, "/v1/chat/completions")
@@ -574,6 +665,10 @@ class ModelRuntime:
                 payload["temperature"] = temperature
             if max_tokens is not None:
                 payload["max_tokens"] = max_tokens
+            if native_tools:
+                payload["tools"] = native_tools
+                payload["tool_choice"] = "auto"
+                payload["parallel_tool_calls"] = False
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
             if reasoning_params:
                 payload.update(reasoning_params)
@@ -587,15 +682,9 @@ class ModelRuntime:
             )
             payload = {
                 "model": model,
-                "input": [
-                    {
-                        "role": item.get("role", "user"),
-                        "content": ModelRuntime._responses_content(
-                            item.get("content"), str(item.get("role") or "user")
-                        ),
-                    }
-                    for item in messages if item.get("role") != "system"
-                ],
+                "input": ModelRuntime._responses_input([
+                    item for item in messages if item.get("role") != "system"
+                ]),
                 "stream": stream_enabled,
             }
             if temperature is not None:
@@ -604,6 +693,10 @@ class ModelRuntime:
                 payload["max_output_tokens"] = max_tokens
             if instructions:
                 payload["instructions"] = instructions
+            if native_tools:
+                payload["tools"] = native_tools
+                payload["tool_choice"] = "auto"
+                payload["parallel_tool_calls"] = False
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
             if reasoning_params:
                 payload.update(reasoning_params)
@@ -617,21 +710,7 @@ class ModelRuntime:
                 for item in messages if item.get("role") == "system"
             ]
             contents = [
-                {
-                    "role": "model" if item.get("role") == "assistant" else "user",
-                    "parts": [
-                        {"text": str(part.get("text") or "")}
-                        if part.get("type") == "text"
-                        else {
-                            "inlineData": {
-                                "mimeType": part.get("media_type") or "image/jpeg",
-                                "data": part.get("data") or "",
-                            }
-                        }
-                        for part in ModelRuntime._content_parts(item.get("content"))
-                        if part.get("type") == "text" or (part.get("type") == "image" and part.get("data"))
-                    ],
-                }
+                ModelRuntime._gemini_message(item)
                 for item in messages if item.get("role") != "system"
             ]
             generation_config = {}
@@ -644,6 +723,9 @@ class ModelRuntime:
                 payload["generationConfig"] = generation_config
             if system_parts:
                 payload["systemInstruction"] = {"parts": system_parts}
+            if native_tools:
+                payload["tools"] = [{"functionDeclarations": native_tools}]
+                payload["toolConfig"] = {"functionCallingConfig": {"mode": "AUTO"}}
             if api_key:
                 headers["x-goog-api-key"] = api_key
         elif request_format == "claude":
@@ -657,23 +739,7 @@ class ModelRuntime:
             payload = {
                 "model": model,
                 "messages": [
-                    {
-                        "role": item.get("role", "user"),
-                        "content": [
-                            {"type": "text", "text": str(part.get("text") or "")}
-                            if part.get("type") == "text"
-                            else {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": part.get("media_type") or "image/jpeg",
-                                    "data": part.get("data") or "",
-                                },
-                            }
-                            for part in ModelRuntime._content_parts(item.get("content"))
-                            if part.get("type") == "text" or (part.get("type") == "image" and part.get("data"))
-                        ],
-                    }
+                    ModelRuntime._claude_message(item)
                     for item in messages if item.get("role") != "system"
                 ],
                 "max_tokens": max_tokens if max_tokens is not None else 4096,
@@ -683,6 +749,9 @@ class ModelRuntime:
                 payload["temperature"] = temperature
             if system:
                 payload["system"] = system
+            if native_tools:
+                payload["tools"] = native_tools
+                payload["tool_choice"] = {"type": "auto"}
             if api_key:
                 headers["x-api-key"] = api_key
             headers["anthropic-version"] = "2023-06-01"
@@ -698,6 +767,8 @@ class ModelRuntime:
                 "messages": ModelRuntime._ollama_messages(messages),
                 "stream": stream_enabled,
             }
+            if native_tools:
+                payload["tools"] = native_tools
             context_window = profile.get("context_window") or profile.get("context_size")
             if context_window:
                 ollama_options["num_ctx"] = int(context_window)
@@ -709,24 +780,42 @@ class ModelRuntime:
             if reasoning_params:
                 payload.update(reasoning_params)
         elif request_format == "lm_studio":
-            endpoint = ModelRuntime._local_endpoint(base_url, "/api/v1/chat")
-            system_prompt, lm_input = ModelRuntime._lm_studio_messages(messages)
-            payload = {
-                "model": model,
-                "system_prompt": system_prompt,
-                "input": lm_input,
-                "stream": stream_enabled,
-            }
-            if temperature is not None:
-                payload["temperature"] = temperature
-            if max_tokens is not None:
-                payload["max_output_tokens"] = max_tokens
-            context_window = profile.get("context_window") or profile.get("context_size")
-            if context_window:
-                payload["context_length"] = int(context_window)
-            reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
-            if reasoning_params:
-                payload.update(reasoning_params)
+            if native_tools:
+                # LM Studio exposes an OpenAI-compatible endpoint for native
+                # function calling. Keep its custom endpoint for tool-free chat.
+                response_format = "openai_chat"
+                endpoint = ModelRuntime._with_endpoint(base_url, "/v1/chat/completions")
+                payload = {
+                    "model": model,
+                    "messages": ModelRuntime._openai_messages(messages),
+                    "stream": stream_enabled,
+                    "tools": native_tools,
+                    "tool_choice": "auto",
+                    "parallel_tool_calls": False,
+                }
+                if temperature is not None:
+                    payload["temperature"] = temperature
+                if max_tokens is not None:
+                    payload["max_tokens"] = max_tokens
+            else:
+                endpoint = ModelRuntime._local_endpoint(base_url, "/api/v1/chat")
+                system_prompt, lm_input = ModelRuntime._lm_studio_messages(messages)
+                payload = {
+                    "model": model,
+                    "system_prompt": system_prompt,
+                    "input": lm_input,
+                    "stream": stream_enabled,
+                }
+                if temperature is not None:
+                    payload["temperature"] = temperature
+                if max_tokens is not None:
+                    payload["max_output_tokens"] = max_tokens
+                context_window = profile.get("context_window") or profile.get("context_size")
+                if context_window:
+                    payload["context_length"] = int(context_window)
+                reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
+                if reasoning_params:
+                    payload.update(reasoning_params)
             if api_key:
                 headers["Authorization"] = f"Bearer {api_key}"
         else:
@@ -765,10 +854,13 @@ class ModelRuntime:
         attempts_override = options.get("request_attempts")
         if isinstance(attempts_override, int) and attempts_override > 0:
             attempts = min(attempts_override, 5)
+        if native_tools:
+            attempts = max(attempts, 2)
+        tool_fallback_used = False
         for attempt in range(attempts):
             try:
                 with ModelRuntime._urlopen_cancelable(request, request_timeout, cancel_event) as response:
-                    if stream_enabled and request_format == "ollama":
+                    if stream_enabled and response_format == "ollama":
                         streamed = ModelRuntime._read_ollama_stream(response, status)
                         content = ModelRuntime._clean_content(streamed["content"])
                         reasoning = streamed["reasoning"]
@@ -800,7 +892,7 @@ class ModelRuntime:
                             if not content:
                                 raise RuntimeError("Ollama 流式响应中没有文本内容")
                         return content, reasoning, streamed["usage"]
-                    if stream_enabled and request_format == "lm_studio":
+                    if stream_enabled and response_format == "lm_studio":
                         streamed = ModelRuntime._read_lm_studio_stream(response, status)
                         content = ModelRuntime._clean_content(streamed["content"])
                         reasoning = streamed["reasoning"]
@@ -811,8 +903,8 @@ class ModelRuntime:
                             else:
                                 raise RuntimeError("LM Studio 流式响应中没有文本内容")
                         return content, reasoning, streamed["usage"]
-                    if stream_enabled and request_format != "gemini":
-                        streamed = ModelRuntime._read_sse_response(response, request_format, status)
+                    if stream_enabled and response_format != "gemini":
+                        streamed = ModelRuntime._read_sse_response(response, response_format, status)
                         content = ModelRuntime._clean_content(streamed["content"])
                         reasoning = streamed["reasoning"]
                         if not content:
@@ -855,6 +947,24 @@ class ModelRuntime:
                     exc.headers.get("Content-Type", "") if exc.headers else "",
                     endpoint_host,
                 )
+                tool_rejection = any(
+                    marker in detail.lower()
+                    for marker in ("tools", "tool_choice", "functioncalling", "function calling", "unknown field", "unsupported")
+                )
+                if native_tools and not tool_fallback_used and exc.code in {400, 404, 422} and tool_rejection:
+                    fallback_payload = dict(payload)
+                    for key in ("tools", "tool_choice", "parallel_tool_calls", "toolConfig"):
+                        fallback_payload.pop(key, None)
+                    request = urllib.request.Request(
+                        endpoint,
+                        data=json.dumps(fallback_payload, ensure_ascii=False).encode("utf-8"),
+                        headers=headers,
+                        method="POST",
+                    )
+                    tool_fallback_used = True
+                    if status:
+                        status({"type": "status", "message": "当前接口不支持原生 Tool Calling，已切换兼容工具协议"})
+                    continue
                 if (
                     not is_local
                     and not connection_test
@@ -884,11 +994,11 @@ class ModelRuntime:
                     hint = "；连接被中止，请检查代理/TUN、防火墙或服务状态"
                 raise RuntimeError(f"无法连接{target_detail}：{reason}{hint}") from exc
 
-        usage = ModelRuntime._online_usage(request_format, result)
+        usage = ModelRuntime._online_usage(response_format, result)
         try:
-            content, reasoning = ModelRuntime._online_response(request_format, result)
+            content, reasoning = ModelRuntime._online_response(response_format, result)
         except RuntimeError:
-            reasoning = ModelRuntime._online_reasoning(request_format, result)
+            reasoning = ModelRuntime._online_reasoning(response_format, result)
             if connection_test and reasoning:
                 return "接口已返回有效响应", reasoning, usage
             raise
@@ -899,10 +1009,20 @@ class ModelRuntime:
         converted = []
         for item in messages:
             content = item.get("content")
+            role = str(item.get("role") or "user")
             message = {
-                "role": item.get("role", "user"),
+                "role": role,
                 "content": ModelRuntime._content_text(content) if not isinstance(content, str) else content,
             }
+            if role == "assistant" and isinstance(item.get("tool_calls"), list):
+                message["tool_calls"] = [{
+                    "function": {
+                        "name": str(call.get("name") or ""),
+                        "arguments": call.get("arguments") or {},
+                    }
+                } for call in item["tool_calls"] if isinstance(call, dict)]
+            if role == "tool":
+                message["tool_name"] = str(item.get("name") or "")
             images = [
                 str(part.get("data") or "")
                 for part in ModelRuntime._content_parts(content)
@@ -912,6 +1032,77 @@ class ModelRuntime:
                 message["images"] = images
             converted.append(message)
         return converted
+
+    @staticmethod
+    def _gemini_message(item: dict[str, Any]) -> dict[str, Any]:
+        role = str(item.get("role") or "user")
+        if role == "tool":
+            try:
+                response = json.loads(ModelRuntime._content_text(item.get("content")))
+            except (json.JSONDecodeError, TypeError):
+                response = {"result": ModelRuntime._content_text(item.get("content"))}
+            return {
+                "role": "user",
+                "parts": [{"functionResponse": {"name": str(item.get("name") or ""), "response": response}}],
+            }
+        if role == "assistant" and isinstance(item.get("tool_calls"), list):
+            return {
+                "role": "model",
+                "parts": [{"functionCall": {
+                    "name": str(call.get("name") or ""),
+                    "args": call.get("arguments") or {},
+                }} for call in item["tool_calls"] if isinstance(call, dict)],
+            }
+        return {
+            "role": "model" if role == "assistant" else "user",
+            "parts": [
+                {"text": str(part.get("text") or "")}
+                if part.get("type") == "text"
+                else {"inlineData": {"mimeType": part.get("media_type") or "image/jpeg", "data": part.get("data") or ""}}
+                for part in ModelRuntime._content_parts(item.get("content"))
+                if part.get("type") == "text" or (part.get("type") == "image" and part.get("data"))
+            ],
+        }
+
+    @staticmethod
+    def _claude_message(item: dict[str, Any]) -> dict[str, Any]:
+        role = str(item.get("role") or "user")
+        if role == "tool":
+            return {
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": str(item.get("tool_call_id") or ""),
+                    "content": ModelRuntime._content_text(item.get("content")),
+                }],
+            }
+        if role == "assistant" and isinstance(item.get("tool_calls"), list):
+            return {
+                "role": "assistant",
+                "content": [{
+                    "type": "tool_use",
+                    "id": str(call.get("id") or ""),
+                    "name": str(call.get("name") or ""),
+                    "input": call.get("arguments") or {},
+                } for call in item["tool_calls"] if isinstance(call, dict)],
+            }
+        return {
+            "role": "assistant" if role == "assistant" else "user",
+            "content": [
+                {"type": "text", "text": str(part.get("text") or "")}
+                if part.get("type") == "text"
+                else {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": part.get("media_type") or "image/jpeg",
+                        "data": part.get("data") or "",
+                    },
+                }
+                for part in ModelRuntime._content_parts(item.get("content"))
+                if part.get("type") == "text" or (part.get("type") == "image" and part.get("data"))
+            ],
+        }
 
     @staticmethod
     def _lm_studio_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
@@ -978,6 +1169,7 @@ class ModelRuntime:
         reasoning_started = False
         reasoning_ended = False
         inline_parser = _InlineReasoningParser()
+        native_tool_calls: dict[int, dict[str, str]] = {}
         for raw_line in response:
             try:
                 chunk = json.loads(raw_line.decode("utf-8", errors="replace"))
@@ -986,6 +1178,18 @@ class ModelRuntime:
             if not isinstance(chunk, dict):
                 continue
             chunks.append(chunk)
+            message = chunk.get("message") or {}
+            for index, raw_call in enumerate(message.get("tool_calls") or [] if isinstance(message, dict) else []):
+                if not isinstance(raw_call, dict):
+                    continue
+                function = raw_call.get("function") or {}
+                raw_arguments = function.get("arguments", {})
+                arguments = raw_arguments if isinstance(raw_arguments, str) else json.dumps(raw_arguments, ensure_ascii=False)
+                native_tool_calls[index] = {
+                    "id": str(raw_call.get("id") or ""),
+                    "name": str(function.get("name") or ""),
+                    "arguments": arguments,
+                }
             text, reasoning = ModelRuntime._ollama_stream_delta(chunk)
             text, inline_reasoning = inline_parser.feed(text)
             reasoning = reasoning + inline_reasoning
@@ -1023,7 +1227,11 @@ class ModelRuntime:
         if status and reasoning_started and not reasoning_ended:
             status({"type": "reasoning_end"})
         return {
-            "content": ModelRuntime._clean_content("".join(full_content_parts)),
+            "content": (
+                ModelRuntime._build_action_from_native_tool_calls(native_tool_calls)
+                if native_tool_calls
+                else ModelRuntime._clean_content("".join(full_content_parts))
+            ),
             "reasoning": "".join(reasoning_parts),
             "usage": ModelRuntime._online_usage("ollama", chunks),
         }
@@ -1252,6 +1460,46 @@ class ModelRuntime:
                         "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else "",
                     }
                 )
+        elif request_format == "codex_responses":
+            event_type = str(chunk.get("type") or "")
+            if event_type == "response.output_item.added":
+                item = chunk.get("item") or {}
+                if isinstance(item, dict) and item.get("type") == "function_call":
+                    tool_calls.append({
+                        "index": int(chunk.get("output_index", 0) or 0),
+                        "id": str(item.get("call_id") or item.get("id") or ""),
+                        "name": str(item.get("name") or ""),
+                        "arguments": str(item.get("arguments") or ""),
+                    })
+            elif event_type == "response.function_call_arguments.delta":
+                tool_calls.append({
+                    "index": int(chunk.get("output_index", 0) or 0),
+                    "id": str(chunk.get("item_id") or ""),
+                    "name": "",
+                    "arguments": str(chunk.get("delta") or ""),
+                })
+        elif request_format == "claude":
+            event_type = str(chunk.get("type") or "")
+            index = int(chunk.get("index", 0) or 0)
+            if event_type == "content_block_start":
+                block = chunk.get("content_block") or {}
+                if isinstance(block, dict) and block.get("type") == "tool_use":
+                    raw_input = block.get("input") or {}
+                    tool_calls.append({
+                        "index": index,
+                        "id": str(block.get("id") or ""),
+                        "name": str(block.get("name") or ""),
+                        "arguments": json.dumps(raw_input, ensure_ascii=False) if raw_input else "",
+                    })
+            elif event_type == "content_block_delta":
+                delta = chunk.get("delta") or {}
+                if isinstance(delta, dict) and delta.get("type") == "input_json_delta":
+                    tool_calls.append({
+                        "index": index,
+                        "id": "",
+                        "name": "",
+                        "arguments": str(delta.get("partial_json") or ""),
+                    })
         return text, reasoning, tool_calls
 
     @staticmethod
@@ -1261,27 +1509,24 @@ class ModelRuntime:
         Raises ``RuntimeError`` on malformed/unsupported calls so the original
         protocol is never forwarded to the chat answer.
         """
-        calls = [native_tool_calls[index] for index in sorted(native_tool_calls)]
-        if len(calls) != 1:
-            logger.warning("工具调用解析失败：收到 %d 个并行 tool_calls，暂不支持", len(calls))
-            raise RuntimeError(
-                f"暂不支持并行工具调用（收到 {len(calls)} 个 tool_calls）；请一次只调用一个工具"
-            )
-        call = calls[0]
-        name = call["name"].strip()
-        if not name:
-            logger.warning("工具调用解析失败：缺少工具名")
-            raise RuntimeError("工具调用解析失败：缺少工具名")
-        raw_args = call["arguments"] or "{}"
-        try:
-            arguments = json.loads(raw_args) if raw_args.strip() else {}
-        except json.JSONDecodeError as exc:
-            logger.warning("工具调用解析失败：参数不是合法 JSON")
-            raise RuntimeError(f"工具调用参数不是合法 JSON：{exc}") from exc
-        if not isinstance(arguments, dict):
-            logger.warning("工具调用解析失败：参数不是 JSON 对象")
-            raise RuntimeError("工具调用参数必须是 JSON 对象")
-        return json.dumps({"type": "tool", "tool": name, "arguments": arguments}, ensure_ascii=False)
+        actions = []
+        for call in (native_tool_calls[index] for index in sorted(native_tool_calls)):
+            name = call["name"].strip()
+            if not name:
+                logger.warning("工具调用解析失败：缺少工具名")
+                raise RuntimeError("工具调用解析失败：缺少工具名")
+            raw_args = call["arguments"] or "{}"
+            try:
+                arguments = json.loads(raw_args) if raw_args.strip() else {}
+            except json.JSONDecodeError as exc:
+                logger.warning("工具调用解析失败：参数不是合法 JSON")
+                raise RuntimeError(f"工具调用参数不是合法 JSON：{exc}") from exc
+            if not isinstance(arguments, dict):
+                logger.warning("工具调用解析失败：参数不是 JSON 对象")
+                raise RuntimeError("工具调用参数必须是 JSON 对象")
+            actions.append({"type": "tool", "tool": name, "arguments": arguments})
+        payload = actions[0] if len(actions) == 1 else {"type": "tools", "calls": actions}
+        return json.dumps(payload, ensure_ascii=False)
 
     @staticmethod
     def _classify_agent_output(buffer: str) -> str:
@@ -1446,6 +1691,12 @@ class ModelRuntime:
         # Native OpenAI tool_calls (non-streaming) are converted to the internal
         # action structure so the Agent Loop can consume them directly.
         action = ModelRuntime._openai_tool_calls_action(result, request_format)
+        if action is None:
+            action = ModelRuntime._responses_tool_calls_action(result, request_format)
+        if action is None:
+            action = ModelRuntime._gemini_tool_calls_action(result, request_format)
+        if action is None:
+            action = ModelRuntime._claude_tool_calls_action(result, request_format)
         if action is not None:
             return action, reasoning
         content = ModelRuntime._online_content(request_format, result)
@@ -1465,10 +1716,13 @@ class ModelRuntime:
         Returns the internal action JSON string, or ``None`` when the response
         has no tool calls. Raises ``RuntimeError`` on malformed calls.
         """
-        if request_format not in {"openai_chat", "lm_studio"} or not isinstance(result, dict):
+        if request_format not in {"openai_chat", "lm_studio", "ollama"} or not isinstance(result, dict):
             return None
-        choices = result.get("choices") or []
-        message = (choices[0].get("message") or {}) if choices and isinstance(choices[0], dict) else {}
+        if request_format == "ollama":
+            message = result.get("message") or {}
+        else:
+            choices = result.get("choices") or []
+            message = (choices[0].get("message") or {}) if choices and isinstance(choices[0], dict) else {}
         tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
         if not isinstance(tool_calls, list) or not tool_calls:
             return None
@@ -1477,31 +1731,89 @@ class ModelRuntime:
             if not isinstance(raw_call, dict):
                 continue
             function = raw_call.get("function") or {}
+            raw_arguments = function.get("arguments", "")
             calls.append(
                 {
                     "name": str(function.get("name") or ""),
-                    "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else "",
+                    "arguments": (
+                        raw_arguments if isinstance(raw_arguments, str)
+                        else json.dumps(raw_arguments, ensure_ascii=False)
+                    ),
                 }
             )
-        if len(calls) != 1:
-            logger.warning("工具调用解析失败：收到 %d 个并行 tool_calls，暂不支持", len(calls))
-            raise RuntimeError(
-                f"暂不支持并行工具调用（收到 {len(calls)} 个 tool_calls）；请一次只调用一个工具"
-            )
-        name = calls[0]["name"].strip()
-        if not name:
-            logger.warning("工具调用解析失败：缺少工具名")
-            raise RuntimeError("工具调用解析失败：缺少工具名")
-        raw_args = calls[0]["arguments"] or "{}"
-        try:
-            arguments = json.loads(raw_args) if raw_args.strip() else {}
-        except json.JSONDecodeError as exc:
-            logger.warning("工具调用解析失败：参数不是合法 JSON")
-            raise RuntimeError(f"工具调用参数不是合法 JSON：{exc}") from exc
-        if not isinstance(arguments, dict):
-            logger.warning("工具调用解析失败：参数不是 JSON 对象")
-            raise RuntimeError("工具调用参数必须是 JSON 对象")
-        return json.dumps({"type": "tool", "tool": name, "arguments": arguments}, ensure_ascii=False)
+        native = {
+            index: {"id": "", "name": call["name"], "arguments": call["arguments"]}
+            for index, call in enumerate(calls)
+        }
+        return ModelRuntime._build_action_from_native_tool_calls(native)
+
+    @staticmethod
+    def _responses_tool_calls_action(result: Any, request_format: str) -> str | None:
+        """Extract a native function call from a non-streaming Responses API result."""
+        if request_format != "codex_responses" or not isinstance(result, dict):
+            return None
+        calls = [
+            item for item in result.get("output") or []
+            if isinstance(item, dict) and item.get("type") == "function_call"
+        ]
+        if not calls:
+            return None
+        native = {
+            index: {
+                "id": str(call.get("call_id") or call.get("id") or ""),
+                "name": str(call.get("name") or ""),
+                "arguments": str(call.get("arguments") or ""),
+            }
+            for index, call in enumerate(calls)
+        }
+        return ModelRuntime._build_action_from_native_tool_calls(native)
+
+    @staticmethod
+    def _gemini_tool_calls_action(result: Any, request_format: str) -> str | None:
+        if request_format != "gemini":
+            return None
+        chunks = result if isinstance(result, list) else [result]
+        calls: list[dict[str, Any]] = []
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            candidates = chunk.get("candidates") or []
+            content = (candidates[0].get("content") or {}) if candidates and isinstance(candidates[0], dict) else {}
+            for part in content.get("parts") or []:
+                call = part.get("functionCall") if isinstance(part, dict) else None
+                if isinstance(call, dict):
+                    calls.append(call)
+        if not calls:
+            return None
+        native = {
+            index: {
+                "id": "",
+                "name": str(call.get("name") or ""),
+                "arguments": json.dumps(call.get("args") or {}, ensure_ascii=False),
+            }
+            for index, call in enumerate(calls)
+        }
+        return ModelRuntime._build_action_from_native_tool_calls(native)
+
+    @staticmethod
+    def _claude_tool_calls_action(result: Any, request_format: str) -> str | None:
+        if request_format != "claude" or not isinstance(result, dict):
+            return None
+        calls = [
+            block for block in result.get("content") or []
+            if isinstance(block, dict) and block.get("type") == "tool_use"
+        ]
+        if not calls:
+            return None
+        native = {
+            index: {
+                "id": str(call.get("id") or ""),
+                "name": str(call.get("name") or ""),
+                "arguments": json.dumps(call.get("input") or {}, ensure_ascii=False),
+            }
+            for index, call in enumerate(calls)
+        }
+        return ModelRuntime._build_action_from_native_tool_calls(native)
 
     @staticmethod
     def _reasoning_action(reasoning: str) -> str:

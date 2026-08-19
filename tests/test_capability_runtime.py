@@ -84,6 +84,37 @@ class CapabilityRuntimeTests(unittest.TestCase):
                 self.assertEqual("demo-skill", payload["name"])
                 self.assertEqual(["demo-skill"], [skill["name"] for skill in active])
 
+    def test_exclusive_inventory_hides_other_skills_and_blocks_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = self.make_app(root)
+            skills_root = Path(app.catalog.directories[0])
+            for name in ("allowed", "hidden"):
+                directory = skills_root / name
+                directory.mkdir()
+                (directory / "SKILL.md").write_text(
+                    f"---\nname: {name}\ndescription: test\n---\n",
+                    encoding="utf-8",
+                )
+            skills = {skill["name"]: skill for skill in app.catalog.scan()}
+            context = {
+                "skill_policy": {
+                    "mode": "exclusive",
+                    "skill_ids": [skills["allowed"]["id"]],
+                }
+            }
+
+            ok, text = CapabilityRuntime(app).inventory({}, [skills["allowed"]], context)
+            payload = json.loads(text)
+            install_ok, install_text = CapabilityRuntime(app).install_skill(
+                {"source_path": str(root / "anything")}, [], context
+            )
+
+            self.assertTrue(ok)
+            self.assertEqual(["allowed"], [skill["name"] for skill in payload["skills"]])
+            self.assertFalse(install_ok)
+            self.assertIn("exclusive", install_text)
+
 
 class CapabilityToolRegistrationTests(unittest.TestCase):
     def test_generic_orchestration_tools_replace_plan_tool(self):
