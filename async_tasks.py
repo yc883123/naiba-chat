@@ -82,17 +82,57 @@ def _merge_usage_summary(
 
 
 def _completion_contract(message: str) -> dict[str, Any]:
-    """Infer only conservative, machine-checkable requirements from user text."""
+    """Infer a contract only when the user explicitly requests a file/产物.
+
+    Merely mentioning a medium (for example, asking for a video prompt or
+    selecting T2VA) is not a request to deliver a generated media file.
+    """
     import re
     text = str(message or "")
     lower = text.lower()
-    kind = "video" if any(token in text for token in ("视频", "短剧", "片段", "Ref2VA", "ComfyUI")) else ""
+    media_terms = (
+        "视频", "短剧", "片段", "图片", "图像", "音频", "文档", "报告", "表格",
+        "文件", "产物", "artifact", ".mp4", ".png", ".jpg", ".jpeg", ".pdf",
+        ".docx", ".xlsx", ".pptx", ".zip",
+    )
+    delivery_verbs = (
+        "生成", "制作", "输出", "导出", "交付", "提供", "保存", "下载", "渲染",
+        "创建", "写入", "返回", "提交", "deliver", "export", "save", "download",
+        "generate", "create", "render",
+    )
+    # Require a delivery verb near a file/media term. This excludes text such
+    # as “视频提示词” and “选择输入模式：T2VA” from artifact validation.
+    delivery_intent = any(
+        re.search(rf"{re.escape(verb)}[^。！？!?\n]{{0,18}}(?:{'|'.join(map(re.escape, media_terms))})", lower, re.I)
+        or re.search(rf"(?:{'|'.join(map(re.escape, media_terms))})[^。！？!?\n]{{0,18}}{re.escape(verb)}", lower, re.I)
+        for verb in delivery_verbs
+    )
+    prompt_only = re.search(r"(?:视频|图片|图像|音频)?[^。！？!?\n]{0,24}(?:提示词|prompt|脚本|分镜|方案)", lower, re.I)
+    explicit_file_phrase = re.search(r"(?:文件|产物|artifact|导出|交付|下载|保存).{0,8}(?:视频|图片|音频|文档|报告|表格)?", lower, re.I)
+    if prompt_only and not explicit_file_phrase:
+        delivery_intent = False
+    kind = ""
+    if delivery_intent:
+        if any(token in lower for token in ("视频", "短剧", "片段", ".mp4")):
+            kind = "video"
+        elif any(token in lower for token in ("图片", "图像", ".png", ".jpg", ".jpeg")):
+            kind = "image"
+        elif any(token in lower for token in ("音频", ".mp3", ".wav", ".m4a")):
+            kind = "audio"
+        else:
+            kind = "file"
     count = 0
     m = re.search(r"(\d+)\s*(?:个|段|条)?\s*(?:视频|片段)", text)
+    if not m:
+        m = re.search(r"(\d+)\s*(?:个|张|份|条|段)?\s*(?:文件|产物|视频|片段|图片|图像|音频|文档|报告|表格)", text)
     if m:
         count = int(m.group(1))
     else:
-        for word, value in (("两个", 2), ("两段", 2), ("三个", 3), ("三段", 3), ("一个", 1), ("一段", 1)):
+        for word, value in (
+            ("两个", 2), ("两张", 2), ("两份", 2), ("两段", 2),
+            ("三个", 3), ("三张", 3), ("三份", 3), ("三段", 3),
+            ("一个", 1), ("一张", 1), ("一份", 1), ("一段", 1),
+        ):
             if word in text:
                 count = value
                 break
@@ -105,6 +145,7 @@ def _completion_contract(message: str) -> dict[str, Any]:
         if m:
             duration_min = duration_max = float(m.group(1))
     return {
+        "required": bool(kind),
         "kind": kind,
         "count": count,
         "duration_min_sec": duration_min,
@@ -144,7 +185,7 @@ def _probe_video_duration(path: str) -> tuple[float | None, str | None]:
 
 
 def _validate_completion(contract: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any]:
-    """Validate real MCP artifacts; never treat a textual claim as completion."""
+    """Validate real artifacts only for an explicit file-delivery contract."""
     import os
     artifacts: list[dict[str, Any]] = []
     for run in runs:
@@ -158,8 +199,8 @@ def _validate_completion(contract: dict[str, Any], runs: list[dict[str, Any]]) -
             items = payload.get("artifacts") or []
             if isinstance(items, list):
                 artifacts.extend(item for item in items if isinstance(item, dict))
-    kind = contract.get("kind")
-    if not kind:
+    kind = str(contract.get("kind") or "")
+    if not contract.get("required") and not kind:
         return {"required": False, "passed": True, "artifacts": artifacts, "issues": []}
     video_exts = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".gif"}
     actual = []
@@ -167,24 +208,35 @@ def _validate_completion(contract: dict[str, Any], runs: list[dict[str, Any]]) -
         path = str(item.get("local_path") or "")
         ext = os.path.splitext(path or str(item.get("filename") or ""))[1].lower()
         item_kind = str(item.get("kind") or "").lower()
-        if item_kind in {"videos", "gifs", "video"} or ext in video_exts:
+        if kind == "video" and (item_kind in {"videos", "gifs", "video"} or ext in video_exts):
+            actual.append(item)
+        elif kind == "image" and (item_kind in {"images", "image"} or ext in {".png", ".jpg", ".jpeg", ".webp", ".gif"}):
+            actual.append(item)
+        elif kind == "audio" and (item_kind in {"audio", "audios"} or ext in {".mp3", ".wav", ".m4a", ".flac", ".aac"}):
+            actual.append(item)
+        elif kind == "file":
             actual.append(item)
     issues = []
     expected = int(contract.get("count") or 0)
-    if kind == "video" and not actual:
-        issues.append("未找到可验证的视频产物（PNG/JPG 图片不能替代视频）")
+    if not actual:
+        label = {"video": "视频", "image": "图片", "audio": "音频", "file": "交付产物"}.get(kind, "交付产物")
+        if kind == "video":
+            issues.append("未找到可验证的视频产物（PNG/JPG 图片不能替代视频）")
+        else:
+            issues.append(f"未找到可验证的{label}")
     if expected and len(actual) < expected:
-        issues.append(f"需要 {expected} 个视频片段，实际仅找到 {len(actual)} 个")
+        label = {"video": "视频片段", "image": "图片", "audio": "音频", "file": "交付文件"}.get(kind, "交付文件")
+        issues.append(f"需要 {expected} 个{label}，实际仅找到 {len(actual)} 个")
     missing_paths = [
         str(item.get("filename") or item)
         for item in actual
         if not item.get("local_path") or not os.path.exists(str(item["local_path"]))
     ]
     if missing_paths:
-        issues.append("部分视频文件路径不存在: " + ", ".join(missing_paths[:3]))
+        issues.append("部分交付文件路径不存在: " + ", ".join(missing_paths[:3]))
     duration_min = float(contract.get("duration_min_sec") or 0)
     duration_max = float(contract.get("duration_max_sec") or 0)
-    if duration_min or duration_max:
+    if kind == "video" and (duration_min or duration_max):
         lower = duration_min or 0
         upper = duration_max or float("inf")
         tolerance = 0.75
@@ -671,7 +723,7 @@ class ConversationRunManager:
             )
             if mode == "plan":
                 prompt = (prompt + "\n\n" + self.app.plans.prepare_prompt(self.app.plans.get(plan_id))).strip()
-            if completion_contract.get("kind"):
+            if completion_contract.get("required"):
                 prompt = (prompt + "\n\n本次运行的不可变验收契约（不得自行降级或改写）：\n" + json.dumps(completion_contract, ensure_ascii=False)).strip()
             # 联网搜索提示（PLAN4 §联网搜索）：开关开启且 provider 可用时引导模型按需调用。
             if snapshot.get("web_search_enabled") and self.app.web_search.is_available():

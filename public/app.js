@@ -292,7 +292,6 @@ function messageElement(message, temporary = false) {
       <div class="message-body">
         ${skillMarkup(metadata.skills)}
         ${reasoningMarkup(metadata.reasoning)}
-        ${toolAvailabilityMarkup(metadata.allowed_tools)}
         ${toolMarkup(metadata.tool_runs)}
         ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
         <div class="answer-content" data-raw="">${temporary ? '' : markdown(message.content)}</div>
@@ -2448,11 +2447,9 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'skills') {
     setActivity(`已启用 ${event.skills.map((skill) => skill.name).join('、')}`);
   } else if (event.type === 'tools_available') {
-    const existing = row.querySelector('.tool-availability');
-    if (existing) existing.remove();
-    const wrapper = document.createElement('div');
-    wrapper.innerHTML = toolAvailabilityMarkup(event.tools || []);
-    if (wrapper.firstElementChild) answer.before(wrapper.firstElementChild);
+    // Tool schemas are runtime state, not user-facing message content.
+    // Keep tool execution/result details available without dumping the full
+    // capability list into every response.
   } else if (event.type === 'delta') {
     setActivity('');
     const current = answer.dataset.raw || '';

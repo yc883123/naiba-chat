@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from async_tasks import ConversationRunManager, _validate_completion
+from async_tasks import ConversationRunManager, _completion_contract, _validate_completion
 from storage import ChatStorage
 
 
@@ -125,6 +125,20 @@ class CompletionValidationTests(unittest.TestCase):
         self.assertTrue(any("PNG/JPG" in issue for issue in result["issues"]))
         self.assertTrue(any("需要 2 个" in issue for issue in result["issues"]))
 
+    def test_video_prompt_does_not_require_a_video_artifact(self) -> None:
+        contract = _completion_contract("请生成一个 15 秒视频提示词")
+
+        self.assertFalse(contract["required"])
+        self.assertEqual("", contract["kind"])
+        self.assertTrue(_validate_completion(contract, [])["passed"])
+
+    def test_explicit_media_file_delivery_requires_matching_artifact(self) -> None:
+        contract = _completion_contract("请生成一个 15 秒视频文件")
+
+        self.assertTrue(contract["required"])
+        self.assertEqual("video", contract["kind"])
+        self.assertEqual(1, contract["count"])
+
     def test_two_existing_videos_with_valid_durations_pass(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             first = Path(root) / "segment-1.mp4"
@@ -179,6 +193,12 @@ class RunFrontendTests(unittest.TestCase):
         self.assertNotIn("data-cancel-task", source)
         self.assertNotIn("data-confirm-task", source)
         self.assertNotIn("data-reject-task", source)
+
+    def test_frontend_does_not_render_available_tool_schemas(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("${toolAvailabilityMarkup(metadata.allowed_tools)}", source)
+        self.assertNotIn("wrapper.innerHTML = toolAvailabilityMarkup(event.tools || [])", source)
 
 
 if __name__ == "__main__":
