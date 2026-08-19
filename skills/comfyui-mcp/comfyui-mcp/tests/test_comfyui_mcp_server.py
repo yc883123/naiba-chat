@@ -372,12 +372,47 @@ class ComfyUIMCPServerTests(unittest.TestCase):
         self.assertEqual(result["prompt_id"], "prompt-1")
         self.assertIn("artifacts", result)
         self.assertIn("images", result)
+        self.assertIn("videos", result)
+        self.assertEqual([], result["videos"])
         self.assertEqual(len(self.comfyui.state.submissions), 1)
         submitted_graph = self.comfyui.state.submissions[0]["prompt"]
         self.assertEqual(submitted_graph["2"]["inputs"]["text"], "new prompt")
         self.assertEqual(submitted_graph["1"]["inputs"]["ckpt_name"], "model.safetensors")
         local_path = Path(result["artifacts"][0]["local_path"])
         self.assertEqual(local_path.read_bytes(), self.comfyui.state.artifact_bytes)
+
+    def test_get_image_returns_video_artifacts_for_completed_video_prompt(self):
+        self.comfyui.state.history["video-prompt"] = {
+            "status": {"status_str": "success"},
+            "outputs": {
+                "5": {
+                    "videos": [{"filename": "result.mp4", "subfolder": "", "type": "output"}],
+                }
+            },
+        }
+
+        result = json.loads(self.server.get_image("video-prompt"))
+
+        self.assertEqual("success", result["status"])
+        self.assertEqual(1, len(result["artifacts"]))
+        self.assertEqual(1, len(result["videos"]))
+        self.assertTrue(result["videos"][0].endswith("result.mp4"))
+
+    def test_get_image_classifies_savevideo_mp4_even_when_comfyui_uses_images_key(self):
+        self.comfyui.state.history["savevideo-prompt"] = {
+            "status": {"status_str": "success"},
+            "outputs": {
+                "285": {
+                    "images": [{"filename": "segment.mp4", "subfolder": "BOSS", "type": "output"}],
+                }
+            },
+        }
+
+        result = json.loads(self.server.get_image("savevideo-prompt"))
+
+        self.assertEqual("images", result["artifacts"][0]["kind"])
+        self.assertEqual(1, len(result["videos"]))
+        self.assertTrue(result["videos"][0].endswith("segment.mp4"))
 
     def test_confirming_one_default_does_not_confirm_other_defaults(self):
         result = json.loads(

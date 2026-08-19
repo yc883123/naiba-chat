@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import subprocess
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
@@ -75,6 +79,130 @@ def _merge_usage_summary(
         if merged["input_tokens"] else 0.0
     )
     return merged
+
+
+def _completion_contract(message: str) -> dict[str, Any]:
+    """Infer only conservative, machine-checkable requirements from user text."""
+    import re
+    text = str(message or "")
+    lower = text.lower()
+    kind = "video" if any(token in text for token in ("视频", "短剧", "片段", "Ref2VA", "ComfyUI")) else ""
+    count = 0
+    m = re.search(r"(\d+)\s*(?:个|段|条)?\s*(?:视频|片段)", text)
+    if m:
+        count = int(m.group(1))
+    else:
+        for word, value in (("两个", 2), ("两段", 2), ("三个", 3), ("三段", 3), ("一个", 1), ("一段", 1)):
+            if word in text:
+                count = value
+                break
+    duration_min = duration_max = 0
+    m = re.search(r"(\d+(?:\.\d+)?)\s*[-~至到]\s*(\d+(?:\.\d+)?)\s*秒", text)
+    if m:
+        duration_min, duration_max = float(m.group(1)), float(m.group(2))
+    else:
+        m = re.search(r"(\d+(?:\.\d+)?)\s*秒", text)
+        if m:
+            duration_min = duration_max = float(m.group(1))
+    return {
+        "kind": kind,
+        "count": count,
+        "duration_min_sec": duration_min,
+        "duration_max_sec": duration_max,
+        "source": text[:1000],
+    }
+
+
+def _probe_video_duration(path: str) -> tuple[float | None, str | None]:
+    """Read a media duration from the delivered file, never from a model claim."""
+    file_path = Path(path)
+    if not file_path.is_file():
+        return None, "视频文件不存在"
+    configured = os.environ.get("NAIBA_FFPROBE", "").strip()
+    candidates = [
+        configured,
+        r"D:\comfyuibyte\ComfyUI_portable_TE_v260619\ffprobe\ffprobe.exe",
+        shutil.which("ffprobe") or "",
+    ]
+    executable = next((candidate for candidate in candidates if candidate and Path(candidate).is_file()), "")
+    if not executable:
+        return None, "未找到 ffprobe，无法验证视频时长"
+    try:
+        result = subprocess.run(
+            [executable, "-v", "error", "-show_entries", "format=duration", "-of", "json", str(file_path)],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        duration = float(json.loads(result.stdout)["format"]["duration"])
+        if duration <= 0:
+            return None, "ffprobe 未返回有效视频时长"
+        return duration, None
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+        return None, f"无法读取视频时长: {exc}"
+
+
+def _validate_completion(contract: dict[str, Any], runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Validate real MCP artifacts; never treat a textual claim as completion."""
+    import os
+    artifacts: list[dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, dict) or not run.get("success"):
+            continue
+        try:
+            payload = json.loads(str(run.get("result") or ""))
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            items = payload.get("artifacts") or []
+            if isinstance(items, list):
+                artifacts.extend(item for item in items if isinstance(item, dict))
+    kind = contract.get("kind")
+    if not kind:
+        return {"required": False, "passed": True, "artifacts": artifacts, "issues": []}
+    video_exts = {".mp4", ".webm", ".mov", ".mkv", ".avi", ".gif"}
+    actual = []
+    for item in artifacts:
+        path = str(item.get("local_path") or "")
+        ext = os.path.splitext(path or str(item.get("filename") or ""))[1].lower()
+        item_kind = str(item.get("kind") or "").lower()
+        if item_kind in {"videos", "gifs", "video"} or ext in video_exts:
+            actual.append(item)
+    issues = []
+    expected = int(contract.get("count") or 0)
+    if kind == "video" and not actual:
+        issues.append("未找到可验证的视频产物（PNG/JPG 图片不能替代视频）")
+    if expected and len(actual) < expected:
+        issues.append(f"需要 {expected} 个视频片段，实际仅找到 {len(actual)} 个")
+    missing_paths = [
+        str(item.get("filename") or item)
+        for item in actual
+        if not item.get("local_path") or not os.path.exists(str(item["local_path"]))
+    ]
+    if missing_paths:
+        issues.append("部分视频文件路径不存在: " + ", ".join(missing_paths[:3]))
+    duration_min = float(contract.get("duration_min_sec") or 0)
+    duration_max = float(contract.get("duration_max_sec") or 0)
+    if duration_min or duration_max:
+        lower = duration_min or 0
+        upper = duration_max or float("inf")
+        tolerance = 0.75
+        for item in actual:
+            local_path = str(item.get("local_path") or "")
+            if not local_path or not os.path.isfile(local_path):
+                continue
+            duration, error = _probe_video_duration(local_path)
+            if error:
+                issues.append(f"无法验证视频 {item.get('filename') or local_path} 的时长: {error}")
+                continue
+            item["duration_sec"] = round(duration, 3)
+            if duration < lower - tolerance or duration > upper + tolerance:
+                expected_range = f"{lower:g}-{upper:g}" if duration_min and duration_max else f">={lower:g}"
+                issues.append(
+                    f"视频 {item.get('filename') or local_path} 时长 {duration:.2f} 秒，不符合要求 {expected_range} 秒"
+                )
+    return {"required": True, "passed": not issues, "artifacts": actual, "issues": issues}
 
 
 class ActiveRunError(RuntimeError):
@@ -440,6 +568,7 @@ class ConversationRunManager:
             from server import _detect_choice_groups, build_model_history, extract_attachments
 
             message = str(run.get("message") or "")
+            completion_contract = _completion_contract(message)
             uploads = snapshot.get("attachments") or []
             extra = [f"[用户上传文件：{item.get('path')}]" for item in uploads if item.get("path")]
             effective = message + (("\n" + "\n".join(extra)) if extra else "")
@@ -542,6 +671,8 @@ class ConversationRunManager:
             )
             if mode == "plan":
                 prompt = (prompt + "\n\n" + self.app.plans.prepare_prompt(self.app.plans.get(plan_id))).strip()
+            if completion_contract.get("kind"):
+                prompt = (prompt + "\n\n本次运行的不可变验收契约（不得自行降级或改写）：\n" + json.dumps(completion_contract, ensure_ascii=False)).strip()
             # 联网搜索提示（PLAN4 §联网搜索）：开关开启且 provider 可用时引导模型按需调用。
             if snapshot.get("web_search_enabled") and self.app.web_search.is_available():
                 prompt = (prompt + "\n\n联网搜索已开启：需要实时/外部信息时调用 web_search 工具；"
@@ -553,6 +684,7 @@ class ConversationRunManager:
                 "executor": executor,
                 "cancel_event": cancel_event,
                 "interaction_mode": mode,
+                "completion_contract": completion_contract,
             }
             response, runs, reasonings, usage = worker.run(
                 effective,
@@ -614,6 +746,14 @@ class ConversationRunManager:
                         })
                 response, plan = self.app.plans.process_response(plan_id, response)
                 plan_status = str((plan or {}).get("status") or "")
+            completion_validation = _validate_completion(completion_contract, runs)
+            if completion_validation["required"] and not completion_validation["passed"]:
+                missing = "；".join(completion_validation["issues"])
+                sink.failure_message = "产物验收未通过：" + missing
+                response = (
+                    "任务未完成。产物验收未通过：" + missing
+                    + "。已保留真实工具结果，未将替代图片或提交记录当作完成。"
+                )
             choice_groups = _detect_choice_groups(response)
             metadata = {
                 "skills": skills,
@@ -632,6 +772,8 @@ class ConversationRunManager:
                 "interaction_mode": mode,
                 "plan_id": plan_id,
                 "plan_status": plan_status,
+                "completion_contract": completion_contract,
+                "completion_validation": completion_validation,
                 **({"error": sink.failure_message} if sink.failure_message else {}),
             }
             saved = self.app.storage.add_message(conversation_id, "assistant", response, metadata)

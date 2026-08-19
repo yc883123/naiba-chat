@@ -26,7 +26,9 @@ COMFYUI_ROOT = os.getenv("COMFYUI_ROOT", "")
 WORKFLOWS_DIR = Path(
     os.getenv("COMFYUI_WORKFLOWS_DIR", Path(__file__).resolve().parent.parent / "workflows")
 ).resolve()
-TIMEOUT = int(os.getenv("COMFYUI_TIMEOUT", "300"))
+# H3 Ref2VA can legitimately need several minutes for one 15-second clip.
+# Keep the wait inside one MCP call so the agent does not burn turns polling.
+TIMEOUT = int(os.getenv("COMFYUI_TIMEOUT", "1800"))
 OUTPUT_DIR = Path(
     os.getenv("COMFYUI_MCP_OUTPUT_DIR", Path(__file__).resolve().parent.parent / "output")
 ).resolve()
@@ -92,7 +94,16 @@ def _read_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8-sig"))
 
 
+def _unwrap_api_payload(data: object) -> object:
+    """Accept both exported graphs and ComfyUI /prompt request payloads."""
+    if isinstance(data, dict) and isinstance(data.get("prompt"), dict):
+        return data["prompt"]
+    return data
+
+
 def _workflow_format(data: object) -> str:
+    # Payload files commonly store the API graph under a top-level `prompt`.
+    data = _unwrap_api_payload(data)
     if isinstance(data, dict) and isinstance(data.get("nodes"), list):
         return "ui"
     if isinstance(data, dict) and data and all(
@@ -165,7 +176,9 @@ def _normalize_requirements(
     if raw_requirements is None:
         raw_requirements = []
         for node_id, node in graph.items():
-            if node.get("class_type") == "LoadImage" and "image" in node.get("inputs", {}):
+            inputs = node.get("inputs", {})
+            class_type = node.get("class_type")
+            if class_type == "LoadImage" and "image" in inputs:
                 raw_requirements.append(
                     {
                         "id": f"image_{node_id}",
@@ -173,6 +186,30 @@ def _normalize_requirements(
                         "type": "image",
                         "node_id": str(node_id),
                         "input": "image",
+                        "required": True,
+                        "confirm_default": True,
+                    }
+                )
+            elif "upload_image" in inputs:
+                raw_requirements.append(
+                    {
+                        "id": f"image_{node_id}",
+                        "label": f"Reference image (node {node_id})",
+                        "type": "image",
+                        "node_id": str(node_id),
+                        "input": "upload_image",
+                        "required": True,
+                        "confirm_default": True,
+                    }
+                )
+            elif class_type == "LoadAudio" and "audio" in inputs:
+                raw_requirements.append(
+                    {
+                        "id": f"audio_{node_id}",
+                        "label": f"Reference audio (node {node_id})",
+                        "type": "audio",
+                        "node_id": str(node_id),
+                        "input": "audio",
                         "required": True,
                         "confirm_default": True,
                     }
@@ -318,13 +355,13 @@ def _preflight_requirements(
             "current_value": value,
             "explicitly_supplied": explicit,
         }
-        if requirement["type"] == "image":
+        if requirement["type"] in {"image", "audio"}:
             item["available_in_comfyui_input"] = _input_file_available(value)
         visible.append(item)
-        unavailable_file = requirement["type"] == "image" and item.get("available_in_comfyui_input") is False
+        unavailable_file = requirement["type"] in {"image", "audio"} and item.get("available_in_comfyui_input") is False
         if requirement["required"] and (is_empty or unavailable_file):
             if unavailable_file:
-                item["problem"] = "The image is not available under ComfyUI/input."
+                item["problem"] = f"The {requirement['type']} is not available under ComfyUI/input."
             missing.append(item)
         elif (
             requirement["confirm_default"]
@@ -370,7 +407,7 @@ def _resolve_workflow_path(name: str) -> Path:
 def _inspect_workflow_path(path: Path) -> dict:
     result = {"name": path.stem, "file": path.name}
     try:
-        graph = _read_json(path)
+        graph = _unwrap_api_payload(_read_json(path))
     except (OSError, json.JSONDecodeError) as exc:
         return {**result, "status": "invalid", "errors": [str(exc)]}
     kind = _workflow_format(graph)
@@ -427,7 +464,7 @@ def _load_workflow(name: str) -> tuple[dict, dict[str, list[dict]], list[dict]]:
     inspection = _inspect_workflow_path(path)
     if inspection["status"] != "ready":
         raise ValueError(json.dumps(inspection, ensure_ascii=False))
-    graph = _read_json(path)
+    graph = _unwrap_api_payload(_read_json(path))
     meta_path = _metadata_path(path)
     metadata = _read_json(meta_path) if meta_path.is_file() else None
     parameter_map, _ = _normalize_parameter_map(metadata)
@@ -438,7 +475,7 @@ def _load_workflow(name: str) -> tuple[dict, dict[str, list[dict]], list[dict]]:
 
 
 def _load_inline_workflow(workflow_json: str) -> dict:
-    graph = json.loads(workflow_json)
+    graph = _unwrap_api_payload(json.loads(workflow_json))
     kind = _workflow_format(graph)
     if kind == "ui":
         raise ValueError("UI workflow JSON is not executable; export it from ComfyUI in API format")
@@ -607,6 +644,36 @@ def _collect_artifacts(prompt_id: str, outputs: dict) -> list[dict]:
                     artifact["download_error"] = str(exc)
                 artifacts.append(artifact)
     return artifacts
+
+
+def _workflow_result(prompt_id: str, record: dict) -> dict:
+    status_record = record.get("status", {}) if isinstance(record, dict) else {}
+    if status_record.get("status_str") == "error":
+        return {
+            "prompt_id": prompt_id,
+            "status": "error",
+            "messages": status_record.get("messages", []),
+        }
+    artifacts = _collect_artifacts(prompt_id, record.get("outputs", {}))
+    images = [
+        artifact.get("local_path", artifact["url"])
+        for artifact in artifacts
+        if artifact["kind"] == "images"
+    ]
+    videos = [
+        artifact.get("local_path", artifact["url"])
+        for artifact in artifacts
+        if artifact["kind"] in {"videos", "video", "gifs"}
+        or Path(str(artifact.get("filename") or "")).suffix.lower()
+        in {".mp4", ".webm", ".mov", ".mkv", ".avi", ".gif"}
+    ]
+    return {
+        "prompt_id": prompt_id,
+        "status": "success",
+        "artifacts": artifacts,
+        "images": images,
+        "videos": videos,
+    }
 
 
 @mcp.tool(annotations=_READONLY)
@@ -846,30 +913,10 @@ def run_workflow(
                 history = {}
             if prompt_id in history:
                 record = history[prompt_id]
-                status_record = record.get("status", {})
-                if status_record.get("status_str") == "error":
-                    return json.dumps(
-                        {
-                            "prompt_id": prompt_id,
-                            "status": "error",
-                            "messages": status_record.get("messages", []),
-                            "elapsed_sec": round(time.time() - started, 1),
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-                artifacts = _collect_artifacts(prompt_id, record.get("outputs", {}))
-                images = [
-                    artifact.get("local_path", artifact["url"])
-                    for artifact in artifacts
-                    if artifact["kind"] == "images"
-                ]
+                result = _workflow_result(prompt_id, record)
                 return json.dumps(
                     {
-                        "prompt_id": prompt_id,
-                        "status": "success",
-                        "artifacts": artifacts,
-                        "images": images,
+                        **result,
                         "elapsed_sec": round(time.time() - started, 1),
                     },
                     ensure_ascii=False,
@@ -887,14 +934,27 @@ def run_workflow(
 
 @mcp.tool(annotations=_READONLY)
 def get_image(prompt_id: str) -> str:
-    """Return image URLs from ComfyUI history for a known prompt_id."""
+    """Return all completed artifacts for a prompt, including images and videos."""
     try:
         history = _get_json(f"/history/{prompt_id}")
         if prompt_id not in history:
             return json.dumps({"status": "not_ready", "prompt_id": prompt_id}, ensure_ascii=False)
-        artifacts = _collect_artifacts(prompt_id, history[prompt_id].get("outputs", {}))
-        images = [artifact.get("local_path", artifact["url"]) for artifact in artifacts if artifact["kind"] == "images"]
-        return json.dumps({"prompt_id": prompt_id, "images": images}, ensure_ascii=False, indent=2)
+        return json.dumps(_workflow_result(prompt_id, history[prompt_id]), ensure_ascii=False, indent=2)
+    except Exception as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=2)
+
+
+@mcp.tool(annotations=_READONLY)
+def wait_for_workflow(prompt_id: str, wait_seconds: int = 300) -> str:
+    """Wait for an already submitted ComfyUI prompt and return its real artifacts."""
+    try:
+        deadline = time.time() + min(max(int(wait_seconds), 1), TIMEOUT)
+        while time.time() < deadline:
+            history = _get_json(f"/history/{prompt_id}")
+            if prompt_id in history:
+                return json.dumps(_workflow_result(prompt_id, history[prompt_id]), ensure_ascii=False, indent=2)
+            time.sleep(1.5)
+        return json.dumps({"prompt_id": prompt_id, "status": "not_ready"}, ensure_ascii=False)
     except Exception as exc:
         return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False, indent=2)
 

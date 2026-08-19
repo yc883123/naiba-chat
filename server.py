@@ -1689,9 +1689,9 @@ class NaibaChatApp:
         shutil.copy2(source_script, target_script)
         workflows = Path(env.get("COMFYUI_WORKFLOWS_DIR", ""))
         if workflows.is_dir():
-            target_workflows = target_root / "workflows"
-            shutil.copytree(workflows, target_workflows, dirs_exist_ok=True)
-            env["COMFYUI_WORKFLOWS_DIR"] = str(target_workflows)
+            # Keep user supplied workflow roots intact.  Copying them into a
+            # managed cache made MCP silently ignore later edits and assets.
+            env["COMFYUI_WORKFLOWS_DIR"] = str(workflows.resolve())
         payload["args"] = [str(target_script) if Path(item) == source_script else item for item in args]
         payload["env"] = env
         return payload

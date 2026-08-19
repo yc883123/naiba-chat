@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import gc
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
-from async_tasks import ConversationRunManager
+from async_tasks import ConversationRunManager, _validate_completion
 from storage import ChatStorage
 
 
@@ -106,6 +108,63 @@ class RunStorageTests(unittest.TestCase):
             del manager
             del storage
             gc.collect()
+
+
+class CompletionValidationTests(unittest.TestCase):
+    @staticmethod
+    def run_with_artifacts(artifacts):
+        return [{"success": True, "result": json.dumps({"artifacts": artifacts})}]
+
+    def test_png_cannot_satisfy_two_requested_videos(self) -> None:
+        result = _validate_completion(
+            {"kind": "video", "count": 2, "duration_min_sec": 0, "duration_max_sec": 0},
+            self.run_with_artifacts([{"kind": "images", "filename": "preview.png", "local_path": "preview.png"}]),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("PNG/JPG" in issue for issue in result["issues"]))
+        self.assertTrue(any("需要 2 个" in issue for issue in result["issues"]))
+
+    def test_two_existing_videos_with_valid_durations_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            first = Path(root) / "segment-1.mp4"
+            second = Path(root) / "segment-2.mp4"
+            first.write_bytes(b"video")
+            second.write_bytes(b"video")
+            artifacts = [
+                {"kind": "videos", "filename": first.name, "local_path": str(first)},
+                {"kind": "videos", "filename": second.name, "local_path": str(second)},
+            ]
+            with patch("async_tasks._probe_video_duration", return_value=(15.1, None)):
+                result = _validate_completion(
+                    {"kind": "video", "count": 2, "duration_min_sec": 15, "duration_max_sec": 15},
+                    self.run_with_artifacts(artifacts),
+                )
+
+        self.assertTrue(result["passed"])
+        self.assertEqual([15.1, 15.1], [item["duration_sec"] for item in result["artifacts"]])
+
+    def test_video_without_artifact_fails(self) -> None:
+        result = _validate_completion(
+            {"kind": "video", "count": 1, "duration_min_sec": 15, "duration_max_sec": 15},
+            self.run_with_artifacts([]),
+        )
+
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("未找到" in issue for issue in result["issues"]))
+
+    def test_wrong_duration_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            video = Path(root) / "segment.mp4"
+            video.write_bytes(b"video")
+            with patch("async_tasks._probe_video_duration", return_value=(9.0, None)):
+                result = _validate_completion(
+                    {"kind": "video", "count": 1, "duration_min_sec": 15, "duration_max_sec": 15},
+                    self.run_with_artifacts([{"kind": "videos", "filename": video.name, "local_path": str(video)}]),
+                )
+
+        self.assertFalse(result["passed"])
+        self.assertTrue(any("时长 9.00 秒" in issue for issue in result["issues"]))
 
 
 class RunFrontendTests(unittest.TestCase):

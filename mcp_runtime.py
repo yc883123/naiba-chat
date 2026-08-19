@@ -29,6 +29,12 @@ class MCPServerConnection:
         self.command = command
         self.args = args
         self.env = env
+        # Video workflows can take longer than ordinary MCP calls.  A server
+        # may opt in without extending timeouts for every other MCP service.
+        try:
+            self.call_timeout_seconds = max(20, int(env.get("MCP_TOOL_TIMEOUT", "620")))
+        except (TypeError, ValueError):
+            self.call_timeout_seconds = 620
         self.tools: list[dict[str, Any]] = []
         self.error = ""
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -149,7 +155,8 @@ class MCPServerConnection:
             return False
         return bool(self._session)
 
-    def call(self, tool_name: str, arguments: dict[str, Any], timeout: int = 620) -> tuple[bool, str]:
+    def call(self, tool_name: str, arguments: dict[str, Any], timeout: int | None = None) -> tuple[bool, str]:
+        timeout = timeout or self.call_timeout_seconds
         with self._call_lock:
             self.active_calls += 1
             self.activity = "calling"
