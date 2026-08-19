@@ -69,12 +69,18 @@
 
       <section class="composer-wrap">
         <div class="active-task-bar" id="activeTaskBar" hidden></div>
-        <div class="plan-bar" id="planBar" hidden></div>
         <div class="pending-files" id="pendingFiles"></div>
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
           <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">＋</button>
           <textarea id="messageInput" rows="1" placeholder="输入消息" aria-label="消息"></textarea>
+          <button class="icon-button deep-reasoning-button" type="button" id="deepReasoningButton" title="深度思考：关闭" aria-label="深度思考" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <circle cx="12" cy="12" r="1"></circle>
+              <path d="M20.2 20.2c2.04-2.03.02-7.35-4.5-11.87S5.86 1.8 3.83 3.83c-2.04 2.03-.02 7.35 4.5 11.87s9.84 6.53 11.87 4.5Z"></path>
+              <path d="M15.7 15.7c4.52-4.52 6.54-9.84 4.5-11.87-2.03-2.04-7.35-.02-11.87 4.5S1.8 18.17 3.83 20.2c2.03 2.04 7.35.02 11.87-4.5Z"></path>
+            </svg>
+          </button>
           <button class="icon-button web-search-button" type="button" id="webSearchButton" title="联网搜索：关闭" aria-label="联网搜索" aria-pressed="false">🌐</button>
           <div class="context-usage-wrap">
             <button class="context-usage-button" type="button" id="contextUsageButton" title="上下文用量：暂无数据" aria-label="查看上下文和 Token 用量" aria-expanded="false">
@@ -90,10 +96,6 @@
         </form>
         <div class="composer-meta">
           <div class="composer-meta-left">
-            <label class="plan-toggle" title="勾选后进入 Plan 模式">
-              <input id="planModeSwitch" type="checkbox" aria-label="Plan 模式">
-              <span>Plan</span>
-            </label>
             <div class="permission-mode-switch" id="permissionModeSwitch" role="radiogroup" aria-label="当前对话审批模式">
               <span>审批</span>
               <button type="button" data-permission-mode="confirm" class="active" role="radio" title="敏感操作逐次确认">确认</button>
@@ -465,28 +467,6 @@
         </section>
       </div>
     </div>
-  </dialog>
-
-  <dialog id="planEditDialog" class="panel-dialog plan-edit-dialog">
-    <form id="planEditForm" method="dialog">
-      <div class="dialog-toolbar">
-        <div><h2>编辑计划</h2><p>修改方案内容，步骤进度会按标题保留</p></div>
-        <button class="icon-button" type="button" data-close="planEditDialog" title="关闭" aria-label="关闭">×</button>
-      </div>
-      <label class="field-wide">
-        计划标题
-        <input id="planEditTitle" type="text" maxlength="200" placeholder="计划标题">
-      </label>
-      <label class="field-wide plan-edit-content-field">
-        方案内容（Markdown，编号行会被识别为实施步骤）
-        <textarea id="planEditContent" rows="14" maxlength="100000" placeholder="# 计划标题&#10;## 方案概述&#10;……&#10;## 实施步骤&#10;1. 步骤一：……&#10;2. 步骤二：……"></textarea>
-      </label>
-      <p class="form-error" id="planEditError"></p>
-      <div class="form-actions">
-        <button class="control-button" type="button" data-close="planEditDialog">取消</button>
-        <button class="primary-button" id="savePlanEdit" type="submit">保存计划</button>
-      </div>
-    </form>
   </dialog>
 
   <dialog id="tasksDialog" class="panel-dialog tasks-dialog">

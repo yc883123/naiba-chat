@@ -178,7 +178,17 @@ class ModelRuntime:
                 raise ValueError(f"在线模型配置使用了本地请求格式：{request_format}")
         else:
             raise ValueError(f"不支持的模型类型：{kind}")
-        content, reasoning, usage = self._complete_online(profile, messages, options, status)
+        reasoning_enabled = bool(options.get("reasoning_enabled", True))
+        effective_status = status
+        if status is not None and not reasoning_enabled:
+            def effective_status(payload: dict[str, Any]) -> None:
+                if not str(payload.get("type") or "").startswith("reasoning"):
+                    status(payload)
+        content, reasoning, usage = self._complete_online(
+            profile, messages, options, effective_status
+        )
+        if not reasoning_enabled:
+            reasoning = ""
         self.last_reasoning = reasoning
         self.last_usage = usage
         return content
@@ -909,6 +919,8 @@ class ModelRuntime:
         pending = ""
         reasoning_parts: list[str] = []
         tool_protocol = False
+        reasoning_started = False
+        reasoning_ended = False
         for raw_line in response:
             try:
                 chunk = json.loads(raw_line.decode("utf-8", errors="replace"))
@@ -919,15 +931,25 @@ class ModelRuntime:
             chunks.append(chunk)
             text, reasoning = ModelRuntime._ollama_stream_delta(chunk)
             if reasoning:
+                if status and not reasoning_started:
+                    status({"type": "reasoning_start"})
+                    reasoning_started = True
                 reasoning_parts.append(reasoning)
+                if status:
+                    status({"type": "reasoning_delta", "content": reasoning})
             if not text:
                 continue
+            if status and reasoning_started and not reasoning_ended:
+                status({"type": "reasoning_end"})
+                reasoning_ended = True
             full_content_parts.append(text)
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         if not tool_protocol:
             ModelRuntime._forward_guarded_text(pending, status, final=True)
+        if status and reasoning_started and not reasoning_ended:
+            status({"type": "reasoning_end"})
         return {
             "content": ModelRuntime._clean_content("".join(full_content_parts)),
             "reasoning": "".join(reasoning_parts),
@@ -960,6 +982,8 @@ class ModelRuntime:
         reasoning_parts: list[str] = []
         native_tool_calls: dict[int, dict[str, str]] = {}
         tool_protocol = False
+        reasoning_started = False
+        reasoning_ended = False
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -976,9 +1000,17 @@ class ModelRuntime:
             chunks.append(chunk)
             text, reasoning, tool_calls = ModelRuntime._stream_delta_full(request_format, chunk)
             if reasoning:
+                if status and not reasoning_started:
+                    status({"type": "reasoning_start"})
+                    reasoning_started = True
                 reasoning_parts.append(reasoning)
+                if status:
+                    status({"type": "reasoning_delta", "content": reasoning})
             if tool_calls:
                 # Native OpenAI tool calls must not appear as answer text.
+                if status and reasoning_started and not reasoning_ended:
+                    status({"type": "reasoning_end"})
+                    reasoning_ended = True
                 if not tool_protocol:
                     ModelRuntime._forward_guarded_text(pending, status, final=True)
                     pending = ""
@@ -996,12 +1028,17 @@ class ModelRuntime:
                 continue
             if not text:
                 continue
+            if status and reasoning_started and not reasoning_ended:
+                status({"type": "reasoning_end"})
+                reasoning_ended = True
             full_content_parts.append(text)
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         if not tool_protocol:
             ModelRuntime._forward_guarded_text(pending, status, final=True)
+        if status and reasoning_started and not reasoning_ended:
+            status({"type": "reasoning_end"})
         usage = ModelRuntime._online_usage(request_format, chunks)
         if native_tool_calls:
             # Convert to the internal action structure the Agent Loop consumes.
@@ -1022,6 +1059,8 @@ class ModelRuntime:
         pending = ""
         reasoning_parts: list[str] = []
         tool_protocol = False
+        reasoning_started = False
+        reasoning_ended = False
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -1045,7 +1084,14 @@ class ModelRuntime:
             if event_type in ("chat.end", "message.end", "reasoning.end", "message.start", "reasoning.start"):
                 continue
             if event_type in ("reasoning.delta", "reasoning.full"):
-                reasoning_parts.append(ModelRuntime._text_value(chunk.get("content")))
+                reasoning = ModelRuntime._text_value(chunk.get("content"))
+                if reasoning:
+                    if status and not reasoning_started:
+                        status({"type": "reasoning_start"})
+                        reasoning_started = True
+                    reasoning_parts.append(reasoning)
+                    if status:
+                        status({"type": "reasoning_delta", "content": reasoning})
                 continue
             if event_type in ("message.delta", "message.full"):
                 text = ModelRuntime._text_value(chunk.get("content"))
@@ -1054,12 +1100,17 @@ class ModelRuntime:
                 text = ModelRuntime._text_value(chunk.get("content") or chunk.get("text"))
             if not text:
                 continue
+            if status and reasoning_started and not reasoning_ended:
+                status({"type": "reasoning_end"})
+                reasoning_ended = True
             full_content_parts.append(text)
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         if not tool_protocol:
             ModelRuntime._forward_guarded_text(pending, status, final=True)
+        if status and reasoning_started and not reasoning_ended:
+            status({"type": "reasoning_end"})
         return {
             "content": ModelRuntime._clean_content("".join(full_content_parts)),
             "reasoning": "".join(reasoning_parts),

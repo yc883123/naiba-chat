@@ -57,6 +57,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .icon-button:hover { background: rgba(127, 127, 127, .13); }
 .web-search-button { font-size: 17px; opacity: .55; }
 .web-search-button.active { opacity: 1; background: var(--green); color: #fff; box-shadow: 0 0 0 2px rgba(18,100,64,.25); }
+.deep-reasoning-button { color: #55708f; opacity: .7; }
+.deep-reasoning-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.deep-reasoning-button:hover { color: #2563eb; opacity: 1; }
+.deep-reasoning-button.active { opacity: 1; background: #2563eb; color: #fff; box-shadow: 0 0 0 2px rgba(37,99,235,.2); }
 .context-usage-wrap { position: relative; flex: none; align-self: center; }
 .context-usage-button { width: 32px; height: 38px; display: grid; place-items: center; border: 0; background: transparent; padding: 0; color: var(--muted); }
 .context-usage-button:hover { color: var(--text); background: var(--surface-2); }
@@ -130,6 +134,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .reasoning-block summary { cursor: pointer; color: #4361a8; font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }
 .tool-stack { margin: 8px 0 12px; border-left: 2px solid #d9a66c; padding-left: 10px; }
+.tool-availability { margin: 8px 0 12px; color: var(--muted); font-size: 12px; }
+.tool-availability summary { cursor: pointer; color: #a87943; font-weight: 600; }
+.tool-availability ul { margin: 6px 0 0; padding-left: 20px; }
+.tool-availability code { color: var(--text); }
+.tool-availability span { margin-left: 6px; }
 .tool-run { margin: 5px 0; font-size: 12px; color: var(--muted); }
 .tool-run summary { cursor: pointer; color: var(--amber); }
 .tool-run pre { max-height: 220px; font-size: 11px; white-space: pre-wrap; }

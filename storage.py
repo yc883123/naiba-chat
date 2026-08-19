@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -83,10 +83,22 @@ def _migrate_to_v2(db: sqlite3.Connection) -> None:
             db.execute(f"ALTER TABLE background_tasks ADD COLUMN {column} {definition}")
 
 
+def _migrate_to_v3(db: sqlite3.Connection) -> None:
+    """Persist the deep-reasoning switch per conversation."""
+    try:
+        db.execute("SELECT deep_reasoning_enabled FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN deep_reasoning_enabled "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
+    3: _migrate_to_v3,
 }
 
 
@@ -118,6 +130,7 @@ class ChatStorage:
                     mode TEXT NOT NULL DEFAULT 'online',
                     permission_mode TEXT NOT NULL DEFAULT 'confirm',
                     web_search_enabled INTEGER NOT NULL DEFAULT 0,
+                    deep_reasoning_enabled INTEGER NOT NULL DEFAULT 0,
                     title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
@@ -247,6 +260,7 @@ class ChatStorage:
         # Keep legacy data repair idempotent after the schema reaches v1.
         # Older builds may have written rows after the version was recorded.
         self._repair_legacy_model_keys()
+        self._disable_legacy_plan_mode()
 
     def _repair_legacy_model_keys(self) -> None:
         with self._connect() as db:
@@ -254,6 +268,11 @@ class ChatStorage:
                 "UPDATE conversations SET model_key = 'online:' || provider_id "
                 "WHERE model_key = '' AND provider_id != ''"
             )
+
+    def _disable_legacy_plan_mode(self) -> None:
+        """Keep historical plans, but make every conversation use normal chat."""
+        with self._connect() as db:
+            db.execute("UPDATE conversations SET interaction_mode = 'craft' WHERE interaction_mode != 'craft'")
 
     def apply_pending_migrations(self) -> None:
         """依次应用尚未执行的迁移，直到 user_version == CURRENT_SCHEMA_VERSION。"""
@@ -322,10 +341,11 @@ class ChatStorage:
         model_key: str = "",
         permission_mode: str = "confirm",
         web_search_enabled: bool = False,
+        deep_reasoning_enabled: bool = False,
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
-        interaction_mode = "plan" if str(interaction_mode or "").strip().lower() == "plan" else "craft"
+        interaction_mode = "craft"
         if permission_mode not in ("confirm", "auto", "full"):
             permission_mode = "confirm"
         resolved_model_key = str(model_key or "").strip()
@@ -333,14 +353,15 @@ class ChatStorage:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
                     "online",
                     permission_mode,
                     1 if web_search_enabled else 0,
+                    1 if deep_reasoning_enabled else 0,
                     0,
                     "",
                     1,
@@ -358,13 +379,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -372,7 +393,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -400,6 +421,7 @@ class ChatStorage:
         interaction_mode: str | None = None,
         permission_mode: str | None = None,
         web_search_enabled: bool | None = None,
+        deep_reasoning_enabled: bool | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -437,13 +459,15 @@ class ChatStorage:
             normalized = interaction_mode.strip().lower()
             if normalized not in {"plan", "craft", "ask"}:
                 raise ValueError("interaction_mode 必须是 plan 或普通模式")
-            values["interaction_mode"] = "plan" if normalized == "plan" else "craft"
+            values["interaction_mode"] = "craft"
         if permission_mode is not None:
             if permission_mode not in ("confirm", "auto", "full"):
                 raise ValueError("permission_mode 必须是 confirm / auto / full")
             values["permission_mode"] = permission_mode
         if web_search_enabled is not None:
             values["web_search_enabled"] = 1 if bool(web_search_enabled) else 0
+        if deep_reasoning_enabled is not None:
+            values["deep_reasoning_enabled"] = 1 if bool(deep_reasoning_enabled) else 0
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
@@ -992,9 +1016,7 @@ class ChatStorage:
     @staticmethod
     def _conversation_dict(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
-        result["interaction_mode"] = (
-            "plan" if str(result.get("interaction_mode") or "").strip().lower() == "plan" else "craft"
-        )
+        result["interaction_mode"] = "craft"
         return result
 
     @staticmethod

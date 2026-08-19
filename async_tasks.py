@@ -225,10 +225,9 @@ class ConversationRunManager:
                 # 内置 Agent 携带 tool_scope；自定义 Agent 留空（表示不限制）。
                 "tool_scope": list(agent.get("tool_scope") or []),
             }
-            mode = normalize_interaction_mode(conversation.get("interaction_mode"))
+            # Plan mode is disabled. Legacy conversations always enter the normal chat path.
+            mode = "craft"
             plan_id = ""
-            if mode == "plan":
-                plan_id = str(self.app.plans.ensure_active_plan(conversation_id, message)["id"])
             web_search_enabled = bool(conversation.get("web_search_enabled", 0))
             allowed_tools = self._resolve_allowed_tools(mode, agent, web_search_enabled)
             model_key = str(body.get("model_key") or conversation.get("model_key") or "")
@@ -248,6 +247,7 @@ class ConversationRunManager:
                 "plan_id": plan_id,
                 "workspace_dir": str(self.app.config.resolve_workspace_dir()),
                 "web_search_enabled": web_search_enabled,
+                "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
                 "allowed_tools": allowed_tools,
                 "permission_mode": str(conversation.get("permission_mode") or "confirm"),
             }
@@ -305,6 +305,7 @@ class ConversationRunManager:
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
                 "generation_options": self._generation_options(self.app.config, model_key),
                 "web_search_enabled": bool(web_search_enabled),
+                "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
                 "allowed_tools": self._resolve_allowed_tools(
                     "craft", agent, bool(web_search_enabled)
                 ),
@@ -446,7 +447,9 @@ class ConversationRunManager:
                 model_key = f"online:{snapshot['provider_id']}"
             # 先解析当前模型 profile（含 supports_images 能力），再交给视觉路由判断。
             # 顺序错误会导致 prepare_history 因 profile 未定义而整体被跳过（视觉失效）。
-            profile = self.app.config.profile(model_key)
+            profile = dict(self.app.config.profile(model_key))
+            if not bool(snapshot.get("deep_reasoning_enabled", False)):
+                profile["reasoning_effort"] = "off"
             history = build_model_history(snapshot.get("conversation_messages") or [])
             # 视觉自动路由（Phase 1）：文本大脑不支持看图时，把图片改写为不可信描述注入；
             # 纯文本大脑绝不会收到原始 image_url。
@@ -509,6 +512,25 @@ class ConversationRunManager:
                     event({"type": "status", "message": f"视觉路由异常，已安全移除 {removed} 张图片"})
             options = dict(snapshot.get("generation_options") or self._generation_options(self.app.config, model_key))
             options["stream"] = bool(snapshot.get("stream_enabled", True))
+            options["reasoning_enabled"] = bool(snapshot.get("deep_reasoning_enabled", False))
+            allowed_tools = [str(item) for item in snapshot.get("allowed_tools") or []]
+            schema_getter = getattr(self.app.tool_registry, "schemas", None)
+            available_schemas = schema_getter() if callable(schema_getter) else []
+            tool_schemas = [
+                spec for spec in available_schemas
+                if isinstance(spec, dict) and str(spec.get("name") or "") in allowed_tools
+            ]
+            event({
+                "type": "tools_available",
+                "tools": [
+                    {
+                        "name": str(spec.get("name") or ""),
+                        "description": str(spec.get("description") or ""),
+                    }
+                    for spec in tool_schemas
+                    if spec.get("name")
+                ],
+            })
             agent = snapshot.get("agent") or {}
             selected = list(dict.fromkeys(agent.get("skill_ids", []) + snapshot.get("skill_ids", [])))
             prompt = "\n\n".join(
@@ -539,7 +561,7 @@ class ConversationRunManager:
                 bool(snapshot.get("auto_skills")),
                 selected,
                 prompt,
-                [str(item) for item in snapshot.get("allowed_tools") or []],
+                allowed_tools,
                 event,
                 log_tool_run,
                 cancel_event,
@@ -567,6 +589,7 @@ class ConversationRunManager:
                     try:
                         compile_options = dict(options)
                         compile_options["stream"] = False
+                        compile_options.pop("tools", None)
                         response = self.app.models.complete(
                             profile,
                             self.app.plans.plan_compilation_messages(current_plan, response),
@@ -594,6 +617,7 @@ class ConversationRunManager:
             metadata = {
                 "skills": skills,
                 "tool_runs": runs,
+                "allowed_tools": allowed_tools,
                 "reasoning": reasonings,
                 "usage": usage,
                 "attachments": extract_attachments(runs),

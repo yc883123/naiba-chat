@@ -1280,11 +1280,13 @@ class ConversationSearchPersistenceTests(unittest.TestCase):
 
             self.assertEqual(1, first["web_search_enabled"])
             self.assertEqual(0, second["web_search_enabled"])
+            self.assertEqual(0, second["deep_reasoning_enabled"])
             updated = storage.update_conversation_settings(
-                second["id"], web_search_enabled=True
+                second["id"], web_search_enabled=True, deep_reasoning_enabled=True
             )
             self.assertEqual(1, updated["web_search_enabled"])
-            self.assertEqual(2, storage.get_user_version())
+            self.assertEqual(1, updated["deep_reasoning_enabled"])
+            self.assertEqual(3, storage.get_user_version())
 
     def test_search_sources_are_normalized_for_message_metadata(self) -> None:
         from async_tasks import _search_sources
@@ -1920,6 +1922,73 @@ class ToolProtocolStreamTests(unittest.TestCase):
         result = ModelRuntime._read_ollama_stream(lines, lambda e: events.append(e))
         self.assertNotIn("delta", [e.get("type") for e in events])
         self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
+
+
+class ReasoningAndNativeToolTests(unittest.TestCase):
+    def test_reasoning_is_streamed_before_visible_text_and_closed(self) -> None:
+        chunks = [
+            {"choices": [{"delta": {"reasoning_content": "先分析"}}]},
+            {"choices": [{"delta": {"reasoning_content": "再判断"}}]},
+            {"choices": [{"delta": {"content": "最终答案"}}]},
+        ]
+        events = []
+        result = ModelRuntime._read_sse_response(
+            [f"data: {json.dumps(chunk, ensure_ascii=False)}".encode("utf-8") for chunk in chunks],
+            "openai_chat",
+            lambda event: events.append(event),
+        )
+        types = [event.get("type") for event in events]
+        self.assertEqual("reasoning_start", types[0])
+        self.assertEqual(
+            ["先分析", "再判断"],
+            [event["content"] for event in events if event.get("type") == "reasoning_delta"],
+        )
+        self.assertLess(types.index("reasoning_end"), types.index("delta"))
+        self.assertEqual("最终答案", result["content"])
+
+    def test_openai_payload_omits_unverified_native_tools(self) -> None:
+        captured = {}
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"ok"}}]}'
+
+            @property
+            def headers(self):
+                return {"Content-Type": "application/json"}
+
+        def fake_urlopen(request, timeout, cancel_event=None):
+            del timeout, cancel_event
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return Response()
+
+        profile = {
+            "kind": "online",
+            "base_url": "https://example.test/v1",
+            "model": "deepseek-chat",
+            "request_format": "openai_chat",
+        }
+        with patch.object(ModelRuntime, "_urlopen_cancelable", side_effect=fake_urlopen):
+            ModelRuntime().complete(
+                profile,
+                [{"role": "user", "content": "读取文件"}],
+                {
+                    "stream": False,
+                    "tools": [{
+                        "name": "read_file",
+                        "description": "读取文本文件",
+                        "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                    }],
+                },
+            )
+        self.assertNotIn("tool_choice", captured["payload"])
+        self.assertNotIn("tools", captured["payload"])
 
 
 class ToolProtocolAgentLoopTests(unittest.TestCase):

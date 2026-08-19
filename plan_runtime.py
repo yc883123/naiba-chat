@@ -317,10 +317,17 @@ class PlanManager:
         """
         if not plan or PLAN_BLOCK_RE.search(response or ""):
             return False
+        text = str(response or "").strip()
+        clarification_markers = (
+            "请选择", "请提供", "请补充", "请确认", "请告诉我", "需要你选择",
+        )
+        if any(marker in text for marker in clarification_markers):
+            return False
+        if re.search(r"(?m)^\s*(?:\d+[.、)]|[A-D][.、)])\s*\S+", text):
+            return False
         rounds = int((plan.get("detail") or {}).get("clarification_round") or 0)
         if rounds >= 1:
             return True
-        text = str(response or "").strip()
         return bool(text) and "?" not in text and "？" not in text
 
     @staticmethod

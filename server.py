@@ -2020,9 +2020,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             if raw_agent_id is not None and not APP.config.get_agent(agent_id):
                 self._json({"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST)
                 return
-            interaction_mode = "plan" if str(body.get("interaction_mode") or "").strip().lower() == "plan" else "craft"
+            interaction_mode = "craft"
             permission_mode = str(body.get("permission_mode") or "confirm")
             web_search_enabled = body.get("web_search_enabled", False)
+            deep_reasoning_enabled = body.get("deep_reasoning_enabled", False)
             # Only Plan is user-selectable; all other values mean ordinary mode.
             if permission_mode not in ("confirm", "auto", "full"):
                 self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
@@ -2030,12 +2031,16 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not isinstance(web_search_enabled, bool):
                 self._json({"error": "web_search_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
+            if not isinstance(deep_reasoning_enabled, bool):
+                self._json({"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
+                return
             self._json(
                 APP.storage.create_conversation(
                     title=title, provider_id=provider_id, agent_id=agent_id,
                     interaction_mode=interaction_mode, model_key=model_key,
                     permission_mode=permission_mode,
                     web_search_enabled=web_search_enabled,
+                    deep_reasoning_enabled=deep_reasoning_enabled,
                 ),
                 HTTPStatus.CREATED,
             )
@@ -2080,7 +2085,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 if normalized_interaction_mode not in {"plan", "craft", "ask"}:
                     self._json({"error": "interaction_mode 必须是 plan 或普通模式"}, HTTPStatus.BAD_REQUEST)
                     return
-                interaction_mode = "plan" if normalized_interaction_mode == "plan" else "craft"
+                interaction_mode = "craft"
             permission_mode = body.get("permission_mode")
             if permission_mode is not None:
                 if not isinstance(permission_mode, str) or permission_mode not in ("confirm", "auto", "full"):
@@ -2089,6 +2094,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             web_search_enabled = body.get("web_search_enabled")
             if web_search_enabled is not None and not isinstance(web_search_enabled, bool):
                 self._json({"error": "web_search_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
+                return
+            deep_reasoning_enabled = body.get("deep_reasoning_enabled")
+            if deep_reasoning_enabled is not None and not isinstance(deep_reasoning_enabled, bool):
+                self._json({"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
@@ -2101,6 +2110,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 model_key=model_key,
                 permission_mode=permission_mode,
                 web_search_enabled=web_search_enabled,
+                deep_reasoning_enabled=deep_reasoning_enabled,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
         elif path == "/api/agents":

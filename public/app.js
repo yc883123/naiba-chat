@@ -29,12 +29,8 @@ const state = {
   taskTimer: null,
   visionTimer: null,
   visionStartedAt: 0,
-  planTimer: null,
-  planLoadSeq: 0,
-  plans: [],
-  interactionMode: localStorage.getItem('naibaChatInteractionMode') === 'plan' ? 'plan' : 'craft',
-  planEditingId: '',
   webSearchEnabled: false,
+  deepReasoningEnabled: false,
   contextUsage: null,
   providerModelCapabilities: {},
 };
@@ -272,6 +268,17 @@ function sourcesMarkup(sources = []) {
   return items ? `<details class="message-sources"><summary>联网来源（${sources.length}）</summary><ol>${items}</ol></details>` : '';
 }
 
+function toolAvailabilityMarkup(tools = []) {
+  if (!Array.isArray(tools) || !tools.length) return '';
+  const items = tools.map((tool) => {
+    const name = typeof tool === 'string' ? tool : tool?.name;
+    if (!name) return '';
+    const description = typeof tool === 'string' ? '' : String(tool?.description || '');
+    return `<li><code>${escapeHtml(name)}</code>${description ? ` <span>${escapeHtml(description)}</span>` : ''}</li>`;
+  }).filter(Boolean).join('');
+  return items ? `<details class="tool-availability"><summary>Available tools (${tools.length})</summary><ul>${items}</ul></details>` : '';
+}
+
 function messageElement(message, temporary = false) {
   const row = document.createElement('article');
   row.className = `message-row ${message.role}`;
@@ -285,10 +292,10 @@ function messageElement(message, temporary = false) {
       <div class="message-body">
         ${skillMarkup(metadata.skills)}
         ${reasoningMarkup(metadata.reasoning)}
+        ${toolAvailabilityMarkup(metadata.allowed_tools)}
         ${toolMarkup(metadata.tool_runs)}
         <div class="answer-content">${temporary ? '<div class="activity">正在准备</div>' : markdown(message.content)}</div>
         ${temporary ? '' : sourcesMarkup(metadata.sources)}
-        ${metadata.plan_id ? `<div class="plan-card" data-plan-card="${escapeHtml(metadata.plan_id)}"></div>` : ''}
         ${mediaMarkup(metadata.attachments)}
         ${temporary ? '' : usageMarkup(metadata.usage)}
         ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
@@ -402,7 +409,6 @@ function renderMessages(messages) {
       showChoiceButtons(choices, choiceGroups);
     }
     else hideChoiceButtons();
-    fillPlanCards();
     updateContextUsage(messages);
   } catch (error) {
     console.error('[naiba] renderMessages 渲染崩溃:', error, '消息数=', messages.length);
@@ -474,13 +480,11 @@ async function initialize() {
   renderSkills();
   renderProviders();
   renderMcp();
-  renderModeSwitch();
   renderUpdateStatus(state.bootstrap.update || {});
   await loadConversations();
   await loadTasks();
   startTaskSync();
   startConversationSync();
-  startPlanSync();
   startMcpPoll();
 }
 
@@ -510,28 +514,6 @@ function startTaskSync() {
 
 function taskStatusLabel(status) {
   return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消' })[status] || status;
-}
-
-// ---- 交互模式（普通 / Plan） ----
-
-function currentInteractionMode() {
-  const conversation = state.conversations.find((item) => item.id === state.conversationId);
-  const mode = conversation?.interaction_mode || state.interactionMode || 'craft';
-  return mode === 'plan' ? 'plan' : 'craft';
-}
-
-function renderModeSwitch() {
-  const mode = currentInteractionMode();
-  const switcher = $('#planModeSwitch');
-  if (switcher) switcher.checked = mode === 'plan';
-  const input = $('#messageInput');
-  if (input) {
-    const hints = {
-      craft: '输入消息',
-      plan: '描述需求，先只读澄清并生成计划，确认后逐步执行',
-    };
-    input.placeholder = hints[mode] || '输入消息';
-  }
 }
 
 function currentPermissionMode() {
@@ -571,38 +553,6 @@ async function switchPermissionMode(mode) {
   } catch (error) {
     renderPermissionModeSwitch();
     toast(`切换审批模式失败：${error.message}`);
-  }
-}
-
-async function switchPlanMode(enabled) {
-  const mode = enabled ? 'plan' : 'craft';
-  if (mode === currentInteractionMode()) return;
-  if (state.chatRunId || state.abortController || state.taskSubmitting) {
-    renderModeSwitch();
-    toast('当前 Run 正在执行，请先停止后再切换模式');
-    return;
-  }
-  if (!state.conversationId) {
-    state.interactionMode = mode;
-    localStorage.setItem('naibaChatInteractionMode', mode);
-    renderModeSwitch();
-    return;
-  }
-  try {
-    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
-      method: 'POST',
-      body: { interaction_mode: mode },
-    });
-    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
-    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    state.interactionMode = mode;
-    localStorage.setItem('naibaChatInteractionMode', mode);
-    renderModeSwitch();
-    renderPlanBar();
-    toast(mode === 'plan' ? '已进入 Plan 模式' : '已退出 Plan 模式');
-  } catch (error) {
-    renderModeSwitch();
-    toast(`切换模式失败：${error.message}`);
   }
 }
 
@@ -1150,24 +1100,24 @@ async function createConversation() {
   const conversation = await api('/api/conversations', {
     method: 'POST',
     body: {
-      interaction_mode: state.interactionMode,
+      interaction_mode: 'craft',
       permission_mode: 'confirm',
       web_search_enabled: false,
+      deep_reasoning_enabled: false,
       agent_id: $('#agentSelect')?.value || state.bootstrap?.default_agent_id || '',
     },
   });
   state.conversationId = conversation.id;
   state.conversations.unshift(conversation);
-  state.plans = [];
   renderConversations();
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
   updateWebSearchButton();
+  state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
+  updateDeepReasoningButton();
   renderMessages([]);
-  renderModeSwitch();
   renderPermissionModeSwitch();
-  renderPlanBar();
   closeSidebar();
   $('#messageInput').focus();
 }
@@ -1187,12 +1137,12 @@ async function openConversation(id) {
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
   renderMessages(conversation.messages || []);
-  renderModeSwitch();
   renderPermissionModeSwitch();
   // 联网搜索开关由对话数据库字段恢复，不依赖当前浏览器。
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
   updateWebSearchButton();
-  await loadPlans();
+  state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
+  updateDeepReasoningButton();
   await resumeConversationRun(id);
   closeSidebar();
 }
@@ -1218,15 +1168,15 @@ async function syncCurrentConversation() {
     state.conversationSnapshot = snapshot;
     renderConversations();
     renderMessages(conversation.messages || []);
-    renderModeSwitch();
     renderPermissionModeSwitch();
     state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
     updateWebSearchButton();
+    state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
+    updateDeepReasoningButton();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
     state.syncInFlight = false;
-    loadPlans();
   }
 }
 
@@ -1239,8 +1189,7 @@ function startConversationSync() {
 }
 
 function taskModeLabel(task) {
-  if (task.kind === 'plan_execute') return 'Plan 执行';
-  return task.interaction_mode === 'plan' ? 'Plan' : '普通';
+  return '普通';
 }
 
 function taskElapsed(task) {
@@ -1277,13 +1226,6 @@ function renderRunTasks() {
       <div class="task-actions"><span class="task-status ${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span></div>
     </div>`;
   }).join('');
-}
-
-function startPlanSync() {
-  if (state.planTimer) return;
-  state.planTimer = window.setInterval(() => {
-    if (state.conversationId) loadPlans();
-  }, 1500);
 }
 
 function openConversationSettings(id) {
@@ -1335,14 +1277,11 @@ async function deleteConversation(id) {
   state.conversations = state.conversations.filter((item) => item.id !== id);
   if (state.conversationId === id) {
     state.conversationId = '';
-    state.plans = [];
   }
   renderConversations();
   if (state.conversations.length) await openConversation(state.conversations[0].id);
   else {
     renderMessages([]);
-    renderModeSwitch();
-    renderPlanBar();
   }
 }
 
@@ -2398,6 +2337,35 @@ async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
 }
 
+function updateDeepReasoningButton() {
+  const btn = $('#deepReasoningButton');
+  if (!btn) return;
+  btn.classList.toggle('active', state.deepReasoningEnabled);
+  btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled));
+  btn.title = state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭';
+}
+
+async function toggleDeepReasoning() {
+  if (!state.conversationId) await createConversation();
+  if (state.chatRunId || state.abortController) return;
+  const previous = state.deepReasoningEnabled;
+  state.deepReasoningEnabled = !previous;
+  updateDeepReasoningButton();
+  try {
+    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
+      method: 'POST',
+      body: { deep_reasoning_enabled: state.deepReasoningEnabled },
+    });
+    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    toast(state.deepReasoningEnabled ? '深度思考已开启（本对话）' : '深度思考已关闭（本对话）');
+  } catch (error) {
+    state.deepReasoningEnabled = previous;
+    updateDeepReasoningButton();
+    toast(`深度思考设置保存失败：${error.message}`);
+  }
+}
+
 function updateWebSearchButton() {
   const btn = $('#webSearchButton');
   if (!btn) return;
@@ -2445,6 +2413,9 @@ async function handlePasteImage(event) {
 function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
   if (conversationId !== state.conversationId) return;
   const answer = row.querySelector('.answer-content');
+  const collapseReasoning = () => {
+    row.querySelectorAll('.reasoning-block').forEach((block) => { block.open = false; });
+  };
   if (event.type === 'run_started') {
     state.chatRunId = String(event.run_id || '');
     state.runConversationId = conversationId;
@@ -2468,12 +2439,47 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     $('#runtimeStatus').textContent = statusMessage;
   } else if (event.type === 'skills') {
     answer.innerHTML = `<div class="activity">已启用 ${event.skills.map((skill) => escapeHtml(skill.name)).join('、')}</div>`;
+  } else if (event.type === 'tools_available') {
+    const existing = row.querySelector('.tool-availability');
+    if (existing) existing.remove();
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = toolAvailabilityMarkup(event.tools || []);
+    if (wrapper.firstElementChild) answer.before(wrapper.firstElementChild);
   } else if (event.type === 'delta') {
     const current = answer.dataset.raw || '';
     const next = current + String(event.content || '');
     answer.dataset.raw = next;
     answer.innerHTML = markdown(next);
-  } else if (event.type === 'reasoning') {
+  } else if (event.type === 'reasoning_start') {
+    row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => { block.dataset.active = 'false'; });
+    const block = document.createElement('details');
+    block.className = 'reasoning-block';
+    block.open = true;
+    block.dataset.streaming = 'true';
+    block.dataset.active = 'true';
+    block.innerHTML = '<summary>Thinking</summary><div class="reasoning-content"></div>';
+    answer.before(block);
+  } else if (event.type === 'reasoning_delta') {
+    let block = row.querySelector('.reasoning-block[data-active="true"]');
+    if (!block) {
+      block = document.createElement('details');
+      block.className = 'reasoning-block';
+      block.open = true;
+      block.dataset.streaming = 'true';
+      block.dataset.active = 'true';
+      block.innerHTML = '<summary>Thinking</summary><div class="reasoning-content"></div>';
+      answer.before(block);
+    }
+    const content = block.querySelector('.reasoning-content');
+    content.dataset.raw = (content.dataset.raw || '') + String(event.content || '');
+    content.innerHTML = markdown(content.dataset.raw);
+    row.dataset.reasoningStreamed = 'true';
+  } else if (event.type === 'reasoning_end') {
+    row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
+      block.open = false;
+      block.dataset.active = 'false';
+    });
+  } else if (event.type === 'reasoning' && !row.dataset.reasoningStreamed) {
     // 实时显示推理内容到可折叠块
     let block = row.querySelector('.reasoning-block');
     if (!block) {
@@ -2489,9 +2495,34 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'tool_start') {
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
     stack.className = 'tool-stack';
+    const details = document.createElement('details');
+    details.className = 'tool-run';
+    details.open = true;
+    const toolArguments = typeof event.arguments === 'string'
+      ? event.arguments
+      : JSON.stringify(event.arguments || {}, null, 2);
+    details.innerHTML = `<summary>Running · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</summary><pre>${escapeHtml(toolArguments)}</pre>`;
+    stack.appendChild(details);
+    if (!stack.parentNode) answer.before(stack);
+  } else if (event.type === 'tool_start_legacy') {
+    const stack = row.querySelector('.tool-stack') || document.createElement('div');
+    stack.className = 'tool-stack';
     stack.insertAdjacentHTML('beforeend', `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`);
     if (!stack.parentNode) answer.before(stack);
   } else if (event.type === 'tool_result') {
+    const last = row.querySelector('.tool-run:last-child');
+    if (last) {
+      const summary = last.querySelector('summary');
+      if (summary) summary.textContent = `${event.success ? 'Completed' : 'Failed'} · ${event.tool}`;
+      const toolArguments = typeof event.arguments === 'string'
+        ? event.arguments
+        : JSON.stringify(event.arguments || {}, null, 2);
+      const pre = last.querySelector('pre') || document.createElement('pre');
+      pre.textContent = `${toolArguments}\n\n${String(event.result || '')}`;
+      if (!pre.parentNode) last.appendChild(pre);
+      last.open = false;
+    }
+  } else if (event.type === 'tool_result_legacy') {
     const last = row.querySelector('.tool-run:last-child');
     if (last) last.textContent = `${event.success ? '已完成' : '失败'} · ${event.tool}`;
   } else if (event.type === 'tool_confirm') {
@@ -2527,15 +2558,17 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     showChoiceButtons(event.choices, event.choice_groups);
   } else if (event.type === 'cancelled') {
     clearVisionProgress();
+    collapseReasoning();
     answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
-    if (row.dataset.runKind === 'plan_execute') void loadPlans();
   } else if (event.type === 'run_failed') {
     clearVisionProgress();
+    collapseReasoning();
     // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
     $('#runtimeStatus').textContent = '执行失败';
   } else if (event.type === 'done') {
     clearVisionProgress();
+    collapseReasoning();
     if (event.message) {
       try {
         const completedRow = messageElement(event.message);
@@ -2552,19 +2585,11 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     } else {
       answer.innerHTML = '<p>计划执行完成</p>';
     }
-    if (event.plan?.id) {
-      const index = state.plans.findIndex((plan) => plan.id === event.plan.id);
-      if (index >= 0) state.plans[index] = event.plan;
-      else state.plans.unshift(event.plan);
-      renderPlanBar();
-      fillPlanCards();
-    }
-    if (event.plan || row.dataset.runKind === 'plan_execute') void loadPlans();
     $('#runtimeStatus').textContent = '就绪';
   } else if (event.type === 'error') {
     clearVisionProgress();
+    collapseReasoning();
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.message)}</p>`;
-    if (row.dataset.runKind === 'plan_execute') void loadPlans();
     $('#runtimeStatus').textContent = '执行失败';
   }
   scrollToBottom();
@@ -2723,8 +2748,8 @@ function setBusy(busy) {
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
   sendBtn.setAttribute('aria-label', busy ? '停止当前请求' : '发送');
   $('#messageInput').disabled = false;
-  const modeSwitch = $('#planModeSwitch');
-  if (modeSwitch) modeSwitch.disabled = busy;
+  const reasoningButton = $('#deepReasoningButton');
+  if (reasoningButton) reasoningButton.disabled = busy;
   updateUnloadModelButton();
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
 }
@@ -2783,23 +2808,10 @@ function bindEvents() {
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
   });
-  $('#planModeSwitch').addEventListener('change', (event) => switchPlanMode(event.target.checked));
   $('#permissionModeSwitch').addEventListener('click', (event) => {
     const button = event.target.closest('[data-permission-mode]');
     if (button) switchPermissionMode(button.dataset.permissionMode);
   });
-  $('#planBar').addEventListener('click', (event) => {
-    const action = event.target.closest('[data-plan-action]');
-    if (!action) return;
-    const type = action.dataset.planAction;
-    if (type === 'confirm') resolvePlanConfirmation(action.dataset.confirmId, true);
-    else if (type === 'reject') resolvePlanConfirmation(action.dataset.confirmId, false);
-    else if (type === 'execute') executePlan(action.dataset.planId);
-    else if (type === 'keep-planning') keepPlanning(action.dataset.planId);
-    else if (type === 'cancel') cancelPlan(action.dataset.planId);
-    else if (type === 'edit') openPlanEditor(action.dataset.planId);
-  });
-  $('#planEditForm').addEventListener('submit', savePlanEdit);
   $('#taskList').addEventListener('click', (event) => {
     const item = event.target.closest('[data-task-id]');
     if (!item) return;
@@ -2864,6 +2876,7 @@ function bindEvents() {
     });
   }
   $('#webSearchButton').addEventListener('click', toggleWebSearch);
+  $('#deepReasoningButton').addEventListener('click', toggleDeepReasoning);
   $('#contextUsageButton').addEventListener('click', toggleContextUsagePopover);
   $('#contextUsagePopover').addEventListener('click', (event) => event.stopPropagation());
   document.addEventListener('click', closeContextUsagePopover);

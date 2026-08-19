@@ -37,16 +37,16 @@ class InteractionModeStorageTests(unittest.TestCase):
             with self.assertRaisesRegex(sqlite3.ProgrammingError, "closed"):
                 db.execute("SELECT 1")
 
-    def test_conversation_defaults_to_craft_and_persists_mode(self) -> None:
+    def test_conversation_always_uses_craft_mode(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             storage = make_storage(root)
             conversation = storage.create_conversation()
             self.assertEqual("craft", conversation["interaction_mode"])
 
             planned = storage.create_conversation(interaction_mode="plan")
-            self.assertEqual("plan", planned["interaction_mode"])
+            self.assertEqual("craft", planned["interaction_mode"])
             self.assertEqual(
-                "plan",
+                "craft",
                 storage.get_conversation(planned["id"], include_messages=False)["interaction_mode"],
             )
             del storage
@@ -448,32 +448,24 @@ class PlanManagerTests(unittest.TestCase):
 
 
 class FrontendIntegrationTests(unittest.TestCase):
-    def test_mode_switch_and_plan_ui_are_wired(self) -> None:
+    def test_plan_ui_and_sync_are_removed(self) -> None:
         html = Path("public/index.html").read_text(encoding="utf-8")
         source = Path("public/app.js").read_text(encoding="utf-8")
-        server_source = Path("server.py").read_text(encoding="utf-8")
 
-        self.assertIn('id="planModeSwitch"', html)
-        self.assertIn('type="checkbox"', html)
+        self.assertNotIn('id="planModeSwitch"', html)
         self.assertNotIn('data-mode="ask"', html)
-        self.assertIn('id="planBar"', html)
-        self.assertIn('id="planEditDialog"', html)
-        self.assertIn("async function switchPlanMode(enabled)", source)
-        self.assertIn("interaction_mode: state.interactionMode", source)
+        self.assertNotIn('id="planBar"', html)
+        self.assertNotIn('id="planEditDialog"', html)
+        self.assertNotIn("async function switchPlanMode(enabled)", source)
+        self.assertIn("interaction_mode: 'craft'", source)
         self.assertIn("async function sendChatMessage", source)
         self.assertIn("await sendChatMessage(textOverride)", source)
         self.assertIn("fetch('/api/chat'", source)
         self.assertIn("event.type === 'run_started'", source)
         self.assertIn("/api/chat/cancel", source)
-        self.assertIn("function startPlanSync()", source)
-        self.assertIn("function renderPlanBar()", source)
-        self.assertIn("function fillPlanCards()", source)
-        self.assertIn("method: 'PUT'", source)
-        self.assertIn("planLoadSeq: 0", source)
-        self.assertIn("requestSeq !== state.planLoadSeq", source)
-        self.assertIn("currentInteractionMode() !== 'plan'", source)
-        self.assertIn("const plan = state.plans[0]", source)
-        self.assertIn("if (event.plan?.id)", source)
+        self.assertNotIn("function startPlanSync()", source)
+        self.assertNotIn("planLoadSeq: 0", source)
+        self.assertNotIn("if (event.plan?.id)", source)
 
     def test_plan_api_routes_exist(self) -> None:
         server_source = Path("server.py").read_text(encoding="utf-8")
