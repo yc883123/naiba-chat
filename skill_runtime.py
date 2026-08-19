@@ -683,6 +683,21 @@ class SkillAgent:
             "所有路径均为 Windows 路径。\n\n"
             + tool_guide
         )
+        if "capability_inventory" in allowed:
+            system += (
+                "\n\n通用自主编排协议：\n"
+                "- 对需要多步操作的任务，不要停在建议或方案；持续执行到产物经过验证，或遇到确实需要用户决定的阻塞。\n"
+                "- 开始前确认目标、已有输入和完成标准。能力不确定或工具失败时调用 capability_inventory，"
+                "区分工具未调用、MCP 未连接、Skill 缺失、命令缺失和输入素材缺失。\n"
+                "- 能力缺失时，优先复用现有工具、Skill 与 MCP；其次在工作区查找可用实现。"
+                "有可信本地 Skill 包时可用 install_skill 安装，有 MCP 配置时可用 register_mcp 注册，"
+                "命令或软件依赖可在权限允许时用 run_command 安装。补齐后必须重新检查并继续原任务。\n"
+                "- 输入素材缺失时，能由现有能力可靠生成或转换的就自动补齐；"
+                "只有身份、凭据、创意取舍等无法可靠推断的信息才询问用户。不得伪造已经补齐。\n"
+                "- 可独立或耗时的工作使用后台 Job 或子 Agent；启动后记录 Job ID，完成前收集结果，"
+                "检查失败原因并对可恢复错误做有界重试。不要把“已提交”当作“已完成”。\n"
+                "- 最终答复说明实际产物、验证结果，以及仍然存在的真实缺口。"
+            )
         if agent_system_prompt.strip():
             system += "\n\n用户配置的 Agent 指令：\n" + agent_system_prompt.strip()
         mcp_guide = self.executor.mcp_tool_guide()

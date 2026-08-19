@@ -570,27 +570,58 @@ def build_job_tool_specs() -> list[ToolSpec]:
     ]
 
 
-def build_tool_registry() -> ToolRegistry:
-    registry = ToolRegistry()
-    registry.register_many(build_core_tool_specs())
-    registry.register(
+def build_capability_tool_specs() -> list[ToolSpec]:
+    """Tools used by the generic orchestration loop to discover and fill gaps."""
+    return [
         ToolSpec(
-            name="exit_plan_mode",
-            description="提交完整 Markdown 实施计划，供用户批准或继续规划。仅在 Plan 模式下生效。",
+            name="capability_inventory",
+            description=(
+                "盘点当前实际可用的工具、Skill、MCP 服务，并按需检查命令与路径。"
+                "当任务需要的能力不确定、工具不可用或执行失败时先调用它，区分未调用、未连接和确实缺失。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "plan": {"type": "string", "description": "完整 Markdown 计划，必须以 # 标题开头"},
+                    "tools": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "skills": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "mcp_servers": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "executables": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "paths": {"type": "array", "items": {"type": "string"}, "default": []},
                 },
-                "required": ["plan"],
+            },
+            side_effect=False,
+            retryable=True,
+            timeout=30,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="install_skill",
+            description=(
+                "安装经过校验的本地 Skill 文件夹、ZIP 或单个 Markdown。"
+                "来源可先由现有工具下载到工作区；安装成功后本轮即可继续使用该 Skill。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "source_path": _string("本地 Skill 文件夹、ZIP 或 Markdown 的绝对路径"),
+                    "name": _string("可选安装名称", ""),
+                    "destination": _string("可选的已配置 Skill 根目录", ""),
+                },
+                "required": ["source_path"],
             },
             side_effect=True,
             retryable=False,
-            timeout=30,
+            timeout=120,
             permission="confirm",
-        )
-    )
+        ),
+    ]
+
+
+def build_tool_registry() -> ToolRegistry:
+    registry = ToolRegistry()
+    registry.register_many(build_core_tool_specs())
     registry.register_many(build_job_tool_specs())
+    registry.register_many(build_capability_tool_specs())
     registry.register_many(build_vision_tool_specs())
     registry.register_many(build_search_tool_specs())
     return registry

@@ -465,6 +465,7 @@ _BUILT_IN_SCOPE_FULL = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
     "run_skill_script", "http_request", "register_mcp", "call_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+    "capability_inventory", "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
     "vision_colors", "vision_pixel_diff", "web_search",
 )
@@ -472,6 +473,7 @@ _BUILT_IN_SCOPE_CODE = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
     "run_skill_script", "http_request", "run_in_background", "job_output", "job_status",
     "job_wait", "job_kill", "subagent",
+    "capability_inventory", "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
     "vision_colors", "vision_pixel_diff", "web_search",
 )
@@ -480,7 +482,7 @@ _BUILT_IN_SCOPE_MINIMAL = (
 )
 _BUILT_IN_SCOPE_CORDIS = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
-    "run_skill_script", "http_request", "subagent",
+    "run_skill_script", "http_request", "subagent", "capability_inventory", "install_skill",
     "vision_describe", "vision_ground", "vision_ocr", "vision_colors", "web_search",
 )
 
@@ -492,8 +494,9 @@ def built_in_agents() -> list[dict[str, Any]]:
             "id": "dsh-standard",
             "name": "dsh-standard（全能）",
             "system_prompt": (
-                "你是 naiba-chat 的全能内置 Agent，拥有完整工具、Skill、计划、MCP、联网搜索与子任务能力。"
-                "根据用户意图自主选择工具与子 Agent 完成多步任务；涉及文件改动先说明范围。"
+                "你是 naiba-chat 的全能内置 Agent，拥有完整工具、Skill、MCP、联网搜索与子任务能力。"
+                "对任何领域的多步任务执行通用闭环：盘点能力与输入，补齐可恢复缺口，执行并收集后台结果，"
+                "验证产物，失败时依据证据修正后重试；涉及文件改动先说明范围。"
             ),
             "skill_ids": [],
             "tool_scope": list(_BUILT_IN_SCOPE_FULL),
@@ -1614,6 +1617,11 @@ class NaibaChatApp:
         self.tool_registry.register_system_handler("subagent", subagent_handler_factory(self))
         for _name, _handler in job_tool_handler_factory(self).items():
             self.tool_registry.register_system_handler(_name, _handler)
+        from capability_runtime import CapabilityRuntime
+
+        self.capabilities = CapabilityRuntime(self)
+        for _name, _handler in self.capabilities.tool_handlers().items():
+            self.tool_registry.register_system_handler(_name, _handler)
         # 视觉运行时（Phase 1-3）：注册 7 个视觉工具处理器。文本大脑看不到图时自动路由。
         from vision_runtime import VisionRouter
 
@@ -1625,7 +1633,6 @@ class NaibaChatApp:
 
         self.web_search = WebSearchRuntime(self)
         self.tool_registry.register_system_handler("web_search", self._web_search_handler)
-        self.tool_registry.register_system_handler("exit_plan_mode", self._exit_plan_mode_handler)
         # Local smoke/test builds can opt out without changing persisted user settings.
         auto_update = os.environ.get("NAIBA_DISABLE_AUTO_UPDATE", "").strip().lower() not in {"1", "true", "yes"}
         self.updater = UpdateManager(APP_DIR, DATA_DIR, auto_update=auto_update)
@@ -1641,17 +1648,6 @@ class NaibaChatApp:
         query = str(args.get("query") or args.get("q") or "")
         max_results = args.get("max_results")
         return self.web_search.search(query, int(max_results) if isinstance(max_results, (int, float)) else None)
-
-    def _exit_plan_mode_handler(
-        self, args: dict[str, Any], _skills: Any, run_context: dict[str, Any] | None
-    ) -> tuple[bool, str]:
-        content = str((args or {}).get("plan") or "").strip()
-        if not content.startswith("#"):
-            return False, "计划必须是完整 Markdown，并以 # 标题开头"
-        if not isinstance(run_context, dict) or str(run_context.get("interaction_mode") or "") != "plan":
-            return False, "exit_plan_mode 只能在 Plan 模式下调用"
-        run_context["plan_exit_content"] = content[:100000]
-        return True, "计划已提交，等待用户 Approve 或 Keep planning"
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         if str(values.get("id") or "").strip() == "comfyui":

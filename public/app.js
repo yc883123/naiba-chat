@@ -294,7 +294,8 @@ function messageElement(message, temporary = false) {
         ${reasoningMarkup(metadata.reasoning)}
         ${toolAvailabilityMarkup(metadata.allowed_tools)}
         ${toolMarkup(metadata.tool_runs)}
-        <div class="answer-content">${temporary ? '<div class="activity">正在准备</div>' : markdown(message.content)}</div>
+        ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
+        <div class="answer-content" data-raw="">${temporary ? '' : markdown(message.content)}</div>
         ${temporary ? '' : sourcesMarkup(metadata.sources)}
         ${mediaMarkup(metadata.attachments)}
         ${temporary ? '' : usageMarkup(metadata.usage)}
@@ -2413,6 +2414,13 @@ async function handlePasteImage(event) {
 function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
   if (conversationId !== state.conversationId) return;
   const answer = row.querySelector('.answer-content');
+  const activity = row.querySelector('.run-activity');
+  const setActivity = (content, html = false) => {
+    if (!activity) return;
+    activity.hidden = !content;
+    if (html) activity.innerHTML = content;
+    else activity.textContent = content || '';
+  };
   const collapseReasoning = () => {
     row.querySelectorAll('.reasoning-block').forEach((block) => { block.open = false; });
   };
@@ -2421,24 +2429,24 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     state.runConversationId = conversationId;
     row.dataset.runId = state.chatRunId;
   } else if (event.type === 'vision_start') {
-    renderVisionProgress(answer, event);
+    renderVisionProgress(activity || answer, event);
   } else if (event.type === 'vision_done') {
     clearVisionProgress();
-    answer.innerHTML = `<div class="activity">${escapeHtml(event.message || '视觉识别完成，正在交给主模型处理')}</div>`;
+    setActivity(event.message || '视觉识别完成，正在交给主模型处理');
     $('#runtimeStatus').textContent = event.message || '视觉识别完成，正在交给主模型处理';
   } else if (event.type === 'vision_error') {
     clearVisionProgress();
-    answer.innerHTML = `<div class="activity">${escapeHtml(event.message || '视觉识别失败，已降级处理')}</div>`;
+    setActivity(event.message || '视觉识别失败，已降级处理');
     $('#runtimeStatus').textContent = '视觉识别失败，已降级处理';
   } else if (event.type === 'status') {
     clearVisionProgress();
     const statusMessage = String(event.message || '').startsWith('已自动识图')
       ? `视觉识别完成，正在交给主模型处理（${event.message}）`
       : event.message;
-    answer.innerHTML = `<div class="activity">${escapeHtml(statusMessage)}</div>`;
+    setActivity(statusMessage);
     $('#runtimeStatus').textContent = statusMessage;
   } else if (event.type === 'skills') {
-    answer.innerHTML = `<div class="activity">已启用 ${event.skills.map((skill) => escapeHtml(skill.name)).join('、')}</div>`;
+    setActivity(`已启用 ${event.skills.map((skill) => skill.name).join('、')}`);
   } else if (event.type === 'tools_available') {
     const existing = row.querySelector('.tool-availability');
     if (existing) existing.remove();
@@ -2446,6 +2454,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     wrapper.innerHTML = toolAvailabilityMarkup(event.tools || []);
     if (wrapper.firstElementChild) answer.before(wrapper.firstElementChild);
   } else if (event.type === 'delta') {
+    setActivity('');
     const current = answer.dataset.raw || '';
     const next = current + String(event.content || '');
     answer.dataset.raw = next;
@@ -2559,10 +2568,12 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'cancelled') {
     clearVisionProgress();
     collapseReasoning();
+    setActivity('');
     answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
   } else if (event.type === 'run_failed') {
     clearVisionProgress();
     collapseReasoning();
+    setActivity('');
     // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
     $('#runtimeStatus').textContent = '执行失败';

@@ -132,8 +132,56 @@ def _network_error_code(error: BaseException) -> int | None:
     return int(value) if isinstance(value, int) else None
 
 
+class _NullLock:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _InlineReasoningParser:
+    """Split local-model <think> streams without leaking them into the answer."""
+
+    _OPEN = ("<think>", "<thinking>", "<reasoning>")
+    _CLOSE = ("</think>", "</thinking>", "</reasoning>")
+
+    def __init__(self) -> None:
+        self.buffer = ""
+        self.inside = False
+
+    def feed(self, text: str, final: bool = False) -> tuple[str, str]:
+        self.buffer += str(text or "")
+        visible: list[str] = []
+        reasoning: list[str] = []
+        while self.buffer:
+            markers = self._CLOSE if self.inside else self._OPEN
+            positions = [(self.buffer.lower().find(marker), marker) for marker in markers]
+            positions = [(index, marker) for index, marker in positions if index >= 0]
+            if positions:
+                index, marker = min(positions, key=lambda item: item[0])
+                chunk = self.buffer[:index]
+                (reasoning if self.inside else visible).append(chunk)
+                self.buffer = self.buffer[index + len(marker):]
+                self.inside = not self.inside
+                continue
+            if final:
+                (reasoning if self.inside else visible).append(self.buffer)
+                self.buffer = ""
+                break
+            # Retain a possible partial marker split across SSE chunks.
+            keep = max(len(marker) for marker in markers) - 1
+            if len(self.buffer) <= keep:
+                break
+            chunk, self.buffer = self.buffer[:-keep], self.buffer[-keep:]
+            (reasoning if self.inside else visible).append(chunk)
+        return "".join(visible), "".join(reasoning)
+
+
 class ModelRuntime:
     """在线模型调用。"""
+
+    _local_execution_lock = threading.RLock()
 
     def __init__(self) -> None:
         # 每个 HTTP 请求线程独立保存最近一次模型调用信息，避免并发对话互相覆盖。
@@ -184,9 +232,17 @@ class ModelRuntime:
             def effective_status(payload: dict[str, Any]) -> None:
                 if not str(payload.get("type") or "").startswith("reasoning"):
                     status(payload)
-        content, reasoning, usage = self._complete_online(
-            profile, messages, options, effective_status
-        )
+        is_local = kind == "local"
+        if is_local and status:
+            status({"type": "status", "message": "等待本地模型资源"})
+        # Local backends share GPU/RAM and commonly expose one active model.
+        # Serialize requests so a vision call, sub-agent, and main turn cannot
+        # make the local server compete with itself.
+        lock = self._local_execution_lock if is_local else _NullLock()
+        with lock:
+            content, reasoning, usage = self._complete_online(
+                profile, messages, options, effective_status
+            )
         if not reasoning_enabled:
             reasoning = ""
         self.last_reasoning = reasoning
@@ -921,6 +977,7 @@ class ModelRuntime:
         tool_protocol = False
         reasoning_started = False
         reasoning_ended = False
+        inline_parser = _InlineReasoningParser()
         for raw_line in response:
             try:
                 chunk = json.loads(raw_line.decode("utf-8", errors="replace"))
@@ -930,6 +987,8 @@ class ModelRuntime:
                 continue
             chunks.append(chunk)
             text, reasoning = ModelRuntime._ollama_stream_delta(chunk)
+            text, inline_reasoning = inline_parser.feed(text)
+            reasoning = reasoning + inline_reasoning
             if reasoning:
                 if status and not reasoning_started:
                     status({"type": "reasoning_start"})
@@ -946,6 +1005,19 @@ class ModelRuntime:
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
+        final_text, final_reasoning = inline_parser.feed("", final=True)
+        if final_reasoning:
+            if status and not reasoning_started:
+                status({"type": "reasoning_start"})
+                reasoning_started = True
+            if status:
+                status({"type": "reasoning_delta", "content": final_reasoning})
+        if final_text:
+            if status and reasoning_started and not reasoning_ended:
+                status({"type": "reasoning_end"})
+                reasoning_ended = True
+            full_content_parts.append(final_text)
+            pending += final_text
         if not tool_protocol:
             ModelRuntime._forward_guarded_text(pending, status, final=True)
         if status and reasoning_started and not reasoning_ended:
@@ -984,6 +1056,7 @@ class ModelRuntime:
         tool_protocol = False
         reasoning_started = False
         reasoning_ended = False
+        inline_parser = _InlineReasoningParser()
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -999,6 +1072,8 @@ class ModelRuntime:
                 continue
             chunks.append(chunk)
             text, reasoning, tool_calls = ModelRuntime._stream_delta_full(request_format, chunk)
+            text, inline_reasoning = inline_parser.feed(text)
+            reasoning = reasoning + inline_reasoning
             if reasoning:
                 if status and not reasoning_started:
                     status({"type": "reasoning_start"})
@@ -1035,6 +1110,19 @@ class ModelRuntime:
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
+        final_text, final_reasoning = inline_parser.feed("", final=True)
+        if final_reasoning:
+            if status and not reasoning_started:
+                status({"type": "reasoning_start"})
+                reasoning_started = True
+            if status:
+                status({"type": "reasoning_delta", "content": final_reasoning})
+        if final_text:
+            if status and reasoning_started and not reasoning_ended:
+                status({"type": "reasoning_end"})
+                reasoning_ended = True
+            full_content_parts.append(final_text)
+            pending += final_text
         if not tool_protocol:
             ModelRuntime._forward_guarded_text(pending, status, final=True)
         if status and reasoning_started and not reasoning_ended:
@@ -1061,6 +1149,7 @@ class ModelRuntime:
         tool_protocol = False
         reasoning_started = False
         reasoning_ended = False
+        inline_parser = _InlineReasoningParser()
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
             if not line.startswith("data:"):
@@ -1098,6 +1187,14 @@ class ModelRuntime:
             else:
                 # 未知事件但可能带有正文/文本字段（兼容字段命名）。
                 text = ModelRuntime._text_value(chunk.get("content") or chunk.get("text"))
+            text, inline_reasoning = inline_parser.feed(text)
+            if inline_reasoning:
+                if status and not reasoning_started:
+                    status({"type": "reasoning_start"})
+                    reasoning_started = True
+                reasoning_parts.append(inline_reasoning)
+                if status:
+                    status({"type": "reasoning_delta", "content": inline_reasoning})
             if not text:
                 continue
             if status and reasoning_started and not reasoning_ended:
@@ -1107,6 +1204,20 @@ class ModelRuntime:
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
+        final_text, final_reasoning = inline_parser.feed("", final=True)
+        if final_reasoning:
+            if status and not reasoning_started:
+                status({"type": "reasoning_start"})
+                reasoning_started = True
+            reasoning_parts.append(final_reasoning)
+            if status:
+                status({"type": "reasoning_delta", "content": final_reasoning})
+        if final_text:
+            if status and reasoning_started and not reasoning_ended:
+                status({"type": "reasoning_end"})
+                reasoning_ended = True
+            full_content_parts.append(final_text)
+            pending += final_text
         if not tool_protocol:
             ModelRuntime._forward_guarded_text(pending, status, final=True)
         if status and reasoning_started and not reasoning_ended:

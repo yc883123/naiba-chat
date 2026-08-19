@@ -58,6 +58,12 @@ class BuiltInAgentsTest(TestCase):
             cfg.upsert_agent({"id": "myagent", "name": "我的", "system_prompt": "hi"})
             self.assertIsNotNone(cfg.get_agent("myagent"))
 
+    def test_full_agent_has_generic_capability_tools(self):
+        agent = next(a for a in server.built_in_agents() if a["id"] == "dsh-standard")
+        self.assertIn("capability_inventory", agent["tool_scope"])
+        self.assertIn("install_skill", agent["tool_scope"])
+        self.assertNotIn("计划", agent["system_prompt"])
+
 
 class RunToolScopeTest(TestCase):
     def _manager(self, search_available: bool = True) -> ConversationRunManager:

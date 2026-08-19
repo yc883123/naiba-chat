@@ -14,12 +14,13 @@ from skill_runtime import SkillAgent, TaskCancelled
 # - Craft 模式：作业/子 Agent/视觉/搜索工具全部可用；
 # - Ask/Plan 模式：仅只读分析与搜索工具（crop/pixel_diff 等写文件工具排除）。
 JOB_TOOLS = ("run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent")
+CAPABILITY_TOOLS = ("capability_inventory", "install_skill")
 VISION_READONLY_TOOLS = (
     "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
 )
 VISION_WRITING_TOOLS = ("vision_crop", "vision_pixel_diff")
-SYSTEM_TOOLS_CRAFT = JOB_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("web_search", "exit_plan_mode")
-SYSTEM_TOOLS_READONLY = VISION_READONLY_TOOLS + ("web_search", "exit_plan_mode")
+SYSTEM_TOOLS_CRAFT = JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("web_search",)
+SYSTEM_TOOLS_READONLY = ("capability_inventory",) + VISION_READONLY_TOOLS + ("web_search",)
 
 
 def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
