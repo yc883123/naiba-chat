@@ -15,4 +15,5 @@
   ,"Build47: align Plan with DeepSeek harness review flow; remove Ask/Craft mode choices and replace them with a Plan checkbox."
   ,"Build48: show a live local vision progress indicator with backend name and elapsed wait time before the main model continues."
   ,"Build49: allow choosing a custom persistent database/data directory and clarify that schema migration does not move data."
+  ,"Build50: migrate the complete data tree recursively, keep uploads and other files, activate configured data directories immediately, and resolve legacy absolute attachment paths."
 ]

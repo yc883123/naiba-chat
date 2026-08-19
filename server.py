@@ -110,8 +110,22 @@ def _database_has_conversations(path: Path) -> bool:
         return False
 
 
+def _merge_data_tree(source: Path, target: Path) -> bool:
+    """Copy a data tree recursively, keeping files already present at target."""
+    changed = False
+    target.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        destination = target / item.name
+        if item.is_dir():
+            changed = _merge_data_tree(item, destination) or changed
+        elif not destination.exists():
+            shutil.copy2(item, destination)
+            changed = True
+    return changed
+
+
 def _copy_legacy_data(source: Path, replace_empty_target: bool = True) -> dict[str, bool]:
-    """Merge a legacy install into APP_DIR without overwriting non-empty data."""
+    """Merge a legacy install into the current data directory, including all subdirectories."""
     report = {"config": False, "data": False}
     legacy_config = source / "config.json"
     legacy_data = source / "data"
@@ -153,14 +167,7 @@ def _copy_legacy_data(source: Path, replace_empty_target: bool = True) -> dict[s
     for item in legacy_data.iterdir():
         if item.name in {"chat.db", "chat.db-wal", "chat.db-shm", "server.lock"}:
             continue
-        destination = DATA_DIR / item.name
-        if destination.exists():
-            continue
-        if item.is_dir():
-            shutil.copytree(item, destination)
-        else:
-            shutil.copy2(item, destination)
-        report["data"] = True
+        report["data"] = _merge_data_tree(item, DATA_DIR / item.name) or report["data"]
     return report
 
 
@@ -1525,9 +1532,32 @@ def _context_window_source(provider: dict[str, Any]) -> str:
 
 class NaibaChatApp:
     def __init__(self):
+        global DATA_DIR, STATUS_PATH, LOCK_PATH
         # 冻结版首次启动：从 EXE 相邻旧目录迁移配置与数据到 %LOCALAPPDATA%\NaibaChat。
+        initial_data_dir = DATA_DIR.resolve()
         self.data_migration = migrate_legacy_data()
         self.config = ConfigStore(CONFIG_PATH)
+        # ConfigStore may reveal a custom data directory after the legacy
+        # bootstrap migration has already run. Rebind all runtime globals and
+        # carry over the bootstrap directory so the same process reads the
+        # directory the user configured.
+        configured_data_dir = self.config.resolve_data_dir().resolve()
+        if configured_data_dir != initial_data_dir:
+            try:
+                if (
+                    initial_data_dir.is_dir()
+                    and not path_within(configured_data_dir, initial_data_dir)
+                    and not path_within(initial_data_dir, configured_data_dir)
+                ):
+                    self.data_migration["data"] = (
+                        _merge_data_tree(initial_data_dir, configured_data_dir)
+                        or bool(self.data_migration.get("data"))
+                    )
+            except OSError as exc:
+                print(f"Data directory switch migration failed: {exc}")
+            DATA_DIR = configured_data_dir
+            STATUS_PATH = DATA_DIR / "server.json"
+            LOCK_PATH = DATA_DIR / "server.lock"
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.storage = ChatStorage(DATA_DIR / "chat.db")
         self.models = ModelRuntime()
@@ -1806,13 +1836,7 @@ class NaibaChatApp:
             for item in source.iterdir():
                 if item.name in {"server.lock", "backups"}:
                     continue
-                destination = target / item.name
-                if destination.exists():
-                    continue
-                if item.is_dir():
-                    shutil.copytree(item, destination)
-                else:
-                    shutil.copy2(item, destination)
+                _merge_data_tree(item, target / item.name)
             self.config.update_settings({"data_dir": str(target)})
         except (OSError, sqlite3.Error, ValueError) as exc:
             return {"ok": False, "error": f"迁移数据失败：{exc}"}
@@ -2428,9 +2452,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
         else:
             path = Path(source).expanduser().resolve()
+            # Attachments created before a data-directory migration contain an
+            # absolute path from the old install. Resolve those records by
+            # filename inside the current uploads directory.
+            current_data_root = DATA_DIR.resolve()
+            current_uploads = (current_data_root / "uploads").resolve()
+            if not path.is_file() and path.name:
+                migrated_path = current_uploads / path.name
+                if migrated_path.is_file():
+                    path = migrated_path
             allowed_roots = [
                 APP.config.resolve_workspace_dir(),
-                DATA_DIR.resolve(),
+                current_data_root,
             ]
             if not any(path_within(path, root) for root in allowed_roots):
                 self._json({"error": "文件不在允许访问的目录中"}, HTTPStatus.FORBIDDEN)
