@@ -113,6 +113,39 @@ class RunStorageTests(unittest.TestCase):
             del storage
             gc.collect()
 
+    def test_pending_run_guidance_is_not_consumed_until_guided(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            run = storage.create_run(conversation["id"], "work", {}, {})
+            pending = storage.add_run_interjection(
+                conversation["id"], run["id"], "change the direction"
+            )
+
+            self.assertFalse(pending["metadata"]["interjection_guided"])
+            self.assertEqual([], storage.list_run_interjections(run["id"]))
+            self.assertTrue(storage.delete_run_interjection(
+                conversation["id"], run["id"], pending["id"]
+            ))
+
+            guided = storage.add_run_interjection(
+                conversation["id"], run["id"], "use a different ending"
+            )
+            guided = storage.guide_run_interjection(conversation["id"], run["id"], guided["id"])
+            self.assertTrue(guided["metadata"]["interjection_guided"])
+            self.assertEqual([guided["id"]], [
+                item["id"] for item in storage.list_run_interjections(run["id"])
+            ])
+            with self.assertRaisesRegex(LookupError, "已被处理"):
+                storage.guide_run_interjection(conversation["id"], run["id"], guided["id"])
+            self.assertFalse(storage.delete_run_interjection(
+                conversation["id"], run["id"], guided["id"]
+            ))
+            storage.mark_run_interjections_consumed(run["id"], [guided["id"]])
+            self.assertEqual([], storage.list_run_interjections(run["id"]))
+            del storage
+            gc.collect()
+
 
 class SkillPolicyTests(unittest.TestCase):
     skills = [{"id": "a"}, {"id": "b"}, {"id": "fixed"}]

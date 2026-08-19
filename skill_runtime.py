@@ -824,21 +824,59 @@ class SkillAgent:
         reasonings: list[str] = []
         # model_complete 是 ModelRuntime.complete 的绑定方法，可通过 __self__ 读取 last_reasoning
         model_runtime = getattr(self.model_complete, "__self__", None)
-        # 有界、可恢复：默认最多 agent_max_steps 个模型步骤
-        max_steps = 32 if max_steps is None else max(1, int(max_steps))
         step = 0
         repeat_key = ""
         repeat_count = 0
         no_progress_signature = ""
         no_progress_count = 0
         parse_error_count = 0
-        while step < max_steps:
+        seen_interjections: set[str] = set()
+
+        def consume_interjections() -> int:
+            getter = (run_context or {}).get("pull_interjections")
+            if not callable(getter):
+                return 0
+            consumed = 0
+            for item in getter() or []:
+                message_id = str(item.get("id") or "")
+                if not message_id or message_id in seen_interjections:
+                    continue
+                seen_interjections.add(message_id)
+                content = str(item.get("content") or "").strip()
+                attachments = (item.get("metadata") or {}).get("attachments") or []
+                paths = [
+                    str(attachment.get("path") or attachment.get("source") or "").strip()
+                    for attachment in attachments
+                    if isinstance(attachment, dict)
+                    and str(attachment.get("path") or attachment.get("source") or "").strip()
+                ]
+                if paths:
+                    content += "\n\n[插话附带文件]\n" + "\n".join(paths)
+                if not content:
+                    continue
+                messages.append({
+                    "role": "user",
+                    "content": "用户插话（优先处理，并根据新指令继续当前任务）：\n" + content,
+                })
+                marker = (run_context or {}).get("mark_interjections_consumed")
+                if callable(marker):
+                    marker([message_id])
+                event({
+                    "type": "interjection_consumed",
+                    "message_id": message_id,
+                    "message": content[:500],
+                })
+                consumed += 1
+            return consumed
+
+        while True:
             if cancel_event and cancel_event.is_set():
                 event({"type": "run_cancelled", "reason": "用户取消"})
                 raise TaskCancelled("任务已取消")
             step += 1
+            consume_interjections()
             event({"type": "step_started", "step": step})
-            event({"type": "status", "message": f"正在思考（第 {step}/{max_steps} 轮）"})
+            event({"type": "status", "message": f"正在思考（第 {step} 轮）"})
             event({"type": "model_request", "step": step})
             raw = self.model_complete(profile, messages, options, event)
             if cancel_event and cancel_event.is_set():
@@ -892,6 +930,14 @@ class SkillAgent:
                 )
             parse_error_count = 0
             if action.get("type") not in {"tool", "tools"}:
+                before_interjections = len(messages)
+                if consume_interjections():
+                    interjections = messages[before_interjections:]
+                    del messages[before_interjections:]
+                    messages.append({"role": "assistant", "content": str(action.get("content") or raw or "")})
+                    messages.extend(interjections)
+                    event({"type": "step_finished", "step": step})
+                    continue
                 pending_jobs = self._pending_background_jobs(run_context)
                 if pending_jobs:
                     event({
@@ -996,13 +1042,6 @@ class SkillAgent:
                     }
                 )
             event({"type": "step_finished", "step": step})
-
-        # 超过最大步骤，明确失败，不允许无限循环
-        event({"type": "run_failed", "error": f"已达到最大步骤数 {max_steps}"})
-        return (
-            f"已达到最大步骤数（{max_steps}），任务未能在限定步数内完成。",
-            runs, reasonings, self._summarize_usage(usages),
-        )
 
     @staticmethod
     def _pending_background_jobs(run_context: dict[str, Any] | None) -> list[str]:

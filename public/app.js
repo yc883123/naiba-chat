@@ -38,6 +38,7 @@ const state = {
   visionStartedAt: 0,
   webSearchEnabled: false,
   deepReasoningEnabled: false,
+  lightweightMode: false,
   contextUsage: null,
   providerModelCapabilities: {},
 };
@@ -131,7 +132,9 @@ function markdown(text) {
 }
 
 function fileUrl(source) {
-  return `/api/file?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(source)}`;
+  const value = String(source || '');
+  if (/^https?:\/\//i.test(value)) return value;
+  return `/api/file?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(value)}`;
 }
 
 function mediaMarkup(attachments = []) {
@@ -140,12 +143,14 @@ function mediaMarkup(attachments = []) {
     const source = attachment.source || attachment.path;
     const lower = String(source).toLowerCase().split('?')[0];
     const url = fileUrl(source);
+    const safeUrl = escapeHtml(url);
+    const name = escapeHtml(attachment.name || '生成文件');
     if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
-      return `<a href="${url}" target="_blank"><img src="${url}" alt="${escapeHtml(attachment.name || '生成图片')}" loading="lazy"></a>`;
+      return `<a class="media-image-link" href="${safeUrl}" target="_blank" rel="noreferrer"><img src="${safeUrl}" alt="${name}" loading="lazy" onerror="this.remove(); this.parentElement.classList.add('media-failed')"><span>打开 ${name}</span></a>`;
     }
-    if (/\.(mp4|webm)$/.test(lower)) return `<video src="${url}" controls playsinline></video>`;
-    if (/\.(wav|mp3|m4a)$/.test(lower)) return `<audio src="${url}" controls></audio>`;
-    return `<a class="file-chip" href="${url}" target="_blank">${escapeHtml(attachment.name || '下载文件')}</a>`;
+    if (/\.(mp4|webm)$/.test(lower)) return `<video src="${safeUrl}" controls playsinline></video>`;
+    if (/\.(wav|mp3|m4a)$/.test(lower)) return `<audio src="${safeUrl}" controls></audio>`;
+    return `<a class="file-chip" href="${safeUrl}" target="_blank" rel="noreferrer">${name}</a>`;
   }).join('');
   return `<div class="media-grid">${items}</div>`;
 }
@@ -291,8 +296,12 @@ function messageElement(message, temporary = false) {
   row.className = `message-row ${message.role}`;
   row.dataset.messageId = message.id || '';
   const metadata = message.metadata || {};
+  row.dataset.interjection = String(Boolean(metadata.interjection));
+  row.dataset.interjectionGuided = String(Boolean(metadata.interjection_guided));
+  row.dataset.interjectionConsumed = String(Boolean(metadata.interjection_consumed));
   if (message.role === 'user') {
-    row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${message.id ? `<div class="message-actions"><button data-edit-message title="编辑并从此处重新开始">编辑</button></div>` : ''}</div>`;
+    const actions = message.id ? `<div class="message-actions"><button data-edit-message title="编辑并从此处重新开始">编辑</button>${metadata.interjection && !metadata.interjection_consumed ? '<button data-delete-message title="删除这条消息">删除</button>' : ''}</div>` : '';
+    row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
     row.innerHTML = `
       <div class="message-avatar">AI</div>
@@ -311,8 +320,58 @@ function messageElement(message, temporary = false) {
   return row;
 }
 
+function isPendingRunGuidance(message) {
+  const metadata = message?.metadata || {};
+  return message?.role === 'user'
+    && Boolean(metadata.interjection)
+    && !metadata.interjection_guided
+    && !metadata.interjection_consumed;
+}
+
+function runGuidanceElement(message) {
+  const row = document.createElement('article');
+  const metadata = message.metadata || {};
+  row.className = 'message-row user run-guidance-card';
+  row.dataset.messageId = message.id || '';
+  row.dataset.interjection = 'true';
+  row.dataset.runGuidance = 'true';
+  row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}
+    <div class="run-guidance-actions">
+      <button type="button" data-delete-message title="删除这条待引导消息">删除</button>
+      <button type="button" data-guide-message title="让当前运行根据这条消息继续">引导</button>
+      <button type="button" data-edit-message title="编辑这条待引导消息">编辑</button>
+    </div>
+  </div>`;
+  return row;
+}
+
+function renderRunGuidance(messages) {
+  const container = $('#runGuidanceList');
+  if (!container) return;
+  const pending = (messages || []).filter(isPendingRunGuidance);
+  container.replaceChildren(...pending.map(runGuidanceElement));
+  container.hidden = pending.length === 0;
+}
+
+function promoteRunGuidance(messageId) {
+  const row = messageId
+    ? document.querySelector(`.run-guidance-card[data-message-id="${CSS.escape(String(messageId))}"]`)
+    : null;
+  if (!row) return;
+  row.classList.remove('run-guidance-card');
+  delete row.dataset.runGuidance;
+  row.querySelector('.run-guidance-actions')?.remove();
+  $('#messages').append(row);
+  const container = $('#runGuidanceList');
+  if (container && !container.children.length) container.hidden = true;
+  scrollToBottom();
+}
+
 function startEditMessage(row) {
-  if (!row || state.chatRunId) {
+  const editablePendingGuidance = row?.dataset.interjection === 'true'
+    && row?.dataset.interjectionGuided !== 'true'
+    && row?.dataset.interjectionConsumed !== 'true';
+  if (!row || (state.chatRunId && !editablePendingGuidance)) {
     if (state.chatRunId) toast('请先停止当前对话再编辑');
     return;
   }
@@ -352,6 +411,21 @@ async function confirmEditMessage(row, newText) {
   }
   const messageId = row.dataset.messageId;
   if (!messageId || !state.conversationId) return;
+  if (state.chatRunId && row.dataset.interjection === 'true'
+      && row.dataset.interjectionGuided !== 'true'
+      && row.dataset.interjectionConsumed !== 'true') {
+    try {
+      await api('/api/chat/interject/delete', {
+        method: 'POST',
+        body: { conversation_id: state.conversationId, run_id: state.chatRunId, message_id: messageId },
+      });
+      row.remove();
+      await sendRunInterjection(text);
+    } catch (error) {
+      toast(`编辑失败：${error.message}`);
+    }
+    return;
+  }
   try {
     const result = await api('/api/messages/edit', {
       method: 'POST',
@@ -415,13 +489,15 @@ function renderMessages(messages) {
     container.replaceChildren();
     // 始终保留 empty 在容器中，仅切换 hidden；否则它会被移出 DOM，
     // 导致后续 sendMessage 中 $('#emptyState') 为 null 而崩溃
-    empty.hidden = messages.length > 0;
+    const visibleMessages = messages.filter((message) => !isPendingRunGuidance(message));
+    empty.hidden = visibleMessages.length > 0;
     container.append(empty);
-    if (messages.length) {
-      messages.forEach((message) => container.append(messageElement(message)));
+    if (visibleMessages.length) {
+      visibleMessages.forEach((message) => container.append(messageElement(message)));
       scrollToBottom();
     }
-    const choiceMessage = pendingChoiceMessage(messages);
+    renderRunGuidance(messages);
+    const choiceMessage = pendingChoiceMessage(visibleMessages);
     const choices = choiceMessage?.metadata?.choices || [];
     const choiceGroups = choiceMessage?.metadata?.choice_groups || [];
     if ((Array.isArray(choiceGroups) && choiceGroups.length) || (Array.isArray(choices) && choices.length)) {
@@ -1131,6 +1207,8 @@ async function createConversation() {
   updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   updateDeepReasoningButton();
+  state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
+  updateLightweightModeControl();
   renderMessages([]);
   renderPermissionModeSwitch();
   closeSidebar();
@@ -1158,6 +1236,8 @@ async function openConversation(id) {
   updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   updateDeepReasoningButton();
+  state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
+  updateLightweightModeControl();
   await resumeConversationRun(id);
   closeSidebar();
 }
@@ -1188,6 +1268,8 @@ async function syncCurrentConversation() {
     updateWebSearchButton();
     state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
     updateDeepReasoningButton();
+    state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
+    updateLightweightModeControl();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
@@ -2140,6 +2222,10 @@ function startMcpPoll() {
 }
 
 async function uploadFiles(files) {
+  if (state.lightweightMode) {
+    toast('轻量对话不支持附件');
+    return;
+  }
   for (const file of files) {
     const chip = { name: file.name, uploading: true };
     state.pendingFiles.push(chip);
@@ -2206,6 +2292,7 @@ function createRunRow(run) {
   const row = messageElement({ role: 'assistant', content: '' }, true);
   row.dataset.runId = String(run.id || '');
   row.dataset.runKind = String(run.kind || 'chat');
+  row.dataset.lightweightMode = String(state.lightweightMode);
   $('#messages').append(row);
   scrollToBottom();
   return row;
@@ -2310,17 +2397,21 @@ async function resumeConversationRun(conversationId) {
 async function sendChatMessage(textOverride = '') {
   const input = $('#messageInput');
   const text = (textOverride || input.value).trim();
-  if (!text || state.chatRunId || state.abortController || state.taskSubmitting) return;
+  if (!text || state.taskSubmitting) return;
   if (state.pendingFiles.some((file) => file.uploading)) {
     toast('请等待文件上传完成');
     return;
   }
-  if (state.skillMode === 'exclusive' && !state.selectedSkills.length) {
+  if (!state.lightweightMode && state.skillMode === 'exclusive' && !state.selectedSkills.length) {
     toast('仅允许所选 Skill 时，请至少选择一个 Skill');
     return;
   }
-  hideChoiceButtons();
   if (!state.conversationId) await createConversation();
+  if (state.chatRunId || state.abortController) {
+    await sendRunInterjection(text);
+    return;
+  }
+  hideChoiceButtons();
   const conversationId = state.conversationId;
   const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
   state.pendingFiles = [];
@@ -2371,6 +2462,78 @@ async function sendChatMessage(textOverride = '') {
   }
 }
 
+async function sendRunInterjection(text) {
+  const input = $('#messageInput');
+  const runId = state.chatRunId;
+  const conversationId = state.conversationId;
+  if (!runId || !conversationId) return;
+  if (state.pendingFiles.some((file) => file.uploading)) {
+    toast('请等待文件上传完成');
+    return;
+  }
+  const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
+  state.pendingFiles = [];
+  renderPendingFiles();
+  input.value = '';
+  resizeTextarea();
+  try {
+    const result = await api('/api/chat/interject', {
+      method: 'POST',
+      body: { conversation_id: conversationId, run_id: runId, message: text, attachments },
+    });
+    const message = result.message || { role: 'user', content: text, metadata: { attachments, interjection: true } };
+    const container = $('#runGuidanceList');
+    container.append(runGuidanceElement(message));
+    container.hidden = false;
+    toast('已发送，可删除、编辑或引导当前任务');
+  } catch (error) {
+    toast(`消息发送失败：${error.message}`);
+  }
+}
+
+async function guideMessage(row) {
+  const messageId = row?.dataset.messageId;
+  if (!messageId || !state.conversationId || !state.chatRunId) return;
+  const button = row.querySelector('[data-guide-message]');
+  if (button) button.disabled = true;
+  try {
+    const result = await api('/api/chat/interject/guide', {
+      method: 'POST',
+      body: { conversation_id: state.conversationId, run_id: state.chatRunId, message_id: messageId },
+    });
+    promoteRunGuidance(result.message?.id || messageId);
+  } catch (error) {
+    if (button) button.disabled = false;
+    toast(`引导失败：${error.message}`);
+  }
+}
+
+async function deleteMessage(row) {
+  const messageId = row?.dataset.messageId;
+  if (!messageId || !state.conversationId) return;
+  if (state.chatRunId) {
+    try {
+      await api('/api/chat/interject/delete', {
+        method: 'POST',
+        body: { conversation_id: state.conversationId, run_id: state.chatRunId, message_id: messageId },
+      });
+      row.remove();
+      toast('已删除待引导消息');
+    } catch (error) {
+      toast(`删除失败：${error.message}`);
+    }
+    return;
+  }
+  try {
+    await api('/api/messages/edit', {
+      method: 'POST', body: { conversation_id: state.conversationId, message_id: messageId },
+    });
+    await openConversation(state.conversationId);
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
+}
+
 async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
 }
@@ -2378,14 +2541,16 @@ async function sendMessage(textOverride = '') {
 function updateDeepReasoningButton() {
   const btn = $('#deepReasoningButton');
   if (!btn) return;
+  const disabled = state.lightweightMode || Boolean(state.chatRunId || state.abortController);
+  btn.disabled = disabled;
   btn.classList.toggle('active', state.deepReasoningEnabled);
   btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled));
-  btn.title = state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭';
+  btn.title = state.lightweightMode ? '轻量对话已关闭深度思考' : (state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭');
 }
 
 async function toggleDeepReasoning() {
   if (!state.conversationId) await createConversation();
-  if (state.chatRunId || state.abortController) return;
+  if (state.lightweightMode || state.chatRunId || state.abortController) return;
   const previous = state.deepReasoningEnabled;
   state.deepReasoningEnabled = !previous;
   updateDeepReasoningButton();
@@ -2407,13 +2572,16 @@ async function toggleDeepReasoning() {
 function updateWebSearchButton() {
   const btn = $('#webSearchButton');
   if (!btn) return;
+  const disabled = state.lightweightMode || Boolean(state.chatRunId || state.abortController);
+  btn.disabled = disabled;
   btn.classList.toggle('active', state.webSearchEnabled);
   btn.setAttribute('aria-pressed', String(state.webSearchEnabled));
-  btn.title = state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭';
+  btn.title = state.lightweightMode ? '轻量对话已关闭联网搜索' : (state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭');
 }
 
 async function toggleWebSearch() {
   if (!state.conversationId) await createConversation();
+  if (state.lightweightMode || state.chatRunId || state.abortController) return;
   const previous = state.webSearchEnabled;
   state.webSearchEnabled = !previous;
   updateWebSearchButton();
@@ -2429,6 +2597,48 @@ async function toggleWebSearch() {
     state.webSearchEnabled = previous;
     updateWebSearchButton();
     toast(`联网搜索设置保存失败：${error.message}`);
+  }
+}
+
+function updateLightweightModeControl() {
+  const toggle = $('#lightweightModeToggle');
+  const attach = $('#attachButton');
+  if (toggle) {
+    toggle.checked = state.lightweightMode;
+    toggle.disabled = Boolean(state.chatRunId || state.abortController);
+  }
+  if (attach) attach.disabled = state.lightweightMode;
+  updateDeepReasoningButton();
+  updateWebSearchButton();
+}
+
+async function toggleLightweightMode() {
+  if (!state.conversationId) await createConversation();
+  if (state.chatRunId || state.abortController) return;
+  const previous = state.lightweightMode;
+  state.lightweightMode = !previous;
+  if (state.lightweightMode) {
+    state.deepReasoningEnabled = false;
+    state.webSearchEnabled = false;
+    state.pendingFiles = [];
+    renderPendingFiles();
+  }
+  updateLightweightModeControl();
+  try {
+    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
+      method: 'POST',
+      body: {
+        lightweight_mode: state.lightweightMode,
+        ...(state.lightweightMode ? { deep_reasoning_enabled: false, web_search_enabled: false } : {}),
+      },
+    });
+    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    toast(state.lightweightMode ? '轻量对话已开启（本对话）' : '轻量对话已关闭（本对话）');
+  } catch (error) {
+    state.lightweightMode = previous;
+    updateLightweightModeControl();
+    toast(`轻量对话设置保存失败：${error.message}`);
   }
 }
 
@@ -2465,6 +2675,20 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     state.chatRunId = String(event.run_id || '');
     state.runConversationId = conversationId;
     row.dataset.runId = state.chatRunId;
+    row.dataset.lightweightMode = String(Boolean(event.lightweight_mode));
+  } else if (event.type === 'user_guidance') {
+    hideChoiceButtons();
+    promoteRunGuidance(event.message_id);
+    row.querySelectorAll('.tool-confirm').forEach((confirmation) => {
+      const actions = confirmation.querySelector('.tool-confirm-actions');
+      if (actions) actions.innerHTML = '<div class="tool-confirm-status">新指令已到达，原确认已撤销</div>';
+    });
+    setActivity('已收到引导，准备继续');
+  } else if (event.type === 'interjection_consumed') {
+    const messageRow = event.message_id
+      ? document.querySelector(`.message-row[data-message-id="${CSS.escape(String(event.message_id))}"]`)
+      : null;
+    messageRow?.querySelector('.message-actions')?.remove();
   } else if (event.type === 'vision_start') {
     renderVisionProgress(activity || answer, event);
   } else if (event.type === 'vision_done') {
@@ -2492,7 +2716,13 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     setActivity('');
     const current = answer.dataset.raw || '';
     const next = current + String(event.content || '');
-    scheduleStreamingMarkdown(answer, next);
+    if (row.dataset.lightweightMode === 'true') {
+      answer.dataset.raw = next;
+      answer.textContent = next;
+      scrollToBottom();
+    } else {
+      scheduleStreamingMarkdown(answer, next);
+    }
   } else if (event.type === 'reasoning_start') {
     row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => { block.dataset.active = 'false'; });
     const block = document.createElement('details');
@@ -2786,14 +3016,15 @@ async function rejectTool(confirmId, runId = state.chatRunId) {
 function setBusy(busy) {
   const sendBtn = $('#sendButton');
   sendBtn.disabled = false;
-  sendBtn.classList.toggle('is-stop', busy);
-  sendBtn.textContent = busy ? '■' : '↑';
-  sendBtn.title = busy ? '停止当前请求' : '发送';
+  sendBtn.classList.remove('is-stop');
+  sendBtn.textContent = '↑';
+  sendBtn.title = '发送';
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
-  sendBtn.setAttribute('aria-label', busy ? '停止当前请求' : '发送');
+  sendBtn.setAttribute('aria-label', '发送');
   $('#messageInput').disabled = false;
-  const reasoningButton = $('#deepReasoningButton');
-  if (reasoningButton) reasoningButton.disabled = busy;
+  const cancelButton = $('#cancelRunButton');
+  if (cancelButton) cancelButton.hidden = !busy;
+  updateLightweightModeControl();
   updateUnloadModelButton();
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
 }
@@ -2887,11 +3118,7 @@ function bindEvents() {
     event.preventDefault();
     sendMessage();
   });
-  $('#sendButton').addEventListener('click', (event) => {
-    if (!state.chatRunId && !state.abortController) return;
-    event.preventDefault();
-    if (state.chatRunId) cancelCurrentRun();
-  });
+  $('#cancelRunButton').addEventListener('click', cancelCurrentRun);
   $('#messageInput').addEventListener('input', resizeTextarea);
   $('#messageInput').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
@@ -2900,6 +3127,7 @@ function bindEvents() {
     }
   });
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
+  $('#lightweightModeToggle').addEventListener('change', toggleLightweightMode);
   $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
   const composerWrap = document.querySelector('.composer-wrap');
   if (composerWrap) {
@@ -2982,7 +3210,25 @@ function bindEvents() {
     const editButton = event.target.closest('[data-edit-message]');
     if (editButton) {
       startEditMessage(editButton.closest('.message-row'));
+      return;
     }
+    const deleteButton = event.target.closest('[data-delete-message]');
+    if (deleteButton) {
+      deleteMessage(deleteButton.closest('.message-row'));
+    }
+  });
+  $('#runGuidanceList').addEventListener('click', (event) => {
+    const row = event.target.closest('.run-guidance-card');
+    if (!row) return;
+    if (event.target.closest('[data-guide-message]')) {
+      guideMessage(row);
+      return;
+    }
+    if (event.target.closest('[data-edit-message]')) {
+      startEditMessage(row);
+      return;
+    }
+    if (event.target.closest('[data-delete-message]')) deleteMessage(row);
   });
   $$('.starter-grid button').forEach((button) => button.addEventListener('click', () => sendMessage(button.dataset.prompt)));
   $('#copyAddress').addEventListener('click', async () => {

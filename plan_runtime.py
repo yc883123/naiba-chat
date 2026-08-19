@@ -761,7 +761,6 @@ class PlanManager:
                 conversation_id, tool, args, result, success
             ),
             cancel_event,
-            max_steps=int(self.app.config.data.get("agent_max_steps", 32)),
             tool_registry=self.app.tool_registry,
             run_context={
                 "run_id": str((plan.get("detail") or {}).get("run_id") or ""),

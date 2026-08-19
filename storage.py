@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -94,11 +94,23 @@ def _migrate_to_v3(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v4(db: sqlite3.Connection) -> None:
+    """Persist the lightweight text-chat switch per conversation."""
+    try:
+        db.execute("SELECT lightweight_mode FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN lightweight_mode "
+            "INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
+    4: _migrate_to_v4,
 }
 
 
@@ -131,6 +143,7 @@ class ChatStorage:
                     permission_mode TEXT NOT NULL DEFAULT 'confirm',
                     web_search_enabled INTEGER NOT NULL DEFAULT 0,
                     deep_reasoning_enabled INTEGER NOT NULL DEFAULT 0,
+                    lightweight_mode INTEGER NOT NULL DEFAULT 0,
                     title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
@@ -342,6 +355,7 @@ class ChatStorage:
         permission_mode: str = "confirm",
         web_search_enabled: bool = False,
         deep_reasoning_enabled: bool = False,
+        lightweight_mode: bool = False,
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
@@ -353,8 +367,8 @@ class ChatStorage:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
@@ -362,6 +376,7 @@ class ChatStorage:
                     permission_mode,
                     1 if web_search_enabled else 0,
                     1 if deep_reasoning_enabled else 0,
+                    1 if lightweight_mode else 0,
                     0,
                     "",
                     1,
@@ -379,13 +394,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -393,7 +408,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -422,6 +437,7 @@ class ChatStorage:
         permission_mode: str | None = None,
         web_search_enabled: bool | None = None,
         deep_reasoning_enabled: bool | None = None,
+        lightweight_mode: bool | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -468,6 +484,8 @@ class ChatStorage:
             values["web_search_enabled"] = 1 if bool(web_search_enabled) else 0
         if deep_reasoning_enabled is not None:
             values["deep_reasoning_enabled"] = 1 if bool(deep_reasoning_enabled) else 0
+        if lightweight_mode is not None:
+            values["lightweight_mode"] = 1 if bool(lightweight_mode) else 0
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
@@ -606,6 +624,145 @@ class ChatStorage:
                 (conversation_id,),
             ).fetchone()
         return self._task_dict(row) if row else None
+
+    def add_run_interjection(
+        self,
+        conversation_id: str,
+        run_id: str,
+        content: str,
+        attachments: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Create a pending user instruction for an active Run.
+
+        Pending instructions are intentionally not visible to the agent until the
+        user explicitly chooses to guide the Run with them.
+        """
+        now = int(time.time() * 1000)
+        message_id = uuid.uuid4().hex
+        metadata = {
+            "attachments": attachments or [],
+            "run_id": run_id,
+            "interjection": True,
+            "interjection_guided": False,
+        }
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute(
+                "SELECT id FROM background_tasks WHERE id = ? AND conversation_id = ? "
+                "AND status IN ('queued', 'running', 'waiting', 'cancelling')",
+                (run_id, conversation_id),
+            ).fetchone()
+            if not active:
+                raise LookupError("运行不存在或已结束")
+            db.execute(
+                "INSERT INTO messages(id, conversation_id, role, content, metadata, created_at) "
+                "VALUES (?, ?, 'user', ?, ?, ?)",
+                (message_id, conversation_id, content, json.dumps(metadata, ensure_ascii=False), now),
+            )
+            db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+        return {
+            "id": message_id,
+            "role": "user",
+            "content": content,
+            "metadata": metadata,
+            "created_at": now,
+        }
+
+    def list_run_interjections(self, run_id: str) -> list[dict[str, Any]]:
+        run = self.get_background_task(run_id)
+        if not run:
+            return []
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT id, role, content, metadata, created_at FROM messages "
+                "WHERE conversation_id = ? AND role = 'user' ORDER BY created_at, rowid",
+                (str(run.get("conversation_id") or ""),),
+            ).fetchall()
+        return [
+            message for message in (self._message_dict(row) for row in rows)
+            if bool(message.get("metadata", {}).get("interjection"))
+            and str(message.get("metadata", {}).get("run_id") or "") == run_id
+            and bool(message.get("metadata", {}).get("interjection_guided"))
+            and not bool(message.get("metadata", {}).get("interjection_consumed"))
+        ]
+
+    def guide_run_interjection(
+        self, conversation_id: str, run_id: str, message_id: str
+    ) -> dict[str, Any]:
+        """Expose one pending instruction to the active Run."""
+        now = int(time.time() * 1000)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            active = db.execute(
+                "SELECT id FROM background_tasks WHERE id = ? AND conversation_id = ? "
+                "AND status IN ('queued', 'running', 'waiting', 'cancelling')",
+                (run_id, conversation_id),
+            ).fetchone()
+            if not active:
+                raise LookupError("运行不存在或已结束")
+            row = db.execute(
+                "SELECT id, role, content, metadata, created_at FROM messages "
+                "WHERE id = ? AND conversation_id = ? AND role = 'user'",
+                (message_id, conversation_id),
+            ).fetchone()
+            if not row:
+                raise LookupError("待引导消息不存在")
+            message = self._message_dict(row)
+            metadata = dict(message.get("metadata") or {})
+            if (not metadata.get("interjection")
+                    or str(metadata.get("run_id") or "") != run_id
+                    or metadata.get("interjection_guided")
+                    or metadata.get("interjection_consumed")):
+                raise LookupError("待引导消息不存在或已被处理")
+            metadata["interjection_guided"] = True
+            db.execute(
+                "UPDATE messages SET metadata = ? WHERE id = ?",
+                (json.dumps(metadata, ensure_ascii=False), message_id),
+            )
+            db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+        message["metadata"] = metadata
+        return message
+
+    def mark_run_interjections_consumed(self, run_id: str, message_ids: list[str]) -> None:
+        ids = [str(message_id).strip() for message_id in message_ids if str(message_id).strip()]
+        if not ids:
+            return
+        placeholders = ", ".join("?" for _ in ids)
+        with self._connect() as db:
+            rows = db.execute(
+                f"SELECT id, metadata FROM messages WHERE id IN ({placeholders})", ids
+            ).fetchall()
+            for row in rows:
+                try:
+                    metadata = json.loads(row["metadata"] or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+                if str(metadata.get("run_id") or "") != run_id or not metadata.get("interjection"):
+                    continue
+                metadata["interjection_consumed"] = True
+                db.execute(
+                    "UPDATE messages SET metadata = ? WHERE id = ?",
+                    (json.dumps(metadata, ensure_ascii=False), row["id"]),
+                )
+
+    def delete_run_interjection(
+        self, conversation_id: str, run_id: str, message_id: str
+    ) -> bool:
+        with self._connect() as db:
+            cursor = db.execute(
+                "DELETE FROM messages WHERE id = ? AND conversation_id = ? AND role = 'user' "
+                "AND json_extract(metadata, '$.run_id') = ? "
+                "AND json_extract(metadata, '$.interjection') = 1 "
+                "AND COALESCE(json_extract(metadata, '$.interjection_guided'), 0) = 0 "
+                "AND COALESCE(json_extract(metadata, '$.interjection_consumed'), 0) = 0",
+                (message_id, conversation_id, run_id),
+            )
+            if cursor.rowcount:
+                db.execute(
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                    (int(time.time() * 1000), conversation_id),
+                )
+        return bool(cursor.rowcount)
 
     def create_chat_run(
         self,

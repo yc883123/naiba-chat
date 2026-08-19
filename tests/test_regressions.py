@@ -1201,7 +1201,9 @@ class ConversationInteractionHistoryTests(unittest.TestCase):
 
         self.assertIn("function pendingChoiceMessage(messages)", source)
         self.assertIn("if (message?.role === 'user') return null", source)
-        self.assertIn("const choiceMessage = pendingChoiceMessage(messages)", source)
+        self.assertIn("const choiceMessage = pendingChoiceMessage(visibleMessages)", source)
+        self.assertIn("renderRunGuidance(messages)", source)
+        self.assertIn("hideChoiceButtons();\n    promoteRunGuidance(event.message_id);", source)
 
     def test_enabled_skills_are_saved_and_rendered_with_messages(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
@@ -1287,7 +1289,7 @@ class ConversationSearchPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(1, updated["web_search_enabled"])
             self.assertEqual(1, updated["deep_reasoning_enabled"])
-            self.assertEqual(3, storage.get_user_version())
+            self.assertEqual(4, storage.get_user_version())
 
     def test_search_sources_are_normalized_for_message_metadata(self) -> None:
         from async_tasks import _search_sources

@@ -70,6 +70,7 @@
       <section class="composer-wrap">
         <div class="active-task-bar" id="activeTaskBar" hidden></div>
         <div class="pending-files" id="pendingFiles"></div>
+        <div class="run-guidance-list" id="runGuidanceList" hidden aria-live="polite"></div>
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
           <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">＋</button>
@@ -92,6 +93,7 @@
               <small id="lastTurnUsageSummary">完成一次回复后显示本轮消耗</small>
             </div>
           </div>
+          <button class="icon-button cancel-run-button" id="cancelRunButton" type="button" title="停止当前任务" aria-label="停止当前任务" hidden>■</button>
           <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
         </form>
         <div class="composer-meta">
@@ -103,6 +105,11 @@
               <button type="button" data-permission-mode="full" role="radio" title="工具无需逐次确认">完全</button>
             </div>
           </div>
+          <label class="lightweight-mode-toggle" id="lightweightModeControl" title="关闭工具、Skills、联网、视觉和深度思考，降低本机负载">
+            <input id="lightweightModeToggle" type="checkbox">
+            <span>轻量对话</span>
+            <small>纯文本 · 关闭工具、联网、视觉和深度思考</small>
+          </label>
           <span id="runtimeStatus">就绪</span>
         </div>
       </section>

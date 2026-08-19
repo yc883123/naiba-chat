@@ -2108,6 +2108,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             if deep_reasoning_enabled is not None and not isinstance(deep_reasoning_enabled, bool):
                 self._json({"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
+            lightweight_mode = body.get("lightweight_mode")
+            if lightweight_mode is not None and not isinstance(lightweight_mode, bool):
+                self._json({"error": "lightweight_mode 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
+                return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
                 title=title,
@@ -2120,6 +2124,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 permission_mode=permission_mode,
                 web_search_enabled=web_search_enabled,
                 deep_reasoning_enabled=deep_reasoning_enabled,
+                lightweight_mode=lightweight_mode,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
         elif path == "/api/agents":
@@ -2289,6 +2294,27 @@ class RequestHandler(BaseHTTPRequestHandler):
                         self._json({"retried": True, "job_id": new_id}, HTTPStatus.OK)
                     else:
                         self._json({"error": "Job 不存在或无权访问"}, HTTPStatus.NOT_FOUND)
+        elif path == "/api/chat/interject":
+            try:
+                self._json(APP.runs.interject(body), HTTPStatus.ACCEPTED)
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/chat/interject/guide":
+            try:
+                self._json(APP.runs.guide_interjection(body))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/chat/interject/delete":
+            try:
+                self._json(APP.runs.delete_interjection(body))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/chat":
             self._chat(body)
         elif path == "/api/tasks":

@@ -121,7 +121,6 @@ def run_subagent_agent(
                 conversation_id, tool, args, result, success
             ),
             cancel,
-            max_steps=int(app.config.data.get("agent_max_steps", 32)),
             tool_registry=app.tool_registry,
             run_context=run_context,
         )
