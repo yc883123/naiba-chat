@@ -1416,6 +1416,26 @@ class UpdateManifestTests(unittest.TestCase):
             self.assertEqual("available", status["phase"])
             self.assertEqual("build-45", status["latest_version"])
 
+    def test_republished_same_build_with_new_commit_is_available(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            manager = UpdateManager(Path(root), Path(root) / "data")
+            manager.build = {"version": "build-60", "commit": "c" * 40}
+            manifest = {
+                "repository": "yc883123/naiba-chat",
+                "commit": "d" * 40,
+                "sha256": "e" * 64,
+                "asset": "naiba-chat.exe",
+                "version": "build-60",
+            }
+            with (
+                patch.object(UpdateManager, "mode", new_callable=PropertyMock, return_value="executable"),
+                patch.object(UpdateManager, "_request_json", return_value=manifest),
+            ):
+                status = manager.check(force=True)
+
+            self.assertTrue(status["update_available"])
+            self.assertEqual("available", status["phase"])
+
     def test_frozen_update_restart_resets_pyinstaller_environment(self) -> None:
         source = Path("updater.py").read_text(encoding="utf-8")
 

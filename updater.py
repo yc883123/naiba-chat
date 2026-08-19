@@ -260,7 +260,15 @@ class UpdateManager:
             latest_number = self._build_number(manifest.get("version", ""))
             update_available = manifest["commit"] != self.build.get("commit")
             if current_number is not None and latest_number is not None:
-                update_available = latest_number > current_number
+                # Build numbers prevent downgrades, while a republished build
+                # with a different commit must still reach existing clients.
+                update_available = (
+                    latest_number > current_number
+                    or (
+                        latest_number == current_number
+                        and manifest["commit"] != self.build.get("commit")
+                    )
+                )
             manifest["update_available"] = update_available
             with self.lock:
                 self.latest = manifest
