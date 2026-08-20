@@ -1380,6 +1380,33 @@ async function saveConversationSettings(event) {
   }
 }
 
+async function clearConversationMessages() {
+  const id = state.conversationSettingsId;
+  if (!id) return;
+  if (!confirm('确定清空这个对话的全部消息和工具记录吗？此操作无法恢复。')) return;
+  if (!confirm('请再次确认：要永久清空当前对话吗？')) return;
+  try {
+    await api(`/api/conversations/${encodeURIComponent(id)}/messages`, { method: 'DELETE' });
+    $('#conversationSettingsDialog').close();
+    if (id === state.conversationId) renderMessages([]);
+    await loadConversations();
+    toast('对话已清空');
+  } catch (error) {
+    toast(`清空失败：${error.message}`);
+  }
+}
+
+async function clearTerminalTasks() {
+  if (!confirm('清理所有已结束、失败、取消或中断的异步任务记录吗？运行中的任务不会受影响。')) return;
+  try {
+    const result = await api('/api/tasks/clear', { method: 'DELETE' });
+    await loadTasks();
+    toast(`已清理 ${Number(result.deleted || 0)} 个任务`);
+  } catch (error) {
+    toast(`清理失败：${error.message}`);
+  }
+}
+
 async function deleteConversation(id) {
   if (id === state.conversationId && state.chatRunId) {
     toast('请先停止当前回复再删除对话');
@@ -2305,6 +2332,24 @@ function renderVisionProgress(answer, event) {
   state.visionTimer = window.setInterval(update, 1000);
 }
 
+function clearStreamingAnswer(answer) {
+  if (!answer) return;
+  answer.dataset.raw = '';
+  answer.dataset.renderScheduled = '0';
+  answer.replaceChildren();
+}
+
+function createStreamingReasoningBlock(answer) {
+  const block = document.createElement('details');
+  block.className = 'reasoning-block';
+  block.open = true;
+  block.dataset.streaming = 'true';
+  block.dataset.active = 'true';
+  block.innerHTML = '<summary>Thinking</summary><div class="reasoning-content"></div>';
+  answer.before(block);
+  return block;
+}
+
 function createRunRow(run) {
   const row = messageElement({ role: 'assistant', content: '' }, true);
   row.dataset.runId = String(run.id || '');
@@ -2753,24 +2798,15 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       scheduleStreamingMarkdown(answer, next);
     }
   } else if (event.type === 'reasoning_start') {
-    row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => { block.dataset.active = 'false'; });
-    const block = document.createElement('details');
-    block.className = 'reasoning-block';
-    block.open = true;
-    block.dataset.streaming = 'true';
-    block.dataset.active = 'true';
-    block.innerHTML = '<summary>Thinking</summary><div class="reasoning-content"></div>';
-    answer.before(block);
+    row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
+      block.dataset.active = 'false';
+      if (!(block.querySelector('.reasoning-content')?.dataset.raw || '').trim()) block.remove();
+    });
   } else if (event.type === 'reasoning_delta') {
+    if (!String(event.content || '').trim()) return;
     let block = row.querySelector('.reasoning-block[data-active="true"]');
     if (!block) {
-      block = document.createElement('details');
-      block.className = 'reasoning-block';
-      block.open = true;
-      block.dataset.streaming = 'true';
-      block.dataset.active = 'true';
-      block.innerHTML = '<summary>Thinking</summary><div class="reasoning-content"></div>';
-      answer.before(block);
+      block = createStreamingReasoningBlock(answer);
     }
     const content = block.querySelector('.reasoning-content');
     scheduleStreamingMarkdown(content, (content.dataset.raw || '') + String(event.content || ''));
@@ -2779,6 +2815,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
       block.open = false;
       block.dataset.active = 'false';
+      if (!(block.querySelector('.reasoning-content')?.dataset.raw || '').trim()) block.remove();
     });
   } else if (event.type === 'reasoning' && !row.dataset.reasoningStreamed) {
     // 实时显示推理内容到可折叠块
@@ -2794,6 +2831,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     content.innerHTML = markdown((content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content);
     content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
   } else if (event.type === 'tool_start') {
+    clearStreamingAnswer(answer);
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
     stack.className = 'tool-stack';
     const details = document.createElement('details');
@@ -2806,6 +2844,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     stack.appendChild(details);
     if (!stack.parentNode) answer.before(stack);
   } else if (event.type === 'tool_start_legacy') {
+    clearStreamingAnswer(answer);
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
     stack.className = 'tool-stack';
     stack.insertAdjacentHTML('beforeend', `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`);
@@ -2827,6 +2866,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     const last = row.querySelector('.tool-run:last-child');
     if (last) last.textContent = `${event.success ? '已完成' : '失败'} · ${event.tool}`;
   } else if (event.type === 'tool_confirm') {
+    clearStreamingAnswer(answer);
     // 需要确认的工具调用
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
     stack.className = 'tool-stack';
@@ -3118,6 +3158,8 @@ function bindEvents() {
   $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
   $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());
+  $('#clearTerminalTasks').addEventListener('click', clearTerminalTasks);
+  $('#clearConversationMessages').addEventListener('click', clearConversationMessages);
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
   });

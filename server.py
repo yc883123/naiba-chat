@@ -2455,7 +2455,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"error": "访问口令无效"}, HTTPStatus.UNAUTHORIZED)
             return
         path = parsed.path
-        if path.startswith("/api/conversations/"):
+        if path == "/api/tasks/clear":
+            self._json({"deleted": APP.storage.clear_terminal_background_tasks()})
+        elif path.startswith("/api/conversations/") and path.endswith("/messages"):
+            conversation_id = path.split("/")[-2]
+            if APP.storage.list_background_tasks(conversation_id, active_only=True):
+                self._json({"error": "当前对话仍有运行中的任务，无法清空"}, HTTPStatus.CONFLICT)
+                return
+            self._json({"deleted": APP.storage.clear_conversation_messages(conversation_id)})
+        elif path.startswith("/api/conversations/"):
             deleted = APP.storage.delete_conversation(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/tasks/") and path.endswith("/cancel"):

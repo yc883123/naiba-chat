@@ -1,4 +1,7 @@
 [
+  "Build73: prevent provisional streamed text from lingering before a tool call, and suppress empty Thinking blocks during multi-step agent runs.",
+  "Build73: show elapsed time for vision_describe and other in-agent visual tools, including the final visual-backend failure reason.",
+  "Build73: add one-click cleanup for finished async task records and double-confirmed per-conversation chat cleanup.",
   "Build72: fix local-vision handoff to online reasoning by resolving uploaded image basenames against the persistent uploads directory, preventing false file-not-found retries and vision-budget exhaustion.",
   "Build72: restore four per-conversation lightweight switches (tools/Skills, vision/attachments, web search, and deep reasoning) and correct the checkbox layout and sizing.",
   "Build72: preserve packaged Skills in the managed persistent Skill directory so Build updates no longer make Skills from the previous executable disappear.",

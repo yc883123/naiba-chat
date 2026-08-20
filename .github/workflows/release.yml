@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: build-72
+  RELEASE_VERSION: build-73
 
 concurrency:
   group: naiba-chat-release

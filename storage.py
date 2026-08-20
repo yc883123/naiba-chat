@@ -587,6 +587,17 @@ class ChatStorage:
             cursor = db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
         return cursor.rowcount > 0
 
+    def clear_conversation_messages(self, conversation_id: str) -> int:
+        """Clear persisted chat/tool history while retaining the conversation settings."""
+        with self._connect() as db:
+            db.execute("DELETE FROM tool_runs WHERE conversation_id = ?", (conversation_id,))
+            cursor = db.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            db.execute(
+                "UPDATE conversations SET title = '新对话', title_customized = 0, updated_at = ? WHERE id = ?",
+                (int(time.time() * 1000), conversation_id),
+            )
+        return cursor.rowcount
+
     def truncate_from_message(self, conversation_id: str, message_id: str) -> int:
         """删除某条消息及其之后（同一会话内 created_at 不早于它的）所有消息。
 
@@ -1216,6 +1227,14 @@ class ChatStorage:
                 parameters,
             ).fetchall()
         return [self._task_dict(row) for row in rows]
+
+    def clear_terminal_background_tasks(self) -> int:
+        """Remove completed task records and their cascaded run events, never active runs."""
+        with self._connect() as db:
+            cursor = db.execute(
+                "DELETE FROM background_tasks WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted')"
+            )
+        return cursor.rowcount
 
     # ---- 计划（Plan 模式） ----
     def create_plan(self, conversation_id: str, question: str) -> dict[str, Any]:

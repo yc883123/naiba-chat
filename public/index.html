@@ -206,6 +206,7 @@
         <label><input type="checkbox" name="lightweightFeature" value="deep_reasoning"> 深度推理</label>
       </fieldset>
       <div class="form-actions">
+        <button class="danger-button" id="clearConversationMessages" type="button">清空对话</button>
         <button class="control-button" type="button" data-close="conversationSettingsDialog">取消</button>
         <button class="primary-button" id="saveConversationSettings" type="submit">保存对话设置</button>
       </div>
@@ -489,7 +490,10 @@
   <dialog id="tasksDialog" class="panel-dialog tasks-dialog">
     <div class="dialog-toolbar">
       <div><h2>异步任务</h2></div>
-      <button class="icon-button" data-close="tasksDialog" title="关闭" aria-label="关闭">×</button>
+      <div class="dialog-toolbar-actions">
+        <button class="danger-button task-clear-button" id="clearTerminalTasks" type="button">清理已结束</button>
+        <button class="icon-button" data-close="tasksDialog" title="关闭" aria-label="关闭">×</button>
+      </div>
     </div>
     <div class="task-list" id="taskList"></div>
   </dialog>

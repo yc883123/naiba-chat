@@ -76,6 +76,34 @@ class RunStorageTests(unittest.TestCase):
             del storage
             gc.collect()
 
+    def test_clear_terminal_tasks_preserves_active_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            completed = storage.create_run(conversation["id"], "completed", {}, {})
+            storage.update_background_task(completed["id"], status="completed", finished=True)
+            active = storage.create_run(conversation["id"], "active", {}, {})
+
+            self.assertEqual(1, storage.clear_terminal_background_tasks())
+            self.assertIsNone(storage.get_background_task(completed["id"]))
+            self.assertIsNotNone(storage.get_background_task(active["id"]))
+            del storage
+            gc.collect()
+
+    def test_clear_conversation_messages_retains_settings(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            storage.add_message(conversation["id"], "user", "remove me", {})
+            storage.log_tool_run(conversation["id"], "vision_describe", {}, "result", True)
+
+            self.assertEqual(1, storage.clear_conversation_messages(conversation["id"]))
+            cleared = storage.get_conversation(conversation["id"])
+            self.assertEqual([], cleared["messages"])
+            self.assertEqual("新对话", cleared["title"])
+            del storage
+            gc.collect()
+
     def test_restart_marks_active_run_interrupted_and_appends_terminal_event(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             storage = self.make_storage(root)
@@ -579,6 +607,24 @@ class RunFrontendTests(unittest.TestCase):
         self.assertIn("mode: state.skillMode", source)
         self.assertIn('value="exclusive"', html)
         self.assertNotIn("completion_contract", source)
+
+    def test_frontend_clears_provisional_output_and_empty_thinking_blocks(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function clearStreamingAnswer(answer)", source)
+        self.assertIn("clearStreamingAnswer(answer);", source)
+        self.assertIn("if (!String(event.content || '').trim()) return;", source)
+        self.assertIn("if (!(block.querySelector('.reasoning-content')?.dataset.raw || '').trim()) block.remove();", source)
+
+    def test_frontend_includes_task_and_conversation_cleanup_controls(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+
+        self.assertIn("clearTerminalTasks", source)
+        self.assertIn("clearConversationMessages", source)
+        self.assertIn("/api/tasks/clear", source)
+        self.assertIn("clearTerminalTasks", html)
+        self.assertIn("clearConversationMessages", html)
 
 
 if __name__ == "__main__":

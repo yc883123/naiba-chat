@@ -308,6 +308,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .setup-body { padding: 18px 20px; display: grid; gap: 12px; }
 .setup-desc { margin: 0; color: var(--text); line-height: 1.6; }
 .dialog-toolbar { min-height: 65px; display: flex; align-items: center; justify-content: space-between; padding: 11px 17px; border-bottom: 1px solid var(--line); }
+.dialog-toolbar-actions { display: inline-flex; align-items: center; gap: 8px; }
+.task-clear-button { min-height: 32px; padding: 0 10px; font-size: 12px; }
 .toggle-row { min-height: 62px; padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); color: var(--text); }
 .toggle-row span { display: grid; }
 .toggle-row small { color: var(--muted); margin-top: 3px; }

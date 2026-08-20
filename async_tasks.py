@@ -8,7 +8,7 @@ from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
 from skill_runtime import SkillAgent, TaskCancelled, normalize_skill_policy
-from vision_runtime import VISION_BUDGET_EXHAUSTED, VisionBudget
+from vision_runtime import VISION_BUDGET_EXHAUSTED, VISION_TOOL_NAMES, VisionBudget
 
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
@@ -125,6 +125,21 @@ class _RunEventSink:
             payload = {**payload, "type": "tool_start"}
             if tool:
                 self._announced_tools.add(tool)
+        if str(payload.get("type") or "") == "tool_start" and str(payload.get("tool") or "") in VISION_TOOL_NAMES:
+            self.manager.emit(self.run_id, {
+                "type": "vision_start",
+                "backend": "视觉工具",
+                "tool": str(payload.get("tool") or ""),
+                "started_at": int(time.time() * 1000),
+            })
+        elif str(payload.get("type") or "") == "tool_result" and str(payload.get("tool") or "") in VISION_TOOL_NAMES:
+            self.manager.emit(self.run_id, {
+                "type": "vision_done" if payload.get("success") else "vision_error",
+                "message": (
+                    "视觉识别完成，正在继续处理"
+                    if payload.get("success") else f"视觉识别失败：{payload.get('result') or '视觉后端未返回结果'}"
+                ),
+            })
         self.manager.emit(self.run_id, payload)
 
     def flush(self) -> None:
