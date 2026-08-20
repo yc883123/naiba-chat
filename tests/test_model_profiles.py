@@ -28,6 +28,7 @@ def _free_port() -> int:
 class _MockModelHandler(BaseHTTPRequestHandler):
     routes: dict[str, int] = {}
     last_body: bytes = b""
+    last_headers: dict[str, str] = {}
 
     def log_message(self, *args: Any) -> None:  # 静默
         pass
@@ -35,10 +36,19 @@ class _MockModelHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length", "0") or "0")
         _MockModelHandler.last_body = self.rfile.read(length) if length else b""
+        _MockModelHandler.last_headers = {key.lower(): value for key, value in self.headers.items()}
         _MockModelHandler.routes[self.path] = _MockModelHandler.routes.get(self.path, 0) + 1
         body = json.dumps({"choices": [{"message": {"content": "mock-ok"}}]}).encode("utf-8")
         if self.path == "/api/chat":  # Ollama 非流式单条 JSON
             body = json.dumps({"message": {"content": "mock-ok", "thinking": ""}, "done": True}).encode("utf-8")
+        elif self.path.endswith("/v1/messages"):
+            body = json.dumps({
+                "id": "msg_mock",
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "text", "text": "mock-claude-ok"}],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }).encode("utf-8")
         elif self.path == "/api/v1/chat":  # LM Studio
             body = json.dumps({"choices": [{"message": {"content": "mock-ok"}}]}).encode("utf-8")
         elif self.path.endswith("/api/generate"):  # Ollama 卸载
@@ -258,6 +268,15 @@ class RuntimeDispatchTests(unittest.TestCase):
             "request_format": "lm_studio",
         }
 
+    def _claude(self) -> dict[str, Any]:
+        return {
+            "kind": "online",
+            "base_url": f"{self.base}/provider/v1",
+            "model": "claude-test",
+            "api_key": "x",
+            "request_format": "claude",
+        }
+
     def _messages(self) -> list[dict[str, Any]]:
         return [{"role": "user", "content": "hi"}]
 
@@ -266,6 +285,27 @@ class RuntimeDispatchTests(unittest.TestCase):
         self.assertEqual(out, "mock-ok")
         self.assertIn("/v1/chat/completions", _MockModelHandler.routes)
         self.assertNotIn("/api/chat", _MockModelHandler.routes)
+        self.assertTrue(_MockModelHandler.last_headers.get("user-agent", "").startswith("Mozilla/5.0"))
+
+    def test_anthropic_messages_format_and_full_provider_path(self) -> None:
+        profile = self._claude()
+        self.assertEqual(["m1", "m2"], [m["id"] for m in ModelRuntime.list_online_models(profile)])
+        self.assertEqual("mock-claude-ok", ModelRuntime().complete(profile, self._messages(), {"stream": False}))
+        self.assertIn("/provider/v1/messages", _MockModelHandler.routes)
+        self.assertEqual("x", _MockModelHandler.last_headers.get("x-api-key"))
+        self.assertTrue(_MockModelHandler.last_headers.get("user-agent", "").startswith("Mozilla/5.0"))
+        full = dict(profile, base_url=f"{self.base}/provider/v1/messages")
+        self.assertEqual("mock-claude-ok", ModelRuntime().complete(full, self._messages(), {"stream": False}))
+        self.assertEqual(2, _MockModelHandler.routes["/provider/v1/messages"])
+
+    def test_cloudflare_signature_error_is_actionable(self) -> None:
+        detail = model_runtime._summarize_http_error(
+            json.dumps({"error": {"detail": "browser_signature_banned", "cloudflare_error": True}}),
+            "application/json",
+            "api.example.com",
+        )
+        self.assertIn("Cloudflare", detail)
+        self.assertIn("手动填写模型名称", detail)
 
     def test_ollama_hits_local_endpoint_only(self) -> None:
         out = ModelRuntime().complete(self._ollama(), self._messages(), {"stream": False})

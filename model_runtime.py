@@ -15,6 +15,15 @@ logger = logging.getLogger("naiba.model_runtime")
 
 
 StatusCallback = Callable[[dict[str, Any]], None]
+
+# Some OpenAI-compatible gateways sit behind Cloudflare rules that reject
+# urllib's default ``Python-urllib/...`` signature before authentication is
+# evaluated. A normal browser-compatible UA keeps the API request protocol
+# unchanged while allowing model-list and inference requests through.
+API_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 ONLINE_MODEL_TIMEOUT_SECONDS = 180
 LOCAL_MODEL_TIMEOUT_SECONDS = 1800
 PROVIDER_TEST_TIMEOUT_SECONDS = 30
@@ -122,6 +131,20 @@ def _summarize_http_error(raw: str, content_type: str = "", host: str = "") -> s
                 summary = str(error)
             elif parsed.get("message"):
                 summary = str(parsed["message"])
+
+    # Cloudflare error 1010 is a gateway policy decision, not a bad model
+    # name or API protocol. Keep the upstream detail but add a concise action
+    # so users know to try the browser-compatible client signature or ask the
+    # provider to allow this endpoint.
+    lowered = summary.lower()
+    raw_lowered = str(raw or "").lower()
+    if (
+        "browser_signature_banned" in lowered
+        or "browser_signature_banned" in raw_lowered
+        or "cloudflare_error\":true" in lowered
+        or "cloudflare_error\":true" in raw_lowered
+    ):
+        summary += "；上游 Cloudflare 拦截了当前客户端签名，请让服务方放行 API 请求，或暂时手动填写模型名称"
 
     return summary[:800]
 
@@ -482,7 +505,7 @@ class ModelRuntime:
         if not base_url:
             raise ValueError("请先填写 API URL")
 
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": "application/json", "User-Agent": API_USER_AGENT}
         if request_format == "gemini":
             endpoint = ModelRuntime._with_endpoint(base_url, "/v1beta/models")
             if api_key:
@@ -602,7 +625,11 @@ class ModelRuntime:
         else:
             raise ValueError("当前供应商不是支持手动卸载的本地模型服务")
 
-        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": API_USER_AGENT,
+        }
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         request = urllib.request.Request(
@@ -650,7 +677,7 @@ class ModelRuntime:
         max_tokens = None if max_tokens_raw in (None, "") else int(max_tokens_raw)
         stream_enabled = bool(options.get("stream", False))
         reasoning_effort = str(profile.get("reasoning_effort") or "auto").strip().lower()
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "User-Agent": API_USER_AGENT}
         native_tools = ModelRuntime._tool_schemas(options.get("tools"), request_format)
         response_format = request_format
 
