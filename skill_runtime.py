@@ -988,6 +988,11 @@ class SkillAgent:
                 step_runs.append(run)
                 event({"type": "tool_result", **run})
 
+                if not success and "VISION_BUDGET_EXHAUSTED" in result:
+                    error = "视觉调用达到本轮上限或总时限，已停止以避免重复请求"
+                    event({"type": "run_failed", "error": error})
+                    return error, runs, reasonings, self._summarize_usage(usages)
+
                 key = f"{tool}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
                 if not success and key == repeat_key:
                     repeat_count += 1

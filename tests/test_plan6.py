@@ -167,6 +167,33 @@ class PrepareHistoryCleaningTest(TestCase):
         self.assertNotIn("RAWIMAGEURL", blob)
         self.assertIn("自动识图失败", blob)
 
+    def test_prepare_history_propagates_vision_budget_circuit_breaker(self):
+        router = self._router(auto_route=True)
+        budget = vision_runtime.VisionBudget(timeout_seconds=60, max_calls=1)
+        with mock.patch.object(
+            router,
+            "describe_parts",
+            side_effect=RuntimeError(vision_runtime.VISION_BUDGET_EXHAUSTED),
+        ):
+            with self.assertRaisesRegex(RuntimeError, vision_runtime.VISION_BUDGET_EXHAUSTED):
+                router.prepare_history(
+                    self._img_history(),
+                    {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"},
+                    vision_budget=budget,
+                )
+
+    def test_vision_budget_key_includes_tool_and_parameters(self):
+        parts = [{"type": "image", "data": "same-image"}]
+        key = vision_runtime.VisionRouter._budget_key(parts, "describe", "vision_describe", 1024)
+        self.assertNotEqual(
+            key,
+            vision_runtime.VisionRouter._budget_key(parts, "describe", "vision_ocr", 1024),
+        )
+        self.assertNotEqual(
+            key,
+            vision_runtime.VisionRouter._budget_key(parts, "describe", "vision_describe", 2048),
+        )
+
     def test_text_brain_strips_images_with_auto_route_off(self):
         router = self._router(auto_route=False)
         history = self._img_history()

@@ -8,6 +8,7 @@ from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
 from skill_runtime import SkillAgent, TaskCancelled, normalize_skill_policy
+from vision_runtime import VISION_BUDGET_EXHAUSTED, VisionBudget
 
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
@@ -249,9 +250,13 @@ class ConversationRunManager:
             mode = "craft"
             plan_id = ""
             lightweight_mode = bool(conversation.get("lightweight_mode", 0))
-            web_search_enabled = bool(conversation.get("web_search_enabled", 0)) and not lightweight_mode
-            allowed_tools = [] if lightweight_mode else self._resolve_allowed_tools(mode, agent, web_search_enabled)
-            if lightweight_mode:
+            disabled_features = {
+                str(item) for item in (conversation.get("lightweight_disabled_features") or [])
+                if str(item) in {"skills_tools", "vision"}
+            } if lightweight_mode else set()
+            web_search_enabled = bool(conversation.get("web_search_enabled", 0))
+            allowed_tools = [] if "skills_tools" in disabled_features else self._resolve_allowed_tools(mode, agent, web_search_enabled)
+            if "skills_tools" in disabled_features:
                 skill_policy = {"mode": "exclusive", "skill_ids": []}
             else:
                 catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
@@ -281,6 +286,7 @@ class ConversationRunManager:
                 "web_search_enabled": web_search_enabled,
                 "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
                 "lightweight_mode": lightweight_mode,
+                "lightweight_disabled_features": sorted(disabled_features),
                 "allowed_tools": allowed_tools,
                 "permission_mode": str(conversation.get("permission_mode") or "confirm"),
             }
@@ -387,7 +393,8 @@ class ConversationRunManager:
         self.emit(run_id, {
             "type": "run_started",
             "run_id": run_id,
-            "lightweight_mode": bool(snapshot.get("lightweight_mode", False)),
+            "lightweight_mode": bool(snapshot.get("lightweight_mode", False))
+            and "skills_tools" in set(snapshot.get("lightweight_disabled_features") or []),
         })
         thread = threading.Thread(
             target=target,
@@ -494,7 +501,11 @@ class ConversationRunManager:
             # 顺序错误会导致 prepare_history 因 profile 未定义而整体被跳过（视觉失效）。
             profile = dict(self.app.config.profile(model_key))
             lightweight_mode = bool(snapshot.get("lightweight_mode", False))
-            if lightweight_mode or not bool(snapshot.get("deep_reasoning_enabled", False)):
+            disabled_features = {
+                str(item) for item in (snapshot.get("lightweight_disabled_features") or [])
+            } if lightweight_mode else set()
+            lightweight_direct = "skills_tools" in disabled_features
+            if not bool(snapshot.get("deep_reasoning_enabled", False)):
                 profile["reasoning_effort"] = "off"
             history = build_model_history(snapshot.get("conversation_messages") or [])
             # 视觉自动路由（Phase 1）：文本大脑不支持看图时，把图片改写为不可信描述注入；
@@ -510,12 +521,14 @@ class ConversationRunManager:
             )
             vision_config_getter = getattr(self.app.vision, "config", None)
             vision_config = vision_config_getter() if callable(vision_config_getter) else {}
+            if "vision" in disabled_features:
+                vision_config = {**vision_config, "auto_route": False}
             brain_supports_getter = getattr(self.app.vision, "brain_supports_images", None)
             brain_supports_images = (
                 bool(brain_supports_getter(profile)) if callable(brain_supports_getter) else False
             )
             vision_backend_name = "视觉模型"
-            if not lightweight_mode and image_pending and not brain_supports_images and vision_config.get("auto_route", True):
+            if image_pending and not brain_supports_images and vision_config.get("auto_route", True):
                 selected_vision_key = str(vision_config.get("provider_model_key") or "")
                 try:
                     vision_profile = self.app.config.profile(selected_vision_key) if selected_vision_key else {}
@@ -539,15 +552,14 @@ class ConversationRunManager:
                     "started_at": int(time.time() * 1000),
                 })
             try:
-                if lightweight_mode:
-                    history, removed = self.app.vision.strip_images_for_text_model(
-                        history, "轻量对话模式不处理图片"
-                    )
-                    vision_note = f"轻量对话已移除 {removed} 张图片" if removed else ""
-                else:
-                    history, vision_note = self.app.vision.prepare_history(
-                        history, profile, cancel_event=cancel_event
-                    )
+                vision_timeout = max(1.0, int(vision_config.get("timeout_ms", 120000)) / 1000)
+            except (TypeError, ValueError):
+                vision_timeout = 120.0
+            vision_budget = VisionBudget(vision_timeout, max_calls=6, event=event)
+            try:
+                history, vision_note = self.app.vision.prepare_history(
+                    history, profile, cancel_event=cancel_event, vision_budget=vision_budget
+                )
                 if image_pending and vision_backend_name != "视觉模型":
                     event({"type": "vision_done", "message": "视觉识别完成，正在交给主模型处理"})
                 if vision_note:
@@ -555,6 +567,8 @@ class ConversationRunManager:
             except Exception as exc:  # noqa: BLE001 - 视觉不可用不应阻断普通聊天
                 if cancel_event.is_set():
                     raise TaskCancelled("任务已取消")
+                if VISION_BUDGET_EXHAUSTED in str(exc):
+                    raise RuntimeError("视觉调用达到本轮上限，已停止以避免重复请求") from exc
                 if image_pending and vision_backend_name != "视觉模型":
                     event({"type": "vision_error", "message": f"视觉识别失败，已安全降级：{exc}"})
                 history, removed = self.app.vision.strip_images_for_text_model(
@@ -564,15 +578,17 @@ class ConversationRunManager:
                     event({"type": "status", "message": f"视觉路由异常，已安全移除 {removed} 张图片"})
             options = dict(snapshot.get("generation_options") or self._generation_options(self.app.config, model_key))
             options["stream"] = bool(snapshot.get("stream_enabled", True))
-            options["reasoning_enabled"] = bool(snapshot.get("deep_reasoning_enabled", False)) and not lightweight_mode
+            options["reasoning_enabled"] = bool(snapshot.get("deep_reasoning_enabled", False))
             allowed_tools = [str(item) for item in snapshot.get("allowed_tools") or []]
+            if "vision" in disabled_features:
+                allowed_tools = [tool for tool in allowed_tools if not tool.startswith("vision_")]
             schema_getter = getattr(self.app.tool_registry, "schemas", None)
             available_schemas = schema_getter() if callable(schema_getter) else []
             tool_schemas = [
                 spec for spec in available_schemas
                 if isinstance(spec, dict) and str(spec.get("name") or "") in allowed_tools
             ]
-            if not lightweight_mode:
+            if not lightweight_direct:
                 event({
                     "type": "tools_available",
                     "tools": [
@@ -587,7 +603,7 @@ class ConversationRunManager:
             agent = snapshot.get("agent") or {}
             prompt = "\n\n".join(
                 item for item in (
-                    "" if lightweight_mode else str(agent.get("system_prompt") or "").strip(),
+                    "" if lightweight_direct else str(agent.get("system_prompt") or "").strip(),
                     str(snapshot.get("conversation_system_prompt") or "").strip(),
                 ) if item
             )
@@ -607,12 +623,13 @@ class ConversationRunManager:
                 "job_registry": getattr(self.app, "jobs", None),
                 "executor": executor,
                 "cancel_event": cancel_event,
+                "vision_budget": vision_budget,
                 "interaction_mode": mode,
                 "skill_policy": dict(snapshot.get("skill_policy") or {"mode": "auto", "skill_ids": []}),
                 "pull_interjections": lambda: self.app.storage.list_run_interjections(run_id),
                 "mark_interjections_consumed": lambda ids: self.app.storage.mark_run_interjections_consumed(run_id, ids),
             }
-            if lightweight_mode:
+            if lightweight_direct:
                 direct_messages = list(history)
                 if prompt:
                     direct_messages.insert(0, {"role": "system", "content": prompt})
@@ -744,7 +761,18 @@ class ConversationRunManager:
                     run_id,
                     {"type": "choice", "choices": choice_groups[0]["choices"], "choice_groups": choice_groups},
                 )
-            self.emit(run_id, {"type": "done", "message": saved})
+            followup = None
+            if sink.failure_message is None:
+                claim_followup = getattr(self.app.storage, "claim_interjections_for_followup", None)
+                if callable(claim_followup):
+                    followup = claim_followup(run_id, snapshot)
+                if followup:
+                    self._start(followup, self._run_chat)
+            self.emit(run_id, {
+                "type": "done",
+                "message": saved,
+                "followup_run_id": str((followup or {}).get("id") or ""),
+            })
         except TaskCancelled:
             sink.flush()
             if mode == "plan" and plan_id:
@@ -914,6 +942,17 @@ class ConversationRunManager:
             "message_id": message_id,
             "message": str(saved.get("content") or ""),
         })
+        return {"message": saved, "run_id": run_id}
+
+    def edit_interjection(self, body: dict[str, Any]) -> dict[str, Any]:
+        conversation_id = str(body.get("conversation_id") or "").strip()
+        run_id = str(body.get("run_id") or "").strip()
+        message_id = str(body.get("message_id") or "").strip()
+        message = str(body.get("message") or "").strip()
+        if not conversation_id or not run_id or not message_id or not message:
+            raise ValueError("conversation_id、run_id、message_id 和 message 不能为空")
+        saved = self.app.storage.edit_run_interjection(conversation_id, run_id, message_id, message)
+        self.emit(run_id, {"type": "user_interjection_edited", "message_id": message_id})
         return {"message": saved, "run_id": run_id}
 
     def delete_interjection(self, body: dict[str, Any]) -> dict[str, Any]:

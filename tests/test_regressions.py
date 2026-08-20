@@ -1289,7 +1289,7 @@ class ConversationSearchPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(1, updated["web_search_enabled"])
             self.assertEqual(1, updated["deep_reasoning_enabled"])
-            self.assertEqual(4, storage.get_user_version())
+            self.assertEqual(5, storage.get_user_version())
 
     def test_search_sources_are_normalized_for_message_metadata(self) -> None:
         from async_tasks import _search_sources

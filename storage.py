@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -105,12 +105,24 @@ def _migrate_to_v4(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v5(db: sqlite3.Connection) -> None:
+    """Persist the user-selected features disabled by lightweight mode."""
+    try:
+        db.execute("SELECT lightweight_disabled_features FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN lightweight_disabled_features "
+            "TEXT NOT NULL DEFAULT '[\"skills_tools\", \"vision\"]'"
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
     2: _migrate_to_v2,
     3: _migrate_to_v3,
     4: _migrate_to_v4,
+    5: _migrate_to_v5,
 }
 
 
@@ -144,6 +156,7 @@ class ChatStorage:
                     web_search_enabled INTEGER NOT NULL DEFAULT 0,
                     deep_reasoning_enabled INTEGER NOT NULL DEFAULT 0,
                     lightweight_mode INTEGER NOT NULL DEFAULT 0,
+                    lightweight_disabled_features TEXT NOT NULL DEFAULT '["skills_tools", "vision"]',
                     title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
@@ -367,8 +380,8 @@ class ChatStorage:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
@@ -377,6 +390,7 @@ class ChatStorage:
                     1 if web_search_enabled else 0,
                     1 if deep_reasoning_enabled else 0,
                     1 if lightweight_mode else 0,
+                    json.dumps(["skills_tools", "vision"]),
                     0,
                     "",
                     1,
@@ -394,13 +408,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -408,7 +422,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -438,6 +452,7 @@ class ChatStorage:
         web_search_enabled: bool | None = None,
         deep_reasoning_enabled: bool | None = None,
         lightweight_mode: bool | None = None,
+        lightweight_disabled_features: list[str] | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -486,6 +501,11 @@ class ChatStorage:
             values["deep_reasoning_enabled"] = 1 if bool(deep_reasoning_enabled) else 0
         if lightweight_mode is not None:
             values["lightweight_mode"] = 1 if bool(lightweight_mode) else 0
+        if lightweight_disabled_features is not None:
+            allowed = {"skills_tools", "vision"}
+            values["lightweight_disabled_features"] = json.dumps(
+                [item for item in lightweight_disabled_features if item in allowed], ensure_ascii=False
+            )
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
@@ -763,6 +783,101 @@ class ChatStorage:
                     (int(time.time() * 1000), conversation_id),
                 )
         return bool(cursor.rowcount)
+
+    def edit_run_interjection(
+        self, conversation_id: str, run_id: str, message_id: str, content: str
+    ) -> dict[str, Any]:
+        """Update a still-queued interjection without deleting its record."""
+        content = str(content or "").strip()
+        if not content:
+            raise ValueError("插话内容不能为空")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT id, role, content, metadata, created_at FROM messages "
+                "WHERE id = ? AND conversation_id = ? AND role = 'user'",
+                (message_id, conversation_id),
+            ).fetchone()
+            if not row:
+                raise LookupError("待发送消息不存在")
+            message = self._message_dict(row)
+            metadata = dict(message.get("metadata") or {})
+            if (not metadata.get("interjection") or str(metadata.get("run_id") or "") != run_id
+                    or metadata.get("interjection_guided") or metadata.get("interjection_consumed")):
+                raise LookupError("待发送消息不存在或已被处理")
+            db.execute("UPDATE messages SET content = ? WHERE id = ?", (content, message_id))
+            db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (int(time.time() * 1000), conversation_id))
+        return {**message, "content": content}
+
+    def claim_interjections_for_followup(
+        self, parent_run_id: str, snapshot: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Atomically turn remaining queued rows into one follow-up chat Run.
+
+        The user messages remain their original records; only their metadata is
+        marked as dispatched so a completion can never silently discard them.
+        """
+        now = int(time.time() * 1000)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = db.execute(
+                "SELECT conversation_id FROM background_tasks WHERE id = ? "
+                "AND status = 'completed'", (parent_run_id,)
+            ).fetchone()
+            if not parent:
+                return None
+            conversation_id = str(parent["conversation_id"])
+            active = db.execute(
+                "SELECT id FROM background_tasks WHERE conversation_id = ? "
+                "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+            if active:
+                return None
+            rows = db.execute(
+                "SELECT id, role, content, metadata, created_at FROM messages "
+                "WHERE conversation_id = ? AND role = 'user' ORDER BY created_at, rowid",
+                (conversation_id,),
+            ).fetchall()
+            queued: list[dict[str, Any]] = []
+            for row in rows:
+                message = self._message_dict(row)
+                metadata = message.get("metadata") or {}
+                if (metadata.get("interjection") and str(metadata.get("run_id") or "") == parent_run_id
+                        and not metadata.get("interjection_guided") and not metadata.get("interjection_consumed")
+                        and not metadata.get("interjection_dispatched")):
+                    queued.append(message)
+            if not queued:
+                return None
+            run_id = uuid.uuid4().hex
+            for message in queued:
+                metadata = dict(message.get("metadata") or {})
+                metadata["interjection_dispatched"] = True
+                metadata["interjection_followup_run_id"] = run_id
+                db.execute("UPDATE messages SET metadata = ? WHERE id = ?", (
+                    json.dumps(metadata, ensure_ascii=False), message["id"]
+                ))
+            history_rows = db.execute(
+                "SELECT id, role, content, metadata, created_at FROM messages "
+                "WHERE conversation_id = ? ORDER BY created_at, rowid", (conversation_id,)
+            ).fetchall()
+            frozen = dict(snapshot)
+            frozen["conversation_messages"] = [self._message_dict(row) for row in history_rows]
+            message = "\n".join(str(item.get("content") or "") for item in queued).strip()
+            agent = frozen.get("agent") or {}
+            db.execute(
+                "INSERT INTO background_tasks("
+                "id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
+                "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at, "
+                "parent_job_id, owner_session_id"
+                ") VALUES (?, ?, 'chat', ?, ?, '', ?, ?, 'queued', ?, ?, '{}', ?, ?, '', ?)",
+                (run_id, conversation_id, str(frozen.get("interaction_mode") or "craft"),
+                 str(queued[0].get("id") or ""), str(agent.get("id") or ""),
+                 str(agent.get("name") or "Agent"), message, json.dumps(frozen, ensure_ascii=False),
+                 now, now, conversation_id),
+            )
+            db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
+        return self.get_background_task(run_id)
 
     def create_chat_run(
         self,
@@ -1174,6 +1289,15 @@ class ChatStorage:
     def _conversation_dict(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
         result["interaction_mode"] = "craft"
+        try:
+            features = json.loads(
+                result.get("lightweight_disabled_features") or "[]"
+            )
+            result["lightweight_disabled_features"] = [
+                item for item in features if item in {"skills_tools", "vision"}
+            ]
+        except (json.JSONDecodeError, TypeError):
+            result["lightweight_disabled_features"] = []
         return result
 
     @staticmethod

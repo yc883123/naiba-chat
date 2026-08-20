@@ -93,7 +93,6 @@
               <small id="lastTurnUsageSummary">完成一次回复后显示本轮消耗</small>
             </div>
           </div>
-          <button class="icon-button cancel-run-button" id="cancelRunButton" type="button" title="停止当前任务" aria-label="停止当前任务" hidden>■</button>
           <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
         </form>
         <div class="composer-meta">
@@ -105,10 +104,10 @@
               <button type="button" data-permission-mode="full" role="radio" title="工具无需逐次确认">完全</button>
             </div>
           </div>
-          <label class="lightweight-mode-toggle" id="lightweightModeControl" title="关闭工具、Skills、联网、视觉和深度思考，降低本机负载">
+          <label class="lightweight-mode-toggle" id="lightweightModeControl" title="按对话设置中选定的项目降低负载">
             <input id="lightweightModeToggle" type="checkbox">
             <span>轻量对话</span>
-            <small>纯文本 · 关闭工具、联网、视觉和深度思考</small>
+            <small>按设置关闭选定能力</small>
           </label>
           <span id="runtimeStatus">就绪</span>
         </div>
@@ -199,6 +198,11 @@
         <span><b>流式输出</b><small>模型生成内容时实时显示文本</small></span>
         <input id="conversationStreamEnabled" type="checkbox">
       </label>
+      <fieldset class="lightweight-feature-options">
+        <legend>轻量模式关闭项</legend>
+        <label><input type="checkbox" name="lightweightFeature" value="skills_tools"> 工具与 Skills</label>
+        <label><input type="checkbox" name="lightweightFeature" value="vision"> 视觉识图与图片附件</label>
+      </fieldset>
       <div class="form-actions">
         <button class="control-button" type="button" data-close="conversationSettingsDialog">取消</button>
         <button class="primary-button" id="saveConversationSettings" type="submit">保存对话设置</button>

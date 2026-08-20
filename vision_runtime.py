@@ -75,6 +75,48 @@ VISION_BRAIN_HINTS = (
 MAX_EDGE = 1600
 TARGET_BYTES = 900 * 1024
 DEFAULT_TIMEOUT_SECONDS = 120
+VISION_BUDGET_EXHAUSTED = "VISION_BUDGET_EXHAUSTED"
+
+
+class VisionBudget:
+    """One bounded visual-call budget shared by every path in a Run."""
+
+    def __init__(self, timeout_seconds: float, max_calls: int = 6, event: Any = None):
+        self.deadline = time.monotonic() + max(1.0, float(timeout_seconds))
+        self.max_calls = max(1, int(max_calls))
+        self.event = event
+        self.calls = 0
+        self.cache: dict[str, str] = {}
+        self._lock = threading.RLock()
+
+    def remaining(self) -> float:
+        return max(0.0, self.deadline - time.monotonic())
+
+    def cached(self, key: str) -> str | None:
+        with self._lock:
+            value = self.cache.get(key)
+        if value is not None:
+            self._emit("vision_cache_hit", {"calls": self.calls})
+        return value
+
+    def begin(self, key: str) -> float:
+        with self._lock:
+            remaining = self.remaining()
+            if self.calls >= self.max_calls or remaining <= 0:
+                self._emit("vision_budget_exhausted", {"calls": self.calls, "max_calls": self.max_calls})
+                raise RuntimeError(VISION_BUDGET_EXHAUSTED)
+            self.calls += 1
+            calls = self.calls
+        self._emit("vision_request", {"calls": calls, "max_calls": self.max_calls})
+        return remaining
+
+    def store(self, key: str, value: str) -> None:
+        with self._lock:
+            self.cache[key] = value
+
+    def _emit(self, kind: str, payload: dict[str, Any]) -> None:
+        if callable(self.event):
+            self.event({"type": kind, **payload})
 
 
 def _default_vision_config() -> dict[str, Any]:
@@ -368,6 +410,7 @@ class VisionRouter:
         question: str = "",
         json_mode: bool = False,
         cancel_event: threading.Event | None = None,
+        vision_budget: VisionBudget | None = None,
     ) -> str:
         """对内存中的 image 部件做看图问答，带链式 failover。"""
         if not image_parts:
@@ -379,7 +422,7 @@ class VisionRouter:
                 "layout（主要布局区域列表）、entities（实体清单）、text（图片中原文逐字转写，没有则空字符串）。"
                 "不要输出 JSON 以外的任何文字或 Markdown 代码块。"
             )
-        return self._describe_with_chain(image_parts, prompt, json_mode, cancel_event)
+        return self._describe_with_chain(image_parts, prompt, json_mode, cancel_event, vision_budget)
 
     def describe_files(
         self,
@@ -387,6 +430,7 @@ class VisionRouter:
         question: str = "",
         json_mode: bool = False,
         cancel_event: threading.Event | None = None,
+        vision_budget: VisionBudget | None = None,
     ) -> str:
         parts = []
         for path in paths:
@@ -395,7 +439,7 @@ class VisionRouter:
                 parts.append(part)
         if not parts:
             raise ValueError("vision: 无法读取任何图片文件")
-        return self.describe_parts(parts, question, json_mode, cancel_event)
+        return self.describe_parts(parts, question, json_mode, cancel_event, vision_budget)
 
     def _describe_with_chain(
         self,
@@ -403,6 +447,7 @@ class VisionRouter:
         prompt: str,
         json_mode: bool,
         cancel_event: threading.Event | None = None,
+        vision_budget: VisionBudget | None = None,
     ) -> str:
         cache_key = ""
         cfg = self.config()
@@ -422,14 +467,21 @@ class VisionRouter:
             if cancel_event and cancel_event.is_set():
                 raise RuntimeError("任务已取消")
             try:
-                content = self._call_backend(
-                    profile, image_parts, prompt, cancel_event=cancel_event
+                content = self._budgeted_backend_call(
+                    profile,
+                    image_parts,
+                    prompt,
+                    cancel_event=cancel_event,
+                    budget=vision_budget,
+                    operation=f"vision_describe:{json_mode}",
                 )
                 if content and content.strip():
                     self._cache_put(cache_key, content, cfg)
                     return content
                 errors.append(f"{profile.get('name')}：空响应")
             except Exception as exc:  # noqa: BLE001 - 逐供应商降级
+                if VISION_BUDGET_EXHAUSTED in str(exc):
+                    raise
                 errors.append(f"{profile.get('name')}：{exc}")
         raise RuntimeError("视觉后端全部失败：" + "；".join(errors[-6:]))
 
@@ -464,6 +516,7 @@ class VisionRouter:
         history: list[dict[str, Any]],
         brain_profile: dict[str, Any],
         cancel_event: threading.Event | None = None,
+        vision_budget: VisionBudget | None = None,
     ) -> tuple[list[dict[str, Any]], str]:
         """把历史里的 image 部件改写成文本描述，让文本大脑能「看见」图片。
 
@@ -501,9 +554,16 @@ class VisionRouter:
             paths = [str(p.get("path") or p.get("name") or "") for p in selected]
             if auto_route:
                 try:
-                    description = self.describe_parts(selected, text, cancel_event=cancel_event)
+                    description = self.describe_parts(
+                        selected, text, cancel_event=cancel_event, vision_budget=vision_budget
+                    )
                 except Exception as exc:  # noqa: BLE001 - 视觉不可用时降级为占位标记
                     if cancel_event and cancel_event.is_set():
+                        raise
+                    # Budget exhaustion is a circuit breaker, not a recoverable
+                    # recognition error. Propagate it so the Run cannot continue
+                    # into the online reasoning agent and trigger more vision tools.
+                    if VISION_BUDGET_EXHAUSTED in str(exc):
                         raise
                     description = f"（自动识图失败，视觉后端不可用：{exc}）"
                 # Phase 3 记忆：缓存本轮图片的描述，供后续轮次复用。
@@ -604,7 +664,7 @@ class VisionRouter:
                 return False, "vision_describe: 请提供 paths 或 image 参数（图片文件路径）"
             question = str(args.get("question") or "")
             json_mode = bool(args.get("json"))
-            result = self.describe_files(paths, question, json_mode, cancel_event)
+            result = self.describe_files(paths, question, json_mode, cancel_event, self._context_budget(_ctx))
             return True, result
         except Exception as exc:  # noqa: BLE001
             return False, f"vision_describe 失败：{exc}"
@@ -649,7 +709,9 @@ class VisionRouter:
             part = encode_image_file(paths[0])
             if not part:
                 return False, "vision_ground: 图片编码失败"
-            raw = self._call_with_first_backend([part], prompt, 1024, cancel_event)
+            raw = self._call_with_first_backend(
+                [part], prompt, 1024, cancel_event, self._context_budget(_ctx), "vision_ground"
+            )
             box = self._extract_json(raw)
             if isinstance(box, dict):
                 x1, y1, x2, y2 = (
@@ -688,7 +750,9 @@ class VisionRouter:
             part = encode_image_file(paths[0])
             if not part:
                 return False, "vision_detect: 图片编码失败"
-            raw = self._call_with_first_backend([part], prompt, 1600, cancel_event)
+            raw = self._call_with_first_backend(
+                [part], prompt, 1600, cancel_event, self._context_budget(_ctx), "vision_detect"
+            )
             parsed = self._extract_json(raw)
             if not isinstance(parsed, list):
                 return False, f"vision_detect: 视觉模型未返回有效清单：{str(raw)[:400]}"
@@ -755,7 +819,9 @@ class VisionRouter:
             if not parts:
                 return False, "vision_ocr: 图片编码失败"
             prompt = "请逐字转写图片中的所有文字，保持原有顺序与换行。只输出文字本身，不要任何解释或前后缀。"
-            return True, self._call_with_first_backend(parts, prompt, 2048, cancel_event)
+            return True, self._call_with_first_backend(
+                parts, prompt, 2048, cancel_event, self._context_budget(_ctx), "vision_ocr"
+            )
         except Exception as exc:  # noqa: BLE001
             return False, f"vision_ocr 失败：{exc}"
 
@@ -848,25 +914,68 @@ class VisionRouter:
     def _context_cancel_event(ctx: Any) -> threading.Event | None:
         return ctx.get("cancel_event") if isinstance(ctx, dict) else None
 
+    @staticmethod
+    def _context_budget(ctx: Any) -> VisionBudget | None:
+        budget = ctx.get("vision_budget") if isinstance(ctx, dict) else None
+        return budget if isinstance(budget, VisionBudget) else None
+
+    @staticmethod
+    def _budget_key(
+        parts: list[dict[str, Any]], prompt: str, operation: str, max_tokens: int
+    ) -> str:
+        digest = hashlib.sha256()
+        digest.update(operation.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(prompt.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(max_tokens).encode("ascii"))
+        for part in parts:
+            digest.update(str(part.get("data") or "").encode("ascii", errors="ignore"))
+        return digest.hexdigest()
+
+    def _budgeted_backend_call(
+        self, profile: dict[str, Any], parts: list[dict[str, Any]], prompt: str,
+        max_tokens: int = 2048, cancel_event: threading.Event | None = None,
+        budget: VisionBudget | None = None, operation: str = "vision_describe",
+    ) -> str:
+        key = self._budget_key(parts, prompt, operation, max_tokens)
+        if budget:
+            cached = budget.cached(key)
+            if cached is not None:
+                return cached
+            timeout = budget.begin(key)
+        else:
+            timeout = None
+        result = self._call_backend(
+            profile, parts, prompt, max_tokens, timeout_seconds=timeout, cancel_event=cancel_event
+        )
+        if budget and result:
+            budget.store(key, result)
+        return result
+
     def _call_with_first_backend(
         self,
         parts: list[dict[str, Any]],
         prompt: str,
         max_tokens: int,
         cancel_event: threading.Event | None = None,
+        vision_budget: VisionBudget | None = None,
+        operation: str = "vision_describe",
     ) -> str:
         errors: list[str] = []
         for profile in self.vision_backends():
             if cancel_event and cancel_event.is_set():
                 raise RuntimeError("任务已取消")
             try:
-                content = self._call_backend(
-                    profile, parts, prompt, max_tokens, cancel_event=cancel_event
+                content = self._budgeted_backend_call(
+                    profile, parts, prompt, max_tokens, cancel_event, vision_budget, operation
                 )
                 if content and content.strip():
                     return content
                 errors.append(f"{profile.get('name')}：空响应")
             except Exception as exc:  # noqa: BLE001
+                if VISION_BUDGET_EXHAUSTED in str(exc):
+                    raise
                 errors.append(f"{profile.get('name')}：{exc}")
         raise RuntimeError("视觉后端全部失败：" + "；".join(errors[-6:]))
 

@@ -2112,6 +2112,13 @@ class RequestHandler(BaseHTTPRequestHandler):
             if lightweight_mode is not None and not isinstance(lightweight_mode, bool):
                 self._json({"error": "lightweight_mode 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
+            lightweight_disabled_features = body.get("lightweight_disabled_features")
+            if lightweight_disabled_features is not None and (
+                not isinstance(lightweight_disabled_features, list)
+                or not all(isinstance(item, str) for item in lightweight_disabled_features)
+            ):
+                self._json({"error": "lightweight_disabled_features 必须是字符串数组"}, HTTPStatus.BAD_REQUEST)
+                return
             updated = APP.storage.update_conversation_settings(
                 conversation_id,
                 title=title,
@@ -2125,6 +2132,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 web_search_enabled=web_search_enabled,
                 deep_reasoning_enabled=deep_reasoning_enabled,
                 lightweight_mode=lightweight_mode,
+                lightweight_disabled_features=lightweight_disabled_features,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
         elif path == "/api/agents":
@@ -2304,6 +2312,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/chat/interject/guide":
             try:
                 self._json(APP.runs.guide_interjection(body))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/chat/interject/edit":
+            try:
+                self._json(APP.runs.edit_interjection(body))
             except LookupError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
             except ValueError as exc:

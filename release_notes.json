@@ -1,4 +1,7 @@
 [
+  "Build71: consolidate the running composer into one send/stop button; queued interjections can be edited, deleted, sent individually, or automatically continued after the current reply.",
+  "Build71: lightweight mode now lets each conversation choose whether to disable tools/Skills and vision. Deep reasoning and web search remain independent composer controls.",
+  "Build71: prevent local vision backends (LM Studio, Ollama, llama.cpp, and compatible local APIs) from repeated calls freezing a Run. Vision calls share a bounded budget, exact-request cache, and circuit breaker; models are never automatically unloaded.",
   "Build70: add lightweight text-chat fallback, remove fixed thinking-round limits, and add pending guidance messages that can be edited, deleted, or explicitly applied while a Run is active.",
   "Fix generated media previews for remote HTTP/HTTPS URLs and provide a clickable fallback when an image cannot load.",
   "Build60: fix local llama.cpp protocol selection, include the model-list endpoint in connection errors, and stop local vision calls from implicitly unloading models.",
