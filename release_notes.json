@@ -1,4 +1,7 @@
 [
+  "Build74: remove the fixed visual-call count and Run-wide vision deadline; each automatic or tool-driven visual request now receives its own timeout.",
+  "Build74: increase the default per-request vision timeout to 180 seconds while preserving custom timeout values and exact-request caching.",
+  "Build74: keep repeated-tool and no-progress safeguards, but report real visual backend errors instead of the ambiguous visual-budget message.",
   "Build73: prevent provisional streamed text from lingering before a tool call, and suppress empty Thinking blocks during multi-step agent runs.",
   "Build73: show elapsed time for vision_describe and other in-agent visual tools, including the final visual-backend failure reason.",
   "Build73: add one-click cleanup for finished async task records and double-confirmed per-conversation chat cleanup.",

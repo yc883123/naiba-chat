@@ -74,23 +74,18 @@ VISION_BRAIN_HINTS = (
 
 MAX_EDGE = 1600
 TARGET_BYTES = 900 * 1024
-DEFAULT_TIMEOUT_SECONDS = 120
-VISION_BUDGET_EXHAUSTED = "VISION_BUDGET_EXHAUSTED"
+DEFAULT_TIMEOUT_SECONDS = 180
 
 
 class VisionBudget:
-    """One bounded visual-call budget shared by every path in a Run."""
+    """Run-scoped visual request cache and counter with a per-call timeout."""
 
-    def __init__(self, timeout_seconds: float, max_calls: int = 6, event: Any = None):
-        self.deadline = time.monotonic() + max(1.0, float(timeout_seconds))
-        self.max_calls = max(1, int(max_calls))
+    def __init__(self, timeout_seconds: float, event: Any = None):
+        self.timeout_seconds = max(1.0, float(timeout_seconds))
         self.event = event
         self.calls = 0
         self.cache: dict[str, str] = {}
         self._lock = threading.RLock()
-
-    def remaining(self) -> float:
-        return max(0.0, self.deadline - time.monotonic())
 
     def cached(self, key: str) -> str | None:
         with self._lock:
@@ -100,15 +95,12 @@ class VisionBudget:
         return value
 
     def begin(self, key: str) -> float:
+        del key
         with self._lock:
-            remaining = self.remaining()
-            if self.calls >= self.max_calls or remaining <= 0:
-                self._emit("vision_budget_exhausted", {"calls": self.calls, "max_calls": self.max_calls})
-                raise RuntimeError(VISION_BUDGET_EXHAUSTED)
             self.calls += 1
             calls = self.calls
-        self._emit("vision_request", {"calls": calls, "max_calls": self.max_calls})
-        return remaining
+        self._emit("vision_request", {"calls": calls, "timeout_seconds": self.timeout_seconds})
+        return self.timeout_seconds
 
     def store(self, key: str, value: str) -> None:
         with self._lock:
@@ -384,7 +376,7 @@ class VisionRouter:
         }
         if timeout_seconds is None:
             try:
-                timeout_seconds = int(self.config().get("timeout_ms", 120000)) / 1000
+                timeout_seconds = int(self.config().get("timeout_ms", 180000)) / 1000
             except (TypeError, ValueError):
                 timeout_seconds = DEFAULT_TIMEOUT_SECONDS
         options["request_timeout_seconds"] = max(1, float(timeout_seconds))
@@ -480,8 +472,6 @@ class VisionRouter:
                     return content
                 errors.append(f"{profile.get('name')}：空响应")
             except Exception as exc:  # noqa: BLE001 - 逐供应商降级
-                if VISION_BUDGET_EXHAUSTED in str(exc):
-                    raise
                 errors.append(f"{profile.get('name')}：{exc}")
         raise RuntimeError("视觉后端全部失败：" + "；".join(errors[-6:]))
 
@@ -559,11 +549,6 @@ class VisionRouter:
                     )
                 except Exception as exc:  # noqa: BLE001 - 视觉不可用时降级为占位标记
                     if cancel_event and cancel_event.is_set():
-                        raise
-                    # Budget exhaustion is a circuit breaker, not a recoverable
-                    # recognition error. Propagate it so the Run cannot continue
-                    # into the online reasoning agent and trigger more vision tools.
-                    if VISION_BUDGET_EXHAUSTED in str(exc):
                         raise
                     description = f"（自动识图失败，视觉后端不可用：{exc}）"
                 # Phase 3 记忆：缓存本轮图片的描述，供后续轮次复用。
@@ -1005,8 +990,6 @@ class VisionRouter:
                     return content
                 errors.append(f"{profile.get('name')}：空响应")
             except Exception as exc:  # noqa: BLE001
-                if VISION_BUDGET_EXHAUSTED in str(exc):
-                    raise
                 errors.append(f"{profile.get('name')}：{exc}")
         raise RuntimeError("视觉后端全部失败：" + "；".join(errors[-6:]))
 

@@ -470,7 +470,7 @@ def default_config() -> dict[str, Any]:
             "provider_model_key": "",
             "fallback_models": [],
             "brain_supports_image": False,
-            "timeout_ms": 120000,
+            "timeout_ms": 180000,
             "cache": True,
             "cache_ttl_seconds": 3600,
             "cache_max_entries": 200,
@@ -602,6 +602,12 @@ class ConfigStore:
             if isinstance(defaults.get(key), dict):
                 merged.update(defaults[key])
             defaults[key] = merged
+        # Build 74 changes the historical 120-second Run-wide vision budget
+        # into a 180-second timeout for each individual visual request. Only
+        # migrate the old default; preserve explicit custom timeout values.
+        vision = defaults.get("vision")
+        if isinstance(vision, dict) and vision.get("timeout_ms") == 120000:
+            vision["timeout_ms"] = 180000
         # MCP 配置去重：重复 server id 只保留首个（PLAN4 §MCP）。
         servers = defaults.get("mcp_servers")
         if isinstance(servers, list):

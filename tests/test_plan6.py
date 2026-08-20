@@ -131,6 +131,21 @@ class SupportsImagesTest(TestCase):
             self.assertFalse(cleared["supports_images"])
 
 
+class VisionConfigMigrationTest(TestCase):
+    def test_new_config_uses_180_second_per_request_timeout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = server.ConfigStore(Path(tmp) / "config.json")
+            self.assertEqual(180000, cfg.data["vision"]["timeout_ms"])
+
+    def test_old_default_timeout_migrates_but_custom_value_is_preserved(self):
+        for configured, expected in ((120000, 180000), (90000, 90000)):
+            with self.subTest(configured=configured), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "config.json"
+                path.write_text(json.dumps({"vision": {"timeout_ms": configured}}), encoding="utf-8")
+                cfg = server.ConfigStore(path)
+                self.assertEqual(expected, cfg.data["vision"]["timeout_ms"])
+
+
 class PrepareHistoryCleaningTest(TestCase):
     def _router(self, auto_route: bool = True) -> "vision_runtime.VisionRouter":
         app = types.SimpleNamespace(
@@ -167,20 +182,58 @@ class PrepareHistoryCleaningTest(TestCase):
         self.assertNotIn("RAWIMAGEURL", blob)
         self.assertIn("自动识图失败", blob)
 
-    def test_prepare_history_propagates_vision_budget_circuit_breaker(self):
+    def test_vision_budget_allows_unlimited_calls_with_fresh_timeout(self):
+        events = []
+        budget = vision_runtime.VisionBudget(timeout_seconds=180, event=events.append)
+
+        timeouts = [budget.begin(f"request-{index}") for index in range(10)]
+
+        self.assertEqual([180.0] * 10, timeouts)
+        self.assertEqual(10, budget.calls)
+        self.assertEqual(10, len([event for event in events if event["type"] == "vision_request"]))
+        self.assertTrue(all("max_calls" not in event for event in events))
+
+    def test_each_distinct_backend_call_receives_full_timeout(self):
+        router = self._router()
+        budget = vision_runtime.VisionBudget(timeout_seconds=180)
+        parts = [{"type": "image", "data": "same-image"}]
+        received = []
+
+        def backend(_profile, _parts, _prompt, _max_tokens, timeout_seconds=None, **_kwargs):
+            received.append(timeout_seconds)
+            return f"result-{len(received)}"
+
+        with mock.patch.object(router, "_call_backend", side_effect=backend):
+            for index in range(10):
+                router._budgeted_backend_call({}, parts, f"describe-{index}", budget=budget)
+
+        self.assertEqual([180.0] * 10, received)
+
+    def test_vision_budget_cache_does_not_consume_another_call(self):
+        router = self._router()
+        budget = vision_runtime.VisionBudget(timeout_seconds=180)
+        parts = [{"type": "image", "data": "same-image"}]
+        with mock.patch.object(router, "_call_backend", return_value="cached result") as backend:
+            first = router._budgeted_backend_call({}, parts, "describe", budget=budget)
+            second = router._budgeted_backend_call({}, parts, "describe", budget=budget)
+
+        self.assertEqual("cached result", first)
+        self.assertEqual(first, second)
+        self.assertEqual(1, budget.calls)
+        backend.assert_called_once()
+
+    def test_automatic_vision_failure_degrades_without_budget_abort(self):
         router = self._router(auto_route=True)
-        budget = vision_runtime.VisionBudget(timeout_seconds=60, max_calls=1)
-        with mock.patch.object(
-            router,
-            "describe_parts",
-            side_effect=RuntimeError(vision_runtime.VISION_BUDGET_EXHAUSTED),
-        ):
-            with self.assertRaisesRegex(RuntimeError, vision_runtime.VISION_BUDGET_EXHAUSTED):
-                router.prepare_history(
-                    self._img_history(),
-                    {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"},
-                    vision_budget=budget,
-                )
+        budget = vision_runtime.VisionBudget(timeout_seconds=180)
+        with mock.patch.object(router, "describe_parts", side_effect=RuntimeError("backend timeout")):
+            out, note = router.prepare_history(
+                self._img_history(),
+                {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"},
+                vision_budget=budget,
+            )
+
+        self.assertIn("已自动识图", note)
+        self.assertIn("backend timeout", json.dumps(out, ensure_ascii=False))
 
     def test_vision_budget_key_includes_tool_and_parameters(self):
         parts = [{"type": "image", "data": "same-image"}]

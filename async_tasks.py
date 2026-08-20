@@ -8,7 +8,7 @@ from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
 from skill_runtime import SkillAgent, TaskCancelled, normalize_skill_policy
-from vision_runtime import VISION_BUDGET_EXHAUSTED, VISION_TOOL_NAMES, VisionBudget
+from vision_runtime import VISION_TOOL_NAMES, VisionBudget
 
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
@@ -567,10 +567,10 @@ class ConversationRunManager:
                     "started_at": int(time.time() * 1000),
                 })
             try:
-                vision_timeout = max(1.0, int(vision_config.get("timeout_ms", 120000)) / 1000)
+                vision_timeout = max(1.0, int(vision_config.get("timeout_ms", 180000)) / 1000)
             except (TypeError, ValueError):
-                vision_timeout = 120.0
-            vision_budget = VisionBudget(vision_timeout, max_calls=6, event=event)
+                vision_timeout = 180.0
+            vision_budget = VisionBudget(vision_timeout, event=event)
             try:
                 history, vision_note = self.app.vision.prepare_history(
                     history, profile, cancel_event=cancel_event, vision_budget=vision_budget
@@ -582,8 +582,6 @@ class ConversationRunManager:
             except Exception as exc:  # noqa: BLE001 - 视觉不可用不应阻断普通聊天
                 if cancel_event.is_set():
                     raise TaskCancelled("任务已取消")
-                if VISION_BUDGET_EXHAUSTED in str(exc):
-                    raise RuntimeError("视觉调用达到本轮上限，已停止以避免重复请求") from exc
                 if image_pending and vision_backend_name != "视觉模型":
                     event({"type": "vision_error", "message": f"视觉识别失败，已安全降级：{exc}"})
                 history, removed = self.app.vision.strip_images_for_text_model(
