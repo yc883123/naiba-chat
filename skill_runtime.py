@@ -814,9 +814,10 @@ class SkillAgent:
         )
         for item in selected_history:
             if item.get("role") in {"user", "assistant"} and item.get("content"):
-                messages.append(
-                    {"role": item["role"], "content": item["content"]}
-                )
+                message = {"role": item["role"], "content": item["content"]}
+                if item.get("role") == "assistant" and item.get("reasoning_content"):
+                    message["reasoning_content"] = str(item["reasoning_content"])
+                messages.append(message)
         if not messages or messages[-1].get("role") != "user":
             messages.append({"role": "user", "content": user_message})
 
@@ -831,6 +832,13 @@ class SkillAgent:
         no_progress_count = 0
         parse_error_count = 0
         seen_interjections: set[str] = set()
+
+        def assistant_message(content: Any = "", **extra: Any) -> dict[str, Any]:
+            message: dict[str, Any] = {"role": "assistant", "content": content}
+            if reasoning:
+                message["reasoning_content"] = reasoning
+            message.update(extra)
+            return message
 
         def consume_interjections() -> int:
             getter = (run_context or {}).get("pull_interjections")
@@ -906,10 +914,7 @@ class SkillAgent:
                         "attempt": parse_error_count,
                         "reason": "工具调用格式不完整，正在自动纠正",
                     })
-                    messages.append({
-                        "role": "assistant",
-                        "content": "上一个工具动作未能通过格式校验。",
-                    })
+                    messages.append(assistant_message("上一个工具动作未能通过格式校验。"))
                     messages.append({
                         "role": "user",
                         "content": (
@@ -934,7 +939,7 @@ class SkillAgent:
                 if consume_interjections():
                     interjections = messages[before_interjections:]
                     del messages[before_interjections:]
-                    messages.append({"role": "assistant", "content": str(action.get("content") or raw or "")})
+                    messages.append(assistant_message(str(action.get("content") or raw or "")))
                     messages.extend(interjections)
                     event({"type": "step_finished", "step": step})
                     continue
@@ -944,7 +949,7 @@ class SkillAgent:
                         "type": "status",
                         "message": "后台任务仍在运行，正在等待并收集结果",
                     })
-                    messages.append({"role": "assistant", "content": str(action.get("content") or raw or "")})
+                    messages.append(assistant_message(str(action.get("content") or raw or "")))
                     messages.append({
                         "role": "user",
                         "content": (
@@ -1020,7 +1025,7 @@ class SkillAgent:
                 if isinstance(call, dict)
             ]
             if native_tools and native_calls:
-                messages.append({"role": "assistant", "content": "", "tool_calls": native_calls})
+                messages.append(assistant_message("", tool_calls=native_calls))
                 for native_call, run in zip(native_calls, step_runs):
                     messages.append({
                         "role": "tool",
@@ -1029,7 +1034,7 @@ class SkillAgent:
                         "content": json.dumps(run, ensure_ascii=False)[:16000],
                     })
             else:
-                messages.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
+                messages.append(assistant_message(json.dumps(action, ensure_ascii=False)))
                 messages.append(
                     {
                         "role": "user",

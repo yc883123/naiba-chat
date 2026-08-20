@@ -649,6 +649,7 @@ class ConversationRunManager:
                 consumed_interjections: set[str] = set()
                 while True:
                     response = self.app.models.complete(profile, direct_messages, options, event)
+                    response_reasoning = str(getattr(self.app.models, "last_reasoning", "") or "")
                     if cancel_event.is_set():
                         raise TaskCancelled("任务已取消")
                     interjections = [
@@ -657,7 +658,10 @@ class ConversationRunManager:
                     ]
                     if not interjections:
                         break
-                    direct_messages.append({"role": "assistant", "content": response})
+                    assistant_message = {"role": "assistant", "content": response}
+                    if response_reasoning:
+                        assistant_message["reasoning_content"] = response_reasoning
+                    direct_messages.append(assistant_message)
                     for item in interjections:
                         consumed_interjections.add(str(item.get("id") or ""))
                         content = str(item.get("content") or "").strip()

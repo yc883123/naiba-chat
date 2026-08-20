@@ -1487,7 +1487,18 @@ def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dic
                     }
                 )
                 continue
-        history.append({"role": item["role"], "content": content})
+        message = {"role": item["role"], "content": content}
+        # Thinking-mode gateways require assistant reasoning_content on the
+        # next request; it lives in persisted metadata, not visible content.
+        if item.get("role") == "assistant":
+            raw_reasoning = (item.get("metadata") or {}).get("reasoning")
+            if isinstance(raw_reasoning, list):
+                raw_reasoning = "\n".join(str(value) for value in raw_reasoning if value)
+            elif raw_reasoning is not None:
+                raw_reasoning = str(raw_reasoning)
+            if str(raw_reasoning or "").strip():
+                message["reasoning_content"] = str(raw_reasoning)
+        history.append(message)
     return history
 
 

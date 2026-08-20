@@ -287,6 +287,13 @@ class RuntimeDispatchTests(unittest.TestCase):
         self.assertNotIn("/api/chat", _MockModelHandler.routes)
         self.assertTrue(_MockModelHandler.last_headers.get("user-agent", "").startswith("Mozilla/5.0"))
 
+    def test_openai_thinking_reasoning_content_is_preserved(self) -> None:
+        messages = ModelRuntime._openai_messages([
+            {"role": "user", "content": "继续"},
+            {"role": "assistant", "content": "结果", "reasoning_content": "上一轮思考"},
+        ])
+        self.assertEqual("上一轮思考", messages[1]["reasoning_content"])
+
     def test_anthropic_messages_format_and_full_provider_path(self) -> None:
         profile = self._claude()
         self.assertEqual(["m1", "m2"], [m["id"] for m in ModelRuntime.list_online_models(profile)])

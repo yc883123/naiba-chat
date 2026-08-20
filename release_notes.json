@@ -1,4 +1,5 @@
 [
+  "Build76: preserve assistant reasoning_content for thinking-mode OpenAI-compatible APIs, fixing HTTP 400 errors that require the previous reasoning content to be passed back.",
   "Build75: improve compatibility with Cloudflare-protected OpenAI/Anthropic gateways by sending a browser-compatible User-Agent, and provide an actionable message for browser-signature 403 errors.",
   "Build74: remove the fixed visual-call count and Run-wide vision deadline; each automatic or tool-driven visual request now receives its own timeout.",
   "Build74: increase the default per-request vision timeout to 180 seconds while preserving custom timeout values and exact-request caching.",

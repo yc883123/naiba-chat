@@ -388,6 +388,12 @@ class ModelRuntime:
                 })
                 continue
             message = {"role": role, "content": ModelRuntime._openai_content(item.get("content"))}
+            if role == "assistant":
+                reasoning_content = item.get("reasoning_content")
+                if reasoning_content is None:
+                    reasoning_content = item.get("reasoning")
+                if reasoning_content:
+                    message["reasoning_content"] = str(reasoning_content)
             if role == "assistant" and isinstance(item.get("tool_calls"), list):
                 message["tool_calls"] = [
                     {
