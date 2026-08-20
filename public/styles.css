@@ -206,12 +206,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .send-button.is-stop:hover { background: #a02820; }
 .composer-meta { min-height: 22px; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; gap: 10px; }
 .composer-meta-left { min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.lightweight-feature-options { display: grid; gap: 8px; margin: 14px 0; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius); }
+.lightweight-feature-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 18px; margin: 14px 18px; padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: var(--radius); }
 .lightweight-feature-options legend { padding: 0 4px; color: var(--text); font-size: 13px; font-weight: 600; }
-.lightweight-feature-options label { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }
-.lightweight-feature-options input { accent-color: var(--green); }
+.lightweight-feature-options label { min-width: 0; min-height: 32px; display: flex; align-items: center; gap: 8px; color: var(--text); font-size: 13px; }
+.conversation-settings-dialog .lightweight-feature-options label input[type="checkbox"] { display: block; width: 17px; height: 17px; margin: 0; padding: 0; border: 0; flex: none; accent-color: var(--green); }
 .lightweight-mode-toggle { display: inline-flex; align-items: center; gap: 5px; min-width: 0; cursor: pointer; white-space: nowrap; }
-.lightweight-mode-toggle input { width: 14px; height: 14px; margin: 0; accent-color: var(--green); }
+.lightweight-mode-toggle input[type="checkbox"] { display: block; width: 14px; height: 14px; margin: 0; padding: 0; border: 0; accent-color: var(--green); }
 .lightweight-mode-toggle span { color: var(--text); font-weight: 600; }
 .lightweight-mode-toggle small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
 .lightweight-mode-toggle input:checked + span { color: var(--green); }
@@ -311,7 +311,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .toggle-row { min-height: 62px; padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); color: var(--text); }
 .toggle-row span { display: grid; }
 .toggle-row small { color: var(--muted); margin-top: 3px; }
-.toggle-row input { width: 42px; height: 22px; accent-color: var(--green); }
+.toggle-row input[type="checkbox"] { display: block; width: 42px; height: 22px; margin: 0; padding: 0; border: 0; accent-color: var(--green); }
 .skill-policy-row { min-height: 68px; padding: 10px 18px; display: flex; align-items: center; justify-content: space-between; gap: 16px; border-bottom: 1px solid var(--line); color: var(--text); }
 .skill-policy-row > span { display: grid; min-width: 0; }
 .skill-policy-row small { color: var(--muted); margin-top: 3px; }
@@ -516,6 +516,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .message-row { min-width: 0; width: 100%; }
   .conversation-item .delete-conversation { opacity: 1; color: #e5a6a1; }
   .conversation-settings { opacity: 1; }
+  .lightweight-feature-options { grid-template-columns: 1fr; }
   .composer-wrap { padding: 7px 10px max(8px, env(safe-area-inset-bottom)); }
   .composer-meta { grid-template-columns: 1fr auto; }
   .composer-meta-left { grid-column: 1; }

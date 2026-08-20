@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -116,6 +116,27 @@ def _migrate_to_v5(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v6(db: sqlite3.Connection) -> None:
+    """Make all four lightweight capabilities explicit for existing chats."""
+    rows = db.execute(
+        "SELECT id, lightweight_disabled_features FROM conversations"
+    ).fetchall()
+    allowed = ("skills_tools", "vision", "web_search", "deep_reasoning")
+    for row in rows:
+        try:
+            current = json.loads(row[1] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            current = []
+        features = [item for item in current if item in allowed]
+        for feature in allowed:
+            if feature not in features:
+                features.append(feature)
+        db.execute(
+            "UPDATE conversations SET lightweight_disabled_features = ? WHERE id = ?",
+            (json.dumps(features, ensure_ascii=False), row[0]),
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -123,6 +144,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     3: _migrate_to_v3,
     4: _migrate_to_v4,
     5: _migrate_to_v5,
+    6: _migrate_to_v6,
 }
 
 
@@ -156,7 +178,7 @@ class ChatStorage:
                     web_search_enabled INTEGER NOT NULL DEFAULT 0,
                     deep_reasoning_enabled INTEGER NOT NULL DEFAULT 0,
                     lightweight_mode INTEGER NOT NULL DEFAULT 0,
-                    lightweight_disabled_features TEXT NOT NULL DEFAULT '["skills_tools", "vision"]',
+                    lightweight_disabled_features TEXT NOT NULL DEFAULT '["skills_tools", "vision", "web_search", "deep_reasoning"]',
                     title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
@@ -390,7 +412,7 @@ class ChatStorage:
                     1 if web_search_enabled else 0,
                     1 if deep_reasoning_enabled else 0,
                     1 if lightweight_mode else 0,
-                    json.dumps(["skills_tools", "vision"]),
+                    json.dumps(["skills_tools", "vision", "web_search", "deep_reasoning"]),
                     0,
                     "",
                     1,
@@ -502,7 +524,7 @@ class ChatStorage:
         if lightweight_mode is not None:
             values["lightweight_mode"] = 1 if bool(lightweight_mode) else 0
         if lightweight_disabled_features is not None:
-            allowed = {"skills_tools", "vision"}
+            allowed = {"skills_tools", "vision", "web_search", "deep_reasoning"}
             values["lightweight_disabled_features"] = json.dumps(
                 [item for item in lightweight_disabled_features if item in allowed], ensure_ascii=False
             )
@@ -1294,7 +1316,8 @@ class ChatStorage:
                 result.get("lightweight_disabled_features") or "[]"
             )
             result["lightweight_disabled_features"] = [
-                item for item in features if item in {"skills_tools", "vision"}
+                item for item in features
+                if item in {"skills_tools", "vision", "web_search", "deep_reasoning"}
             ]
         except (json.JSONDecodeError, TypeError):
             result["lightweight_disabled_features"] = []

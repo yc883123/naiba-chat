@@ -259,6 +259,25 @@ class VisionProbeTest(TestCase):
         )
         return vision_runtime.VisionRouter(app)
 
+    def test_uploaded_basename_resolves_to_current_data_directory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            upload_dir = data_dir / "uploads"
+            upload_dir.mkdir()
+            image = upload_dir / "naiba_chat_example.png"
+            image.write_bytes(b"image")
+            app = types.SimpleNamespace(
+                config=types.SimpleNamespace(
+                    data={"vision": {}},
+                    resolve_data_dir=lambda: data_dir,
+                )
+            )
+            router = vision_runtime.VisionRouter(app)
+
+            resolved = router._resolve_paths({"image": image.name})
+
+            self.assertEqual([str(image.resolve())], resolved)
+
     def test_probe_sends_real_image_and_reports_backend(self):
         router = self._router()
         captured = {}

@@ -644,8 +644,7 @@ class VisionRouter:
             "vision_pixel_diff": self._tool_pixel_diff,
         }
 
-    @staticmethod
-    def _resolve_paths(args: dict[str, Any]) -> list[str]:
+    def _resolve_paths(self, args: dict[str, Any]) -> list[str]:
         paths: list[str] = []
         for raw in args.get("paths") or args.get("attachmentIds") or []:
             value = str(raw or "").strip()
@@ -654,7 +653,39 @@ class VisionRouter:
         single = str(args.get("image") or args.get("path") or "").strip()
         if single:
             paths.append(single)
-        return paths
+        # Models often emit only the uploaded basename even though the
+        # history contains an absolute path. Resolve that basename against
+        # the current data/uploads directory (and the app directory) so a
+        # harmless tool retry does not consume the whole vision budget.
+        resolved: list[str] = []
+        data_roots: list[Path] = []
+        try:
+            data_dir = self.app.config.resolve_data_dir()
+            if data_dir:
+                data_roots.append(Path(data_dir).expanduser().resolve())
+        except (AttributeError, OSError, TypeError, ValueError):
+            pass
+        for value in paths:
+            candidate = Path(value).expanduser()
+            if candidate.is_file():
+                resolved.append(str(candidate.resolve()))
+                continue
+            basename = candidate.name
+            if basename:
+                alternatives = [
+                    *(root / "uploads" / basename for root in data_roots),
+                    *(root / basename for root in data_roots),
+                ]
+                try:
+                    alternatives.append(Path.cwd() / basename)
+                except OSError:
+                    pass
+                match = next((item for item in alternatives if item.is_file()), None)
+                if match is not None:
+                    resolved.append(str(match.resolve()))
+                    continue
+            resolved.append(value)
+        return resolved
 
     def _tool_describe(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
         try:

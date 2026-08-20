@@ -39,7 +39,7 @@ const state = {
   webSearchEnabled: false,
   deepReasoningEnabled: false,
   lightweightMode: false,
-  lightweightDisabledFeatures: ['skills_tools', 'vision'],
+  lightweightDisabledFeatures: ['skills_tools', 'vision', 'web_search', 'deep_reasoning'],
   contextUsage: null,
   providerModelCapabilities: {},
 };
@@ -1210,7 +1210,7 @@ async function createConversation() {
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision'];
+    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
   updateLightweightModeControl();
   renderMessages([]);
   renderPermissionModeSwitch();
@@ -1241,7 +1241,7 @@ async function openConversation(id) {
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision'];
+    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
   updateLightweightModeControl();
   await resumeConversationRun(id);
   closeSidebar();
@@ -1275,7 +1275,7 @@ async function syncCurrentConversation() {
     updateDeepReasoningButton();
     state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
     state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-      ? conversation.lightweight_disabled_features : ['skills_tools', 'vision'];
+      ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
     updateLightweightModeControl();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
@@ -1341,7 +1341,7 @@ function openConversationSettings(id) {
   $('#conversationSystemPrompt').value = conversation.system_prompt || '';
   $('#conversationStreamEnabled').checked = Number(conversation.stream_enabled ?? 1) !== 0;
   const disabled = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision'];
+    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
   $$('input[name="lightweightFeature"]').forEach((input) => {
     input.checked = disabled.includes(input.value);
   });
@@ -1369,7 +1369,7 @@ async function saveConversationSettings(event) {
     $('#conversationSettingsDialog').close();
     renderConversations();
     if (id === state.conversationId) {
-      state.lightweightDisabledFeatures = updated.lightweight_disabled_features || ['skills_tools', 'vision'];
+      state.lightweightDisabledFeatures = updated.lightweight_disabled_features || ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
       updateLightweightModeControl();
     }
     toast('对话设置已保存');
@@ -2571,11 +2571,12 @@ async function sendMessage(textOverride = '') {
 function updateDeepReasoningButton() {
   const btn = $('#deepReasoningButton');
   if (!btn) return;
-  const disabled = Boolean(state.chatRunId || state.abortController);
+  const lightweightDisabled = state.lightweightMode && state.lightweightDisabledFeatures.includes('deep_reasoning');
+  const disabled = Boolean(state.chatRunId || state.abortController || lightweightDisabled);
   btn.disabled = disabled;
-  btn.classList.toggle('active', state.deepReasoningEnabled);
-  btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled));
-  btn.title = state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭';
+  btn.classList.toggle('active', state.deepReasoningEnabled && !lightweightDisabled);
+  btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled && !lightweightDisabled));
+  btn.title = lightweightDisabled ? '轻量对话已关闭深度推理' : (state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭');
 }
 
 async function toggleDeepReasoning() {
@@ -2602,11 +2603,12 @@ async function toggleDeepReasoning() {
 function updateWebSearchButton() {
   const btn = $('#webSearchButton');
   if (!btn) return;
-  const disabled = Boolean(state.chatRunId || state.abortController);
+  const lightweightDisabled = state.lightweightMode && state.lightweightDisabledFeatures.includes('web_search');
+  const disabled = Boolean(state.chatRunId || state.abortController || lightweightDisabled);
   btn.disabled = disabled;
-  btn.classList.toggle('active', state.webSearchEnabled);
-  btn.setAttribute('aria-pressed', String(state.webSearchEnabled));
-  btn.title = state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭';
+  btn.classList.toggle('active', state.webSearchEnabled && !lightweightDisabled);
+  btn.setAttribute('aria-pressed', String(state.webSearchEnabled && !lightweightDisabled));
+  btn.title = lightweightDisabled ? '轻量对话已关闭联网搜索' : (state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭');
 }
 
 async function toggleWebSearch() {

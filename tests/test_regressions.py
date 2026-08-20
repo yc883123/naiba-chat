@@ -1289,7 +1289,21 @@ class ConversationSearchPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(1, updated["web_search_enabled"])
             self.assertEqual(1, updated["deep_reasoning_enabled"])
-            self.assertEqual(5, storage.get_user_version())
+            self.assertEqual(6, storage.get_user_version())
+
+    def test_lightweight_mode_persists_all_four_disabled_capabilities(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = ChatStorage(Path(root) / "chat.db")
+            conversation = storage.create_conversation()
+            expected = ["skills_tools", "vision", "web_search", "deep_reasoning"]
+
+            self.assertEqual(expected, conversation["lightweight_disabled_features"])
+            updated = storage.update_conversation_settings(
+                conversation["id"],
+                lightweight_disabled_features=expected,
+            )
+
+            self.assertEqual(expected, updated["lightweight_disabled_features"])
 
     def test_search_sources_are_normalized_for_message_metadata(self) -> None:
         from async_tasks import _search_sources

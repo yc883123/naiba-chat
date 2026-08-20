@@ -252,9 +252,9 @@ class ConversationRunManager:
             lightweight_mode = bool(conversation.get("lightweight_mode", 0))
             disabled_features = {
                 str(item) for item in (conversation.get("lightweight_disabled_features") or [])
-                if str(item) in {"skills_tools", "vision"}
+                if str(item) in {"skills_tools", "vision", "web_search", "deep_reasoning"}
             } if lightweight_mode else set()
-            web_search_enabled = bool(conversation.get("web_search_enabled", 0))
+            web_search_enabled = bool(conversation.get("web_search_enabled", 0)) and "web_search" not in disabled_features
             allowed_tools = [] if "skills_tools" in disabled_features else self._resolve_allowed_tools(mode, agent, web_search_enabled)
             if "skills_tools" in disabled_features:
                 skill_policy = {"mode": "exclusive", "skill_ids": []}
@@ -284,7 +284,7 @@ class ConversationRunManager:
                 "plan_id": plan_id,
                 "workspace_dir": str(self.app.config.resolve_workspace_dir()),
                 "web_search_enabled": web_search_enabled,
-                "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
+                "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)) and "deep_reasoning" not in disabled_features,
                 "lightweight_mode": lightweight_mode,
                 "lightweight_disabled_features": sorted(disabled_features),
                 "allowed_tools": allowed_tools,

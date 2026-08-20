@@ -124,6 +124,26 @@ def _merge_data_tree(source: Path, target: Path) -> bool:
     return changed
 
 
+def _sync_bundled_skills(source: Path, target: Path) -> bool:
+    """Refresh packaged Skill files without deleting older persisted Skills."""
+    changed = False
+    target.mkdir(parents=True, exist_ok=True)
+    for item in source.iterdir():
+        destination = target / item.name
+        if item.is_dir():
+            changed = _sync_bundled_skills(item, destination) or changed
+            continue
+        try:
+            needs_copy = not destination.is_file() or item.read_bytes() != destination.read_bytes()
+        except OSError:
+            needs_copy = True
+        if needs_copy:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(item, destination)
+            changed = True
+    return changed
+
+
 def _copy_legacy_data(source: Path, replace_empty_target: bool = True) -> dict[str, bool]:
     """Merge a legacy install into the current data directory, including all subdirectories."""
     report = {"config": False, "data": False}
@@ -1574,16 +1594,31 @@ class NaibaChatApp:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.storage = ChatStorage(DATA_DIR / "chat.db")
         self.models = ModelRuntime()
-        skills_dirs = []
+        # Keep packaged Skills in the persistent managed directory as well.
+        # A one-file executable extracts bundled assets to a temporary folder;
+        # without this copy, replacing the executable can make a Skill that
+        # existed in the previous build disappear from the user's catalog.
+        bundled_skills = (RESOURCE_DIR / "skills").resolve()
+        managed_skills = (APP_DIR / "skills").resolve()
+        if bundled_skills.is_dir() and bundled_skills != managed_skills:
+            try:
+                _sync_bundled_skills(bundled_skills, managed_skills)
+            except OSError as exc:
+                print(f"Persisting bundled Skills failed: {exc}")
+
+        skills_dirs: list[str] = []
+        if bundled_skills.is_dir():
+            skills_dirs.append(str(bundled_skills))
+        if managed_skills.is_dir() and managed_skills != bundled_skills:
+            skills_dirs.append(str(managed_skills))
         for raw in self.config.data.get("skills_dirs", []):
             try:
-                validate_skills_dir(self.config._resolve_dir(str(raw)))
-                skills_dirs.append(raw)
+                resolved = self.config._resolve_dir(str(raw))
+                validate_skills_dir(resolved)
+                if str(resolved) not in skills_dirs:
+                    skills_dirs.append(str(resolved))
             except ValueError:
                 print(f"已忽略不安全的 Skill 目录：{raw}")
-        bundled_skills = RESOURCE_DIR / "skills"
-        if bundled_skills.exists():
-            skills_dirs.insert(0, str(bundled_skills))
         self.catalog = SkillCatalog(
             [Path(path) for path in skills_dirs],
             base_dir=APP_DIR,

@@ -1,4 +1,7 @@
 [
+  "Build72: fix local-vision handoff to online reasoning by resolving uploaded image basenames against the persistent uploads directory, preventing false file-not-found retries and vision-budget exhaustion.",
+  "Build72: restore four per-conversation lightweight switches (tools/Skills, vision/attachments, web search, and deep reasoning) and correct the checkbox layout and sizing.",
+  "Build72: preserve packaged Skills in the managed persistent Skill directory so Build updates no longer make Skills from the previous executable disappear.",
   "Build71: consolidate the running composer into one send/stop button; queued interjections can be edited, deleted, sent individually, or automatically continued after the current reply.",
   "Build71: lightweight mode now lets each conversation choose whether to disable tools/Skills and vision. Deep reasoning and web search remain independent composer controls.",
   "Build71: prevent local vision backends (LM Studio, Ollama, llama.cpp, and compatible local APIs) from repeated calls freezing a Run. Vision calls share a bounded budget, exact-request cache, and circuit breaker; models are never automatically unloaded.",
