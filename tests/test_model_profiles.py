@@ -268,6 +268,15 @@ class RuntimeDispatchTests(unittest.TestCase):
             "request_format": "lm_studio",
         }
 
+    def _llama_cpp(self) -> dict[str, Any]:
+        return {
+            "kind": "local",
+            "local_backend": "llama_cpp",
+            "base_url": f"{self.base}/v1",
+            "model": "llama",
+            "request_format": "llama_cpp",
+        }
+
     def _claude(self) -> dict[str, Any]:
         return {
             "kind": "online",
@@ -286,6 +295,15 @@ class RuntimeDispatchTests(unittest.TestCase):
         self.assertIn("/v1/chat/completions", _MockModelHandler.routes)
         self.assertNotIn("/api/chat", _MockModelHandler.routes)
         self.assertTrue(_MockModelHandler.last_headers.get("user-agent", "").startswith("Mozilla/5.0"))
+
+    def test_llama_cpp_uses_openai_v1_chat_endpoint_as_local_backend(self) -> None:
+        out = ModelRuntime().complete(self._llama_cpp(), self._messages(), {"stream": False})
+        self.assertEqual(out, "mock-ok")
+        self.assertIn("/v1/chat/completions", _MockModelHandler.routes)
+
+    def test_llama_cpp_lists_models_from_openai_v1_endpoint(self) -> None:
+        models = ModelRuntime.list_online_models(self._llama_cpp())
+        self.assertEqual(["m1", "m2"], [item["id"] for item in models])
 
     def test_openai_thinking_reasoning_content_is_preserved(self) -> None:
         messages = ModelRuntime._openai_messages([

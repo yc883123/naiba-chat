@@ -593,7 +593,7 @@ class ChatStorage:
             db.execute("DELETE FROM tool_runs WHERE conversation_id = ?", (conversation_id,))
             cursor = db.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
             db.execute(
-                "UPDATE conversations SET title = '新对话', title_customized = 0, updated_at = ? WHERE id = ?",
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
                 (int(time.time() * 1000), conversation_id),
             )
         return cursor.rowcount

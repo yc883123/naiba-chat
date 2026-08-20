@@ -1968,20 +1968,34 @@ async function deleteSearchProfile() {
   await persistSearchProfiles(remaining, remaining[0]?.id || '');
 }
 
-async function testVisionConnection() {
-  const el = $('#visionTestResult');
+async function testVisionCapability(probe) {
+  const el = $(probe === 'text' ? '#visionTextTestResult' : '#visionTestResult');
   if (el) el.textContent = '测试中…';
   try {
     const result = await api('/api/vision/test', {
       method: 'POST',
-      body: { provider_model_key: $('#visionProvider')?.value || '' },
+      body: { provider_model_key: $('#visionProvider')?.value || '', probe },
     });
-    if (el) el.textContent = result.ok
-      ? `可用（延迟 ${result.latency_ms ?? '?'}ms，${result.backend || result.model || ''}）`
-      : `不可用：${result.reason || ''}`;
+    if (el) {
+      const label = probe === 'text' ? '文本推理' : '视觉识别';
+      const errors = {
+        connection: '服务连接失败',
+        text_inference: '文本推理失败',
+        image_load: '图片加载失败',
+        vision_capability: '视觉能力不可用',
+        unknown: '未知错误',
+      };
+      el.textContent = result.ok
+        ? `${label}可用（延迟 ${result.latency_ms ?? '?'}ms，${result.backend || result.model || ''}）`
+        : `${label}不可用 [${errors[result.error_kind] || errors.unknown}]：${result.reason || ''}${result.hint ? `；${result.hint}` : ''}`;
+    }
   } catch (error) {
     if (el) el.textContent = `测试失败：${error.message}`;
   }
+}
+
+async function testVisionConnection() {
+  return testVisionCapability('vision');
 }
 
 async function testSearchConnection() {
@@ -3240,6 +3254,7 @@ function bindEvents() {
   $('#messageInput').addEventListener('paste', handlePasteImage);
   $('#saveVision').addEventListener('click', saveVisionSettings);
   $('#testVision').addEventListener('click', testVisionConnection);
+  $('#testVisionText').addEventListener('click', () => testVisionCapability('text'));
   $('#visionProvider').addEventListener('change', () => saveVisionSettings({ quiet: true }));
   $('#addVisionProvider').addEventListener('click', openVisionProviderForm);
   $('#deleteVisionProvider').addEventListener('click', deleteVisionProvider);

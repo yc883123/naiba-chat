@@ -5,6 +5,7 @@ import gc
 import io
 import json
 import server
+import vision_runtime
 from datetime import timedelta
 from pathlib import Path
 import sys
@@ -357,6 +358,41 @@ class ImageAttachmentTests(unittest.TestCase):
         import base64
 
         self.assertLessEqual(len(base64.b64decode(encoded["data"])), MODEL_IMAGE_TARGET_BYTES)
+
+    def test_all_supported_modes_are_normalized_to_rgb_jpeg(self) -> None:
+        from PIL import Image
+        import base64
+
+        with tempfile.TemporaryDirectory() as root:
+            cases = {
+                "rgb.png": Image.new("RGB", (12, 8), (20, 40, 60)),
+                "gray-alpha.png": Image.new("LA", (12, 8), (120, 100)),
+                "alpha.png": Image.new("RGBA", (12, 8), (20, 40, 60, 120)),
+                "photo.jpg": Image.new("RGB", (12, 8), (60, 40, 20)),
+            }
+            for filename, image in cases.items():
+                path = Path(root) / filename
+                image.save(path, format="JPEG" if path.suffix == ".jpg" else "PNG")
+                encoded = encode_image_for_model(str(path))
+                self.assertIsNotNone(encoded)
+                self.assertEqual("image/jpeg", encoded["media_type"])
+                with Image.open(io.BytesIO(base64.b64decode(encoded["data"]))) as decoded:
+                    self.assertEqual("JPEG", decoded.format)
+                    self.assertEqual("RGB", decoded.mode)
+
+    def test_vision_runtime_normalizes_small_png_to_rgb_jpeg(self) -> None:
+        from PIL import Image
+        import base64
+
+        buffer = io.BytesIO()
+        Image.new("RGBA", (16, 16), (10, 20, 30, 80)).save(buffer, format="PNG")
+        encoded = vision_runtime._encode_image_bytes(buffer.getvalue(), "image/png", "alpha.png")
+
+        self.assertIsNotNone(encoded)
+        self.assertEqual("image/jpeg", encoded["media_type"])
+        with Image.open(io.BytesIO(base64.b64decode(encoded["data"]))) as decoded:
+            self.assertEqual("JPEG", decoded.format)
+            self.assertEqual("RGB", decoded.mode)
 
     def test_history_keeps_only_the_latest_multi_image_batch(self) -> None:
         with tempfile.TemporaryDirectory() as root:

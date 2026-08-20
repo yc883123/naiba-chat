@@ -340,8 +340,8 @@ class VisionProbeTest(TestCase):
             captured["image_parts"] = image_parts
             captured["max_tokens"] = max_tokens
             captured["kwargs"] = kwargs
-            # 校验：真实最小图片请求，media_type 为 image/png，且确实带图。
-            self.assertEqual(image_parts[0]["media_type"], "image/png")
+            # 校验：真实 RGB JPEG 图片请求，且确实带图。
+            self.assertEqual(image_parts[0]["media_type"], "image/jpeg")
             self.assertTrue(image_parts[0]["data"])
             return "OK"
 
@@ -354,6 +354,36 @@ class VisionProbeTest(TestCase):
         self.assertEqual(captured["kwargs"]["attempts"], 1)
         self.assertLessEqual(captured["kwargs"]["timeout_seconds"], 30)
         self.assertTrue(captured["kwargs"]["connection_test"])
+
+    def test_text_probe_sends_no_image(self):
+        router = self._router()
+        captured = {}
+
+        def fake_call(profile, image_parts, question, **kwargs):
+            captured["image_parts"] = image_parts
+            captured["question"] = question
+            return "OK"
+
+        with mock.patch.object(router, "_call_backend", side_effect=fake_call):
+            result = router.probe_text()
+        self.assertTrue(result["ok"])
+        self.assertEqual("text", result["probe"])
+        self.assertEqual([], captured["image_parts"])
+        self.assertIn("OK", captured["question"])
+
+    def test_llama_cpp_image_load_error_keeps_detail_and_mmproj_hint(self):
+        router = self._router()
+        router.vision_backends = lambda _key=None: [{
+            "kind": "local", "local_backend": "llama_cpp", "request_format": "llama_cpp",
+            "name": "Local llama", "base_url": "http://127.0.0.1:8080/v1", "model": "vision",
+        }]
+        message = "API request failed HTTP 400: Failed to load image or audio file"
+        with mock.patch.object(router, "_call_backend", side_effect=RuntimeError(message)):
+            result = router.probe()
+        self.assertFalse(result["ok"])
+        self.assertEqual("image_load", result["error_kind"])
+        self.assertIn("mmproj", result["hint"])
+        self.assertIn("HTTP 400", result["reason"])
 
     def test_probe_failover_reports_reason_and_backend(self):
         router = self._router()
@@ -448,12 +478,13 @@ class VisionProbeTest(TestCase):
             )
         unload.assert_not_called()
 
-    def test_probe_image_is_rgb_png(self):
+    def test_probe_image_is_rgb_jpeg(self):
         from PIL import Image
         import base64
         import io
 
-        image = Image.open(io.BytesIO(base64.b64decode(vision_runtime.MINIMAL_PNG_B64)))
+        image = Image.open(io.BytesIO(base64.b64decode(vision_runtime.PROBE_JPEG_B64)))
+        self.assertEqual("JPEG", image.format)
         self.assertEqual("RGB", image.mode)
 
 

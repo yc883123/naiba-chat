@@ -394,9 +394,11 @@
             <label>最大图片数<input id="visionMaxImages" type="number" min="1" max="20" step="1"></label>
           </div>
           <div class="form-actions">
-            <button class="control-button" id="testVision" type="button">测试视觉连接</button>
+            <button class="control-button" id="testVisionText" type="button">测试文本推理</button>
+            <button class="control-button" id="testVision" type="button">测试视觉识别</button>
             <button class="primary-button" id="saveVision" type="button">保存视觉设置</button>
           </div>
+          <p class="hint" id="visionTextTestResult"></p>
           <p class="hint" id="visionTestResult"></p>
         </section>
         <section data-settings-panel="search" hidden>

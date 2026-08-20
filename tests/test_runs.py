@@ -94,13 +94,18 @@ class RunStorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             storage = self.make_storage(root)
             conversation = storage.create_conversation()
+            storage.update_conversation_settings(
+                conversation["id"], title="保留的标题", model_key="local:llama"
+            )
             storage.add_message(conversation["id"], "user", "remove me", {})
             storage.log_tool_run(conversation["id"], "vision_describe", {}, "result", True)
 
             self.assertEqual(1, storage.clear_conversation_messages(conversation["id"]))
             cleared = storage.get_conversation(conversation["id"])
             self.assertEqual([], cleared["messages"])
-            self.assertEqual("新对话", cleared["title"])
+            self.assertEqual("保留的标题", cleared["title"])
+            self.assertTrue(cleared["title_customized"])
+            self.assertEqual("local:llama", cleared["model_key"])
             del storage
             gc.collect()
 

@@ -1386,7 +1386,7 @@ def _jpeg_for_model(image: Any, target_bytes: int = MODEL_IMAGE_TARGET_BYTES) ->
     from PIL import Image
 
     image.thumbnail((MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_MAX_EDGE))
-    if image.mode not in {"RGB", "L"}:
+    if image.mode != "RGB":
         background = Image.new("RGB", image.size, "white")
         if "A" in image.getbands():
             background.paste(image, mask=image.getchannel("A"))
@@ -1421,22 +1421,13 @@ def encode_image_for_model(source: str) -> dict[str, str] | None:
         from PIL import Image, ImageOps
 
         with Image.open(io.BytesIO(raw)) as opened:
-            source_format = opened.format
             image = ImageOps.exif_transpose(opened).copy()
-            needs_conversion = (
-                max(image.size) > MODEL_IMAGE_MAX_EDGE
-                or len(raw) > MODEL_IMAGE_TARGET_BYTES
-                or source_format == "GIF"
-            )
-            if needs_conversion:
-                raw = _jpeg_for_model(image)
-                media_type = "image/jpeg"
+            raw = _jpeg_for_model(image)
     except (ImportError, OSError, ValueError):
-        if len(raw) > 8 * 1024 * 1024:
-            return None
+        return None
     return {
         "type": "image",
-        "media_type": media_type,
+        "media_type": "image/jpeg",
         "data": base64.b64encode(raw).decode("ascii"),
         "name": path.name,
     }
@@ -2272,7 +2263,14 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/vision/test":
             try:
                 selected = body.get("provider_model_key")
-                self._json(APP.vision.probe(str(selected) if selected is not None else None))
+                selected_key = str(selected) if selected is not None else None
+                probe = str(body.get("probe") or "vision").strip().lower()
+                if probe == "text":
+                    self._json(APP.vision.probe_text(selected_key))
+                elif probe == "vision":
+                    self._json(APP.vision.probe(selected_key))
+                else:
+                    self._json({"ok": False, "reason": "Unsupported vision probe"}, HTTPStatus.BAD_REQUEST)
             except Exception as exc:  # noqa: BLE001
                 self._json({"ok": False, "reason": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/search/test":

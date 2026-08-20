@@ -39,11 +39,20 @@ DEFAULT_VISION_CHAIN = [
     "Qwen3.5-9B",
 ]
 
-# 1x1 透明 PNG：用于视觉连接真实探活（最小图片请求），不依赖 /models 可达性冒充能力。
-MINIMAL_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4//8/AAX+Av4N70a4"
-    "AAAAAElFTkSuQmCC"
-)
+# The valid 32x32 RGB JPEG probe is created below with Pillow.  Some
+# llama-server builds reject a 1x1 transparent PNG before model inference.
+
+
+def _make_probe_jpeg_b64() -> str:
+    """Create a small valid RGB JPEG without depending on a file asset."""
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (32, 32), (80, 120, 160)).save(buffer, format="JPEG", quality=85, optimize=True)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+PROBE_JPEG_B64 = _make_probe_jpeg_b64()
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
 IMAGE_MEDIA_TYPES = {
@@ -126,65 +135,38 @@ def _default_vision_config() -> dict[str, Any]:
 
 
 def _encode_image_bytes(raw: bytes, media_type: str, name: str = "") -> dict[str, Any] | None:
-    """把图片字节编码为模型可用的内部 image 部件（base64），必要时降采样/转 JPEG。"""
+    """Decode every image and normalize it to a bounded RGB JPEG payload."""
     try:
         from PIL import Image, ImageOps
     except ImportError:
-        return {
-            "type": "image",
-            "media_type": media_type or "image/jpeg",
-            "data": base64.b64encode(raw).decode("ascii"),
-            "name": name,
-        }
+        return None
     try:
         with Image.open(io.BytesIO(raw)) as opened:
-            source_format = opened.format
-            source_mode = opened.mode
             image = ImageOps.exif_transpose(opened).convert("RGB")
-            needs_conversion = (
-                source_mode != "RGB"
-                or max(image.size) > MAX_EDGE
-                or len(raw) > TARGET_BYTES
-                or source_format == "GIF"
+        image.thumbnail((MAX_EDGE, MAX_EDGE))
+        encoded = b""
+        for quality in (85, 78, 70, 62):
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=quality, optimize=True)
+            encoded = buffer.getvalue()
+            if len(encoded) <= TARGET_BYTES:
+                break
+        while len(encoded) > TARGET_BYTES and max(image.size) > 768:
+            image = image.resize(
+                tuple(max(1, int(value * 0.85)) for value in image.size),
+                Image.Resampling.LANCZOS,
             )
-            if needs_conversion:
-                image.thumbnail((MAX_EDGE, MAX_EDGE))
-                encoded = b""
-                for quality in (85, 78, 70, 62):
-                    buffer = io.BytesIO()
-                    image.save(buffer, format="JPEG", quality=quality, optimize=True)
-                    encoded = buffer.getvalue()
-                    if len(encoded) <= TARGET_BYTES:
-                        break
-                while len(encoded) > TARGET_BYTES and max(image.size) > 768:
-                    image = image.resize(
-                        tuple(max(1, int(value * 0.85)) for value in image.size),
-                        Image.Resampling.LANCZOS,
-                    )
-                    buffer = io.BytesIO()
-                    image.save(buffer, format="JPEG", quality=62, optimize=True)
-                    encoded = buffer.getvalue()
-                return {
-                    "type": "image",
-                    "media_type": "image/jpeg",
-                    "data": base64.b64encode(encoded).decode("ascii"),
-                    "name": name,
-                }
-            return {
-                "type": "image",
-                "media_type": media_type or "image/jpeg",
-                "data": base64.b64encode(raw).decode("ascii"),
-                "name": name,
-            }
-    except (ImportError, OSError, ValueError):
-        if len(raw) > 8 * 1024 * 1024:
-            return None
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=62, optimize=True)
+            encoded = buffer.getvalue()
         return {
             "type": "image",
-            "media_type": media_type or "image/jpeg",
-            "data": base64.b64encode(raw).decode("ascii"),
+            "media_type": "image/jpeg",
+            "data": base64.b64encode(encoded).decode("ascii"),
             "name": name,
         }
+    except (OSError, ValueError):
+        return None
 
 
 def encode_image_file(path: str) -> dict[str, Any] | None:
@@ -1019,7 +1001,101 @@ class VisionRouter:
         except Exception:
             return None
 
+    @staticmethod
+    def _probe_error(
+        probe: str, profile: dict[str, Any], error: Exception
+    ) -> tuple[str, str]:
+        reason = str(error)
+        lowered = reason.lower()
+        is_llama_cpp = (
+            str(profile.get("kind") or "").lower() == "local"
+            and (
+                str(profile.get("local_backend") or "").lower() == "llama_cpp"
+                or str(profile.get("request_format") or "").lower() == "llama_cpp"
+            )
+        )
+        if any(token in lowered for token in (
+            "connection refused", "unable to connect", "url error", "network is unreachable",
+            "connection reset", "connection aborted", "timed out",
+        )):
+            return "connection", "\u65e0\u6cd5\u8fde\u63a5\u5230\u670d\u52a1\u3002\u8bf7\u68c0\u67e5 Base URL\u3001\u670d\u52a1\u72b6\u6001\u548c\u7f51\u7edc\u3002"
+        if probe == "text":
+            return "text_inference", "\u6587\u672c\u63a8\u7406\u5931\u8d25\uff0c/models \u53ef\u8bbf\u95ee\u4e0d\u4ee3\u8868\u6a21\u578b\u53ef\u4ee5\u63a8\u7406\u3002"
+        if "failed to load image or audio file" in lowered:
+            hint = "\u56fe\u7247\u5728\u670d\u52a1\u7aef\u52a0\u8f7d\u5931\u8d25\u3002"
+            if is_llama_cpp:
+                hint += " \u8bf7\u786e\u8ba4 GGUF \u662f\u89c6\u89c9\u6a21\u578b\uff0c\u5df2\u52a0\u8f7d\u5339\u914d\u7684 mmproj\uff0c\u5e76\u68c0\u67e5 llama-server \u65e5\u5fd7\u3002"
+            return "image_load", hint
+        if any(token in lowered for token in (
+            "mmproj", "vision model", "does not support image", "doesn't support image",
+            "multimodal", "image input",
+        )):
+            hint = "\u5f53\u524d\u6a21\u578b\u53ef\u80fd\u4e0d\u652f\u6301\u89c6\u89c9\u8f93\u5165\u3002"
+            if is_llama_cpp:
+                hint += " \u8bf7\u786e\u8ba4\u4f7f\u7528\u89c6\u89c9 GGUF \u5e76\u52a0\u8f7d\u5339\u914d\u7684 mmproj\u3002"
+            return "vision_capability", hint
+        return "unknown", "\u89c6\u89c9\u63a8\u7406\u5931\u8d25\u3002\u8bf7\u4fdd\u7559\u4e0b\u65b9\u7684\u670d\u52a1\u7aef\u8fd4\u56de\u4fe1\u606f\u4ee5\u4fbf\u6392\u67e5\u3002"
+
+    def _probe(
+        self,
+        provider_model_key: str | None,
+        probe: str,
+        image_parts: list[dict[str, Any]],
+        prompt: str,
+    ) -> dict[str, Any]:
+        backends = self.vision_backends(provider_model_key)
+        if not backends:
+            return {"ok": False, "probe": probe, "error_kind": "unknown", "reason": "No vision backend is configured."}
+        try:
+            configured_timeout = int(self.config().get("timeout_ms", 30000)) / 1000
+        except (TypeError, ValueError):
+            configured_timeout = 30
+        probe_timeout = max(3, min(configured_timeout, 30))
+        errors: list[str] = []
+        last_kind = "unknown"
+        last_hint = ""
+        for profile in backends:
+            name = str(profile.get("name") or profile.get("model") or "Unknown backend")
+            endpoint = str(profile.get("base_url") or "").rstrip("/")
+            started = time.monotonic()
+            try:
+                content = self._call_backend(
+                    profile, image_parts, prompt, max_tokens=16,
+                    timeout_seconds=probe_timeout, attempts=1, connection_test=True,
+                )
+                latency = int((time.monotonic() - started) * 1000)
+                if content and content.strip():
+                    return {
+                        "ok": True, "probe": probe, "latency_ms": latency,
+                        "backend": name, "model": profile.get("model"), "endpoint": endpoint,
+                    }
+                errors.append(f"{name}: empty response")
+                last_kind = "text_inference" if probe == "text" else "vision_capability"
+                last_hint = "\u6a21\u578b\u672a\u8fd4\u56de\u6709\u6548\u7684\u63a8\u7406\u7ed3\u679c\u3002"
+            except Exception as exc:  # noqa: BLE001 - try the configured failover chain
+                last_kind, last_hint = self._probe_error(probe, profile, exc)
+                errors.append(f"{name}: {exc}")
+        last = backends[-1]
+        return {
+            "ok": False, "probe": probe, "error_kind": last_kind, "hint": last_hint,
+            "reason": "; ".join(errors[-6:]),
+            "backend": str(last.get("name") or last.get("model") or "Unknown backend"),
+            "endpoint": str(last.get("base_url") or "").rstrip("/"),
+        }
+
+    def probe_text(self, provider_model_key: str | None = None) -> dict[str, Any]:
+        """Probe text inference independently from image-input capability."""
+        return self._probe(provider_model_key, "text", [], "\u53ea\u56de\u590d OK")
+
     def probe(self, provider_model_key: str | None = None) -> dict[str, Any]:
+        """Probe actual image-input capability with a valid RGB JPEG."""
+        image_part = {"type": "image", "media_type": "image/jpeg", "data": PROBE_JPEG_B64}
+        return self._probe(
+            provider_model_key, "vision", [image_part],
+            "\u8fd9\u662f\u4e00\u5f20\u6d4b\u8bd5\u56fe\u3002\u8bf7\u53ea\u56de\u590d OK\u3002",
+        )
+
+    def _legacy_probe(self, provider_model_key: str | None = None) -> dict[str, Any]:
         """发送真实的最小图片请求探测视觉后端可用性（不再仅用 /models 可达性冒充能力）。
 
         按 vision_backends() 顺序 failover；显式选择时不会静默落到匿名 OVH。
@@ -1028,7 +1104,7 @@ class VisionRouter:
         backends = self.vision_backends(provider_model_key)
         if not backends:
             return {"ok": False, "reason": "没有可用的视觉后端"}
-        image_part = {"type": "image", "media_type": "image/png", "data": MINIMAL_PNG_B64}
+        image_part = {"type": "image", "media_type": "image/jpeg", "data": PROBE_JPEG_B64}
         prompt = "这是一张 1x1 测试图。请只回复两个字：OK。"
         try:
             configured_timeout = int(self.config().get("timeout_ms", 30000)) / 1000
