@@ -156,6 +156,12 @@ def _network_error_code(error: BaseException) -> int | None:
 
 
 class _NullLock:
+    def acquire(self):
+        return True
+
+    def release(self):
+        return None
+
     def __enter__(self):
         return self
 
@@ -211,6 +217,15 @@ class ModelRuntime:
         self._local = threading.local()
 
     @property
+    def last_diagnostics(self) -> dict[str, Any]:
+        value = getattr(self._local, "last_diagnostics", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    @last_diagnostics.setter
+    def last_diagnostics(self, value: dict[str, Any]) -> None:
+        self._local.last_diagnostics = dict(value or {})
+
+    @property
     def last_reasoning(self) -> str:
         return str(getattr(self._local, "last_reasoning", ""))
 
@@ -262,10 +277,34 @@ class ModelRuntime:
         # Serialize requests so a vision call, sub-agent, and main turn cannot
         # make the local server compete with itself.
         lock = self._local_execution_lock if is_local else _NullLock()
-        with lock:
+        diagnostics: dict[str, Any] = {
+            "provider": str(profile.get("name") or ""),
+            "model": str(profile.get("model") or ""),
+            "request_format": request_format,
+            "local": is_local,
+            "stream": bool(options.get("stream", False)),
+            "image_count": sum(
+                1 for item in messages
+                for part in self._content_parts(item.get("content"))
+                if isinstance(part, dict) and part.get("type") == "image"
+            ),
+            "tool_count": len(options.get("tools") or []),
+            "context_window": int(profile.get("context_window") or profile.get("context_size") or 0),
+            "max_output_tokens": int(options.get("max_tokens") or profile.get("max_output_tokens") or 0),
+            "reasoning_effort": str(profile.get("reasoning_effort") or "auto"),
+        }
+        lock_started = time.perf_counter()
+        lock.acquire()
+        diagnostics["lock_wait_ms"] = round((time.perf_counter() - lock_started) * 1000, 1)
+        total_started = time.perf_counter()
+        try:
             content, reasoning, usage = self._complete_online(
-                profile, messages, options, effective_status
+                profile, messages, options, effective_status, diagnostics
             )
+        finally:
+            lock.release()
+            diagnostics["total_ms"] = round((time.perf_counter() - total_started) * 1000, 1)
+            self.last_diagnostics = diagnostics
         if not reasoning_enabled:
             reasoning = ""
         self.last_reasoning = reasoning
@@ -666,6 +705,7 @@ class ModelRuntime:
         messages: list[dict[str, Any]],
         options: dict[str, Any],
         status: StatusCallback | None = None,
+        diagnostics: dict[str, Any] | None = None,
     ) -> tuple[str, str, dict[str, int]]:
         base_url = str(profile.get("base_url") or "").rstrip("/")
         model = str(profile.get("model") or "").strip()
@@ -860,6 +900,16 @@ class ModelRuntime:
             headers=headers,
             method="POST",
         )
+        stream_options_requested = bool(stream_enabled and response_format == "openai_chat")
+        if stream_options_requested:
+            payload["stream_options"] = {"include_usage": True}
+            request = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+
         is_local = (
             str(profile.get("kind") or "").strip().lower() == "local"
             or configured_format in LOCAL_REQUEST_FORMATS
@@ -889,8 +939,23 @@ class ModelRuntime:
             attempts = min(attempts_override, 5)
         if native_tools:
             attempts = max(attempts, 2)
+        if stream_options_requested:
+            attempts = max(attempts, 2)
+        if stream_options_requested and native_tools:
+            attempts = max(attempts, 3)
         tool_fallback_used = False
+        stream_options_fallback_used = False
+        if diagnostics is not None:
+            parsed = urllib.parse.urlsplit(endpoint)
+            diagnostics.update({
+                "endpoint": f"{parsed.hostname or parsed.netloc}{parsed.path}",
+                "attempts": 0,
+                "http_ms": 0.0,
+            })
         for attempt in range(attempts):
+            request_started = time.perf_counter()
+            if diagnostics is not None:
+                diagnostics["attempts"] = attempt + 1
             try:
                 with ModelRuntime._urlopen_cancelable(request, request_timeout, cancel_event) as response:
                     if stream_enabled and response_format == "ollama":
@@ -980,6 +1045,27 @@ class ModelRuntime:
                     exc.headers.get("Content-Type", "") if exc.headers else "",
                     endpoint_host,
                 )
+                stream_option_rejection = any(
+                    marker in detail.lower()
+                    for marker in ("stream_options", "include_usage")
+                )
+                if (
+                    stream_options_requested
+                    and not stream_options_fallback_used
+                    and exc.code in {400, 422}
+                    and stream_option_rejection
+                ):
+                    payload.pop("stream_options", None)
+                    request = urllib.request.Request(
+                        endpoint,
+                        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                        headers=headers,
+                        method="POST",
+                    )
+                    stream_options_fallback_used = True
+                    if status:
+                        status({"type": "status", "message": "当前接口不支持流式 usage 参数，已切换兼容请求"})
+                    continue
                 tool_rejection = any(
                     marker in detail.lower()
                     for marker in ("tools", "tool_choice", "functioncalling", "function calling", "unknown field", "unsupported")
@@ -1026,6 +1112,14 @@ class ModelRuntime:
                 elif error_code in {10053, 10054}:
                     hint = "；连接被中止，请检查代理/TUN、防火墙或服务状态"
                 raise RuntimeError(f"无法连接{target_detail}：{reason}{hint}") from exc
+
+            finally:
+                if diagnostics is not None:
+                    diagnostics["http_ms"] = round(
+                        float(diagnostics.get("http_ms") or 0.0)
+                        + (time.perf_counter() - request_started) * 1000,
+                        1,
+                    )
 
         usage = ModelRuntime._online_usage(response_format, result)
         try:
@@ -1670,7 +1764,7 @@ class ModelRuntime:
         for chunk in chunks:
             if not isinstance(chunk, dict):
                 continue
-            candidate = chunk.get("usage") or chunk.get("usageMetadata")
+            candidate = chunk.get("usage") or chunk.get("usageMetadata") or chunk.get("stats")
             if request_format == "ollama" and any(
                 key in chunk for key in ("prompt_eval_count", "eval_count")
             ):
@@ -1691,12 +1785,12 @@ class ModelRuntime:
             return 0
 
         input_tokens = number(
-            "prompt_tokens", "input_tokens", "promptTokenCount", "inputTokenCount", "prompt_eval_count"
+            "prompt_tokens", "input_tokens", "inputTokens", "promptTokenCount", "inputTokenCount", "prompt_eval_count"
         )
         output_tokens = number(
-            "completion_tokens", "output_tokens", "candidatesTokenCount", "outputTokenCount", "eval_count"
+            "completion_tokens", "output_tokens", "outputTokens", "candidatesTokenCount", "outputTokenCount", "eval_count"
         )
-        total_tokens = number("total_tokens", "totalTokenCount") or input_tokens + output_tokens
+        total_tokens = number("total_tokens", "totalTokens", "totalTokenCount") or input_tokens + output_tokens
         cached_tokens = number(
             "cached_tokens", "cache_read_input_tokens", "cachedContentTokenCount"
         )

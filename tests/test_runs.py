@@ -270,6 +270,47 @@ class SkillPolicyTests(unittest.TestCase):
             self.assertEqual("done", content)
             self.assertEqual(["fixed"], [item["id"] for item in enabled])
 
+    def test_plain_auto_chat_does_not_spend_a_skill_router_request(self) -> None:
+        catalog = SimpleNamespace(scan=lambda: [{
+            "id": "video", "name": "video-maker", "description": "Generate videos",
+            "path": __file__, "root": str(Path(__file__).parent), "requires_mcp": False,
+        }])
+        mcp = SimpleNamespace(connections={}, acquire=lambda: None, release=lambda: None)
+        executor = SimpleNamespace(mcp_registry=mcp, mcp_tool_guide=lambda: "")
+        calls = []
+
+        def complete(_profile, _messages, _options, _event):
+            calls.append(1)
+            return "done"
+
+        agent = SkillAgent(catalog, executor, complete)
+        with patch.object(agent, "_route_skills", side_effect=AssertionError("legacy router must not run")):
+            content, _runs, _reasoning, usage = agent.run(
+                "用一句话描述图片", [], {}, {}, {"mode": "auto", "skill_ids": []},
+                [], "", ["capability_inventory", "activate_skill"],
+                lambda _event: None, lambda *_args: None, run_context={},
+            )
+
+        self.assertEqual("done", content)
+        self.assertEqual(1, len(calls))
+        self.assertEqual({}, usage)
+
+    def test_progressive_tool_visibility_keeps_plain_chat_compact(self) -> None:
+        allowed = {
+            "read_file", "write_file", "run_command", "web_search",
+            "capability_inventory", "activate_skill", "install_skill",
+            "run_in_background", "subagent",
+        }
+        schemas = [{"name": name, "description": name, "parameters": {}} for name in allowed]
+
+        plain = SkillAgent._visible_tool_names("用一句话描述图片", allowed, schemas, [])
+        coding = SkillAgent._visible_tool_names("读取并修改这个代码文件", allowed, schemas, [])
+
+        self.assertEqual({"capability_inventory", "activate_skill"}, plain)
+        self.assertIn("read_file", coding)
+        self.assertIn("write_file", coding)
+        self.assertNotIn("run_in_background", coding)
+
 
 class NativeToolAndMcpTests(unittest.TestCase):
     def test_openai_request_contains_native_tool_schema(self) -> None:

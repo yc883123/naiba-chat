@@ -96,6 +96,13 @@ class RunToolScopeTest(TestCase):
             "web_search", self._manager()._resolve_allowed_tools("craft", agent, True)
         )
 
+    def test_multimodal_model_hides_all_vision_tools_at_snapshot_boundary(self):
+        manager = self._manager()
+        manager.app.config.profile = lambda _key: {"model": "qwen-vl", "supports_images": True}
+        manager.app.vision = types.SimpleNamespace(brain_supports_images=lambda _profile: True)
+        allowed = manager._resolve_allowed_tools("craft", {"tool_scope": []}, True, "local:vl")
+        self.assertFalse(any(tool.startswith("vision_") for tool in allowed))
+
 
 class VisionToolsTest(TestCase):
     def test_vision_tools_registered(self):
@@ -187,8 +194,9 @@ class VisionRoutingTest(TestCase):
         )
         return vision_runtime.VisionRouter(app)
 
-    def test_brain_supports_image_skips_route(self):
+    def test_brain_supports_image_skips_route_when_auto_route_is_off(self):
         router = self._router()
+        router.app.config.data["vision"]["auto_route"] = False
         history = [
             {"role": "user", "content": [
                 {"type": "text", "text": "看这张"},

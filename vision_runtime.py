@@ -213,11 +213,22 @@ class VisionRouter:
         self.app = app
         # 独立 ModelRuntime，避免污染大脑（app.models）的 last_usage / last_reasoning 线程状态。
         self._runtime = ModelRuntime()
+        self._local = threading.local()
         self._cache: dict[str, tuple[float, str]] = {}
         self._cache_lock = threading.RLock()
+        self._capability_cache: dict[str, tuple[float, bool]] = {}
         # Phase 3 图片记忆：path -> 最近一次描述，跨多轮复用（标注为不可信证据）。
         self._path_cache: dict[str, str] = {}
         self._path_lock = threading.RLock()
+
+    @property
+    def last_trace(self) -> dict[str, Any]:
+        value = getattr(self._local, "last_trace", {})
+        return dict(value) if isinstance(value, dict) else {}
+
+    @last_trace.setter
+    def last_trace(self, value: dict[str, Any]) -> None:
+        self._local.last_trace = dict(value or {})
 
     # ---- 配置 ----
     def config(self) -> dict[str, Any]:
@@ -294,6 +305,38 @@ class VisionRouter:
         if isinstance(explicit, bool):
             return explicit
         return cls._brain_supports_vision(profile)
+
+    def resolve_brain_supports_images(self, profile: dict[str, Any]) -> bool:
+        """Resolve runtime image capability, including an attached llama.cpp mmproj."""
+        explicit = profile.get("supports_images_explicit")
+        if isinstance(explicit, bool):
+            return explicit
+        request_format = str(profile.get("request_format") or "").lower()
+        if request_format != "llama_cpp":
+            return self.brain_supports_images(profile)
+        base_url = str(profile.get("base_url") or "").rstrip("/")
+        if base_url.endswith("/v1"):
+            base_url = base_url[:-3]
+        cache_key = f"{base_url}|{profile.get('model') or ''}"
+        cached = self._capability_cache.get(cache_key)
+        if cached and time.time() - cached[0] < 30:
+            return cached[1]
+        detected: bool | None = None
+        try:
+            request = urllib.request.Request(
+                f"{base_url}/props",
+                headers={"Accept": "application/json", "User-Agent": "naiba-chat"},
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                props = json.loads(response.read().decode("utf-8", errors="replace"))
+            modalities = props.get("modalities") if isinstance(props, dict) else None
+            if isinstance(modalities, dict) and isinstance(modalities.get("vision"), bool):
+                detected = modalities["vision"]
+        except (OSError, ValueError, json.JSONDecodeError):
+            detected = None
+        resolved = detected if isinstance(detected, bool) else self.brain_supports_images(profile)
+        self._capability_cache[cache_key] = (time.time(), resolved)
+        return resolved
 
     @staticmethod
     def strip_images_for_text_model(
@@ -376,7 +419,16 @@ class VisionRouter:
         # is invisible to the user and can interrupt the next local turn or
         # force an expensive reload. Explicit unload remains available in the
         # model controls.
-        return self._runtime.complete(vision_profile, messages, options, None)
+        result = self._runtime.complete(vision_profile, messages, options, None)
+        diagnostics = self._runtime.last_diagnostics
+        trace = self.last_trace
+        trace["requests"] = int(trace.get("requests") or 0) + max(1, int(diagnostics.get("attempts") or 1))
+        trace["usage"] = self._runtime.last_usage
+        trace["diagnostics"] = diagnostics
+        trace["model"] = str(vision_profile.get("model") or "")
+        trace["provider"] = str(vision_profile.get("name") or "")
+        self.last_trace = trace
+        return result
 
     def describe_parts(
         self,
@@ -387,6 +439,8 @@ class VisionRouter:
         vision_budget: VisionBudget | None = None,
     ) -> str:
         """对内存中的 image 部件做看图问答，带链式 failover。"""
+        if not getattr(self._local, "last_trace", None):
+            self.last_trace = {"requests": 0, "cache_hit": False}
         if not image_parts:
             raise ValueError("vision: 没有可用的图片")
         prompt = question.strip() or "请描述这张图片的内容。"
@@ -434,6 +488,9 @@ class VisionRouter:
             cache_key = digest.hexdigest()
             cached = self._cache_get(cache_key)
             if cached is not None:
+                trace = self.last_trace
+                trace["cache_hit"] = True
+                self.last_trace = trace
                 return cached
 
         errors: list[str] = []
@@ -492,19 +549,20 @@ class VisionRouter:
     ) -> tuple[list[dict[str, Any]], str]:
         """把历史里的 image 部件改写成文本描述，让文本大脑能「看见」图片。
 
-        纯文本大脑（DeepSeek 官方等）绝不接收原始 image_url：无论自动路由是否开启，
-        图片部件都会被替换为明确文本占位。视觉/多模态大脑（gemini / claude / 显式
-        supports_images）保留原始图片，自行看图。
+        视觉/多模态聊天模型（包括 llama.cpp + mmproj）始终保留原图直接看图，
+        不受自动路由开关影响。只有纯文本聊天模型在自动路由开启时，才先由
+        独立视觉模型生成文本证据；关闭时则只接收安全文本占位。
 
         返回 (new_history, note)。note 非空表示本轮发生了自动识图或安全清洗。
         """
+        self.last_trace = {"requests": 0, "cache_hit": False}
         cfg = self.config()
-        # 大脑自身支持看图：保留原始图片，不做任何改写。
+        auto_route = cfg.get("auto_route", True)
+        # 多模态聊天模型始终直接收到原图；自动路由只服务纯文本聊天模型。
         brain_supports = self.brain_supports_images(brain_profile)
         if brain_supports:
             return history, ""
 
-        auto_route = cfg.get("auto_route", True)
         try:
             max_images = max(1, int(cfg.get("max_images", 4)))
         except (TypeError, ValueError):
@@ -557,6 +615,25 @@ class VisionRouter:
             merged_text = (text + "\n\n" + marker).strip() if text else marker
             new_history.append({**item, "content": [{"type": "text", "text": merged_text}]})
         # Phase 3 记忆：把历史中较早图片的「[用户上传文件：path]」占位替换为缓存描述。
+        # Automatic routing hands the text model one visual evidence result.
+        # Do not leave the old "call vision_describe" hint in that evidence;
+        # it causes a redundant second image pass on ordinary questions.
+        for entry in new_history:
+            content = entry.get("content") if isinstance(entry, dict) else None
+            if not isinstance(content, list):
+                continue
+            for part in content:
+                if not isinstance(part, dict) or part.get("type") != "text":
+                    continue
+                text_value = str(part.get("text") or "")
+                if "vision_describe" not in text_value:
+                    continue
+                kept = [line for line in text_value.splitlines() if "vision_describe" not in line]
+                part["text"] = "\n".join(kept).rstrip() + (
+                    "\nThe vision backend already analyzed this image for the current turn. "
+                    "Treat the evidence above as sufficient; do not call the image-description tool again "
+                    "unless the user explicitly asks for a new crop, OCR, coordinates, or pixel comparison."
+                )
         new_history = self._apply_image_memory(new_history)
         return new_history, note
 

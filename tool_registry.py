@@ -578,12 +578,13 @@ def build_capability_tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="capability_inventory",
             description=(
-                "盘点当前实际可用的工具、Skill、MCP 服务，并按需检查命令与路径。"
-                "当任务需要的能力不确定、工具不可用或执行失败时先调用它，区分未调用、未连接和确实缺失。"
+                "按任务查询当前可用的工具、Skill 与 MCP 服务。普通问答不要调用；"
+                "只有确实需要操作但当前未提供对应工具时才调用。返回结果包含可直接使用的参数格式。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
+                    "query": _string("要完成的操作或所需能力，例如“读取文件”或“运行 ComfyUI 工作流”", ""),
                     "tools": {"type": "array", "items": {"type": "string"}, "default": []},
                     "skills": {"type": "array", "items": {"type": "string"}, "default": []},
                     "mcp_servers": {"type": "array", "items": {"type": "string"}, "default": []},
@@ -593,6 +594,28 @@ def build_capability_tool_specs() -> list[ToolSpec]:
             },
             side_effect=False,
             retryable=True,
+            timeout=30,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="activate_skill",
+            description=(
+                "激活已经安装的 Skill，并在下一轮加载其可信说明。"
+                "仅在用户明确点名 Skill，或 capability_inventory 找到确实相关的 Skill 后调用。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "skills": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Skill ID 或完整名称，最多 4 个",
+                    },
+                },
+                "required": ["skills"],
+            },
+            side_effect=False,
+            retryable=False,
             timeout=30,
             permission="confirm",
         ),

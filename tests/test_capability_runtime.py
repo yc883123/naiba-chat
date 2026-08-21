@@ -112,17 +112,55 @@ class CapabilityRuntimeTests(unittest.TestCase):
 
             self.assertTrue(ok)
             self.assertEqual(["allowed"], [skill["name"] for skill in payload["skills"]])
-            self.assertFalse(install_ok)
-            self.assertIn("exclusive", install_text)
+        self.assertFalse(install_ok)
+        self.assertIn("exclusive", install_text)
+
+    def test_activate_skill_adds_existing_skill_to_the_trusted_active_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = self.make_app(root)
+            skill_dir = Path(app.catalog.directories[0]) / "demo"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: demo workflow\n---\n\nFollow me.",
+                encoding="utf-8",
+            )
+            active = []
+            context = {"skill_policy": {"mode": "auto", "skill_ids": []}}
+
+            ok, text = CapabilityRuntime(app).activate_skill(
+                {"skills": ["demo"]}, active, context
+            )
+
+            self.assertTrue(ok, text)
+            self.assertEqual(["demo"], [skill["name"] for skill in active])
+            self.assertTrue(context["skills_changed"])
+
+    def test_inventory_query_returns_compact_authorized_schemas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            app = self.make_app(Path(tmp))
+            context = {"allowed_tools": ["read_file", "write_file"]}
+
+            ok, text = CapabilityRuntime(app).inventory(
+                {"query": "读取文件"}, [], context
+            )
+            payload = json.loads(text)
+
+            self.assertTrue(ok)
+            self.assertEqual(["read_file"], [tool["name"] for tool in payload["tools"]])
+            self.assertIn("parameters", payload["tools"][0])
+            self.assertNotIn("write_file", [tool["name"] for tool in payload["tools"]])
 
 
 class CapabilityToolRegistrationTests(unittest.TestCase):
     def test_generic_orchestration_tools_replace_plan_tool(self):
         registry = build_tool_registry()
         self.assertIn("capability_inventory", registry.names())
+        self.assertIn("activate_skill", registry.names())
         self.assertIn("install_skill", registry.names())
         self.assertNotIn("exit_plan_mode", registry.names())
         self.assertFalse(registry.side_effect("capability_inventory"))
+        self.assertFalse(registry.side_effect("activate_skill"))
         self.assertTrue(registry.side_effect("install_skill"))
 
 

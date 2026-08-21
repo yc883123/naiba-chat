@@ -20,6 +20,7 @@ from unittest import mock
 import server
 import vision_runtime
 import async_tasks
+from model_runtime import ModelRuntime
 
 
 class SupportsImagesTest(TestCase):
@@ -44,6 +45,12 @@ class SupportsImagesTest(TestCase):
 
     def test_deepseek_explicit_false(self):
         self.assertFalse(server._infer_supports_images(self._provider(supports_images=False)))
+
+    def test_deepseek_v4_flash_vision_is_inferred_on_official_api(self):
+        self.assertTrue(server._infer_supports_images(self._provider(
+            model="deepseek-v4-flash-vision-exp",
+            base_url="https://api.deepseek.com",
+        )))
 
     def test_gemini_inferred_true(self):
         self.assertTrue(server._infer_supports_images(self._provider(model="gemini-2.0", base_url="https://x")))
@@ -165,6 +172,36 @@ class PrepareHistoryCleaningTest(TestCase):
             ],
         }]
 
+    def test_llama_cpp_mmproj_capability_comes_from_props(self):
+        router = self._router()
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def read(self): return b'{"modalities":{"vision":true,"audio":false}}'
+
+        profile = {
+            "request_format": "llama_cpp",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "model": "unknown-name.gguf",
+            "supports_images": False,
+            "supports_images_explicit": None,
+        }
+        with mock.patch("vision_runtime.urllib.request.urlopen", return_value=Response()):
+            self.assertTrue(router.resolve_brain_supports_images(profile))
+
+    def test_explicit_image_capability_overrides_llama_cpp_props(self):
+        router = self._router()
+        profile = {
+            "request_format": "llama_cpp",
+            "base_url": "http://127.0.0.1:8080/v1",
+            "model": "vision.gguf",
+            "supports_images_explicit": False,
+        }
+        with mock.patch("vision_runtime.urllib.request.urlopen") as request:
+            self.assertFalse(router.resolve_brain_supports_images(profile))
+        request.assert_not_called()
+
     def test_text_brain_strips_images_with_auto_route(self):
         router = self._router(auto_route=True)
         history = self._img_history()
@@ -258,7 +295,7 @@ class PrepareHistoryCleaningTest(TestCase):
         self.assertNotIn("RAWIMAGEURL", blob)
 
     def test_vision_brain_keeps_images(self):
-        router = self._router(auto_route=True)
+        router = self._router(auto_route=False)
         history = self._img_history()
         out, note = router.prepare_history(history, {"model": "gemini-2.0", "request_format": "gemini"})
         self.assertEqual(note, "")
@@ -266,11 +303,57 @@ class PrepareHistoryCleaningTest(TestCase):
         self.assertTrue(any(part.get("type") == "image" for part in out[0]["content"]))
 
     def test_explicit_supports_images_true_keeps_images(self):
-        router = self._router(auto_route=True)
+        router = self._router(auto_route=False)
         history = self._img_history()
         out, note = router.prepare_history(history, {"model": "my-model", "supports_images": True})
         self.assertEqual(note, "")
         self.assertIs(out, history)
+
+    def test_auto_route_on_keeps_native_multimodal_brain_images(self):
+        router = self._router(auto_route=True)
+        history = self._img_history()
+        with mock.patch.object(router, "describe_parts", return_value="视觉证据") as describe:
+            out, note = router.prepare_history(
+                history,
+                {"model": "deepseek-v4-flash-vision-exp", "supports_images": True},
+            )
+        describe.assert_not_called()
+        self.assertEqual("", note)
+        self.assertIs(out, history)
+
+    def test_auto_route_evidence_does_not_invite_redundant_describe_tool(self):
+        router = self._router(auto_route=True)
+        with mock.patch.object(router, "describe_parts", return_value="evidence"):
+            out, _note = router.prepare_history(
+                self._img_history(), {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"}
+            )
+        blob = json.dumps(out, ensure_ascii=False)
+        self.assertNotIn("vision_describe", blob)
+        self.assertIn("already analyzed this image", blob)
+
+    def test_auto_route_off_keeps_original_image_for_deepseek_vision(self):
+        history = self._img_history()
+        out, note = self._router(auto_route=False).prepare_history(
+            history,
+            {
+                "model": "deepseek-v4-flash-vision-exp",
+                "base_url": "https://api.deepseek.com",
+                "request_format": "openai_chat",
+                "supports_images": True,
+            },
+        )
+        self.assertEqual("", note)
+        self.assertIs(out, history)
+        self.assertEqual("RAWIMAGEURL", out[0]["content"][1]["data"])
+
+    def test_deepseek_vision_uses_official_openai_image_url_shape(self):
+        content = ModelRuntime._openai_content(self._img_history()[0]["content"])
+        self.assertEqual("text", content[0]["type"])
+        self.assertEqual("image_url", content[1]["type"])
+        self.assertEqual(
+            "data:image/png;base64,RAWIMAGEURL",
+            content[1]["image_url"]["url"],
+        )
 
     def test_explicit_false_overrides_vision_name_heuristic(self):
         router = self._router(auto_route=False)

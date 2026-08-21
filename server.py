@@ -495,7 +495,7 @@ _BUILT_IN_SCOPE_FULL = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
     "run_skill_script", "http_request", "register_mcp", "call_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
-    "capability_inventory", "install_skill",
+    "capability_inventory", "activate_skill", "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
     "vision_colors", "vision_pixel_diff", "web_search",
 )
@@ -503,7 +503,7 @@ _BUILT_IN_SCOPE_CODE = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
     "run_skill_script", "http_request", "run_in_background", "job_output", "job_status",
     "job_wait", "job_kill", "subagent",
-    "capability_inventory", "install_skill",
+    "capability_inventory", "activate_skill", "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
     "vision_colors", "vision_pixel_diff", "web_search",
 )
@@ -512,7 +512,7 @@ _BUILT_IN_SCOPE_MINIMAL = (
 )
 _BUILT_IN_SCOPE_CORDIS = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
-    "run_skill_script", "http_request", "subagent", "capability_inventory", "install_skill",
+    "run_skill_script", "http_request", "subagent", "capability_inventory", "activate_skill", "install_skill",
     "vision_describe", "vision_ground", "vision_ocr", "vision_colors", "web_search",
 )
 
@@ -1216,6 +1216,11 @@ class ConfigStore:
             result = {
                 "kind": provider.get("kind", kind),
                 **provider,
+                "supports_images_explicit": (
+                    provider.get("supports_images")
+                    if isinstance(provider.get("supports_images"), bool)
+                    else None
+                ),
                 "supports_images": _infer_supports_images(provider),
                 "context_window": _infer_context_window(provider),
                 "context_window_source": _context_window_source(provider),
@@ -1581,13 +1586,17 @@ def _infer_supports_images(provider: dict[str, Any]) -> bool:
     """推断模型是否支持图片输入（supports_images 能力字段）。
 
     - 配置显式给出布尔值时直接使用；
-    - DeepSeek 官方接口（api.deepseek.com 等）默认 false（纯文本模型）；
+    - DeepSeek 官方视觉模型 deepseek-v4-flash-vision-exp 明确为 true；
+    - DeepSeek 官方其他模型默认 false；
     - 其余按模型名启发式推断（gemini / claude / 含 vl 等关键词）。
     """
     explicit = provider.get("supports_images")
     if isinstance(explicit, bool):
         return explicit
     base_url = str(provider.get("base_url") or "").lower()
+    model = str(provider.get("model") or "").strip().lower()
+    if model == "deepseek-v4-flash-vision-exp":
+        return True
     if "api.deepseek.com" in base_url or "deepseek.com" in base_url:
         return False
     try:

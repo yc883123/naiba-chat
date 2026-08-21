@@ -1,4 +1,9 @@
 [
+  "Build80: detect llama.cpp multimodal capability from the live /props endpoint, including GGUF models loaded with mmproj, and always send original images directly to a multimodal chat model regardless of the visual auto-route switch.",
+  "Build80: split visual routing into native multimodal and text-only lanes; text-only auto-route performs one visual pass and one chat pass without redundant vision_describe calls, with per-lane request and timing diagnostics.",
+  "Build80: replace unconditional Skill pre-routing and all-tool schema injection with progressive capability disclosure, reducing an ordinary full-Agent image turn from two requests and 25 tool schemas to one request and two compact capability gateways.",
+  "Build80: simplify lightweight mode to independent Tools and Skills switches while preserving native image input, deep reasoning, and web-search controls; add DeepSeek visual image_url request support and restore accurate context usage metadata.",
+  "Build80: add right-click cut/copy/paste menus to text inputs, selectable assistant replies with Copy and append-only quoted quick-send actions, and Markdown heading/ordered-list rendering for response content.",
   "Build78: make the phone access URL match the active listener, select the default-route LAN IPv4, reject virtual adapter addresses, and add a safe enable-and-restart flow for local-only configurations.",
   "Build77: keep build-42 online + openai_chat compatibility while local llama.cpp profiles use the same OpenAI-compatible /v1/models and /v1/chat/completions endpoints.",
   "Build77: normalize every image upload to bounded RGB JPEG, split text and vision capability diagnostics, and show actionable llama.cpp image-load/mmproj guidance.",

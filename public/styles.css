@@ -25,6 +25,13 @@ button, input, textarea, select { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .55; }
 
+.text-context-menu { position: fixed; z-index: 1000; min-width: 138px; padding: 5px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); box-shadow: 0 12px 34px rgba(22,31,23,.2); }
+.text-context-menu[hidden] { display: none; }
+.text-context-menu button[hidden] { display: none; }
+.text-context-menu button { display: block; width: 100%; min-height: 32px; padding: 5px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text); text-align: left; }
+.text-context-menu button:hover:not(:disabled) { background: var(--surface-2); }
+.text-context-menu button[data-context-action="quote"] { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 4px 4px; color: var(--green); font-weight: 600; }
+
 .app-shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100dvh; max-height: 100dvh; min-height: 0; overflow: hidden; }
 .sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; min-width: 0; min-height: 0; z-index: 20; }
 .brand-row { min-height: 72px; padding: 15px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #3b403b; }
@@ -110,6 +117,24 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-row.user .message-body { max-width: min(75%, 680px); background: #e4e7e1; padding: 9px 13px; border-radius: var(--radius); }
 .message-body p { margin: 0 0 10px; }
 .message-body p:last-child { margin-bottom: 0; }
+.answer-content h1,
+.answer-content h2,
+.answer-content h3,
+.answer-content h4,
+.answer-content h5,
+.answer-content h6 { margin: 1.05em 0 .45em; line-height: 1.3; color: var(--text); }
+.answer-content h1:first-child,
+.answer-content h2:first-child,
+.answer-content h3:first-child { margin-top: 0; }
+.answer-content h1 { font-size: 1.5em; }
+.answer-content h2 { font-size: 1.3em; }
+.answer-content h3 { font-size: 1.15em; }
+.answer-content h4,
+.answer-content h5,
+.answer-content h6 { font-size: 1em; }
+.answer-content ol,
+.answer-content ul { margin: .55em 0 .8em; padding-left: 1.6em; }
+.answer-content li + li { margin-top: .25em; }
 .message-body pre { overflow: auto; margin: 10px 0; padding: 13px; color: #ebefea; background: #252925; border-radius: var(--radius); line-height: 1.5; }
 .code-block { margin: 10px 0; overflow: hidden; border-radius: var(--radius); background: #252925; }
 .code-block-bar { min-height: 34px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px 0 13px; border-bottom: 1px solid #3c423c; background: #303530; color: #b8c0b8; }

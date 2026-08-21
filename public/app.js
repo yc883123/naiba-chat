@@ -39,7 +39,7 @@ const state = {
   webSearchEnabled: false,
   deepReasoningEnabled: false,
   lightweightMode: false,
-  lightweightDisabledFeatures: ['skills_tools', 'vision', 'web_search', 'deep_reasoning'],
+  lightweightDisabledFeatures: ['tools', 'skills'],
   contextUsage: null,
   providerModelCapabilities: {},
 };
@@ -92,6 +92,132 @@ async function copyText(text) {
   if (!copied) throw new Error('浏览器未允许访问剪贴板');
 }
 
+let contextMenuTarget = null;
+let contextMenuSelection = '';
+
+function editableElement(target) {
+  if (!(target instanceof Element)) return null;
+  const editable = target.closest('textarea, input, [contenteditable="true"]');
+  if (!editable) return null;
+  if (editable instanceof HTMLInputElement
+      && ['button', 'checkbox', 'color', 'file', 'hidden', 'image', 'radio', 'range', 'reset', 'submit'].includes(editable.type)) {
+    return null;
+  }
+  return editable;
+}
+
+function editableSelection(element) {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    const start = Number.isInteger(element.selectionStart) ? element.selectionStart : 0;
+    const end = Number.isInteger(element.selectionEnd) ? element.selectionEnd : start;
+    return String(element.value || '').slice(start, end);
+  }
+  return String(window.getSelection()?.toString() || '');
+}
+
+function replaceEditableSelection(element, replacement) {
+  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+    const value = String(element.value || '');
+    const start = Number.isInteger(element.selectionStart) ? element.selectionStart : value.length;
+    const end = Number.isInteger(element.selectionEnd) ? element.selectionEnd : start;
+    element.value = value.slice(0, start) + replacement + value.slice(end);
+    const cursor = start + replacement.length;
+    try { element.setSelectionRange(cursor, cursor); } catch (_) { /* number inputs */ }
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+    return;
+  }
+  document.execCommand('insertText', false, replacement);
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function ensureContextMenu() {
+  let menu = $('#textContextMenu');
+  if (menu) return menu;
+  menu = document.createElement('div');
+  menu.id = 'textContextMenu';
+  menu.className = 'text-context-menu';
+  menu.hidden = true;
+  menu.innerHTML = `
+    <button type="button" data-context-action="cut">剪切</button>
+    <button type="button" data-context-action="copy">复制</button>
+    <button type="button" data-context-action="paste">粘贴</button>
+    <button type="button" data-context-action="select-all">全选</button>
+    <button type="button" data-context-action="quote">快速发送</button>`;
+  document.body.append(menu);
+  return menu;
+}
+
+function hideTextContextMenu() {
+  const menu = $('#textContextMenu');
+  if (menu) menu.hidden = true;
+}
+
+function showTextContextMenu(event, mode, target = null, selection = '') {
+  const menu = ensureContextMenu();
+  contextMenuTarget = target;
+  contextMenuSelection = selection;
+  menu.dataset.mode = mode;
+  menu.querySelectorAll('[data-context-action]').forEach((button) => {
+    const action = button.dataset.contextAction;
+    button.hidden = mode === 'selection'
+      ? !['copy', 'quote'].includes(action)
+      : action === 'quote';
+    if (mode === 'editable' && ['cut', 'copy'].includes(action)) {
+      button.disabled = !editableSelection(target);
+    } else {
+      button.disabled = false;
+    }
+  });
+  menu.hidden = false;
+  const width = menu.offsetWidth;
+  const height = menu.offsetHeight;
+  menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6))}px`;
+  menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6))}px`;
+}
+
+async function runTextContextAction(action) {
+  const menu = ensureContextMenu();
+  const mode = menu.dataset.mode;
+  try {
+    if (mode === 'selection') {
+      if (action === 'copy') {
+        await copyText(contextMenuSelection);
+        toast('已复制选中内容');
+      } else if (action === 'quote') {
+        const input = $('#messageInput');
+        const quoted = `“${contextMenuSelection.trim()}”`;
+        const prefix = input.value.length ? '\n\n' : '';
+        input.value += prefix + quoted;
+        input.focus();
+        input.setSelectionRange(input.value.length, input.value.length);
+        resizeTextarea();
+        toast('已引用到输入框');
+      }
+      return;
+    }
+    const target = contextMenuTarget;
+    if (!target) return;
+    if (action === 'copy' || action === 'cut') {
+      const selected = editableSelection(target);
+      if (!selected) return;
+      await copyText(selected);
+      if (action === 'cut' && !target.readOnly && !target.disabled) replaceEditableSelection(target, '');
+    } else if (action === 'paste') {
+      if (target.readOnly || target.disabled) return;
+      if (!navigator.clipboard?.readText) throw new Error('当前浏览器不允许读取剪贴板');
+      replaceEditableSelection(target, await navigator.clipboard.readText());
+    } else if (action === 'select-all') {
+      target.focus();
+      if (typeof target.select === 'function') target.select();
+      else document.execCommand('selectAll');
+    }
+  } catch (error) {
+    toast(`剪贴板操作失败：${error.message}`);
+  } finally {
+    hideTextContextMenu();
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -118,17 +244,72 @@ function markdown(text) {
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-  const blocks = safe.split(/\n{2,}/).map((block) => {
-    const trimmed = block.trim();
-    if (!trimmed) return '';
-    const codeMatch = trimmed.match(/^@@CODE_(\d+)@@$/);
-    if (codeMatch) return codeBlocks[Number(codeMatch[1])];
-    if (/^[-*] /.test(trimmed)) {
-      const items = trimmed.split('\n').map((line) => `<li>${line.replace(/^[-*] /, '')}</li>`).join('');
-      return `<ul>${items}</ul>`;
+  const blocks = [];
+  let paragraph = [];
+  let listType = '';
+  let listItems = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    blocks.push(`<p>${paragraph.join('<br>')}</p>`);
+    paragraph = [];
+  };
+  const flushList = () => {
+    if (!listItems.length) return;
+    blocks.push(`<${listType}>${listItems.map((item) => `<li>${item}</li>`).join('')}</${listType}>`);
+    listType = '';
+    listItems = [];
+  };
+  const startListItem = (type, item) => {
+    flushParagraph();
+    if (listType && listType !== type) flushList();
+    listType = type;
+    listItems.push(item);
+  };
+
+  for (const rawLine of safe.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      flushList();
+      continue;
     }
-    return `<p>${trimmed.replaceAll('\n', '<br>')}</p>`;
-  });
+    const codeMatch = line.match(/^@@CODE_(\d+)@@$/);
+    if (codeMatch) {
+      flushParagraph();
+      flushList();
+      blocks.push(codeBlocks[Number(codeMatch[1])]);
+      continue;
+    }
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length;
+      blocks.push(`<h${level}>${heading[2]}</h${level}>`);
+      continue;
+    }
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) {
+      flushParagraph();
+      flushList();
+      blocks.push('<hr>');
+      continue;
+    }
+    const unordered = line.match(/^[-*+]\s+(.+)$/);
+    if (unordered) {
+      startListItem('ul', unordered[1]);
+      continue;
+    }
+    const ordered = line.match(/^\d{1,3}[.)、]\s+(.+)$/);
+    if (ordered) {
+      startListItem('ol', ordered[1]);
+      continue;
+    }
+    flushList();
+    paragraph.push(line);
+  }
+  flushParagraph();
+  flushList();
   return blocks.join('');
 }
 
@@ -181,10 +362,25 @@ function usageMarkup(usage) {
   const output = Number(usage.output_tokens || 0);
   const cached = Number(usage.cached_tokens || 0);
   const total = Number(usage.total_tokens || input + output);
-  if (!input && !output) return '';
+  const performance = usage.performance || {};
+  const vision = performance.vision || usage.lanes?.vision || {};
+  const chat = performance.chat || usage.lanes?.chat || {};
+  const visualMs = Number(vision.total_ms || vision.diagnostics?.total_ms || 0);
+  const chatMs = Number(chat.total_ms || 0);
+  const visionCacheHit = Boolean(vision.cache_hit);
+  const requestCount = Number(vision.requests || 0) + Number(usage.requests || 0);
+  if (!input && !output && !visualMs && !chatMs) return '';
   const rate = input ? Number(usage.cache_hit_rate ?? (cached / input * 100)).toFixed(1) : '0.0';
   const requests = Number(usage.requests || 1);
-  return `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存 ${cached.toLocaleString()}/${input.toLocaleString()}（${rate}%）</div>`;
+  const tokenLine = (input || output)
+    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存 ${cached.toLocaleString()}/${input.toLocaleString()}（${rate}%）</div>`
+    : '';
+  const laneLine = (visualMs || chatMs || visionCacheHit)
+    ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : (visualMs ? `视觉 ${(visualMs / 1000).toFixed(1)}s` : '')}${(visionCacheHit || visualMs) && chatMs ? ' → ' : ''}${chatMs ? `聊天 ${(chatMs / 1000).toFixed(1)}s` : ''} · 共 ${requestCount || requests} 次请求</div>`
+    : '';
+  const warnings = Array.isArray(performance.warnings) ? performance.warnings : [];
+  const warningLine = warnings.map((item) => `<div class="usage-warning">${escapeHtml(item)}</div>`).join('');
+  return `${tokenLine}${laneLine}${warningLine}`;
 }
 
 function updateContextUsage(messages = null, message = null) {
@@ -314,7 +510,7 @@ function messageElement(message, temporary = false) {
         <div class="answer-content" data-raw="">${temporary ? '' : markdown(message.content)}</div>
         ${temporary ? '' : sourcesMarkup(metadata.sources)}
         ${mediaMarkup(metadata.attachments)}
-        ${temporary ? '' : usageMarkup(metadata.usage)}
+        ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance })}
         ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
       </div>`;
   }
@@ -1240,7 +1436,7 @@ async function createConversation() {
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
+    ? conversation.lightweight_disabled_features : ['tools', 'skills'];
   updateLightweightModeControl();
   renderMessages([]);
   renderPermissionModeSwitch();
@@ -1271,7 +1467,7 @@ async function openConversation(id) {
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
+    ? conversation.lightweight_disabled_features : ['tools', 'skills'];
   updateLightweightModeControl();
   await resumeConversationRun(id);
   closeSidebar();
@@ -1305,7 +1501,7 @@ async function syncCurrentConversation() {
     updateDeepReasoningButton();
     state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
     state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-      ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
+      ? conversation.lightweight_disabled_features : ['tools', 'skills'];
     updateLightweightModeControl();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
@@ -1371,7 +1567,7 @@ function openConversationSettings(id) {
   $('#conversationSystemPrompt').value = conversation.system_prompt || '';
   $('#conversationStreamEnabled').checked = Number(conversation.stream_enabled ?? 1) !== 0;
   const disabled = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
+    ? conversation.lightweight_disabled_features : ['tools', 'skills'];
   $$('input[name="lightweightFeature"]').forEach((input) => {
     input.checked = disabled.includes(input.value);
   });
@@ -1399,7 +1595,7 @@ async function saveConversationSettings(event) {
     $('#conversationSettingsDialog').close();
     renderConversations();
     if (id === state.conversationId) {
-      state.lightweightDisabledFeatures = updated.lightweight_disabled_features || ['skills_tools', 'vision', 'web_search', 'deep_reasoning'];
+      state.lightweightDisabledFeatures = updated.lightweight_disabled_features || ['tools', 'skills'];
       updateLightweightModeControl();
     }
     toast('对话设置已保存');
@@ -2310,10 +2506,6 @@ function startMcpPoll() {
 }
 
 async function uploadFiles(files) {
-  if (state.lightweightMode && state.lightweightDisabledFeatures.includes('vision')) {
-    toast('轻量对话不支持附件');
-    return;
-  }
   for (const file of files) {
     const chip = { name: file.name, uploading: true };
     state.pendingFiles.push(chip);
@@ -2508,7 +2700,7 @@ async function sendChatMessage(textOverride = '') {
     toast('请等待文件上传完成');
     return;
   }
-  if (!(state.lightweightMode && state.lightweightDisabledFeatures.includes('skills_tools')) && state.skillMode === 'exclusive' && !state.selectedSkills.length) {
+  if (!(state.lightweightMode && state.lightweightDisabledFeatures.includes('skills')) && state.skillMode === 'exclusive' && !state.selectedSkills.length) {
     toast('仅允许所选 Skill 时，请至少选择一个 Skill');
     return;
   }
@@ -2660,12 +2852,11 @@ async function sendMessage(textOverride = '') {
 function updateDeepReasoningButton() {
   const btn = $('#deepReasoningButton');
   if (!btn) return;
-  const lightweightDisabled = state.lightweightMode && state.lightweightDisabledFeatures.includes('deep_reasoning');
-  const disabled = Boolean(state.chatRunId || state.abortController || lightweightDisabled);
+  const disabled = Boolean(state.chatRunId || state.abortController);
   btn.disabled = disabled;
-  btn.classList.toggle('active', state.deepReasoningEnabled && !lightweightDisabled);
-  btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled && !lightweightDisabled));
-  btn.title = lightweightDisabled ? '轻量对话已关闭深度推理' : (state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭');
+  btn.classList.toggle('active', state.deepReasoningEnabled);
+  btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled));
+  btn.title = state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭';
 }
 
 async function toggleDeepReasoning() {
@@ -2692,12 +2883,11 @@ async function toggleDeepReasoning() {
 function updateWebSearchButton() {
   const btn = $('#webSearchButton');
   if (!btn) return;
-  const lightweightDisabled = state.lightweightMode && state.lightweightDisabledFeatures.includes('web_search');
-  const disabled = Boolean(state.chatRunId || state.abortController || lightweightDisabled);
+  const disabled = Boolean(state.chatRunId || state.abortController);
   btn.disabled = disabled;
-  btn.classList.toggle('active', state.webSearchEnabled && !lightweightDisabled);
-  btn.setAttribute('aria-pressed', String(state.webSearchEnabled && !lightweightDisabled));
-  btn.title = lightweightDisabled ? '轻量对话已关闭联网搜索' : (state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭');
+  btn.classList.toggle('active', state.webSearchEnabled);
+  btn.setAttribute('aria-pressed', String(state.webSearchEnabled));
+  btn.title = state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭';
 }
 
 async function toggleWebSearch() {
@@ -2728,7 +2918,7 @@ function updateLightweightModeControl() {
     toggle.checked = state.lightweightMode;
     toggle.disabled = Boolean(state.chatRunId || state.abortController);
   }
-  if (attach) attach.disabled = state.lightweightMode && state.lightweightDisabledFeatures.includes('vision');
+  if (attach) attach.disabled = false;
   updateDeepReasoningButton();
   updateWebSearchButton();
 }
@@ -2738,10 +2928,6 @@ async function toggleLightweightMode() {
   if (state.chatRunId || state.abortController) return;
   const previous = state.lightweightMode;
   state.lightweightMode = !previous;
-  if (state.lightweightMode && state.lightweightDisabledFeatures.includes('vision')) {
-    state.pendingFiles = [];
-    renderPendingFiles();
-  }
   updateLightweightModeControl();
   try {
     const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
@@ -3179,6 +3365,28 @@ function closeSidebar() {
 }
 
 function bindEvents() {
+  document.addEventListener('contextmenu', (event) => {
+    const editable = editableElement(event.target);
+    if (editable) {
+      event.preventDefault();
+      showTextContextMenu(event, 'editable', editable);
+      return;
+    }
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
+    const node = selection.getRangeAt(0).commonAncestorContainer;
+    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    if (!element?.closest('.answer-content')) return;
+    event.preventDefault();
+    showTextContextMenu(event, 'selection', null, selection.toString());
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest?.('#textContextMenu')) hideTextContextMenu();
+  });
+  ensureContextMenu().addEventListener('click', (event) => {
+    const button = event.target.closest('[data-context-action]');
+    if (button) runTextContextAction(button.dataset.contextAction);
+  });
   $('#authForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
