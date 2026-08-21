@@ -1,4 +1,5 @@
 [
+  "Build78: make the phone access URL match the active listener, select the default-route LAN IPv4, reject virtual adapter addresses, and add a safe enable-and-restart flow for local-only configurations.",
   "Build77: keep build-42 online + openai_chat compatibility while local llama.cpp profiles use the same OpenAI-compatible /v1/models and /v1/chat/completions endpoints.",
   "Build77: normalize every image upload to bounded RGB JPEG, split text and vision capability diagnostics, and show actionable llama.cpp image-load/mmproj guidance.",
   "Build77: clearing a conversation now removes only messages and tool history while preserving the tab, title, prompts, model, and conversation settings.",

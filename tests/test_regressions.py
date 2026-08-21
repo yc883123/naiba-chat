@@ -14,7 +14,7 @@ import threading
 import time
 import types
 import unittest
-from unittest.mock import PropertyMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import model_runtime
 from model_runtime import ModelRuntime
@@ -22,10 +22,14 @@ from mcp_runtime import MCPRegistry, MCPServerConnection, MCPStartupError
 from server import (
     MODEL_IMAGE_TARGET_BYTES,
     ConfigStore,
+    _is_usable_lan_ipv4,
     _detect_choice_groups,
     _detect_choices,
     build_model_history,
     encode_image_for_model,
+    get_lan_ip,
+    network_access_status,
+    write_status,
 )
 from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor, delete_skill
 from storage import ChatStorage
@@ -37,6 +41,62 @@ class DummyMCPRegistry:
 
     def call(self, server: str, tool: str, arguments: dict[str, object]) -> tuple[bool, str]:
         return True, "ok"
+
+
+class NetworkAccessTests(unittest.TestCase):
+    def test_default_route_address_wins_over_virtual_adapter(self) -> None:
+        fake_socket = MagicMock()
+        fake_socket.getsockname.return_value = ("192.168.5.158", 54321)
+        with (
+            patch("server.socket.socket", return_value=fake_socket),
+            patch(
+                "server.socket.gethostbyname_ex",
+                return_value=("desktop", [], ["198.18.0.1", "169.254.10.2", "10.0.0.8"]),
+            ),
+        ):
+            self.assertEqual("192.168.5.158", get_lan_ip())
+
+    def test_unusable_adapter_addresses_are_rejected(self) -> None:
+        for address in ("127.0.0.1", "169.254.10.2", "198.18.0.1", "0.0.0.0"):
+            with self.subTest(address=address):
+                self.assertFalse(_is_usable_lan_ipv4(address))
+        self.assertTrue(_is_usable_lan_ipv4("192.168.5.158"))
+
+    def test_loopback_listener_does_not_publish_lan_url(self) -> None:
+        status = network_access_status("127.0.0.1", 8765)
+        self.assertFalse(status["lan_enabled"])
+        self.assertEqual("", status["lan_url"])
+        self.assertEqual("http://127.0.0.1:8765", status["local_url"])
+        self.assertIn("仅允许本机访问", status["lan_reason"])
+
+    def test_wildcard_listener_publishes_detected_lan_url(self) -> None:
+        with patch("server.get_lan_ip", return_value="192.168.5.158"):
+            status = network_access_status("0.0.0.0", 8765)
+        self.assertTrue(status["lan_enabled"])
+        self.assertEqual("http://192.168.5.158:8765", status["lan_url"])
+        self.assertEqual("", status["lan_reason"])
+
+    def test_wildcard_listener_without_lan_address_is_not_advertised(self) -> None:
+        with patch("server.get_lan_ip", return_value=None):
+            status = network_access_status("0.0.0.0", 8765)
+        self.assertFalse(status["lan_enabled"])
+        self.assertEqual("", status["lan_url"])
+        self.assertIn("未检测到", status["lan_reason"])
+
+    def test_status_file_uses_the_same_network_access_result(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            status_path = root_path / "server.json"
+            with (
+                patch("server.DATA_DIR", root_path),
+                patch("server.STATUS_PATH", status_path),
+                patch("server.get_lan_ip", return_value="192.168.5.158"),
+            ):
+                write_status("0.0.0.0", 8765, "1234")
+            payload = json.loads(status_path.read_text(encoding="utf-8"))
+        self.assertTrue(payload["lan_enabled"])
+        self.assertEqual("http://192.168.5.158:8765", payload["lan_url"])
+        self.assertEqual("", payload["lan_reason"])
 
 
 class ChoiceDetectionTests(unittest.TestCase):
@@ -1044,6 +1104,15 @@ class PermissionTests(unittest.TestCase):
             self.assertEqual("auto", store.update_settings({"permission_mode": "auto"})["permission_mode"])
             with self.assertRaisesRegex(ValueError, "权限模式"):
                 store.update_settings({"permission_mode": "invalid"})
+
+    def test_listener_host_can_only_switch_between_local_and_lan_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            store = ConfigStore(Path(root) / "config.json")
+
+            self.assertEqual("127.0.0.1", store.update_settings({"host": "127.0.0.1"})["host"])
+            self.assertEqual("0.0.0.0", store.update_settings({"host": "0.0.0.0"})["host"])
+            with self.assertRaisesRegex(ValueError, "host"):
+                store.update_settings({"host": "192.168.5.158"})
 
     def test_context_size_defaults_and_rejects_invalid_values(self) -> None:
         with tempfile.TemporaryDirectory() as root:

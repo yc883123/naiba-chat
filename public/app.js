@@ -537,6 +537,37 @@ async function authenticate(token) {
   localStorage.setItem('naibaChatToken', token);
 }
 
+function renderNetworkAccess() {
+  const access = state.bootstrap || {};
+  const configuredHost = String(access.settings?.host || '0.0.0.0');
+  const pendingRestart = Boolean(access.lan_restart_required);
+  const address = access.lan_enabled && access.lan_url
+    ? access.lan_url
+    : (pendingRestart || configuredHost === '127.0.0.1' ? '当前仅本机访问' : '手机访问不可用');
+  const reason = pendingRestart
+    ? '手机访问已启用，请完全退出并重新启动 naiba-chat。'
+    : (access.lan_reason || '手机与电脑需连接同一局域网。');
+  $('#lanAddress').textContent = address;
+  $('#connectionAddress').textContent = access.lan_url || access.local_url || '未检测到可用地址';
+  $('#connectionReason').textContent = reason;
+  $('#enableLanActions').hidden = access.lan_enabled || pendingRestart || configuredHost === '0.0.0.0';
+  const copyButton = $('#copyAddress');
+  copyButton.disabled = !access.lan_enabled || !access.lan_url;
+  copyButton.title = copyButton.disabled ? reason : '复制手机访问地址';
+}
+
+async function enableLanAccess() {
+  try {
+    const result = await api('/api/settings', { method: 'POST', body: { host: '0.0.0.0' } });
+    Object.assign(state.bootstrap.settings, result.settings || {});
+    state.bootstrap.lan_restart_required = Boolean(result.restart_required);
+    renderNetworkAccess();
+    toast('手机访问已启用，请完全退出并重新启动 naiba-chat');
+  } catch (error) {
+    toast(`启用手机访问失败：${error.message}`);
+  }
+}
+
 async function initialize() {
   try {
     state.bootstrap = await api('/api/bootstrap');
@@ -557,8 +588,7 @@ async function initialize() {
   }
   $('#serverDot').className = 'connected';
   $('#serverLabel').textContent = '服务已连接';
-  $('#lanAddress').textContent = state.bootstrap.lan_url;
-  $('#connectionAddress').textContent = state.bootstrap.lan_url;
+  renderNetworkAccess();
   $('#skillPolicyMode').value = state.skillMode;
   populateModels();
   renderAgents();
@@ -3332,7 +3362,7 @@ function bindEvents() {
   });
   $$('.starter-grid button').forEach((button) => button.addEventListener('click', () => sendMessage(button.dataset.prompt)));
   $('#copyAddress').addEventListener('click', async () => {
-    if (!state.bootstrap) return;
+    if (!state.bootstrap?.lan_enabled || !state.bootstrap?.lan_url) return;
     try {
       await copyText(state.bootstrap.lan_url);
       toast('手机访问地址已复制');
@@ -3340,6 +3370,7 @@ function bindEvents() {
       toast(`复制失败：${error.message}`);
     }
   });
+  $('#enableLanAccess').addEventListener('click', enableLanAccess);
   $('#openSidebar').addEventListener('click', openSidebar);
   $('#closeSidebar').addEventListener('click', closeSidebar);
   $('#sidebarBackdrop').addEventListener('click', closeSidebar);

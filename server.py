@@ -797,6 +797,7 @@ class ConfigStore:
 
     def update_settings(self, values: dict[str, Any]) -> dict[str, Any]:
         allowed = {
+            "host",
             "provider_id",
             "temperature",
             "max_tokens",
@@ -814,7 +815,12 @@ class ConfigStore:
         with self.lock:
             for key in allowed:
                 if key in values:
-                    if key == "access_token":
+                    if key == "host":
+                        host = str(values[key] or "").strip()
+                        if host not in {"127.0.0.1", "0.0.0.0"}:
+                            raise ValueError("host 只能是 127.0.0.1 或 0.0.0.0")
+                        self.data[key] = host
+                    elif key == "access_token":
                         token = str(values[key]).strip()
                         if not token:
                             raise ValueError("访问口令不能为空")
@@ -1337,12 +1343,32 @@ class ConfigStore:
             return True
 
 
-def get_lan_ip() -> str:
-    candidates: list[str] = []
+def _is_usable_lan_ipv4(address: str) -> bool:
+    """Return whether an address can be presented as a LAN entry point."""
     try:
-        candidates.extend(socket.gethostbyname_ex(socket.gethostname())[2])
-    except OSError:
-        pass
+        parsed = ipaddress.IPv4Address(address)
+    except ipaddress.AddressValueError:
+        return False
+    # Do not offer loopback, APIPA, benchmarking, multicast, or unspecified
+    # adapter addresses as phone-access URLs.
+    return (
+        parsed.is_private
+        and not parsed.is_loopback
+        and not parsed.is_link_local
+        and parsed not in ipaddress.IPv4Network("198.18.0.0/15")
+        and not parsed.is_multicast
+        and not parsed.is_unspecified
+    )
+
+
+def get_lan_ip() -> str | None:
+    """Find the LAN address selected by the current default IPv4 route.
+
+    Connecting a UDP socket does not send traffic, but lets the OS choose the
+    outbound interface. This makes the default-route address win over VPNs and
+    virtual adapters. Hostname addresses are only a fallback for offline LANs.
+    """
+    candidates: list[str] = []
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect(("8.8.8.8", 80))
@@ -1351,22 +1377,48 @@ def get_lan_ip() -> str:
         pass
     finally:
         sock.close()
-    unique = list(dict.fromkeys(candidates))
-    for prefix in ("192.168.", "10."):
-        preferred = next((address for address in unique if address.startswith(prefix)), None)
-        if preferred:
-            return preferred
-    for address in unique:
-        try:
-            parsed = ipaddress.ip_address(address)
-            first, second = map(int, address.split(".")[:2])
-            if first == 172 and 16 <= second <= 31:
-                return address
-            if parsed.is_private and not parsed.is_loopback and not address.startswith("198.18."):
-                return address
-        except ValueError:
-            continue
-    return "127.0.0.1"
+    try:
+        candidates.extend(socket.gethostbyname_ex(socket.gethostname())[2])
+    except OSError:
+        pass
+    return next((address for address in dict.fromkeys(candidates) if _is_usable_lan_ipv4(address)), None)
+
+
+def network_access_status(host: str, port: int) -> dict[str, Any]:
+    """Describe the active listener and the only LAN URL safe to present."""
+    normalized_host = str(host or "").strip()
+    local_url = f"http://127.0.0.1:{port}"
+    try:
+        bound_ip = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        bound_ip = None
+
+    lan_enabled = normalized_host in {"0.0.0.0", "::"}
+    if isinstance(bound_ip, ipaddress.IPv4Address) and normalized_host != "0.0.0.0":
+        lan_enabled = _is_usable_lan_ipv4(str(bound_ip))
+
+    if not lan_enabled:
+        return {
+            "lan_enabled": False,
+            "lan_url": "",
+            "lan_reason": "当前服务仅允许本机访问。启用手机访问后重启即可使用。",
+            "local_url": local_url,
+        }
+
+    lan_ip = str(bound_ip) if isinstance(bound_ip, ipaddress.IPv4Address) and _is_usable_lan_ipv4(str(bound_ip)) else get_lan_ip()
+    if not lan_ip:
+        return {
+            "lan_enabled": False,
+            "lan_url": "",
+            "lan_reason": "未检测到可用于局域网访问的 IPv4 地址。请连接网络后重试。",
+            "local_url": local_url,
+        }
+    return {
+        "lan_enabled": True,
+        "lan_url": f"http://{lan_ip}:{port}",
+        "lan_reason": "",
+        "local_url": local_url,
+    }
 
 
 IMAGE_MEDIA_TYPES = {
@@ -1578,6 +1630,7 @@ class NaibaChatApp:
         initial_data_dir = DATA_DIR.resolve()
         self.data_migration = migrate_legacy_data()
         self.config = ConfigStore(CONFIG_PATH)
+        self.listener_host = str(self.config.data.get("host", "0.0.0.0"))
         # ConfigStore may reveal a custom data directory after the legacy
         # bootstrap migration has already run. Rebind all runtime globals and
         # carry over the bootstrap directory so the same process reads the
@@ -1800,6 +1853,10 @@ class NaibaChatApp:
         return report
 
     def bootstrap(self) -> dict[str, Any]:
+        access = network_access_status(
+            getattr(self, "listener_host", str(self.config.data.get("host", "0.0.0.0"))),
+            int(self.config.data["port"]),
+        )
         return {
             "settings": self.config.public(),
             "providers": self.config.public_providers(),
@@ -1809,7 +1866,8 @@ class NaibaChatApp:
             "mcp_servers": self.mcp.states(),
             "agents": self.config.public_agents(),
             "default_agent_id": self.config.default_agent_id(),
-            "lan_url": f"http://{get_lan_ip()}:{self.config.data['port']}",
+            **access,
+            "lan_restart_required": str(self.config.data.get("host", "0.0.0.0")) != self.listener_host,
             "update": self.updater.status(),
             "data_location": {
                 "is_frozen": bool(getattr(sys, "frozen", False)),
@@ -2230,7 +2288,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "default_model_key": APP.config.default_model_key(),
                         "resolved_workspace_dir": str(APP.config.resolve_workspace_dir()),
                         "resolved_data_dir": str(APP.config.resolve_data_dir()),
-                        "restart_required": "data_dir" in body and APP.config.resolve_data_dir() != DATA_DIR.resolve(),
+                        "restart_required": (
+                            ("data_dir" in body and APP.config.resolve_data_dir() != DATA_DIR.resolve())
+                            or ("host" in body and str(APP.config.data.get("host")) != APP.listener_host)
+                        ),
+                        "network_access": network_access_status(
+                            APP.listener_host,
+                            int(APP.config.data.get("port", 8765)),
+                        ),
                     }
                 )
             except (OSError, ValueError) as exc:
@@ -3000,14 +3065,14 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def write_status(host: str, port: int, token: str) -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    access = network_access_status(host, port)
     STATUS_PATH.write_text(
         json.dumps(
             {
                 "pid": os.getpid(),
                 "host": host,
                 "port": port,
-                "lan_url": f"http://{get_lan_ip()}:{port}",
-                "local_url": f"http://127.0.0.1:{port}",
+                **access,
                 "access_token": token,
                 "started_at": int(time.time()),
             },
@@ -3065,12 +3130,14 @@ def main() -> None:
     APP.config.data["host"] = host
     APP.config.data["port"] = port
     APP.config.save()
+    APP.listener_host = host
     server = ThreadingHTTPServer((host, port), RequestHandler)
     server.daemon_threads = True
     write_status(host, port, str(APP.config.data["access_token"]))
     print("\nnaiba-chat 已启动")
-    print(f"手机访问： http://{get_lan_ip()}:{port}")
-    print(f"本机访问： http://127.0.0.1:{port}")
+    access = network_access_status(host, port)
+    print(f"手机访问： {access['lan_url'] or access['lan_reason']}")
+    print(f"本机访问： {access['local_url']}")
     print(f"访问口令： {APP.config.data['access_token']}")
     print("电脑端不需要打开网页。按 Ctrl+C 停止服务。\n")
     try:

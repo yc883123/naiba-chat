@@ -367,8 +367,13 @@
         <section data-settings-panel="connections" hidden>
           <h3>MCP 服务</h3>
           <div id="mcpList" class="connection-list"></div>
-          <h3>服务地址</h3>
+          <h3>手机访问</h3>
           <div class="connection-address" id="connectionAddress"></div>
+          <p class="hint" id="connectionReason"></p>
+          <div class="form-actions" id="enableLanActions" hidden>
+            <button class="primary-button" id="enableLanAccess" type="button">启用手机访问</button>
+          </div>
+          <p class="hint">手机和电脑需要连接同一局域网；Windows 防火墙需要允许 naiba-chat 或当前端口通过。手机登录时需要使用下方访问口令。</p>
           <h3 class="subheading">访问口令</h3>
           <div class="field-grid">
             <label class="field-wide">访问口令（至少 4 位，手机和浏览器都用它登录）

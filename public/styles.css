@@ -51,6 +51,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .address-button span:last-child { min-width: 0; }
 .address-button small { display: block; color: #9fa79f; font-size: 11px; }
 .address-button b { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 500; }
+.address-button:disabled { cursor: default; opacity: .72; }
 .status-mark { width: 8px; height: 8px; border-radius: 50%; background: #3ecf8e; flex: none; }
 
 .icon-button { width: 36px; height: 36px; border: 0; border-radius: var(--radius); background: transparent; color: inherit; display: inline-grid; place-items: center; font-size: 19px; flex: none; }

@@ -134,6 +134,7 @@ class Launcher:
         srv.APP.update_restart_callback = self._quit
         host = str(srv.APP.config.data.get("host", "0.0.0.0"))
         port = int(srv.APP.config.data.get("port", 8765))
+        srv.APP.listener_host = host
         token = str(srv.APP.config.data["access_token"])
         local_url = f"http://127.0.0.1:{port}"
         page_url = f"{local_url}/?token={token}"
