@@ -442,13 +442,37 @@ function renderContextUsage() {
 // providerContextSize remains only as a hidden legacy selector marker;
 // providerContextWindow is the active provider-scoped control.
 
+function positionContextUsagePopover() {
+  const popover = $('#contextUsagePopover');
+  const button = $('#contextUsageButton');
+  if (!popover || !button || popover.hidden) return;
+  const edge = 12;
+  const gap = 9;
+  const buttonRect = button.getBoundingClientRect();
+  const popoverRect = popover.getBoundingClientRect();
+  const rightAligned = buttonRect.right - popoverRect.width;
+  const maxLeft = Math.max(edge, window.innerWidth - popoverRect.width - edge);
+  const left = Math.min(Math.max(edge, rightAligned), maxLeft);
+  let top = buttonRect.top - popoverRect.height - gap;
+  if (top < edge) {
+    top = Math.min(
+      buttonRect.bottom + gap,
+      Math.max(edge, window.innerHeight - popoverRect.height - edge),
+    );
+  }
+  popover.style.left = `${Math.round(left)}px`;
+  popover.style.top = `${Math.round(top)}px`;
+}
+
 function toggleContextUsagePopover(event) {
   event.stopPropagation();
   const popover = $('#contextUsagePopover');
   const button = $('#contextUsageButton');
   const open = popover.hidden;
+  if (open && popover.parentElement !== document.body) document.body.appendChild(popover);
   popover.hidden = !open;
   button.setAttribute('aria-expanded', String(open));
+  if (open) positionContextUsagePopover();
 }
 
 function closeContextUsagePopover() {
@@ -3537,6 +3561,8 @@ function bindEvents() {
   $('#deepReasoningButton').addEventListener('click', toggleDeepReasoning);
   $('#contextUsageButton').addEventListener('click', toggleContextUsagePopover);
   $('#contextUsagePopover').addEventListener('click', (event) => event.stopPropagation());
+  window.addEventListener('resize', positionContextUsagePopover);
+  window.addEventListener('scroll', positionContextUsagePopover, true);
   document.addEventListener('click', closeContextUsagePopover);
   $('#messageInput').addEventListener('paste', handlePasteImage);
   $('#saveVision').addEventListener('click', saveVisionSettings);

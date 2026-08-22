@@ -1349,6 +1349,16 @@ class TokenUsageUITests(unittest.TestCase):
         self.assertIn("usage[\"context_limit\"]", run_source)
         self.assertIn("updateContextUsage(messages)", source)
 
+    def test_usage_popover_escapes_the_scrollable_composer(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        styles = Path("public/styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("document.body.appendChild(popover)", source)
+        self.assertIn("button.getBoundingClientRect()", source)
+        self.assertIn("function positionContextUsagePopover()", source)
+        self.assertIn(".context-usage-popover { position: fixed;", styles)
+        self.assertIn("max-height: min(50vh, 260px); overflow-y: auto;", styles)
+
 
 class ModelSelectionTests(unittest.TestCase):
     def test_frontend_restores_the_saved_provider(self) -> None:
