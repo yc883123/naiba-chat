@@ -2004,34 +2004,9 @@ class MCPRegistrationTests(unittest.TestCase):
         self.assertEqual([("test", connection.tools)], registered)
         self.assertEqual(tools.register_mcp_tools, connection.on_tools_discovered)
 
-    def test_comfyui_server_files_are_copied_out_of_the_bundle(self) -> None:
-        with tempfile.TemporaryDirectory() as root:
-            root_path = Path(root)
-            bundle = root_path / "bundle"
-            workflows = bundle / "workflows"
-            workflows.mkdir(parents=True)
-            script = bundle / "comfyui_mcp_server.py"
-            script.write_text("# server", encoding="utf-8")
-            (workflows / "demo.json").write_text("{}", encoding="utf-8")
-            original_data_dir = server.DATA_DIR
-            server.DATA_DIR = root_path / "data"
-            try:
-                persisted = server.NaibaChatApp._persist_comfyui_mcp(
-                    {
-                        "id": "comfyui",
-                        "command": "python.exe",
-                        "args": [str(script)],
-                        "env": {"COMFYUI_WORKFLOWS_DIR": str(workflows)},
-                    }
-                )
-            finally:
-                server.DATA_DIR = original_data_dir
-
-            persisted_script = Path(persisted["args"][0])
-            persisted_workflows = Path(persisted["env"]["COMFYUI_WORKFLOWS_DIR"])
-            self.assertTrue(persisted_script.is_file())
-            self.assertTrue((persisted_workflows / "demo.json").is_file())
-            self.assertNotEqual(script, persisted_script)
+    def test_legacy_comfyui_bridge_is_removed(self) -> None:
+        self.assertFalse(hasattr(server.NaibaChatApp, "_persist_comfyui_mcp"))
+        self.assertFalse(hasattr(server.NaibaChatApp, "_refresh_persisted_comfyui_mcp"))
 
 
 class ToolProtocolStreamTests(unittest.TestCase):
