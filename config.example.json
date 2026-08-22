@@ -61,7 +61,7 @@
       "id": "general",
       "name": "通用 Agent",
       "system_prompt": "",
-      "skill_ids": ["87aaadb6b599466e", "e03778f862d10595"]
+      "skill_ids": ["0a3afda21c5622e1", "e03778f862d10595"]
     },
     {
       "id": "coding",

@@ -453,9 +453,9 @@ def default_config() -> dict[str, Any]:
                 "id": "general",
                 "name": "通用 Agent",
                 "system_prompt": "",
-                # Keep the two ComfyUI skills available in the default agent.
-                # IDs are derived from their stable declared names and paths.
-                "skill_ids": ["87aaadb6b599466e", "e03778f862d10595"],
+                # Official local Comfy MCP and the shortdrama workflow Skill
+                # are available in the default Agent.
+                "skill_ids": ["0a3afda21c5622e1", "e03778f862d10595"],
             },
             {
                 "id": "coding",
