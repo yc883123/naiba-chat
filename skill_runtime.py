@@ -277,12 +277,14 @@ class ToolExecutor:
         mcp_registry: MCPRegistry,
         permission_mode: str = "confirm",
         mcp_register: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+        mcp_setup: Callable[[], dict[str, Any]] | None = None,
     ):
         self.workspace = workspace.resolve()
         self.python_executable = python_executable
         self.command_timeout = command_timeout
         self.mcp_registry = mcp_registry
         self.mcp_register = mcp_register
+        self.mcp_setup = mcp_setup
         self.permission_mode = "confirm"
         self.set_permission_mode(permission_mode)
         self.pending_confirmation: dict[str, dict[str, Any]] = {}
@@ -302,6 +304,7 @@ class ToolExecutor:
             self.mcp_registry,
             permission_mode=mode,
             mcp_register=self.mcp_register,
+            mcp_setup=self.mcp_setup,
         )
 
     @staticmethod
@@ -719,6 +722,13 @@ class SkillAgent:
             for server_id in (skill.get("mcp_servers") or [])
             if str(server_id).strip()
         })
+        # Official comfy-mcp is installed/registered only when a conversation
+        # actually routes to that Skill.  It must never be a settings-page
+        # side effect or a startup dependency.
+        if "comfy-mcp" in mcp_ids and "comfy-mcp" not in getattr(self.executor.mcp_registry, "connections", {}):
+            if callable(getattr(self.executor, "mcp_setup", None)):
+                event({"type": "status", "message": "正在按需安装并注册官方 comfy-mcp"})
+                self.executor.mcp_setup()
         if needs_mcp:
             event({"type": "status", "message": "正在连接 Skill 所需的 MCP 服务"})
             try:

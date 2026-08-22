@@ -748,6 +748,16 @@ class ModelRuntime:
         temperature = None if temperature_raw in (None, "") else float(temperature_raw)
         max_tokens_raw = options.get("max_tokens", profile.get("max_output_tokens"))
         max_tokens = None if max_tokens_raw in (None, "") else int(max_tokens_raw)
+        # DeepSeek rejects zero/negative values and any value above its API
+        # ceiling.  UI/router defaults can be larger than a provider's limit,
+        # so clamp only the wire value while keeping the profile unchanged.
+        if max_tokens is not None:
+            # A legacy profile can persist zero as "unset".  Never send that
+            # sentinel to an API: DeepSeek answers it with HTTP 400.
+            if max_tokens <= 0:
+                max_tokens = None
+            elif ModelRuntime._is_deepseek_profile(profile):
+                max_tokens = min(max_tokens, 393216)
         stream_enabled = bool(options.get("stream", False))
         reasoning_effort = str(profile.get("reasoning_effort") or "auto").strip().lower()
         reasoning_enabled = bool(
@@ -763,8 +773,13 @@ class ModelRuntime:
                 "model": model,
                 "messages": ModelRuntime._openai_messages(
                     messages,
+                    # DeepSeek-compatible gateways commonly reject an empty
+                    # reasoning_content field on ordinary assistant history.
+                    # Real persisted reasoning is still preserved by
+                    # _openai_messages; only synthetic empty backfills are
+                    # disabled for DeepSeek.
                     include_reasoning_content=(
-                        reasoning_enabled or ModelRuntime._is_deepseek_profile(profile)
+                        reasoning_enabled and not ModelRuntime._is_deepseek_profile(profile)
                     ),
                 ),
                 "stream": stream_enabled,
@@ -778,6 +793,11 @@ class ModelRuntime:
                 payload["tool_choice"] = "auto"
                 payload["parallel_tool_calls"] = False
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
+            # DeepSeek selects thinking behavior from the model itself; its
+            # OpenAI-compatible endpoint does not accept OpenAI's
+            # `reasoning_effort` request field.
+            if ModelRuntime._is_deepseek_profile(profile):
+                reasoning_params = {}
             if reasoning_params:
                 payload.update(reasoning_params)
             if api_key:
@@ -898,7 +918,7 @@ class ModelRuntime:
                     "messages": ModelRuntime._openai_messages(
                         messages,
                         include_reasoning_content=(
-                            reasoning_enabled or ModelRuntime._is_deepseek_profile(profile)
+                            reasoning_enabled and not ModelRuntime._is_deepseek_profile(profile)
                         ),
                     ),
                     "stream": stream_enabled,
@@ -985,6 +1005,7 @@ class ModelRuntime:
             attempts = max(attempts, 3)
         tool_fallback_used = False
         stream_options_fallback_used = False
+        reasoning_fallback_used = False
         if diagnostics is not None:
             parsed = urllib.parse.urlsplit(endpoint)
             diagnostics.update({
@@ -1123,6 +1144,39 @@ class ModelRuntime:
                     tool_fallback_used = True
                     if status:
                         status({"type": "status", "message": "当前接口不支持原生 Tool Calling，已切换兼容工具协议"})
+                    continue
+                reasoning_rejection = any(
+                    marker in detail.lower()
+                    for marker in ("reasoning_content", "reasoning_effort", "thinking", "unknown field")
+                )
+                if (
+                    ModelRuntime._is_deepseek_profile(profile)
+                    and not reasoning_fallback_used
+                    and exc.code in {400, 422}
+                    and reasoning_rejection
+                ):
+                    # Gateways marketed as DeepSeek-compatible disagree on
+                    # whether they accept OpenAI thinking fields. Retry once
+                    # with those optional fields removed; never duplicate a
+                    # tool submission beyond this protocol-only retry.
+                    fallback_payload = dict(payload)
+                    fallback_messages = []
+                    for message in fallback_payload.get("messages", []):
+                        if isinstance(message, dict):
+                            message = dict(message)
+                            message.pop("reasoning_content", None)
+                        fallback_messages.append(message)
+                    fallback_payload["messages"] = fallback_messages
+                    fallback_payload.pop("reasoning_effort", None)
+                    request = urllib.request.Request(
+                        endpoint,
+                        data=json.dumps(fallback_payload, ensure_ascii=False).encode("utf-8"),
+                        headers=headers,
+                        method="POST",
+                    )
+                    reasoning_fallback_used = True
+                    if status:
+                        status({"type": "status", "message": "DeepSeek 网关不接受思考字段，已自动切换兼容请求"})
                     continue
                 if (
                     not is_local

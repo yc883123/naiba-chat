@@ -3217,13 +3217,15 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       : JSON.stringify(event.arguments || {}, null, 2);
     details.innerHTML = `<summary>Running · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</summary><pre>${escapeHtml(toolArguments)}</pre>`;
     stack.appendChild(details);
-    if (!stack.parentNode) answer.before(stack);
+    if (!stack.parentNode) answer.parentNode.insertBefore(stack, answer);
+    scrollToBottom();
   } else if (event.type === 'tool_start_legacy') {
     clearStreamingAnswer(answer);
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
     stack.className = 'tool-stack';
     stack.insertAdjacentHTML('beforeend', `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`);
-    if (!stack.parentNode) answer.before(stack);
+    if (!stack.parentNode) answer.parentNode.insertBefore(stack, answer);
+    scrollToBottom();
   } else if (event.type === 'tool_result') {
     const last = row.querySelector('.tool-run:last-child');
     if (last) {
@@ -3268,7 +3270,8 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
         </div>
       </div>`;
     stack.insertAdjacentHTML('beforeend', confirmMarkup);
-    if (!stack.parentNode) answer.before(stack);
+    if (!stack.parentNode) answer.parentNode.insertBefore(stack, answer);
+    scrollToBottom();
   } else if (event.type === 'choice') {
     // AI回复包含可选项，显示选择按钮
     showChoiceButtons(event.choices, event.choice_groups);

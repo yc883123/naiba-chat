@@ -255,7 +255,11 @@ def validate_skills_dir(resolved: Path) -> None:
 def _detect_choice_groups(text: str) -> list[dict[str, Any]]:
     """检测回复中的交互选项组，并保留每组前面的提示语。"""
     # 代码示例中的列表不是交互选项，先排除 fenced code block。
-    visible_text = re.sub(r"```[\s\S]*?```", "", text)
+    # Long Skill manuals and MCP instructions are not interactive choices.
+    raw_text = str(text or "")
+    if len(raw_text) > 5000 or re.search(r"<skill\b|mcp_servers\s*:|official-comfy-mcp", raw_text, re.I):
+        return []
+    visible_text = re.sub(r"```[\s\S]*?```", "", raw_text)
     lines = visible_text.splitlines()
 
     def clean(value: str) -> str:
@@ -632,12 +636,6 @@ class ConfigStore:
                 seen[sid] = 1
                 deduped.append(server)
             defaults["mcp_servers"] = deduped
-            # The legacy custom ComfyUI bridge is retained for rollback but is
-            # no longer auto-enabled.  The official comfy-mcp server is
-            # registered explicitly when its executable is available.
-            for server in defaults["mcp_servers"]:
-                if isinstance(server, dict) and server.get("id") == "comfyui":
-                    server["enabled"] = False
         self.data = defaults
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
@@ -1726,7 +1724,6 @@ class NaibaChatApp:
             base_dir=APP_DIR,
             hidden_ids=self.config.get_hidden_skill_ids(),
         )
-        self._refresh_persisted_comfyui_mcp()
         self.mcp = MCPRegistry(self.config.data.get("mcp_servers", []))
         self.executor = ToolExecutor(
             self.config.resolve_workspace_dir(),
@@ -1735,6 +1732,7 @@ class NaibaChatApp:
             self.mcp,
             permission_mode=self.config.data.get("permission_mode", "confirm"),
             mcp_register=self.register_mcp_server,
+            mcp_setup=lambda: self.setup_official_comfy_mcp(install=True),
         )
         self.plans = PlanManager(self)
         self.runs = ConversationRunManager(self)
@@ -1797,8 +1795,6 @@ class NaibaChatApp:
         return self.web_search.search(query, int(max_results) if isinstance(max_results, (int, float)) else None)
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
-        if str(values.get("id") or "").strip() == "comfyui":
-            values = self._persist_comfyui_mcp(values)
         config = self.config.upsert_mcp_server(values)
         return {"saved": True, "server": self.mcp.upsert(config)}
 
@@ -1871,47 +1867,6 @@ class NaibaChatApp:
         self.config.ensure_workspace_writable(resolved)
         return {"cancelled": False, "path": selected, "resolved": str(resolved)}
 
-    def _refresh_persisted_comfyui_mcp(self) -> None:
-        """升级后用随程序分发的新脚本刷新持久化 MCP 副本。"""
-        source = RESOURCE_DIR / "skills" / "comfyui-mcp" / "comfyui-mcp" / "scripts" / "comfyui_mcp_server.py"
-        if not source.is_file():
-            return
-        for server in self.config.data.get("mcp_servers", []):
-            if not isinstance(server, dict) or server.get("id") != "comfyui":
-                continue
-            target = next(
-                (Path(str(item)) for item in server.get("args", []) if Path(str(item)).name == source.name),
-                None,
-            )
-            if not target or not target.is_file() or target.resolve() == source.resolve():
-                continue
-            try:
-                if target.read_bytes() != source.read_bytes():
-                    shutil.copy2(source, target)
-            except OSError as exc:
-                print(f"刷新 ComfyUI MCP 脚本失败：{exc}")
-
-    @staticmethod
-    def _persist_comfyui_mcp(values: dict[str, Any]) -> dict[str, Any]:
-        payload = dict(values)
-        args = [str(item) for item in payload.get("args", [])]
-        env = {str(key): str(value) for key, value in (payload.get("env") or {}).items()}
-        source_script = next((Path(item) for item in args if Path(item).name == "comfyui_mcp_server.py"), None)
-        if not source_script or not source_script.is_file():
-            raise ValueError("找不到 ComfyUI MCP 服务脚本")
-        target_root = DATA_DIR / "mcp" / "comfyui"
-        target_root.mkdir(parents=True, exist_ok=True)
-        target_script = target_root / source_script.name
-        shutil.copy2(source_script, target_script)
-        workflows = Path(env.get("COMFYUI_WORKFLOWS_DIR", ""))
-        if workflows.is_dir():
-            # Keep user supplied workflow roots intact.  Copying them into a
-            # managed cache made MCP silently ignore later edits and assets.
-            env["COMFYUI_WORKFLOWS_DIR"] = str(workflows.resolve())
-        payload["args"] = [str(target_script) if Path(item) == source_script else item for item in args]
-        payload["env"] = env
-        return payload
-
     def _start_mcp_background(self) -> None:
         """应用启动后在后台连接所有已启用 MCP 服务，并保持到退出。"""
         try:
@@ -1926,7 +1881,7 @@ class NaibaChatApp:
         if not connection:
             raise ValueError(f"未注册的 MCP 服务：{server_id}")
         state = connection.state()
-        if server_id == "comfyui":
+        if server_id == "comfy-mcp":
             address = (connection.env or {}).get("COMFYUI_SERVER_ADDRESS") or "http://127.0.0.1:8188"
             try:
                 import urllib.request
