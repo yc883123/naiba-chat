@@ -181,7 +181,7 @@ class McpDedupTest(TestCase):
             path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
             cfg = server.ConfigStore(path)
             ids = [s["id"] for s in cfg.data["mcp_servers"]]
-            self.assertEqual(ids, ["comfyui", "other"])
+            self.assertEqual(ids, ["other"])
 
 
 class VisionRoutingTest(TestCase):

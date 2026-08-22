@@ -629,6 +629,10 @@ class ConfigStore:
                 if not isinstance(server, dict):
                     continue
                 sid = str(server.get("id") or "").strip()
+                # The legacy custom ComfyUI bridge is retired. Never revive it
+                # from a migrated per-user config or an older portable build.
+                if sid == "comfyui":
+                    continue
                 if not sid or sid in seen:
                     if sid:
                         print(f"[config] Ignored duplicate MCP server id: {sid}")
@@ -636,6 +640,14 @@ class ConfigStore:
                 seen[sid] = 1
                 deduped.append(server)
             defaults["mcp_servers"] = deduped
+        # Remove the retired bundled Skill from migrated skill roots. The
+        # official first-party Skill is the only Comfy MCP integration.
+        roots = defaults.get("skills_dirs")
+        if isinstance(roots, list):
+            defaults["skills_dirs"] = [
+                item for item in roots
+                if "comfyui-mcp" not in str(item).lower()
+            ]
         self.data = defaults
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
