@@ -1,4 +1,9 @@
 [
+  "Build81: add automatic image-capability detection for llama.cpp, Ollama, and LM Studio using their live capability APIs, with a real-image probe only when runtime metadata is unknown and a manual auto/image/text override per model profile.",
+  "Build81: separate API provider management into Online API and Local API tabs; each tab now lists, adds, edits, and deletes only its own provider type while the visual-provider selector keeps its existing combined display.",
+  "Build81: remove the redundant visual text-inference test, preserve stored API keys during connection tests, and report whether image support came from explicit settings, runtime metadata, a real-image probe, or an unconfirmed model-name fallback.",
+  "Build81: refresh automatic Skill choices immediately after installation and prevent references folders from being detected as standalone Skills.",
+  "Build81: include the default ComfyUI模型与Llama模型互通 Skill with the second-round local-runtime recommendation as its reference and a read-only GGUF/mmproj/runtime compatibility inspector.",
   "Build80: detect llama.cpp multimodal capability from the live /props endpoint, including GGUF models loaded with mmproj, and always send original images directly to a multimodal chat model regardless of the visual auto-route switch.",
   "Build80: split visual routing into native multimodal and text-only lanes; text-only auto-route performs one visual pass and one chat pass without redundant vision_describe calls, with per-lane request and timing diagnostics.",
   "Build80: replace unconditional Skill pre-routing and all-tool schema injection with progressive capability disclosure, reducing an ordinary full-Agent image turn from two requests and 25 tool schemas to one request and two compact capability gateways.",

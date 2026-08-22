@@ -8,7 +8,7 @@ from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
 from skill_runtime import SkillAgent, TaskCancelled, normalize_skill_policy
-from vision_runtime import VISION_TOOL_NAMES, VisionBudget
+from vision_runtime import IMAGE_SUFFIXES, VISION_TOOL_NAMES, VisionBudget
 
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
@@ -241,6 +241,18 @@ class ConversationRunManager:
                 raise first_error
 
     @staticmethod
+    def _attachments_have_images(attachments: list[Any]) -> bool:
+        for item in attachments:
+            if isinstance(item, dict):
+                source = item.get("path") or item.get("name") or item.get("source") or ""
+            else:
+                source = item
+            clean = str(source or "").split("?", 1)[0].split("#", 1)[0].lower()
+            if any(clean.endswith(suffix) for suffix in IMAGE_SUFFIXES):
+                return True
+        return False
+
+    @staticmethod
     def _active_error(exc: RuntimeError) -> ActiveRunError | None:
         text = str(exc)
         if text.startswith("ACTIVE_RUN:"):
@@ -295,7 +307,10 @@ class ConversationRunManager:
                 chat_profile = self.app.config.profile(model_key)
                 resolver = getattr(self.app.vision, "resolve_brain_supports_images", None)
                 chat_supports_images = (
-                    bool(resolver(chat_profile)) if callable(resolver)
+                    bool(resolver(
+                        chat_profile,
+                        probe_if_unknown=self._attachments_have_images(attachments),
+                    )) if callable(resolver)
                     else bool(self.app.vision.brain_supports_images(chat_profile))
                 )
             except Exception:
@@ -585,7 +600,7 @@ class ConversationRunManager:
             else:
                 resolver = getattr(self.app.vision, "resolve_brain_supports_images", None)
                 brain_supports_images = (
-                    bool(resolver(profile)) if callable(resolver)
+                    bool(resolver(profile, probe_if_unknown=image_pending)) if callable(resolver)
                     else bool(getattr(self.app.vision, "brain_supports_images", lambda _profile: False)(profile))
                 )
             # Keep every downstream routing decision on the same frozen

@@ -232,6 +232,10 @@
       </nav>
       <div class="settings-content">
         <section data-settings-panel="models">
+          <div class="provider-scope-tabs" role="tablist" aria-label="API 供应商类型">
+            <button class="active" data-provider-kind="online" type="button" role="tab">在线 API</button>
+            <button data-provider-kind="local" type="button" role="tab">本地 API</button>
+          </div>
           <form id="providerForm" class="provider-form">
             <input id="providerId" type="hidden">
             <div class="provider-current">
@@ -251,14 +255,8 @@
                 <span class="secret-actions"><span id="providerKeyStatus">未配置</span><button id="toggleProviderKey" type="button" title="显示 API Key">显示</button></span>
               </span>
             </label>
-            <label class="provider-field provider-kind-field">API 类型
-              <span class="provider-kind-control">
-                <span class="provider-kind-label">在线 API</span>
-                <input id="providerKind" type="range" min="0" max="1" step="1" value="0" aria-label="API 类型">
-                <span class="provider-kind-label">本地 API</span>
-              </span>
-              <small class="hint" id="providerKindHint">在线 API 使用远程模型服务。</small>
-            </label>
+            <input id="providerKind" type="hidden" value="0">
+            <p class="hint provider-field" id="providerKindHint">在线 API 使用远程模型服务。</p>
             <label class="provider-field">请求格式
               <select id="providerFormat">
                 <option value="openai_chat">OpenAI 兼容（OpenAI / DeepSeek / Grok）/v1/chat/completions</option>
@@ -299,6 +297,14 @@
                 <option value="medium">中</option>
                 <option value="high">高</option>
               </select>
+            </label>
+            <label class="provider-field">视觉输入能力
+              <select id="providerSupportsImages">
+                <option value="auto">自动检测</option>
+                <option value="true">支持图片</option>
+                <option value="false">纯文本</option>
+              </select>
+              <small class="hint" id="providerVisionHint">自动检测会优先读取运行端能力；上传图片时才会执行最小图片探针。</small>
             </label>
             <p class="form-error provider-field" id="providerError"></p>
             <div class="form-actions provider-actions provider-field">
@@ -397,11 +403,9 @@
             <label>最大图片数<input id="visionMaxImages" type="number" min="1" max="20" step="1"></label>
           </div>
           <div class="form-actions">
-            <button class="control-button" id="testVisionText" type="button">测试文本推理</button>
             <button class="control-button" id="testVision" type="button">测试视觉识别</button>
             <button class="primary-button" id="saveVision" type="button">保存视觉设置</button>
           </div>
-          <p class="hint" id="visionTextTestResult"></p>
           <p class="hint" id="visionTestResult"></p>
         </section>
         <section data-settings-panel="search" hidden>

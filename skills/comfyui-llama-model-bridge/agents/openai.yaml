@@ -1,0 +1,4 @@
+interface:
+  display_name: "ComfyUI模型与Llama模型互通"
+  short_description: "安全复用 ComfyUI GGUF，并适配三种本地运行端"
+  default_prompt: "使用 $comfyui-llama-model-bridge 检查我的 ComfyUI 模型目录，并安全接入 llama.cpp、Ollama 或 LM Studio。"

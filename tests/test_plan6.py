@@ -202,6 +202,138 @@ class PrepareHistoryCleaningTest(TestCase):
             self.assertFalse(router.resolve_brain_supports_images(profile))
         request.assert_not_called()
 
+    def test_ollama_capability_comes_from_show(self):
+        router = self._router()
+
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def read(self): return b'{"capabilities":["completion","vision"]}'
+
+        profile = {
+            "kind": "local", "request_format": "ollama",
+            "base_url": "http://127.0.0.1:11434/v1", "model": "gemma3:4b",
+            "supports_images_explicit": None,
+        }
+        with mock.patch("vision_runtime.urllib.request.urlopen", return_value=Response()) as call:
+            capability = router.brain_image_capability(profile, probe_if_unknown=True)
+        self.assertEqual({"supported": True, "confirmed": True, "source": "ollama_show"}, capability)
+        request = call.call_args.args[0]
+        self.assertEqual("http://127.0.0.1:11434/api/show", request.full_url)
+        self.assertEqual({"model": "gemma3:4b"}, json.loads(request.data))
+
+    def test_ollama_show_without_vision_is_authoritative_false(self):
+        router = self._router()
+        profile = {
+            "kind": "local", "request_format": "ollama", "base_url": "http://ollama/v1",
+            "model": "misleading-vision-name", "supports_images_explicit": None,
+        }
+        with (
+            mock.patch.object(router, "_request_json", return_value={"capabilities": ["completion"]}),
+            mock.patch.object(router, "_probe_image_capability") as probe,
+        ):
+            capability = router.brain_image_capability(profile, probe_if_unknown=True)
+        self.assertFalse(capability["supported"])
+        self.assertEqual("ollama_show", capability["source"])
+        probe.assert_not_called()
+
+    def test_old_ollama_without_capabilities_uses_image_probe(self):
+        router = self._router()
+        profile = {
+            "kind": "local", "request_format": "ollama", "base_url": "http://ollama/v1",
+            "model": "custom", "supports_images_explicit": None,
+        }
+        with (
+            mock.patch.object(router, "_request_json", return_value={"details": {}}),
+            mock.patch.object(router, "_probe_image_capability", return_value=True) as probe,
+        ):
+            capability = router.brain_image_capability(profile, probe_if_unknown=True)
+        self.assertTrue(capability["supported"])
+        self.assertEqual("image_probe", capability["source"])
+        probe.assert_called_once_with(profile)
+
+    def test_lm_studio_catalog_matches_model_and_reports_vision(self):
+        router = self._router()
+        profile = {
+            "kind": "local", "request_format": "lm_studio", "base_url": "http://lm/v1",
+            "model": "qwen-vl", "supports_images_explicit": None,
+        }
+        catalog = {"data": [{
+            "key": "qwen-vl", "loaded_instances": [], "capabilities": {"vision": True},
+        }]}
+        with mock.patch.object(router, "_request_json", return_value=catalog):
+            capability = router.brain_image_capability(profile)
+        self.assertEqual({"supported": True, "confirmed": True, "source": "lm_studio_models"}, capability)
+
+    def test_lm_studio_explicit_catalog_false_is_authoritative(self):
+        router = self._router()
+        profile = {
+            "kind": "local", "request_format": "lm_studio", "base_url": "http://lm/v1",
+            "model": "text-model", "supports_images_explicit": None,
+        }
+        catalog = {"models": [{"id": "text-model", "capabilities": {"vision": False}}]}
+        with mock.patch.object(router, "_request_json", return_value=catalog):
+            capability = router.brain_image_capability(profile, probe_if_unknown=True)
+        self.assertFalse(capability["supported"])
+        self.assertTrue(capability["confirmed"])
+
+    def test_lm_studio_unmatched_model_falls_through_to_probe(self):
+        router = self._router()
+        profile = {
+            "kind": "local", "request_format": "lm_studio", "base_url": "http://lm/v1",
+            "model": "selected-model", "supports_images_explicit": None,
+        }
+        with (
+            mock.patch.object(router, "_request_json", return_value={"data": [{
+                "key": "other-model", "capabilities": {"vision": False},
+            }]}),
+            mock.patch.object(router, "_probe_image_capability", return_value=True),
+        ):
+            capability = router.brain_image_capability(profile, probe_if_unknown=True)
+        self.assertTrue(capability["supported"])
+        self.assertEqual("image_probe", capability["source"])
+
+    def test_unconfirmed_name_cache_does_not_block_later_probe(self):
+        router = self._router()
+        profile = {
+            "kind": "online", "request_format": "openai_chat", "base_url": "http://api/v1",
+            "model": "custom-model", "supports_images_explicit": None, "supports_images": False,
+        }
+        with (
+            mock.patch.object(router, "_runtime_image_capability", return_value=(None, "")),
+            mock.patch.object(router, "_probe_image_capability", return_value=True) as probe,
+        ):
+            first = router.brain_image_capability(profile)
+            second = router.brain_image_capability(profile, probe_if_unknown=True)
+        self.assertEqual("model_name", first["source"])
+        self.assertEqual("image_probe", second["source"])
+        probe.assert_called_once()
+
+    def test_image_probe_success_and_explicit_rejection(self):
+        router = self._router()
+        profile = {"kind": "online", "request_format": "openai_chat", "base_url": "http://api/v1", "model": "m"}
+        with mock.patch.object(router._runtime, "complete", return_value="") as complete:
+            self.assertTrue(router._probe_image_capability(profile))
+        sent = complete.call_args.args[1][0]["content"]
+        self.assertTrue(any(part.get("type") == "image" for part in sent))
+        with mock.patch.object(router._runtime, "complete", side_effect=RuntimeError("model does not support images")):
+            self.assertFalse(router._probe_image_capability(profile))
+
+    def test_probe_timeout_is_unknown_then_name_fallback_applies(self):
+        router = self._router()
+        profile = {
+            "kind": "online", "request_format": "openai_chat", "base_url": "http://api/v1",
+            "model": "custom-vision", "supports_images_explicit": None,
+        }
+        with (
+            mock.patch.object(router, "_runtime_image_capability", return_value=(None, "")),
+            mock.patch.object(router._runtime, "complete", side_effect=TimeoutError("offline")),
+        ):
+            capability = router.brain_image_capability(profile, probe_if_unknown=True)
+        self.assertTrue(capability["supported"])
+        self.assertFalse(capability["confirmed"])
+        self.assertEqual("model_name", capability["source"])
+
     def test_text_brain_strips_images_with_auto_route(self):
         router = self._router(auto_route=True)
         history = self._img_history()
@@ -681,6 +813,31 @@ class VisionSettingsFrontendTest(TestCase):
     def test_switching_legacy_openai_llama_endpoint_to_local_keeps_v1_protocol(self):
         app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
         self.assertIn("previousFormat === 'openai_chat' ? 'llama_cpp'", app_js)
+
+    def test_provider_management_is_split_without_changing_vision_picker(self):
+        root = Path(__file__).parents[1] / "public"
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        index_html = (root / "index.html").read_text(encoding="utf-8")
+        self.assertIn('data-provider-kind="online"', index_html)
+        self.assertIn('data-provider-kind="local"', index_html)
+        self.assertNotIn('id="providerKind" type="range"', index_html)
+        self.assertIn("provider.kind || 'online') === state.providerKindTab", app_js)
+        self.assertIn('id="visionProvider"', index_html)
+        self.assertIn("provider.model_key || provider.id", app_js)
+
+    def test_vision_settings_no_longer_exposes_text_inference_probe(self):
+        root = Path(__file__).parents[1] / "public"
+        app_js = (root / "app.js").read_text(encoding="utf-8")
+        index_html = (root / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn('id="testVisionText"', index_html)
+        self.assertNotIn("$('#testVisionText')", app_js)
+
+    def test_skill_catalog_refresh_updates_conversation_picker(self):
+        app_js = (Path(__file__).parents[1] / "public" / "app.js").read_text(encoding="utf-8")
+        start = app_js.index("function renderInstalledSkills(skills)")
+        block = app_js[start:start + 900]
+        self.assertIn("state.bootstrap.skills = lastInstalledSkills", block)
+        self.assertIn("renderSkills(", block)
 
     def test_web_search_button_is_immediately_left_of_send(self):
         index_html = (Path(__file__).parents[1] / "public" / "index.html").read_text(

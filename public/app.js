@@ -28,6 +28,7 @@ const state = {
   conversationSettingsId: '',
   providerEditing: false,
   providerIsNew: false,
+  providerKindTab: 'online',
   syncTimer: null,
   syncInFlight: false,
   conversationSnapshot: '',
@@ -1706,19 +1707,25 @@ function updateSkillSummary() {
 }
 
 function renderProviders() {
-  const providers = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+  const allProviders = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+  const providers = allProviders.filter((provider) => (provider.kind || 'online') === state.providerKindTab);
+  $$('[data-provider-kind]').forEach((button) => {
+    const active = button.dataset.providerKind === state.providerKindTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
   const select = $('#providerSelect');
   select.innerHTML = providers.length
-    ? providers.map((provider) => {
-        const tag = provider.kind === 'local' ? '[本地] ' : '[在线] ';
-        return `<option value="${provider.id}">${escapeHtml(tag + provider.name)}</option>`;
-      }).join('')
-    : '<option value="">尚未添加供应商</option>';
+    ? providers.map((provider) => `<option value="${provider.id}">${escapeHtml(provider.name)}</option>`).join('')
+    : `<option value="">尚未添加${state.providerKindTab === 'local' ? '本地' : '在线'} API</option>`;
   const currentId = $('#providerId').value;
   const current = providers.find((provider) => provider.id === currentId)
     || providers.find((provider) => provider.id === state.bootstrap.settings.provider_id)
     || providers[0];
-  showProviderForm(current || {}, { editing: false });
+  showProviderForm(current || {
+    kind: state.providerKindTab,
+    request_format: state.providerKindTab === 'local' ? 'lm_studio' : 'openai_chat',
+  }, { editing: false });
 }
 
 function showProviderForm(provider = {}, { editing = false, isNew = false } = {}) {
@@ -1737,6 +1744,9 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   $('#providerMaxOutputTokens').value = provider.max_output_tokens || '';
   $('#providerTemperature').value = provider.temperature ?? '';
   $('#providerReasoningEffort').value = provider.reasoning_effort || 'auto';
+  $('#providerSupportsImages').value = provider.supports_images_explicit === true
+    ? 'true'
+    : (provider.supports_images_explicit === false ? 'false' : 'auto');
   setProviderModelOptions([], provider.model || '');
   $('#providerFormat').value = provider.request_format || 'openai_chat';
   $('#providerApiKey').value = '';
@@ -1749,6 +1759,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   syncProviderKindOptions();
   updateProviderFormatGuide();
   updateProviderContextField();
+  updateProviderVisionHint();
   updateUnloadModelButton();
 }
 
@@ -1802,6 +1813,7 @@ function setProviderEditMode(editing, isNew = false) {
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
     '#providerKind', '#providerModel', '#providerModelCustom', '#providerContextWindow',
     '#providerMaxOutputTokens', '#providerTemperature', '#providerReasoningEffort',
+    '#providerSupportsImages',
   ].forEach((selector) => { $(selector).disabled = !editing; });
   $('#providerSelect').disabled = editing;
   $('#addProvider').disabled = editing;
@@ -1827,6 +1839,7 @@ function setProviderModelOptions(models = [], current = '') {
     state.providerModelCapabilities[id] = {
       context_window: model.context_window,
       max_output_tokens: model.max_output_tokens,
+      supports_images: typeof model.supports_images === 'boolean' ? model.supports_images : undefined,
     };
   });
   if (current && !seen.has(current)) unique.unshift({ id: current, name: current });
@@ -1852,6 +1865,26 @@ function applyProviderModelCapabilities() {
   if (!$('#providerMaxOutputTokens').value && capability.max_output_tokens) {
     $('#providerMaxOutputTokens').value = capability.max_output_tokens;
   }
+  updateProviderVisionHint();
+}
+
+function updateProviderVisionHint() {
+  const hint = $('#providerVisionHint');
+  const choice = $('#providerSupportsImages').value;
+  if (choice === 'true') {
+    hint.textContent = '已强制设为支持图片；Naiba-chat 会把用户图片直接交给该模型。';
+    return;
+  }
+  if (choice === 'false') {
+    hint.textContent = '已强制设为纯文本；用户原图不会发送给该模型。';
+    return;
+  }
+  const capability = state.providerModelCapabilities[$('#providerModel').value];
+  if (typeof capability?.supports_images === 'boolean') {
+    hint.textContent = `模型目录报告：${capability.supports_images ? '支持图片' : '纯文本'}（仍保持自动检测，不写入强制配置）。`;
+    return;
+  }
+  hint.textContent = '自动检测会优先读取运行端能力；上传图片时才会执行最小图片探针。';
 }
 
 function toggleCustomModel() {
@@ -1868,6 +1901,7 @@ function providerFormValue() {
     const raw = $(selector).value.trim();
     return raw ? Number(raw) : undefined;
   };
+  const imageChoice = $('#providerSupportsImages').value;
   return {
     id: $('#providerId').value,
     name: $('#providerName').value.trim(),
@@ -1881,6 +1915,7 @@ function providerFormValue() {
     max_output_tokens: numberOrUndefined('#providerMaxOutputTokens'),
     temperature: numberOrUndefined('#providerTemperature'),
     reasoning_effort: $('#providerReasoningEffort').value,
+    supports_images: imageChoice === 'auto' ? null : imageChoice === 'true',
   };
 }
 
@@ -1960,7 +1995,11 @@ async function saveProvider(event) {
 
 function addProvider() {
   if (state.providerEditing) return;
-  showProviderForm({}, { editing: true, isNew: true });
+  const local = state.providerKindTab === 'local';
+  showProviderForm({
+    kind: state.providerKindTab,
+    request_format: local ? 'lm_studio' : 'openai_chat',
+  }, { editing: true, isNew: true });
   $('#providerName').focus();
 }
 
@@ -1979,7 +2018,17 @@ async function testProvider() {
   $('#providerError').textContent = '正在测试连接…';
   try {
     const result = await api('/api/providers/test', { method: 'POST', body: providerFormValue() });
-    $('#providerError').textContent = `推理连接成功：${result.response}`;
+    const sourceLabels = {
+      explicit: '手动配置',
+      llama_props: 'llama.cpp /props',
+      ollama_show: 'Ollama capabilities',
+      lm_studio_models: 'LM Studio 模型目录',
+      image_probe: '真实图片探针',
+      model_name: '模型名推断（未确认）',
+    };
+    const vision = result.supports_images ? '支持图片' : '纯文本';
+    const source = sourceLabels[result.capability_source] || result.capability_source || '未知';
+    $('#providerError').textContent = `推理连接成功：${result.response}；视觉：${vision}；来源：${source}`;
   } catch (error) {
     $('#providerError').textContent = `模型目录可能可访问，但推理服务不可用：${error.message}`;
   }
@@ -2195,7 +2244,7 @@ async function deleteSearchProfile() {
 }
 
 async function testVisionCapability(probe) {
-  const el = $(probe === 'text' ? '#visionTextTestResult' : '#visionTestResult');
+  const el = $('#visionTestResult');
   if (el) el.textContent = '测试中…';
   try {
     const result = await api('/api/vision/test', {
@@ -2203,7 +2252,7 @@ async function testVisionCapability(probe) {
       body: { provider_model_key: $('#visionProvider')?.value || '', probe },
     });
     if (el) {
-      const label = probe === 'text' ? '文本推理' : '视觉识别';
+      const label = '视觉识别';
       const errors = {
         connection: '服务连接失败',
         text_inference: '文本推理失败',
@@ -3492,7 +3541,6 @@ function bindEvents() {
   $('#messageInput').addEventListener('paste', handlePasteImage);
   $('#saveVision').addEventListener('click', saveVisionSettings);
   $('#testVision').addEventListener('click', testVisionConnection);
-  $('#testVisionText').addEventListener('click', () => testVisionCapability('text'));
   $('#visionProvider').addEventListener('change', () => saveVisionSettings({ quiet: true }));
   $('#addVisionProvider').addEventListener('click', openVisionProviderForm);
   $('#deleteVisionProvider').addEventListener('click', deleteVisionProvider);
@@ -3594,6 +3642,11 @@ function bindEvents() {
     const provider = state.bootstrap.providers.find((item) => item.id === event.target.value);
     showProviderForm(provider || {});
   });
+  $$('[data-provider-kind]').forEach((button) => button.addEventListener('click', () => {
+    if (state.providerEditing || state.providerKindTab === button.dataset.providerKind) return;
+    state.providerKindTab = button.dataset.providerKind;
+    renderProviders();
+  }));
   $('#providerForm').addEventListener('submit', saveProvider);
   $('#editProvider').addEventListener('click', editProvider);
   $('#cancelProvider').addEventListener('click', cancelProviderEdit);
@@ -3605,16 +3658,11 @@ function bindEvents() {
     updateProviderFormatGuide();
     updateProviderContextField();
   });
-  $('#providerKind').addEventListener('input', () => {
-    const previousFormat = $('#providerFormat').value;
-    syncProviderKindOptions(previousFormat);
-    updateProviderFormatGuide();
-    updateProviderContextField();
-  });
   $('#providerModel').addEventListener('change', () => {
     toggleCustomModel();
     applyProviderModelCapabilities();
   });
+  $('#providerSupportsImages').addEventListener('change', updateProviderVisionHint);
   $('#toggleProviderKey').addEventListener('click', toggleProviderKey);
   $('#providerApiKey').addEventListener('input', (event) => {
     if (event.target.value) $('#providerKeyStatus').textContent = '待保存';
@@ -3809,6 +3857,14 @@ function isSkillBuiltin(skill) {
 
 function renderInstalledSkills(skills) {
   lastInstalledSkills = skills || [];
+  if (state.bootstrap) {
+    state.bootstrap.skills = lastInstalledSkills;
+    const available = new Set(lastInstalledSkills.map((skill) => skill.id));
+    state.selectedSkills = state.selectedSkills.filter((id) => available.has(id));
+    localStorage.setItem('naibaChatSkillIds', JSON.stringify(state.selectedSkills));
+    renderSkills($('#skillSearch')?.value || '');
+    renderAgentSkillPicker();
+  }
   const list = $('#installedSkillList');
   list.innerHTML = '';
   $('#installedSkillCount').textContent = String(skills.length);

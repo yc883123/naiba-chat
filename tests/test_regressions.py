@@ -1669,6 +1669,50 @@ class UpdateManifestTests(unittest.TestCase):
 
 
 class SkillIdentityTests(unittest.TestCase):
+    def test_openai_metadata_display_name_is_used_without_changing_skill_id(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            skill_dir = Path(root) / "comfyui-llama-model-bridge"
+            agents_dir = skill_dir / "agents"
+            agents_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: comfyui-llama-model-bridge\ndescription: test\n---\n",
+                encoding="utf-8",
+            )
+            metadata = agents_dir / "openai.yaml"
+            metadata.write_text(
+                'interface:\n  display_name: "ComfyUI模型与Llama模型互通"\n',
+                encoding="utf-8",
+            )
+
+            first = SkillCatalog([Path(root)]).scan()[0]
+            metadata.write_text(
+                'interface:\n  display_name: "新的显示标题"\n',
+                encoding="utf-8",
+            )
+            second = SkillCatalog([Path(root)]).scan()[0]
+
+            self.assertEqual("ComfyUI模型与Llama模型互通", first["name"])
+            self.assertEqual("新的显示标题", second["name"])
+            self.assertEqual(first["id"], second["id"])
+
+    def test_reference_markdown_below_skill_root_is_not_a_second_skill(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            skill_dir = Path(root) / "minimax-drama-prompt"
+            references = skill_dir / "references"
+            references.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: minimax-drama-prompt\ndescription: test\n---\n",
+                encoding="utf-8",
+            )
+            (references / "approved-format-example.md").write_text(
+                "---\nname: references\ndescription: supporting document\n---\n",
+                encoding="utf-8",
+            )
+
+            skills = SkillCatalog([Path(root)]).scan()
+
+            self.assertEqual(["minimax-drama-prompt"], [skill["name"] for skill in skills])
+
     def test_skill_id_is_stable_when_root_directory_moves(self) -> None:
         with tempfile.TemporaryDirectory() as first_root, tempfile.TemporaryDirectory() as second_root:
             first_skill = Path(first_root) / "demo"

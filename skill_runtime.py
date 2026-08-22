@@ -127,6 +127,19 @@ def _frontmatter_value(text: str, key: str) -> str:
     return " ".join(lines)
 
 
+def _skill_display_name(skill_file: Path) -> str:
+    """Read the optional UI title without adding a YAML runtime dependency."""
+    if skill_file.name != "SKILL.md":
+        return ""
+    metadata_file = skill_file.parent / "agents" / "openai.yaml"
+    try:
+        metadata = metadata_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
+    match = re.search(r"(?m)^\s*display_name:\s*(.*?)\s*$", metadata)
+    return match.group(1).strip().strip("'\"") if match else ""
+
+
 class SkillCatalog:
     def __init__(
         self,
@@ -164,7 +177,9 @@ class SkillCatalog:
             if p.name == "SKILL.md":
                 candidates.append(p)
                 continue
-            if p.parent in skill_md_dirs:
+            # Documentation below a real Skill root (notably references/*.md)
+            # belongs to that Skill and must never become a second fallback Skill.
+            if any(root == p.parent or root in p.parent.parents for root in skill_md_dirs):
                 continue
             siblings = [q for q in all_md if q.parent == p.parent]
             if len(siblings) == 1:
@@ -196,14 +211,15 @@ class SkillCatalog:
                     text = skill_file.read_text(encoding="utf-8")
                 except (OSError, UnicodeError):
                     continue
-                name = _frontmatter_value(text, "name") or skill_file.parent.name
+                declared_name = _frontmatter_value(text, "name") or skill_file.parent.name
+                name = _skill_display_name(skill_file) or declared_name
                 description = _frontmatter_value(text, "description")
                 declared_mcp = (
                     _frontmatter_value(text, "requires_mcp")
                     or _frontmatter_value(text, "requires-mcp")
                     or _frontmatter_value(text, "mcp_servers")
                 ).lower()
-                mcp_signals = f"{name} {description} {skill_file.parent.name}".lower()
+                mcp_signals = f"{declared_name} {name} {description} {skill_file.parent.name}".lower()
                 requires_mcp = (
                     declared_mcp in {"1", "true", "yes", "required"}
                     or "mcp" in mcp_signals
@@ -213,7 +229,9 @@ class SkillCatalog:
                     stable_path = skill_file.relative_to(directory)
                 except ValueError:
                     stable_path = skill_file
-                identity = f"{name}/{stable_path}".replace("\\", "/").lower()
+                # Keep the stable id tied to the declared Skill identifier, not
+                # to the user-facing title, which may change or be translated.
+                identity = f"{declared_name}/{stable_path}".replace("\\", "/").lower()
                 skill_id = hashlib.sha1(identity.encode("utf-8")).hexdigest()[:16]
                 if skill_id in self.hidden_ids:
                     continue

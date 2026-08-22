@@ -364,10 +364,10 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .connection-item b { display: block; font-size: 13px; }
 .connection-item small { color: var(--muted); overflow-wrap: anywhere; }
 .provider-form { display: grid; gap: 13px; }
+.provider-scope-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; padding: 4px; border-radius: var(--radius); background: var(--surface-2); }
+.provider-scope-tabs button { min-height: 38px; border: 0; border-radius: calc(var(--radius) - 2px); background: transparent; color: var(--muted); font-weight: 600; }
+.provider-scope-tabs button.active { background: var(--surface); color: var(--green); box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
 .provider-field[hidden] { display: none; }
-.provider-kind-control { display: grid; grid-template-columns: auto minmax(120px, 1fr) auto; gap: 10px; align-items: center; }
-.provider-kind-control input[type="range"] { width: 100%; accent-color: var(--green); }
-.provider-kind-label { color: var(--muted); font-size: 12px; white-space: nowrap; }
 .provider-current { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 9px; align-items: end; }
 .provider-current .control-button, .provider-current .danger-button { height: 40px; }
 .workspace-dialog-body { padding: 16px 18px; }

@@ -216,7 +216,8 @@ class VisionRouter:
         self._local = threading.local()
         self._cache: dict[str, tuple[float, str]] = {}
         self._cache_lock = threading.RLock()
-        self._capability_cache: dict[str, tuple[float, bool]] = {}
+        self._capability_cache: dict[str, dict[str, Any]] = {}
+        self._capability_lock = threading.RLock()
         # Phase 3 图片记忆：path -> 最近一次描述，跨多轮复用（标注为不可信证据）。
         self._path_cache: dict[str, str] = {}
         self._path_lock = threading.RLock()
@@ -306,37 +307,183 @@ class VisionRouter:
             return explicit
         return cls._brain_supports_vision(profile)
 
-    def resolve_brain_supports_images(self, profile: dict[str, Any]) -> bool:
-        """Resolve runtime image capability, including an attached llama.cpp mmproj."""
+    @staticmethod
+    def _capability_base_url(profile: dict[str, Any]) -> str:
+        base_url = str(profile.get("base_url") or "").rstrip("/")
+        return base_url[:-3] if base_url.endswith("/v1") else base_url
+
+    @staticmethod
+    def _request_json(
+        endpoint: str,
+        *,
+        method: str = "GET",
+        payload: dict[str, Any] | None = None,
+        api_key: str = "",
+        timeout: float = 2,
+    ) -> Any:
+        headers = {"Accept": "application/json", "User-Agent": "naiba-chat"}
+        data = None
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        request = urllib.request.Request(endpoint, data=data, headers=headers, method=method)
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8", errors="replace"))
+
+    @staticmethod
+    def _lm_studio_model_matches(item: dict[str, Any], configured_model: str) -> bool:
+        """Match both LM Studio catalog models and their loaded instance identifiers."""
+        wanted = str(configured_model or "").strip().replace("\\", "/").casefold()
+        if not wanted:
+            return False
+        identities: list[str] = []
+
+        def collect(value: Any) -> None:
+            if not isinstance(value, dict):
+                return
+            for key in ("id", "key", "model", "name", "display_name", "model_key", "instance_id"):
+                if value.get(key) not in (None, ""):
+                    identities.append(str(value[key]))
+
+        collect(item)
+        loaded = item.get("loaded_instances")
+        if isinstance(loaded, list):
+            for instance in loaded:
+                collect(instance)
+        elif isinstance(loaded, dict):
+            collect(loaded)
+        normalized = [value.strip().replace("\\", "/").casefold() for value in identities]
+        if wanted in normalized:
+            return True
+        wanted_name = wanted.rsplit("/", 1)[-1]
+        return any(value.rsplit("/", 1)[-1] == wanted_name for value in normalized)
+
+    def _runtime_image_capability(self, profile: dict[str, Any]) -> tuple[bool | None, str]:
+        request_format = str(profile.get("request_format") or "").lower()
+        base_url = self._capability_base_url(profile)
+        api_key = str(profile.get("api_key") or "").strip()
+        model = str(profile.get("model") or "").strip()
+        if not base_url:
+            return None, ""
+        try:
+            if request_format == "llama_cpp":
+                props = self._request_json(f"{base_url}/props", api_key=api_key)
+                modalities = props.get("modalities") if isinstance(props, dict) else None
+                vision = modalities.get("vision") if isinstance(modalities, dict) else None
+                return (vision, "llama_props") if isinstance(vision, bool) else (None, "")
+            if request_format == "ollama":
+                details = self._request_json(
+                    f"{base_url}/api/show",
+                    method="POST",
+                    payload={"model": model},
+                    api_key=api_key,
+                )
+                if isinstance(details, dict) and isinstance(details.get("capabilities"), list):
+                    capabilities = {str(value).strip().lower() for value in details["capabilities"]}
+                    return "vision" in capabilities, "ollama_show"
+                return None, ""
+            if request_format == "lm_studio":
+                catalog = self._request_json(f"{base_url}/api/v1/models", api_key=api_key)
+                items = []
+                if isinstance(catalog, dict):
+                    items = catalog.get("data") or catalog.get("models") or []
+                for item in items if isinstance(items, list) else []:
+                    if not isinstance(item, dict) or not self._lm_studio_model_matches(item, model):
+                        continue
+                    capabilities = item.get("capabilities")
+                    vision = capabilities.get("vision") if isinstance(capabilities, dict) else None
+                    return (vision, "lm_studio_models") if isinstance(vision, bool) else (None, "")
+        except (OSError, ValueError, json.JSONDecodeError):
+            return None, ""
+        return None, ""
+
+    def _probe_image_capability(self, profile: dict[str, Any]) -> bool | None:
+        messages = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "只回复 OK"},
+                {"type": "image", "media_type": "image/jpeg", "data": PROBE_JPEG_B64},
+            ],
+        }]
+        options = {
+            "temperature": 0,
+            "max_tokens": 16,
+            "stream": False,
+            "connection_test": True,
+            "request_timeout_seconds": 15,
+            "request_attempts": 1,
+            "reasoning_enabled": False,
+        }
+        try:
+            self._runtime.complete({**profile, "reasoning_effort": "off"}, messages, options, None)
+            return True
+        except Exception as exc:  # noqa: BLE001 - distinguish capability rejection from availability
+            reason = str(exc).lower()
+            unsupported_markers = (
+                "image input is not supported", "does not support images", "unsupported image",
+                "provide the mmproj", "failed to load image", "vision is not supported",
+                "image input unsupported", "images are not supported", "不支持图片输入",
+                "不支持图像输入", "不支持视觉", "未加载 mmproj",
+            )
+            if any(marker in reason for marker in unsupported_markers):
+                return False
+            return None
+
+    def brain_image_capability(
+        self,
+        profile: dict[str, Any],
+        probe_if_unknown: bool = False,
+    ) -> dict[str, Any]:
+        """Resolve image support and retain whether the result was actually confirmed."""
         explicit = profile.get("supports_images_explicit")
         if isinstance(explicit, bool):
-            return explicit
-        request_format = str(profile.get("request_format") or "").lower()
-        if request_format != "llama_cpp":
-            return self.brain_supports_images(profile)
-        base_url = str(profile.get("base_url") or "").rstrip("/")
-        if base_url.endswith("/v1"):
-            base_url = base_url[:-3]
-        cache_key = f"{base_url}|{profile.get('model') or ''}"
-        cached = self._capability_cache.get(cache_key)
-        if cached and time.time() - cached[0] < 30:
-            return cached[1]
-        detected: bool | None = None
-        try:
-            request = urllib.request.Request(
-                f"{base_url}/props",
-                headers={"Accept": "application/json", "User-Agent": "naiba-chat"},
-            )
-            with urllib.request.urlopen(request, timeout=2) as response:
-                props = json.loads(response.read().decode("utf-8", errors="replace"))
-            modalities = props.get("modalities") if isinstance(props, dict) else None
-            if isinstance(modalities, dict) and isinstance(modalities.get("vision"), bool):
-                detected = modalities["vision"]
-        except (OSError, ValueError, json.JSONDecodeError):
-            detected = None
-        resolved = detected if isinstance(detected, bool) else self.brain_supports_images(profile)
-        self._capability_cache[cache_key] = (time.time(), resolved)
-        return resolved
+            return {"supported": explicit, "confirmed": True, "source": "explicit"}
+        cache_key = "|".join((
+            str(profile.get("request_format") or "").lower(),
+            self._capability_base_url(profile),
+            str(profile.get("model") or ""),
+        ))
+        now = time.time()
+        with self._capability_lock:
+            cached = dict(self._capability_cache.get(cache_key) or {})
+        if cached and now - float(cached.get("timestamp") or 0) < float(cached.get("ttl") or 0):
+            if cached.get("confirmed") or not probe_if_unknown:
+                return {key: cached[key] for key in ("supported", "confirmed", "source")}
+
+        detected, source = self._runtime_image_capability(profile)
+        if isinstance(detected, bool):
+            result = {
+                "supported": detected, "confirmed": True, "source": source,
+                "timestamp": now, "ttl": 30,
+            }
+        else:
+            probed = self._probe_image_capability(profile) if probe_if_unknown else None
+            if isinstance(probed, bool):
+                result = {
+                    "supported": probed, "confirmed": True, "source": "image_probe",
+                    "timestamp": now, "ttl": 300,
+                }
+            else:
+                result = {
+                    "supported": self.brain_supports_images(profile),
+                    "confirmed": False,
+                    "source": "model_name",
+                    "timestamp": now,
+                    "ttl": 30,
+                }
+        with self._capability_lock:
+            self._capability_cache[cache_key] = result
+        return {key: result[key] for key in ("supported", "confirmed", "source")}
+
+    def resolve_brain_supports_images(
+        self,
+        profile: dict[str, Any],
+        probe_if_unknown: bool = False,
+    ) -> bool:
+        """Resolve image support in explicit/API/probe/name order."""
+        return bool(self.brain_image_capability(profile, probe_if_unknown)["supported"])
 
     @staticmethod
     def strip_images_for_text_model(

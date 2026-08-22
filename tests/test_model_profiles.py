@@ -71,7 +71,9 @@ class _MockModelHandler(BaseHTTPRequestHandler):
         if self.path.endswith("/api/tags"):
             body = json.dumps({"models": [{"name": "qwen:latest"}]}).encode("utf-8")
         elif self.path.endswith("/api/v1/models"):
-            body = json.dumps({"data": [{"id": "llama"}]}).encode("utf-8")
+            body = json.dumps({"data": [{
+                "id": "llama", "capabilities": {"vision": True},
+            }]}).encode("utf-8")
         elif self.path.endswith("/v1/models"):
             body = json.dumps({"data": [{"id": "m1"}, {"id": "m2"}]}).encode("utf-8")
         else:
@@ -374,6 +376,10 @@ class RuntimeDispatchTests(unittest.TestCase):
         self.assertEqual(
             [m["id"] for m in ModelRuntime.list_online_models(self._lm_studio())], ["llama"]
         )
+
+    def test_lm_studio_model_catalog_exposes_vision_capability(self) -> None:
+        models = ModelRuntime.list_online_models(self._lm_studio())
+        self.assertTrue(models[0]["supports_images"])
 
     def test_unload_local_model(self) -> None:
         result = ModelRuntime.unload_local_model(self._ollama())

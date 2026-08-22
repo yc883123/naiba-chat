@@ -625,6 +625,19 @@ class ModelRuntime:
             seen.add(model_id)
             capability: dict[str, Any] = {}
             if isinstance(item, dict):
+                capabilities = item.get("capabilities")
+                vision = capabilities.get("vision") if isinstance(capabilities, dict) else None
+                if not isinstance(vision, bool):
+                    loaded = item.get("loaded_instances")
+                    if isinstance(loaded, list):
+                        for instance in loaded:
+                            instance_caps = instance.get("capabilities") if isinstance(instance, dict) else None
+                            candidate = instance_caps.get("vision") if isinstance(instance_caps, dict) else None
+                            if isinstance(candidate, bool):
+                                vision = candidate
+                                break
+                if isinstance(vision, bool):
+                    capability["supports_images"] = vision
                 for target, keys in {
                     "context_window": (
                         "context_window", "contextWindow", "context_length", "contextLength",

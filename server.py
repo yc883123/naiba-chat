@@ -2924,7 +2924,23 @@ class RequestHandler(BaseHTTPRequestHandler):
                 ],
                 {"temperature": 0, "max_tokens": 128, "stream": False, "connection_test": True},
             )
-            self._json({"ok": True, "response": result})
+            capability_resolver = getattr(APP.vision, "brain_image_capability", None)
+            capability = (
+                capability_resolver(provider, probe_if_unknown=True)
+                if callable(capability_resolver)
+                else {
+                    "supported": bool(APP.vision.brain_supports_images(provider)),
+                    "confirmed": False,
+                    "source": "model_name",
+                }
+            )
+            self._json({
+                "ok": True,
+                "response": result,
+                "supports_images": bool(capability.get("supported")),
+                "capability_confirmed": bool(capability.get("confirmed")),
+                "capability_source": str(capability.get("source") or "model_name"),
+            })
         except Exception as exc:
             self._json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
@@ -2960,12 +2976,22 @@ class RequestHandler(BaseHTTPRequestHandler):
                 None,
             )
             if stored:
-                provider = {**stored, **{key: value for key, value in provider.items() if value}}
+                provider = {
+                    **stored,
+                    **{
+                        key: value for key, value in provider.items()
+                        if key != "api_key" or bool(value)
+                    },
+                }
         request_format = str(provider.get("request_format") or "openai_chat").strip().lower()
         provider["kind"] = (
             str(provider.get("kind") or "").strip().lower()
             if str(provider.get("kind") or "").strip().lower() in VALID_MODEL_KINDS
             else _infer_kind_for_request_format(request_format)
+        )
+        explicit_images = provider.get("supports_images")
+        provider["supports_images_explicit"] = (
+            explicit_images if isinstance(explicit_images, bool) else None
         )
         return provider
 
