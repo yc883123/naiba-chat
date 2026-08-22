@@ -1,4 +1,0 @@
-interface:
-  display_name: "ComfyUI MCP"
-  short_description: "自动连接并运行本机 ComfyUI 工作流"
-  default_prompt: "Use $comfyui-mcp to connect my running ComfyUI instance and execute a compatible workflow."
