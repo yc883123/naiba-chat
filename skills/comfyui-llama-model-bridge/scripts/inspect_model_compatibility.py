@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only GGUF inventory and local runtime capability inspection."""
+"""Read-only GGUF/Safetensors inventory and local runtime inspection."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import re
+import struct
 import sys
 import urllib.error
 import urllib.parse
@@ -22,6 +23,31 @@ PROJECTOR_MARKERS = (
     "vision-proj",
     "vision_proj",
     "vision.projector",
+)
+VISION_TENSOR_MARKERS = (
+    "model.visual",
+    "model.vision",
+    "vision_tower",
+    "vision_model",
+    "visual.",
+    "multi_modal_projector",
+    "multimodal_projector",
+    "deepstack_merger",
+)
+LANGUAGE_TENSOR_MARKERS = (
+    "model.embed_tokens",
+    "language_model",
+    "transformer.wte",
+    "lm_head",
+    "model.layers.",
+)
+DIFFUSION_TENSOR_MARKERS = (
+    "diffusion_model",
+    "first_stage_model",
+    "model.diffusion_model",
+    "unet.",
+    "vae.",
+    "text_encoders.",
 )
 IGNORED_PAIR_TOKENS = {
     "gguf",
@@ -41,7 +67,7 @@ IGNORED_PAIR_TOKENS = {
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "只读盘点 GGUF 主模型与视觉投影，并可选探测 llama.cpp、"
+            "只读盘点 GGUF、Safetensors 主模型与视觉投影，并可选探测 llama.cpp、"
             "Ollama、LM Studio 的本地接口。"
         )
     )
@@ -69,7 +95,7 @@ def model_tokens(path: Path) -> set[str]:
     }
 
 
-def file_record(path: Path, root: Path) -> dict[str, Any]:
+def file_record(path: Path, root: Path, file_format: str) -> dict[str, Any]:
     stat = path.stat()
     try:
         relative = str(path.relative_to(root))
@@ -79,10 +105,55 @@ def file_record(path: Path, root: Path) -> dict[str, Any]:
         "path": str(path),
         "relative_path": relative,
         "name": path.name,
+        "format": file_format,
         "size": stat.st_size,
         "link_count": getattr(stat, "st_nlink", 1),
         "device": getattr(stat, "st_dev", 0),
         "inode": getattr(stat, "st_ino", 0),
+    }
+
+
+def inspect_safetensors(path: Path) -> dict[str, Any]:
+    """Read only the Safetensors header; never map or load tensor data."""
+    with path.open("rb") as handle:
+        raw_size = handle.read(8)
+        if len(raw_size) != 8:
+            raise ValueError("Safetensors 文件缺少 8 字节 header 长度")
+        header_size = struct.unpack("<Q", raw_size)[0]
+        if header_size <= 0 or header_size > 64 * 1024 * 1024:
+            raise ValueError(f"Safetensors header 长度异常: {header_size}")
+        raw_header = handle.read(header_size)
+    header = json.loads(raw_header.decode("utf-8"))
+    if not isinstance(header, dict):
+        raise ValueError("Safetensors header 不是 JSON 对象")
+    tensor_names = [str(key) for key in header if key != "__metadata__"]
+    lowered = [name.casefold() for name in tensor_names]
+    vision_hits = sorted({marker for marker in VISION_TENSOR_MARKERS if any(marker in name for name in lowered)})
+    language_hits = sorted({marker for marker in LANGUAGE_TENSOR_MARKERS if any(marker in name for name in lowered)})
+    diffusion_hits = sorted({marker for marker in DIFFUSION_TENSOR_MARKERS if any(marker in name for name in lowered)})
+    if vision_hits and language_hits:
+        classification = "vision_language_model"
+        usability = "视觉语言模型权重；通常需要标准 config/tokenizer，并转换为 GGUF 后给 llama.cpp/LM Studio 使用。Ollama 只有在架构和权重格式受支持时才能导入。"
+    elif diffusion_hits and not language_hits:
+        classification = "diffusion_model"
+        usability = "ComfyUI 图像生成权重，不是 Naiba-chat 聊天模型，不能直接接入三种本地聊天端。"
+    elif language_hits:
+        classification = "language_model"
+        usability = "语言模型权重；需要检查架构、配置和 tokenizer，不能仅凭扩展名直接运行。"
+    else:
+        classification = "unknown"
+        usability = "无法仅凭 header 判断用途；需要查看配套配置和模型来源。"
+    metadata = header.get("__metadata__")
+    return {
+        "header_bytes": header_size,
+        "tensor_count": len(tensor_names),
+        "metadata": metadata if isinstance(metadata, dict) else {},
+        "classification": classification,
+        "vision_detected": bool(vision_hits),
+        "vision_markers": vision_hits,
+        "language_markers": language_hits,
+        "diffusion_markers": diffusion_hits,
+        "usability": usability,
     }
 
 
@@ -149,21 +220,34 @@ def duplicate_candidates(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def inventory(root: Path) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
+    safetensors: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
     for path in sorted(root.rglob("*"), key=lambda item: str(item).lower()):
-        if not path.is_file() or path.suffix.lower() != ".gguf":
+        if not path.is_file() or path.suffix.lower() not in {".gguf", ".safetensors"}:
             continue
         try:
-            records.append(file_record(path.resolve(), root.resolve()))
+            resolved = path.resolve()
+            file_format = path.suffix.lower().lstrip(".")
+            record = file_record(resolved, root.resolve(), file_format)
+            if file_format == "safetensors":
+                try:
+                    record.update(inspect_safetensors(resolved))
+                except (OSError, UnicodeError, ValueError, json.JSONDecodeError, struct.error) as exc:
+                    record["inspection_error"] = str(exc)
+                    errors.append({"path": str(resolved), "error": str(exc)})
+                safetensors.append(record)
+            records.append(record)
         except OSError as exc:
             errors.append({"path": str(path), "error": str(exc)})
 
-    models = [record for record in records if not is_projector(Path(record["path"]))]
-    projectors = [record for record in records if is_projector(Path(record["path"]))]
+    gguf_records = [record for record in records if record["format"] == "gguf"]
+    models = [record for record in gguf_records if not is_projector(Path(record["path"]))]
+    projectors = [record for record in gguf_records if is_projector(Path(record["path"]))]
     return {
         "root": str(root.resolve()),
         "models": models,
         "projectors": projectors,
+        "safetensors": safetensors,
         "projector_pair_suggestions": pair_projectors(models, projectors),
         "hardlink_groups": grouped_paths(records, ("device", "inode")),
         "duplicate_candidates": duplicate_candidates(records),
@@ -239,7 +323,10 @@ def format_size(size: int) -> str:
 
 def print_human(report: dict[str, Any]) -> None:
     print(f"模型根目录: {report['root']}")
-    print(f"主模型: {len(report['models'])}，视觉投影: {len(report['projectors'])}")
+    print(
+        f"GGUF 主模型: {len(report['models'])}，视觉投影: {len(report['projectors'])}，"
+        f"Safetensors: {len(report.get('safetensors', []))}"
+    )
     for label, key in (("主模型", "models"), ("视觉投影", "projectors")):
         print(f"\n[{label}]")
         if not report[key]:
@@ -247,6 +334,21 @@ def print_human(report: dict[str, Any]) -> None:
         for record in report[key]:
             links = f"，硬链接数 {record['link_count']}" if record["link_count"] > 1 else ""
             print(f"  - {record['relative_path']} ({format_size(record['size'])}{links})")
+
+    print("\n[Safetensors 头信息]")
+    if not report.get("safetensors"):
+        print("  未发现")
+    for record in report.get("safetensors", []):
+        details = record.get("classification", "无法识别")
+        vision = "支持视觉张量" if record.get("vision_detected") else "未发现视觉张量"
+        print(
+            f"  - {record['relative_path']} ({format_size(record['size'])}) "
+            f"{details}，{vision}"
+        )
+        if record.get("usability"):
+            print(f"    {record['usability']}")
+        if record.get("inspection_error"):
+            print(f"    读取错误: {record['inspection_error']}")
 
     print("\n[视觉投影候选配对]")
     if not report["projector_pair_suggestions"]:
