@@ -372,25 +372,37 @@ class MCPRegistry:
         for connection in connections:
             connection.stop()
 
-    def acquire(self) -> None:
+    def acquire(self, server_ids: list[str] | None = None) -> None:
         with self._lifecycle_lock:
             with self._lock:
                 should_start = self._session_count == 0 and not self._persistent
                 self._session_count += 1
-                connections = list(self.connections.values()) if should_start else []
+                selected = {
+                    str(item).strip() for item in (server_ids or []) if str(item).strip()
+                }
+                connections = [
+                    connection for sid, connection in self.connections.items()
+                    if not selected or sid in selected
+                ] if should_start else []
         for connection in connections:
             try:
                 connection.start()
             except MCPStartupError as exc:
                 connection._emit("startup_failed", error=str(exc))
 
-    def release(self) -> None:
+    def release(self, server_ids: list[str] | None = None) -> None:
         with self._lifecycle_lock:
             with self._lock:
                 if self._session_count == 0:
                     return
                 self._session_count -= 1
-                connections = list(self.connections.values()) if self._session_count == 0 and not self._persistent else []
+                selected = {
+                    str(item).strip() for item in (server_ids or []) if str(item).strip()
+                }
+                connections = [
+                    connection for sid, connection in self.connections.items()
+                    if not selected or sid in selected
+                ] if self._session_count == 0 and not self._persistent else []
         for connection in connections:
             connection.stop()
 

@@ -85,7 +85,9 @@ class SupportsImagesTest(TestCase):
             self.assertFalse(cfg.profile("online:ds")["supports_images"])
 
     def test_context_window_uses_known_capability_only(self):
-        self.assertEqual(128000, server._infer_context_window(self._provider()))
+        # A generic DeepSeek-compatible gateway must not be presented as the
+        # official 128K endpoint unless the provider explicitly declares it.
+        self.assertEqual(0, server._infer_context_window(self._provider()))
         self.assertEqual(
             0,
             server._infer_context_window(

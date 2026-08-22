@@ -219,6 +219,11 @@ class SkillCatalog:
                     or _frontmatter_value(text, "requires-mcp")
                     or _frontmatter_value(text, "mcp_servers")
                 ).lower()
+                declared_mcp_servers = [
+                    item.strip().strip("[]\"'")
+                    for item in re.split(r"[,\s]+", declared_mcp)
+                    if item.strip().strip("[]\"'")
+                ] if declared_mcp else []
                 mcp_signals = f"{declared_name} {name} {description} {skill_file.parent.name}".lower()
                 requires_mcp = (
                     declared_mcp in {"1", "true", "yes", "required"}
@@ -245,6 +250,7 @@ class SkillCatalog:
                     "root": str(skill_file.parent),
                     "script_count": script_count,
                     "requires_mcp": requires_mcp,
+                    "mcp_servers": declared_mcp_servers,
                     "source": directory_source,
                 }
         return sorted(found.values(), key=lambda item: item["name"].lower())
@@ -332,8 +338,15 @@ class ToolExecutor:
         if self.permission_mode == "full":
             return ""
         if tool in {"read_file", "list_directory", "search_files"}:
-            default_workspace = tool != "read_file"
-            path = self._resolve_tool_path(arguments.get("path"), default_workspace)
+            # Read-only inspection is non-destructive; do not interrupt a
+            # Skill workflow with one confirmation per file or chunk.
+            path = self._resolve_tool_path(arguments.get("path"), tool != "read_file")
+            if not any(self._path_within(path, root) for root in self._read_roots(active_skills)):
+                return "读取工作区外路径：" + str(path)
+            if not any(self._path_within(path, root) for root in self._read_roots(active_skills)):
+                return f"璇诲彇宸ヤ綔鍖哄璺緞：{path}"
+            # Continue with the boundary-aware check below.
+            path = self._resolve_tool_path(arguments.get("path"), tool != "read_file")
             if not any(self._path_within(path, root) for root in self._read_roots(active_skills)):
                 return f"读取工作区外路径：{path}"
             return ""
@@ -696,12 +709,22 @@ class SkillAgent:
         mcp_allowed = "call_mcp" in allowed_tools or any(
             str(tool).startswith("mcp__") for tool in allowed_tools
         )
-        needs_mcp = mcp_allowed and (configured_mcp or any(
-            skill.get("requires_mcp") for skill in active
-        ))
+        intent_mcp = bool(re.search(r"mcp|comfyui|comfy-mcp|工作流|生成图|生成图片", routing_message, re.I))
+        needs_mcp = mcp_allowed and (
+            configured_mcp or any(skill.get("requires_mcp") for skill in active) or intent_mcp
+        )
+        mcp_ids = sorted({
+            str(server_id)
+            for skill in active
+            for server_id in (skill.get("mcp_servers") or [])
+            if str(server_id).strip()
+        })
         if needs_mcp:
             event({"type": "status", "message": "正在连接 Skill 所需的 MCP 服务"})
-            self.executor.mcp_registry.acquire()
+            try:
+                self.executor.mcp_registry.acquire(mcp_ids or None)
+            except TypeError:
+                self.executor.mcp_registry.acquire()
         try:
             return self._run_active(
                 user_message,
@@ -721,7 +744,10 @@ class SkillAgent:
             )
         finally:
             if needs_mcp:
-                self.executor.mcp_registry.release()
+                try:
+                    self.executor.mcp_registry.release(mcp_ids or None)
+                except TypeError:
+                    self.executor.mcp_registry.release()
 
     def _run_active(
         self,

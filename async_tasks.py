@@ -4,6 +4,7 @@ import json
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
@@ -342,9 +343,16 @@ class ConversationRunManager:
                 "attachments": attachments,
                 "interaction_mode": mode,
                 "plan_id": plan_id,
-                "workspace_dir": str(self.app.config.resolve_workspace_dir()),
+                # Freeze the conversation workspace into the run snapshot so
+                # concurrent conversations cannot change each other's roots.
+                "workspace_dir": str(
+                    self.app.config.resolve_workspace_dir(str(conversation.get("workspace_dir") or ""))
+                    if str(conversation.get("workspace_dir") or "").strip()
+                    else self.app.config.resolve_workspace_dir()
+                ),
                 "web_search_enabled": web_search_enabled,
                 "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
+                "reasoning_effort": str(conversation.get("reasoning_effort") or ("medium" if conversation.get("deep_reasoning_enabled") else "off")),
                 "lightweight_mode": lightweight_mode,
                 "lightweight_disabled_features": sorted(disabled_features),
                 "allowed_tools": allowed_tools,
@@ -577,8 +585,13 @@ class ConversationRunManager:
                 str(item) for item in (snapshot.get("lightweight_disabled_features") or [])
             } if lightweight_mode else set()
             lightweight_direct = {"tools", "skills"}.issubset(disabled_features)
-            if not bool(snapshot.get("deep_reasoning_enabled", False)):
-                profile["reasoning_effort"] = "off"
+            reasoning_effort = str(
+                snapshot.get("reasoning_effort")
+                or ("medium" if snapshot.get("deep_reasoning_enabled", False) else "off")
+            ).strip().lower()
+            if reasoning_effort not in {"off", "low", "medium", "high", "auto"}:
+                reasoning_effort = "off"
+            profile["reasoning_effort"] = reasoning_effort
             history = build_model_history(snapshot.get("conversation_messages") or [])
             # 视觉自动路由（Phase 1）：文本大脑不支持看图时，把图片改写为不可信描述注入；
             # 纯文本大脑绝不会收到原始 image_url。
@@ -660,7 +673,7 @@ class ConversationRunManager:
                     event({"type": "status", "message": f"视觉路由异常，已安全移除 {removed} 张图片"})
             options = dict(snapshot.get("generation_options") or self._generation_options(self.app.config, model_key))
             options["stream"] = bool(snapshot.get("stream_enabled", True))
-            options["reasoning_enabled"] = bool(snapshot.get("deep_reasoning_enabled", False))
+            options["reasoning_enabled"] = reasoning_effort != "off"
             allowed_tools = [str(item) for item in snapshot.get("allowed_tools") or []]
             if "skills" in disabled_features:
                 allowed_tools = [
@@ -1135,6 +1148,9 @@ class ConversationRunManager:
             if callable(getattr(base, "clone_for_permission", None))
             else base
         )
+        workspace = str(frozen.get("workspace_dir") or "").strip()
+        if workspace and hasattr(executor, "workspace"):
+            executor.workspace = Path(workspace).resolve()
         with self._lock:
             return self._executors.setdefault(run_id, executor)
 

@@ -1,6 +1,7 @@
 ---
 name: comfyui-mcp
 description: Configure and operate a local or portable ComfyUI instance through MCP, including environment/path discovery, embedded-Python setup, workflow compatibility checks, API-format workflow installation, parameter mapping, execution, and output retrieval. Use when a user asks to connect an AI assistant to ComfyUI, run or troubleshoot a ComfyUI workflow, determine which bundled or custom workflows are usable, or adapt an existing ComfyUI workflow for this skill.
+mcp_servers: ["comfyui"]
 ---
 
 # ComfyUI MCP

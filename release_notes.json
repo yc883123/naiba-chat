@@ -1,4 +1,6 @@
-[
+[ 
+  "Build84: add a Windows native workspace folder picker, official comfy-mcp detection/install/registration, and real File-object image dragging for external ComfyUI pages.",
+  "Build84: persist conversation workspace and reasoning effort, avoid loading domain Skills by default, and keep DeepSeek reasoning_content compatible across multi-turn tool calls.",
   "Build83: move the Token usage popover out of the scrollable composer, position it against the viewport, and keep long details internally scrollable so clicking the context ring never clips its contents.",
   "Build82: always pass assistant reasoning_content in deep-reasoning OpenAI-compatible requests, including an empty value for tool steps or legacy history that has no stored reasoning, preventing thinking-mode HTTP 400 failures across online providers.",
   "Build82: bundle official-comfy-mcp as a default tracked Skill so fresh installs and packaged updates include its official ComfyUI MCP workflow guidance.",

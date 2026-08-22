@@ -454,6 +454,15 @@ class ModelRuntime:
         return converted
 
     @staticmethod
+    def _is_deepseek_profile(profile: dict[str, Any]) -> bool:
+        """Return whether an OpenAI-compatible profile speaks DeepSeek's
+        thinking-mode dialect, which requires assistant reasoning_content on
+        every replayed assistant message (including an empty value)."""
+        base_url = str(profile.get("base_url") or "").lower()
+        model = str(profile.get("model") or "").lower()
+        return "deepseek" in model or "deepseek.com" in base_url
+
+    @staticmethod
     def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         converted = []
         for item in messages:
@@ -754,7 +763,9 @@ class ModelRuntime:
                 "model": model,
                 "messages": ModelRuntime._openai_messages(
                     messages,
-                    include_reasoning_content=reasoning_enabled,
+                    include_reasoning_content=(
+                        reasoning_enabled or ModelRuntime._is_deepseek_profile(profile)
+                    ),
                 ),
                 "stream": stream_enabled,
             }
@@ -886,7 +897,9 @@ class ModelRuntime:
                     "model": model,
                     "messages": ModelRuntime._openai_messages(
                         messages,
-                        include_reasoning_content=reasoning_enabled,
+                        include_reasoning_content=(
+                            reasoning_enabled or ModelRuntime._is_deepseek_profile(profile)
+                        ),
                     ),
                     "stream": stream_enabled,
                     "tools": native_tools,

@@ -1415,7 +1415,7 @@ class ConversationSearchPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(1, updated["web_search_enabled"])
             self.assertEqual(1, updated["deep_reasoning_enabled"])
-            self.assertEqual(7, storage.get_user_version())
+            self.assertEqual(8, storage.get_user_version())
 
     def test_lightweight_mode_persists_independent_tools_and_skills_switches(self) -> None:
         with tempfile.TemporaryDirectory() as root:

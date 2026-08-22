@@ -1,6 +1,7 @@
 ---
 name: official-comfy-mcp
 description: Install, configure, and operate Comfy's first-party local comfy-mcp server in NaibaChat. Use for connecting a local ComfyUI workspace over MCP stdio, launching or inspecting ComfyUI, discovering templates/nodes/models, validating and running API-format workflows, monitoring jobs, and fetching outputs.
+mcp_servers: ["comfy-mcp"]
 ---
 
 # 官方comfy-mcp

@@ -453,9 +453,10 @@ def default_config() -> dict[str, Any]:
                 "id": "general",
                 "name": "通用 Agent",
                 "system_prompt": "",
-                # Official local Comfy MCP and the shortdrama workflow Skill
-                # are available in the default Agent.
-                "skill_ids": ["0a3afda21c5622e1", "e03778f862d10595"],
+                # Domain Skills are routed from the current request or
+                # explicitly selected by the user; do not inject them into
+                # every general-agent turn.
+                "skill_ids": [],
             },
             {
                 "id": "coding",
@@ -631,15 +632,37 @@ class ConfigStore:
                 seen[sid] = 1
                 deduped.append(server)
             defaults["mcp_servers"] = deduped
+            # The legacy custom ComfyUI bridge is retained for rollback but is
+            # no longer auto-enabled.  The official comfy-mcp server is
+            # registered explicitly when its executable is available.
+            for server in defaults["mcp_servers"]:
+                if isinstance(server, dict) and server.get("id") == "comfyui":
+                    server["enabled"] = False
         self.data = defaults
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
+        self._migrate_default_agent_skills()
         tools = self.data.get("agent_tools")
         if isinstance(tools, list) and "call_mcp" in tools and "register_mcp" not in tools:
             tools.insert(tools.index("call_mcp"), "register_mcp")
         # 在线/本地模型配置分层：为旧 providers 补全 kind/local_backend，并生成 default_model_key。
         self._migrate_model_profiles()
         self.save()
+
+    def _migrate_default_agent_skills(self) -> None:
+        """Remove historical domain Skills from the general Agent default."""
+        legacy = {"0a3afda21c5622e1", "e03778f862d10595"}
+        agents = self.data.get("agents")
+        if not isinstance(agents, list):
+            return
+        for agent in agents:
+            if not isinstance(agent, dict) or str(agent.get("id") or "") != "general":
+                continue
+            skills = agent.get("skill_ids")
+            if not isinstance(skills, list):
+                agent["skill_ids"] = []
+                continue
+            agent["skill_ids"] = [str(item) for item in skills if str(item) not in legacy]
 
     def save(self) -> None:
         with self.lock:
@@ -1624,8 +1647,10 @@ def _infer_context_window(provider: dict[str, Any]) -> int:
         return explicit
 
     hostname = (urllib.parse.urlparse(str(provider.get("base_url") or "")).hostname or "").lower()
-    if hostname == "api.deepseek.com":
-        return 128_000
+    # Do not infer a provider's advertised context from its hostname.  A
+    # gateway may expose a different limit, and the settings UI must not claim
+    # a value the API did not provide.  Explicit provider config remains the
+    # source of truth.
     return 0
 
 
@@ -1726,8 +1751,8 @@ class NaibaChatApp:
         self.mcp.on_tools_discovered = self.tool_registry.register_mcp_tools
         self.mcp.on_tools_deregistered = self.tool_registry.deregister_mcp_tools
         self.mcp.register_tools_into(self.tool_registry)
-        # MCP 生命周期：启动即在后台连接所有已启用服务，保持到退出。
-        threading.Thread(target=self._start_mcp_background, name="mcp-startup", daemon=True).start()
+        # MCP uses demand-driven lifecycle.  Configured services stay stopped
+        # until a run explicitly needs them or calls an MCP tool.
         from subagent import (
             subagent_handler_factory,
             job_tool_handler_factory,
@@ -1776,6 +1801,75 @@ class NaibaChatApp:
             values = self._persist_comfyui_mcp(values)
         config = self.config.upsert_mcp_server(values)
         return {"saved": True, "server": self.mcp.upsert(config)}
+
+    def inspect_official_comfy_mcp(self) -> dict[str, Any]:
+        """Discover the first-party comfy-mcp toolchain without changing state."""
+        import importlib.util
+        comfy_mcp = shutil.which("comfy-mcp") or shutil.which("comfy-mcp.exe")
+        comfy = shutil.which("comfy") or shutil.which("comfy.exe")
+        try:
+            module_available = importlib.util.find_spec("comfy_mcp") is not None
+        except (ImportError, ValueError):
+            module_available = False
+        registered = next(
+            (item for item in self.config.data.get("mcp_servers", [])
+             if isinstance(item, dict) and item.get("id") == "comfy-mcp"),
+            None,
+        )
+        return {
+            "comfy_mcp": comfy_mcp or "",
+            "comfy": comfy or "",
+            "module_available": module_available,
+            "registered": bool(registered),
+            "enabled": bool(registered and registered.get("enabled", True)),
+            "server": registered or {},
+        }
+
+    def setup_official_comfy_mcp(self, install: bool = False) -> dict[str, Any]:
+        """Optionally install and register Comfy's official stdio MCP server."""
+        info = self.inspect_official_comfy_mcp()
+        if install and not info["comfy_mcp"]:
+            import subprocess
+            command = [sys.executable, "-m", "pip", "install", "comfy-mcp", "comfy-cli>=1.14.0"]
+            proc = subprocess.run(command, capture_output=True, text=True, timeout=900)
+            if proc.returncode != 0:
+                detail = (proc.stderr or proc.stdout or "pip install failed").strip()
+                raise RuntimeError(detail[-2000:])
+            info = self.inspect_official_comfy_mcp()
+        executable = info.get("comfy_mcp")
+        if not executable:
+            raise ValueError("未找到 comfy-mcp。请先安装 comfy-mcp，或确认它位于当前 Python 环境的 PATH 中。")
+        env = {"COMFY_BIN": str(info["comfy"])} if info.get("comfy") else {}
+        result = self.register_mcp_server({
+            "id": "comfy-mcp", "command": str(executable), "args": [],
+            "env": env, "enabled": True,
+        })
+        result["detection"] = self.inspect_official_comfy_mcp()
+        return result
+
+    def pick_workspace_directory(self, initial: str = "") -> dict[str, Any]:
+        """Open a Windows native folder picker; return an empty path if cancelled."""
+        initial_path = str(initial or self.config.resolve_workspace_dir())
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            selected = filedialog.askdirectory(
+                parent=root,
+                initialdir=initial_path if Path(initial_path).is_dir() else str(EXE_DIR),
+                title="选择 NaibaChat 工作区目录", mustexist=False,
+            )
+            root.destroy()
+        except Exception as exc:
+            raise RuntimeError(f"无法打开 Windows 原生目录选择器：{exc}") from exc
+        selected = str(selected or "").strip()
+        if not selected:
+            return {"cancelled": True, "path": ""}
+        resolved = self.config.resolve_workspace_dir(selected)
+        self.config.ensure_workspace_writable(resolved)
+        return {"cancelled": False, "path": selected, "resolved": str(resolved)}
 
     def _refresh_persisted_comfyui_mcp(self) -> None:
         """升级后用随程序分发的新脚本刷新持久化 MCP 副本。"""
@@ -1880,6 +1974,7 @@ class NaibaChatApp:
             "default_model_key": self.config.default_model_key(),
             "skills": self.catalog.scan(),
             "mcp_servers": self.mcp.states(),
+            "comfy_mcp": self.inspect_official_comfy_mcp(),
             "agents": self.config.public_agents(),
             "default_agent_id": self.config.default_agent_id(),
             **access,
@@ -2150,6 +2245,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             permission_mode = str(body.get("permission_mode") or "confirm")
             web_search_enabled = body.get("web_search_enabled", False)
             deep_reasoning_enabled = body.get("deep_reasoning_enabled", False)
+            reasoning_effort = body.get("reasoning_effort")
+            workspace_dir = body.get("workspace_dir")
             # Only Plan is user-selectable; all other values mean ordinary mode.
             if permission_mode not in ("confirm", "auto", "full"):
                 self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
@@ -2160,6 +2257,19 @@ class RequestHandler(BaseHTTPRequestHandler):
             if not isinstance(deep_reasoning_enabled, bool):
                 self._json({"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
+            if reasoning_effort is not None and str(reasoning_effort).lower() not in {"off", "low", "medium", "high", "auto"}:
+                self._json({"error": "reasoning_effort 无效"}, HTTPStatus.BAD_REQUEST)
+                return
+            if workspace_dir is not None and not isinstance(workspace_dir, str):
+                self._json({"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
+            if workspace_dir is not None and str(workspace_dir).strip():
+                try:
+                    resolved_workspace = APP.config.resolve_workspace_dir(str(workspace_dir).strip())
+                    APP.config.ensure_workspace_writable(resolved_workspace)
+                except (OSError, ValueError) as exc:
+                    self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                    return
             self._json(
                 APP.storage.create_conversation(
                     title=title, provider_id=provider_id, agent_id=agent_id,
@@ -2167,6 +2277,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                     permission_mode=permission_mode,
                     web_search_enabled=web_search_enabled,
                     deep_reasoning_enabled=deep_reasoning_enabled,
+                    reasoning_effort=str(reasoning_effort or ("medium" if deep_reasoning_enabled else "off")),
+                    workspace_dir=str(workspace_dir or ""),
                 ),
                 HTTPStatus.CREATED,
             )
@@ -2222,8 +2334,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": "web_search_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
             deep_reasoning_enabled = body.get("deep_reasoning_enabled")
+            reasoning_effort = body.get("reasoning_effort")
+            workspace_dir = body.get("workspace_dir")
             if deep_reasoning_enabled is not None and not isinstance(deep_reasoning_enabled, bool):
                 self._json({"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
+                return
+            if reasoning_effort is not None and str(reasoning_effort).lower() not in {"off", "low", "medium", "high", "auto"}:
+                self._json({"error": "reasoning_effort 无效"}, HTTPStatus.BAD_REQUEST)
+                return
+            if workspace_dir is not None and not isinstance(workspace_dir, str):
+                self._json({"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
             lightweight_mode = body.get("lightweight_mode")
             if lightweight_mode is not None and not isinstance(lightweight_mode, bool):
@@ -2248,6 +2368,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 permission_mode=permission_mode,
                 web_search_enabled=web_search_enabled,
                 deep_reasoning_enabled=deep_reasoning_enabled,
+                reasoning_effort=reasoning_effort,
+                workspace_dir=workspace_dir,
                 lightweight_mode=lightweight_mode,
                 lightweight_disabled_features=lightweight_disabled_features,
             )
@@ -2332,6 +2454,18 @@ class RequestHandler(BaseHTTPRequestHandler):
                 server_id = str(body.get("server_id") or "").strip()
                 result = APP.test_mcp_server(server_id)
                 self._json(result)
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/mcp/comfy/inspect":
+            self._json(APP.inspect_official_comfy_mcp())
+        elif path == "/api/mcp/comfy/setup":
+            try:
+                self._json(APP.setup_official_comfy_mcp(bool(body.get("install"))))
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/workspace/pick":
+            try:
+                self._json(APP.pick_workspace_directory(str(body.get("initial") or "")))
             except (OSError, ValueError, RuntimeError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/mcp/reconnect":

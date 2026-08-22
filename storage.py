@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -159,6 +159,23 @@ def _migrate_to_v7(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v8(db: sqlite3.Connection) -> None:
+    """Persist per-conversation workspace and reasoning intensity."""
+    for column, definition in (
+        ("workspace_dir", "TEXT NOT NULL DEFAULT ''"),
+        ("reasoning_effort", "TEXT NOT NULL DEFAULT 'off'"),
+    ):
+        try:
+            db.execute(f"SELECT {column} FROM conversations LIMIT 1")
+        except sqlite3.OperationalError:
+            db.execute(f"ALTER TABLE conversations ADD COLUMN {column} {definition}")
+    # Preserve the old boolean switch for existing conversations.
+    db.execute(
+        "UPDATE conversations SET reasoning_effort = 'medium' "
+        "WHERE deep_reasoning_enabled = 1 AND (reasoning_effort = '' OR reasoning_effort IS NULL OR reasoning_effort = 'off')"
+    )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -168,6 +185,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     5: _migrate_to_v5,
     6: _migrate_to_v6,
     7: _migrate_to_v7,
+    8: lambda db: _migrate_to_v8(db),
 }
 
 
@@ -205,6 +223,8 @@ class ChatStorage:
                     title_customized INTEGER NOT NULL DEFAULT 0,
                     system_prompt TEXT NOT NULL DEFAULT '',
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
+                    workspace_dir TEXT NOT NULL DEFAULT '',
+                    reasoning_effort TEXT NOT NULL DEFAULT 'off',
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -414,6 +434,8 @@ class ChatStorage:
         web_search_enabled: bool = False,
         deep_reasoning_enabled: bool = False,
         lightweight_mode: bool = False,
+        workspace_dir: str = "",
+        reasoning_effort: str = "off",
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
@@ -425,8 +447,8 @@ class ChatStorage:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
@@ -439,6 +461,8 @@ class ChatStorage:
                     0,
                     "",
                     1,
+                    str(workspace_dir or ""),
+                    str(reasoning_effort or ("medium" if deep_reasoning_enabled else "off")),
                     provider_id or "",
                     resolved_model_key,
                     agent_id or "",
@@ -453,13 +477,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -467,7 +491,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -498,6 +522,8 @@ class ChatStorage:
         deep_reasoning_enabled: bool | None = None,
         lightweight_mode: bool | None = None,
         lightweight_disabled_features: list[str] | None = None,
+        workspace_dir: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -544,6 +570,14 @@ class ChatStorage:
             values["web_search_enabled"] = 1 if bool(web_search_enabled) else 0
         if deep_reasoning_enabled is not None:
             values["deep_reasoning_enabled"] = 1 if bool(deep_reasoning_enabled) else 0
+            if reasoning_effort is None:
+                values["reasoning_effort"] = "medium" if bool(deep_reasoning_enabled) else "off"
+        if reasoning_effort is not None:
+            effort = str(reasoning_effort or "off").strip().lower()
+            if effort not in {"off", "low", "medium", "high", "auto"}:
+                raise ValueError("reasoning_effort 必须是 off / low / medium / high / auto")
+            values["reasoning_effort"] = effort
+            values["deep_reasoning_enabled"] = 0 if effort == "off" else 1
         if lightweight_mode is not None:
             values["lightweight_mode"] = 1 if bool(lightweight_mode) else 0
         if lightweight_disabled_features is not None:
@@ -551,6 +585,8 @@ class ChatStorage:
             values["lightweight_disabled_features"] = json.dumps(
                 [item for item in lightweight_disabled_features if item in allowed], ensure_ascii=False
             )
+        if workspace_dir is not None:
+            values["workspace_dir"] = str(workspace_dir or "").strip()
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)

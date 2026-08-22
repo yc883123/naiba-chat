@@ -66,6 +66,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .web-search-button { font-size: 17px; opacity: .55; }
 .web-search-button.active { opacity: 1; background: var(--green); color: #fff; box-shadow: 0 0 0 2px rgba(18,100,64,.25); }
 .deep-reasoning-button { color: #55708f; opacity: .7; }
+.reasoning-control { position: relative; display: inline-flex; align-items: center; }
+.reasoning-menu { position: absolute; right: 0; bottom: 42px; z-index: 30; min-width: 90px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); box-shadow: 0 8px 24px rgba(22,31,23,.16); }
+.reasoning-menu[hidden] { display: none; }
+.reasoning-menu button { display: block; width: 100%; border: 0; border-radius: 4px; background: transparent; color: var(--text); padding: 6px 10px; text-align: left; }
+.reasoning-menu button:hover { background: var(--surface-2); }
 .deep-reasoning-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .deep-reasoning-button:hover { color: #2563eb; opacity: 1; }
 .deep-reasoning-button.active { opacity: 1; background: #2563eb; color: #fff; box-shadow: 0 0 0 2px rgba(37,99,235,.2); }
@@ -160,6 +165,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .reasoning-block { margin: 8px 0 12px; border-left: 2px solid #6c8cd9; background: #f4f6fb; border-radius: 0 var(--radius) var(--radius) 0; padding: 6px 10px; }
 .reasoning-block summary { cursor: pointer; color: #4361a8; font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }
+.edit-attachments { margin: 8px 0; }
+.edit-attachments .media-grid { max-width: 100%; }
+.edit-attachments img { max-width: 180px; max-height: 140px; object-fit: contain; }
 .tool-stack { margin: 8px 0 12px; border-left: 2px solid #d9a66c; padding-left: 10px; }
 .tool-availability { margin: 8px 0 12px; color: var(--muted); font-size: 12px; }
 .tool-availability summary { cursor: pointer; color: #a87943; font-weight: 600; }
@@ -372,6 +380,10 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .provider-current .control-button, .provider-current .danger-button { height: 40px; }
 .workspace-dialog-body { padding: 16px 18px; }
 .workspace-dialog-body input { width: 100%; }
+.input-with-button { display:flex; gap:8px; align-items:center; }
+.input-with-button input { flex:1; min-width:0; }
+.official-mcp-card { display:flex; justify-content:space-between; gap:16px; align-items:center; padding:12px; margin:10px 0 14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface-2); }
+.official-mcp-card small { display:block; color:var(--muted); margin-top:4px; }
 .vision-provider-current { margin-bottom: 0; }
 .provider-divider { height: 1px; background: var(--line); margin: 2px 0 4px; }
 .provider-format-guide { margin: -3px 0 1px; padding: 9px 11px; border-left: 3px solid var(--green); background: var(--green-soft); color: var(--text); font-size: 12px; line-height: 1.55; }

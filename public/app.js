@@ -39,11 +39,13 @@ const state = {
   visionStartedAt: 0,
   webSearchEnabled: false,
   deepReasoningEnabled: false,
+  reasoningEffort: 'off',
   lightweightMode: false,
   lightweightDisabledFeatures: ['tools', 'skills'],
   contextUsage: null,
   providerModelCapabilities: {},
 };
+const draggedFileCache = new Map();
 
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
@@ -329,7 +331,7 @@ function mediaMarkup(attachments = []) {
     const safeUrl = escapeHtml(url);
     const name = escapeHtml(attachment.name || '生成文件');
     if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
-      return `<a class="media-image-link" href="${safeUrl}" target="_blank" rel="noreferrer"><img src="${safeUrl}" alt="${name}" loading="lazy" onerror="this.remove(); this.parentElement.classList.add('media-failed')"><span>打开 ${name}</span></a>`;
+      return `<a class="media-image-link" href="${safeUrl}" target="_blank" rel="noreferrer"><img draggable="true" src="${safeUrl}" alt="${name}" loading="lazy" onerror="this.remove(); this.parentElement.classList.add('media-failed')"><span>打开 ${name}</span></a>`;
     }
     if (/\.(mp4|webm)$/.test(lower)) return `<video src="${safeUrl}" controls playsinline></video>`;
     if (/\.(wav|mp3|m4a)$/.test(lower)) return `<audio src="${safeUrl}" controls></audio>`;
@@ -370,7 +372,9 @@ function usageMarkup(usage) {
   const chatMs = Number(chat.total_ms || 0);
   const visionCacheHit = Boolean(vision.cache_hit);
   const requestCount = Number(vision.requests || 0) + Number(usage.requests || 0);
-  if (!input && !output && !visualMs && !chatMs) return '';
+  if (!input && !output && !visualMs && !chatMs) {
+    return '<div class="usage-line">Token / 缓存命中率：供应商未返回</div>';
+  }
   const rate = input ? Number(usage.cache_hit_rate ?? (cached / input * 100)).toFixed(1) : '0.0';
   const requests = Number(usage.requests || 1);
   const tokenLine = (input || output)
@@ -518,9 +522,16 @@ function messageElement(message, temporary = false) {
   row.className = `message-row ${message.role}`;
   row.dataset.messageId = message.id || '';
   const metadata = message.metadata || {};
+  row.__messageMetadata = metadata;
   row.dataset.interjection = String(Boolean(metadata.interjection));
   row.dataset.interjectionGuided = String(Boolean(metadata.interjection_guided));
   row.dataset.interjectionConsumed = String(Boolean(metadata.interjection_consumed));
+  if (Array.isArray(metadata.attachments)) {
+    metadata.attachments.forEach((attachment) => {
+      const source = attachment.source || attachment.path;
+      if (source && /\.(png|jpe?g|gif|webp)$/i.test(source)) preloadDraggedFile(source, attachment.name);
+    });
+  }
   if (message.role === 'user') {
     const actions = message.id ? `<div class="message-actions"><button data-edit-message title="编辑并从此处重新开始">编辑</button>${metadata.interjection && !metadata.interjection_consumed ? '<button data-delete-message title="删除这条消息">删除</button>' : ''}</div>` : '';
     row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
@@ -540,6 +551,14 @@ function messageElement(message, temporary = false) {
       </div>`;
   }
   return row;
+}
+
+function preloadDraggedFile(source, name = '') {
+  const url = new URL(fileUrl(source), location.href).href;
+  if (draggedFileCache.has(url)) return;
+  fetch(url).then((response) => response.ok ? response.blob() : Promise.reject(new Error('image fetch failed')))
+    .then((blob) => draggedFileCache.set(url, new File([blob], name || 'image' + (blob.type ? '.' + blob.type.split('/')[1] : ''), { type: blob.type })))
+    .catch(() => {});
 }
 
 function isPendingRunGuidance(message) {
@@ -603,9 +622,11 @@ function startEditMessage(row) {
   // 提取纯文本内容（不含附件标记）
   const textContent = body.childNodes[0]?.textContent ?? body.textContent;
   const currentText = row.dataset.rawContent || textContent.trim();
+  const attachments = row.__messageMetadata?.attachments || [];
   row.dataset.rawContent = currentText;
   body.innerHTML = `
-    <textarea class="edit-input" data-edit-input rows="3">${escapeHtml(currentText)}</textarea>
+    <textarea class="edit-input" data-edit-input rows="5">${escapeHtml(currentText)}</textarea>
+    <div class="edit-attachments">${uploadedFileMarkup(attachments)}</div>
     <div class="edit-actions">
       <button class="primary-button" data-edit-confirm>重新发送</button>
       <button class="control-button" data-edit-cancel>取消</button>
@@ -676,7 +697,7 @@ function uploadedFileMarkup(files = []) {
     const isImage = /\.(png|jpe?g|gif|webp)$/i.test(source);
     if (isImage) {
       const src = fileUrl(source);
-      return `<figure class="attachment attachment-image"><a href="${src}" target="_blank" rel="noreferrer"><img src="${src}" alt="${escapeHtml(file.name || 'image')}" loading="lazy"></a><figcaption>${escapeHtml(file.name || '')}</figcaption></figure>`;
+      return `<figure class="attachment attachment-image"><a href="${src}" target="_blank" rel="noreferrer"><img draggable="true" src="${src}" alt="${escapeHtml(file.name || 'image')}" loading="lazy"></a><figcaption>${escapeHtml(file.name || '')}</figcaption></figure>`;
     }
     return `<span class="file-chip">${escapeHtml(file.name)}</span>`;
   }).join('');
@@ -823,6 +844,7 @@ async function initialize() {
   renderSkills();
   renderProviders();
   renderMcp();
+  renderOfficialComfyMcp();
   renderUpdateStatus(state.bootstrap.update || {});
   await loadConversations();
   await loadTasks();
@@ -1451,6 +1473,7 @@ async function createConversation() {
     },
   });
   state.conversationId = conversation.id;
+  state.workspaceDir = conversation.workspace_dir || '';
   state.conversations.unshift(conversation);
   renderConversations();
   applyConversationModel(conversation);
@@ -1458,6 +1481,7 @@ async function createConversation() {
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
   updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
+  state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'off');
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
@@ -1476,6 +1500,7 @@ async function openConversation(id) {
   }
   const conversation = await api(`/api/conversations/${id}`);
   state.conversationId = id;
+  state.workspaceDir = conversation.workspace_dir || '';
   const index = state.conversations.findIndex((item) => item.id === id);
   if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...conversation };
   state.conversationSnapshot = conversationSnapshot(conversation);
@@ -1489,6 +1514,7 @@ async function openConversation(id) {
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
   updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
+  state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'off');
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
@@ -2449,6 +2475,40 @@ async function saveWorkspaceSettings() {
   }
 }
 
+async function pickWorkspace(targetId = 'workspaceDialogInput') {
+  try {
+    const current = String($(targetId)?.value || '');
+    const result = await api('/api/workspace/pick', { method: 'POST', body: { initial: current } });
+    if (result.cancelled) return;
+    const input = $('#' + targetId);
+    if (input) input.value = result.path || '';
+    if (targetId === 'workspaceDir') $('#resolvedWorkspaceDir').textContent = result.resolved || '-';
+  } catch (error) { toast(`目录选择失败：${error.message}`); }
+}
+
+function renderOfficialComfyMcp(info = state.bootstrap?.comfy_mcp || {}) {
+  const status = $('#officialComfyMcpStatus');
+  if (!status) return;
+  const bits = [];
+  bits.push(info.comfy_mcp ? `comfy-mcp：${info.comfy_mcp}` : '未找到 comfy-mcp');
+  if (info.comfy) bits.push(`comfy：${info.comfy}`);
+  status.textContent = `${bits.join('；')}。${info.registered ? (info.enabled ? '已注册并启用' : '已注册但停用') : '尚未注册'}`;
+}
+
+async function inspectOfficialComfyMcp() {
+  try { const info = await api('/api/mcp/comfy/inspect'); state.bootstrap.comfy_mcp = info; renderOfficialComfyMcp(info); }
+  catch (error) { toast(`检测 comfy-mcp 失败：${error.message}`); }
+}
+
+async function setupOfficialComfyMcp() {
+  try {
+    const result = await api('/api/mcp/comfy/setup', { method: 'POST', body: { install: true } });
+    state.bootstrap.comfy_mcp = result.detection || {};
+    state.bootstrap.mcp_servers = await api('/api/mcp').then((r) => r.servers || state.bootstrap.mcp_servers);
+    renderOfficialComfyMcp(state.bootstrap.comfy_mcp); renderMcp(); toast('官方 comfy-mcp 已安装并注册');
+  } catch (error) { toast(`官方 comfy-mcp 设置失败：${error.message}`); }
+}
+
 async function saveAccessToken() {
   const value = $('#accessTokenInput').value.trim();
   if (!value) {
@@ -2927,7 +2987,10 @@ function updateDeepReasoningButton() {
   if (!btn) return;
   const disabled = Boolean(state.chatRunId || state.abortController);
   btn.disabled = disabled;
+  const effort = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'off');
+  state.deepReasoningEnabled = effort !== 'off';
   btn.classList.toggle('active', state.deepReasoningEnabled);
+  btn.dataset.reasoningEffort = effort;
   btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled));
   btn.title = state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭';
 }
@@ -2935,19 +2998,28 @@ function updateDeepReasoningButton() {
 async function toggleDeepReasoning() {
   if (!state.conversationId) await createConversation();
   if (state.chatRunId || state.abortController) return;
-  const previous = state.deepReasoningEnabled;
-  state.deepReasoningEnabled = !previous;
+  const menu = $('#reasoningMenu');
+  if (menu) {
+    menu.hidden = !menu.hidden;
+    if (!menu.hidden) return;
+  }
+  const levels = ['off', 'low', 'medium', 'high'];
+  const previous = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'off');
+  const next = levels[(levels.indexOf(previous) + 1) % levels.length];
+  state.reasoningEffort = next;
+  state.deepReasoningEnabled = next !== 'off';
   updateDeepReasoningButton();
   try {
     const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
       method: 'POST',
-      body: { deep_reasoning_enabled: state.deepReasoningEnabled },
+      body: { deep_reasoning_enabled: state.deepReasoningEnabled, reasoning_effort: next },
     });
     const index = state.conversations.findIndex((item) => item.id === state.conversationId);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
     toast(state.deepReasoningEnabled ? '深度思考已开启（本对话）' : '深度思考已关闭（本对话）');
   } catch (error) {
-    state.deepReasoningEnabled = previous;
+    state.reasoningEffort = previous;
+    state.deepReasoningEnabled = previous !== 'off';
     updateDeepReasoningButton();
     toast(`深度思考设置保存失败：${error.message}`);
   }
@@ -3441,8 +3513,9 @@ function bindEvents() {
   document.addEventListener('contextmenu', (event) => {
     const editable = editableElement(event.target);
     if (editable) {
-      event.preventDefault();
-      showTextContextMenu(event, 'editable', editable);
+      // Let the browser's native edit menu handle paste/copy.  Chromium's
+      // Clipboard API is permission-gated on LAN HTTP pages, while the native
+      // menu still works for workspace and API inputs.
       return;
     }
     const selection = window.getSelection();
@@ -3502,6 +3575,8 @@ function bindEvents() {
     $('#settingsDialog').showModal();
     switchSettingsTab('connections');
   });
+  $('#inspectComfyMcp')?.addEventListener('click', inspectOfficialComfyMcp);
+  $('#setupComfyMcp')?.addEventListener('click', setupOfficialComfyMcp);
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
@@ -3551,14 +3626,61 @@ function bindEvents() {
       composerWrap.classList.remove('dragover');
     });
     composerWrap.addEventListener('drop', (event) => {
-      if (!event.dataTransfer?.files?.length) return;
+      const droppedPath = event.dataTransfer?.getData('application/x-naiba-file-path')
+        || event.dataTransfer?.getData('text/uri-list');
+      if (!event.dataTransfer?.files?.length && !droppedPath) return;
       event.preventDefault();
       composerWrap.classList.remove('dragover');
-      uploadFiles([...event.dataTransfer.files]);
+      if (event.dataTransfer.files?.length) uploadFiles([...event.dataTransfer.files]);
+      else {
+        const path = String(droppedPath).split('\n').find((item) => item && !item.startsWith('#')) || '';
+        if (path) {
+          const name = path.split(/[\\/]/).pop() || 'image';
+          state.pendingFiles.push({ name, path, size: 0 });
+          renderPendingFiles();
+        }
+      }
     });
   }
+  $('#messages').addEventListener('dragstart', (event) => {
+    const image = event.target.closest?.('.attachment-image img, .media-image-link img');
+    if (!image || !event.dataTransfer) return;
+    const source = image.closest('a')?.href || image.src;
+    event.dataTransfer.effectAllowed = 'copy';
+    event.dataTransfer.setData('text/uri-list', source);
+    event.dataTransfer.setData('text/plain', source);
+    const cached = draggedFileCache.get(source);
+    if (cached && event.dataTransfer.items?.add) {
+      try { event.dataTransfer.items.add(cached); } catch (_error) { /* browser may reject cross-origin items */ }
+    }
+    if (cached) {
+      try { event.dataTransfer.setData('DownloadURL', `${cached.type || 'application/octet-stream'}:${cached.name}:${source}`); } catch (_error) { /* optional Chrome hint */ }
+    }
+    const path = decodeURIComponent(new URL(source, location.href).searchParams.get('path') || '');
+    if (path) event.dataTransfer.setData('application/x-naiba-file-path', path);
+  });
   $('#webSearchButton').addEventListener('click', toggleWebSearch);
   $('#deepReasoningButton').addEventListener('click', toggleDeepReasoning);
+  $('#reasoningMenu')?.addEventListener('click', async (event) => {
+    const effort = event.target.closest?.('[data-reasoning-effort]')?.dataset.reasoningEffort;
+    if (!effort || !state.conversationId || state.chatRunId || state.abortController) return;
+    const previous = state.reasoningEffort || 'off';
+    state.reasoningEffort = effort;
+    state.deepReasoningEnabled = effort !== 'off';
+    updateDeepReasoningButton();
+    try {
+      await api(`/api/conversations/${state.conversationId}/settings`, {
+        method: 'POST', body: { reasoning_effort: effort, deep_reasoning_enabled: state.deepReasoningEnabled },
+      });
+      $('#reasoningMenu').hidden = true;
+      toast(`思考强度：${effort}`);
+    } catch (error) {
+      state.reasoningEffort = previous;
+      state.deepReasoningEnabled = previous !== 'off';
+      updateDeepReasoningButton();
+      toast(`思考设置保存失败：${error.message}`);
+    }
+  });
   $('#contextUsageButton').addEventListener('click', toggleContextUsagePopover);
   $('#contextUsagePopover').addEventListener('click', (event) => event.stopPropagation());
   window.addEventListener('resize', positionContextUsagePopover);
@@ -3662,6 +3784,8 @@ function bindEvents() {
     $('#workspaceDialogInput').focus();
   });
   $('#saveWorkspace').addEventListener('click', saveWorkspaceSettings);
+  $('#browseWorkspace')?.addEventListener('click', () => pickWorkspace('workspaceDialogInput'));
+  $('#browseWorkspaceSettings')?.addEventListener('click', () => pickWorkspace('workspaceDir'));
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => switchSettingsTab(button.dataset.settingsTab)));
   $('#addProvider').addEventListener('click', addProvider);
   $('#providerSelect').addEventListener('change', (event) => {
