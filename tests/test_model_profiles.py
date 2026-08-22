@@ -314,6 +314,31 @@ class RuntimeDispatchTests(unittest.TestCase):
         ])
         self.assertEqual("上一轮思考", messages[1]["reasoning_content"])
 
+    def test_openai_thinking_includes_empty_reasoning_content(self) -> None:
+        source = [
+            {"role": "assistant", "content": "先执行工具"},
+            {"role": "user", "content": "继续"},
+        ]
+
+        thinking = ModelRuntime._openai_messages(source, include_reasoning_content=True)
+        ordinary = ModelRuntime._openai_messages(source)
+
+        self.assertEqual("", thinking[0]["reasoning_content"])
+        self.assertNotIn("reasoning_content", ordinary[0])
+
+    def test_openai_thinking_request_backfills_missing_reasoning_content(self) -> None:
+        ModelRuntime().complete(
+            self._online(),
+            [
+                {"role": "assistant", "content": "先执行工具"},
+                {"role": "user", "content": "继续"},
+            ],
+            {"stream": False, "reasoning_enabled": True},
+        )
+
+        body = json.loads(_MockModelHandler.last_body)
+        self.assertEqual("", body["messages"][0]["reasoning_content"])
+
     def test_anthropic_messages_format_and_full_provider_path(self) -> None:
         profile = self._claude()
         self.assertEqual(["m1", "m2"], [m["id"] for m in ModelRuntime.list_online_models(profile)])

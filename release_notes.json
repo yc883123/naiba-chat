@@ -1,4 +1,6 @@
 [
+  "Build82: always pass assistant reasoning_content in deep-reasoning OpenAI-compatible requests, including an empty value for tool steps or legacy history that has no stored reasoning, preventing thinking-mode HTTP 400 failures across online providers.",
+  "Build82: bundle official-comfy-mcp as a default tracked Skill so fresh installs and packaged updates include its official ComfyUI MCP workflow guidance.",
   "Build81: add automatic image-capability detection for llama.cpp, Ollama, and LM Studio using their live capability APIs, with a real-image probe only when runtime metadata is unknown and a manual auto/image/text override per model profile.",
   "Build81: separate API provider management into Online API and Local API tabs; each tab now lists, adds, edits, and deletes only its own provider type while the visual-provider selector keeps its existing combined display.",
   "Build81: remove the redundant visual text-inference test, preserve stored API keys during connection tests, and report whether image support came from explicit settings, runtime metadata, a real-image probe, or an unconfirmed model-name fallback.",

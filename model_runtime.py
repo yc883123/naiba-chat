@@ -415,7 +415,10 @@ class ModelRuntime:
         return converted
 
     @staticmethod
-    def _openai_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _openai_messages(
+        messages: list[dict[str, Any]],
+        include_reasoning_content: bool = False,
+    ) -> list[dict[str, Any]]:
         converted = []
         for item in messages:
             role = str(item.get("role") or "user")
@@ -431,8 +434,10 @@ class ModelRuntime:
                 reasoning_content = item.get("reasoning_content")
                 if reasoning_content is None:
                     reasoning_content = item.get("reasoning")
-                if reasoning_content:
-                    message["reasoning_content"] = str(reasoning_content)
+                if reasoning_content is not None or include_reasoning_content:
+                    message["reasoning_content"] = (
+                        "" if reasoning_content is None else str(reasoning_content)
+                    )
             if role == "assistant" and isinstance(item.get("tool_calls"), list):
                 message["tool_calls"] = [
                     {
@@ -736,6 +741,9 @@ class ModelRuntime:
         max_tokens = None if max_tokens_raw in (None, "") else int(max_tokens_raw)
         stream_enabled = bool(options.get("stream", False))
         reasoning_effort = str(profile.get("reasoning_effort") or "auto").strip().lower()
+        reasoning_enabled = bool(
+            options.get("reasoning_enabled", reasoning_effort in {"low", "medium", "high"})
+        )
         headers = {"Content-Type": "application/json", "User-Agent": API_USER_AGENT}
         native_tools = ModelRuntime._tool_schemas(options.get("tools"), request_format)
         response_format = request_format
@@ -744,7 +752,10 @@ class ModelRuntime:
             endpoint = ModelRuntime._with_endpoint(base_url, "/v1/chat/completions")
             payload = {
                 "model": model,
-                "messages": ModelRuntime._openai_messages(messages),
+                "messages": ModelRuntime._openai_messages(
+                    messages,
+                    include_reasoning_content=reasoning_enabled,
+                ),
                 "stream": stream_enabled,
             }
             if temperature is not None:
@@ -873,7 +884,10 @@ class ModelRuntime:
                 endpoint = ModelRuntime._with_endpoint(base_url, "/v1/chat/completions")
                 payload = {
                     "model": model,
-                    "messages": ModelRuntime._openai_messages(messages),
+                    "messages": ModelRuntime._openai_messages(
+                        messages,
+                        include_reasoning_content=reasoning_enabled,
+                    ),
                     "stream": stream_enabled,
                     "tools": native_tools,
                     "tool_choice": "auto",
