@@ -1150,15 +1150,15 @@ class ModelRuntime:
                     for marker in ("reasoning_content", "reasoning_effort", "thinking", "unknown field")
                 )
                 if (
-                    ModelRuntime._is_deepseek_profile(profile)
+                    not is_local
                     and not reasoning_fallback_used
                     and exc.code in {400, 422}
                     and reasoning_rejection
                 ):
-                    # Gateways marketed as DeepSeek-compatible disagree on
-                    # whether they accept OpenAI thinking fields. Retry once
-                    # with those optional fields removed; never duplicate a
-                    # tool submission beyond this protocol-only retry.
+                    # OpenAI-compatible gateways disagree on whether they
+                    # accept optional thinking fields. Retry once with those
+                    # fields removed; never duplicate a tool submission beyond
+                    # this protocol-only retry.
                     fallback_payload = dict(payload)
                     fallback_messages = []
                     for message in fallback_payload.get("messages", []):
@@ -1176,7 +1176,7 @@ class ModelRuntime:
                     )
                     reasoning_fallback_used = True
                     if status:
-                        status({"type": "status", "message": "DeepSeek 网关不接受思考字段，已自动切换兼容请求"})
+                        status({"type": "status", "message": "当前网关不接受思考字段，已自动切换兼容请求"})
                     continue
                 if (
                     not is_local
