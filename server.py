@@ -449,7 +449,14 @@ def default_config() -> dict[str, Any]:
         "mcp_servers": [],
         # 多 Agent 定义：每个 Agent 有独立的预设/规则（system_prompt）与固定 Skill（skill_ids）。
         "agents": [
-            {"id": "general", "name": "通用 Agent", "system_prompt": "", "skill_ids": []},
+            {
+                "id": "general",
+                "name": "通用 Agent",
+                "system_prompt": "",
+                # Keep the two ComfyUI skills available in the default agent.
+                # IDs are derived from their stable declared names and paths.
+                "skill_ids": ["87aaadb6b599466e", "e03778f862d10595"],
+            },
             {
                 "id": "coding",
                 "name": "编程 Agent",

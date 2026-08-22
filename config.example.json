@@ -57,7 +57,12 @@
   "provider_id": "online-openai-demo",
   "mcp_servers": [],
   "agents": [
-    { "id": "general", "name": "通用 Agent", "system_prompt": "", "skill_ids": [] },
+    {
+      "id": "general",
+      "name": "通用 Agent",
+      "system_prompt": "",
+      "skill_ids": ["87aaadb6b599466e", "e03778f862d10595"]
+    },
     {
       "id": "coding",
       "name": "编程 Agent",
