@@ -340,6 +340,15 @@ class ToolExecutor:
     ) -> str:
         if self.permission_mode == "full":
             return ""
+        # Legacy Skills may wrap local read-only tools in call_mcp. Those
+        # reads are safe within the active workspace and should not prompt.
+        if tool == "call_mcp" and isinstance(arguments, dict):
+            nested_tool = str(arguments.get("tool") or "").strip()
+            nested_args = arguments.get("arguments") or {}
+            if nested_tool in {"read_file", "list_directory", "search_files"} and isinstance(nested_args, dict):
+                # Read-only inspection is non-destructive; legacy call_mcp
+                # wrappers must not create a confirmation prompt per folder.
+                return ""
         if tool in {"read_file", "list_directory", "search_files"}:
             # Read-only inspection is non-destructive; do not interrupt a
             # Skill workflow with one confirmation per file or chunk.
@@ -617,6 +626,19 @@ class ToolExecutor:
             raise ValueError("MCP arguments 必须是对象")
         if not server or not tool:
             raise ValueError("server 和 tool 不能为空")
+        # Older Skills emitted the local server name for read-only tools.
+        if tool in {"read_file", "list_directory", "search_files"} and server in {"naiba-chat", "comfyui"}:
+            handler = getattr(self, f"_tool_{tool}", None)
+            if handler:
+                return True, str(handler(arguments))
+        # Map the historical ComfyUI id to the official server registration.
+        if server in {"naiba-chat", "comfyui"} and "comfy-mcp" in self.mcp_registry.connections:
+            server = "comfy-mcp"
+        # Compatibility for prompts written before the official server id was
+        # standardized. The old legacy ids now point to comfy-mcp.
+        if server not in self.mcp_registry.connections and server in {"naiba-chat", "comfyui", "comfyui-mcp"}:
+            if "comfy-mcp" in self.mcp_registry.connections:
+                server = "comfy-mcp"
         return self.mcp_registry.call(server, tool, arguments)
 
     def _tool_register_mcp(self, args: dict[str, Any]) -> str:

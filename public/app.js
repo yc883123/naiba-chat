@@ -2126,6 +2126,39 @@ function renderWorkspaceControl() {
   if (input && document.activeElement !== input) input.value = raw === 'workspace' ? '' : raw;
 }
 
+function workspaceEntryMarkup(entry) {
+  const icon = entry.kind === 'directory' ? '▸' : '·';
+  return `<button type="button" class="workspace-entry ${entry.kind}" data-workspace-path="${escapeHtml(entry.path)}" data-workspace-kind="${entry.kind}"><span class="workspace-entry-icon">${icon}</span><span class="workspace-entry-name">${escapeHtml(entry.name)}</span>${entry.kind === 'file' && entry.size != null ? `<small>${Number(entry.size).toLocaleString()} B</small>` : ''}</button>`;
+}
+
+async function loadWorkspaceTree(path = '') {
+  const tree = $('#workspaceTree');
+  if (!tree) return;
+  tree.innerHTML = '<p class="activity">正在读取工作区…</p>';
+  try {
+    const result = await api('/api/workspace/browse?path=' + encodeURIComponent(path || ''));
+    state.workspaceBrowsePath = result.path || result.root || '';
+    $('#workspaceTreePath').textContent = state.workspaceBrowsePath || '-';
+    $('#workspaceTreeTitle').textContent = (state.workspaceBrowsePath.split(/[\\/]/).filter(Boolean).pop() || '当前工作区');
+    $('#workspaceUp').disabled = !result.parent;
+    tree.innerHTML = result.entries?.length ? result.entries.map(workspaceEntryMarkup).join('') : '<p class="activity">此目录为空</p>';
+    $$('#workspaceTree .workspace-entry').forEach((button) => button.addEventListener('dblclick', () => {
+      if (button.dataset.workspaceKind === 'directory') loadWorkspaceTree(button.dataset.workspacePath);
+    }));
+    $$('#workspaceTree .workspace-entry').forEach((button) => button.addEventListener('click', () => {
+      if (button.dataset.workspaceKind === 'directory') loadWorkspaceTree(button.dataset.workspacePath);
+      else { $('#workspaceDialogInput').value = result.root || ''; toast(`已选中文件：${button.querySelector('.workspace-entry-name')?.textContent || ''}`); }
+    }));
+  } catch (error) { tree.innerHTML = `<p class="form-error">${escapeHtml(error.message)}</p>`; }
+}
+
+async function loadMcpServers() {
+  const data = await api('/api/mcp');
+  state.bootstrap.mcp_servers = data.servers || [];
+  renderMcp();
+  return state.bootstrap.mcp_servers;
+}
+
 function populateVisionSettings() {
   const settings = state.bootstrap.settings || {};
   const vision = settings.vision || {};
@@ -2496,17 +2529,26 @@ function renderOfficialComfyMcp(info = state.bootstrap?.comfy_mcp || {}) {
 }
 
 async function inspectOfficialComfyMcp() {
-  try { const info = await api('/api/mcp/comfy/inspect'); state.bootstrap.comfy_mcp = info; renderOfficialComfyMcp(info); }
+  const status = $('#officialComfyMcpStatus');
+  if (status) status.textContent = '正在检查 comfy-mcp 安装、注册和连接状态…';
+  try { const info = await api('/api/mcp/comfy/inspect'); state.bootstrap.comfy_mcp = info; renderOfficialComfyMcp(info); await loadMcpServers(); }
   catch (error) { toast(`检测 comfy-mcp 失败：${error.message}`); }
 }
 
 async function setupOfficialComfyMcp() {
+  const button = $('#setupComfyMcp');
+  if (button) button.disabled = true;
+  const status = $('#officialComfyMcpStatus');
+  if (status) status.textContent = '正在安装并注册官方 comfy-mcp，请稍候…';
   try {
     const result = await api('/api/mcp/comfy/setup', { method: 'POST', body: { install: true } });
     state.bootstrap.comfy_mcp = result.detection || {};
-    state.bootstrap.mcp_servers = await api('/api/mcp').then((r) => r.servers || state.bootstrap.mcp_servers);
-    renderOfficialComfyMcp(state.bootstrap.comfy_mcp); renderMcp(); toast('官方 comfy-mcp 已安装并注册');
-  } catch (error) { toast(`官方 comfy-mcp 设置失败：${error.message}`); }
+    await loadMcpServers();
+    const refreshed = await api('/api/mcp/comfy/inspect');
+    state.bootstrap.comfy_mcp = refreshed;
+    renderOfficialComfyMcp(refreshed); renderMcp(); toast('官方 comfy-mcp 已安装并注册');
+  } catch (error) { if (status) status.textContent = `设置失败：${error.message}`; toast(`官方 comfy-mcp 设置失败：${error.message}`); }
+  finally { if (button) button.disabled = false; }
 }
 
 async function saveAccessToken() {
@@ -3785,10 +3827,17 @@ function bindEvents() {
     renderWorkspaceControl();
     $('#workspaceDialog').showModal();
     $('#workspaceDialogInput').focus();
+    loadWorkspaceTree(state.workspaceBrowsePath || state.bootstrap?.resolved_workspace_dir || '');
   });
   $('#saveWorkspace').addEventListener('click', saveWorkspaceSettings);
   $('#browseWorkspace')?.addEventListener('click', () => pickWorkspace('workspaceDialogInput'));
   $('#browseWorkspaceSettings')?.addEventListener('click', () => pickWorkspace('workspaceDir'));
+  $('#workspaceRefresh')?.addEventListener('click', () => loadWorkspaceTree(state.workspaceBrowsePath || ''));
+  $('#workspaceUp')?.addEventListener('click', () => {
+    const current = String(state.workspaceBrowsePath || '');
+    const parent = current.replace(/[\\/][^\\/]+[\\/]?$/, '');
+    if (parent && parent !== current) loadWorkspaceTree(parent);
+  });
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => switchSettingsTab(button.dataset.settingsTab)));
   $('#addProvider').addEventListener('click', addProvider);
   $('#providerSelect').addEventListener('change', (event) => {

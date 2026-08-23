@@ -1879,6 +1879,35 @@ class NaibaChatApp:
         self.config.ensure_workspace_writable(resolved)
         return {"cancelled": False, "path": selected, "resolved": str(resolved)}
 
+    def browse_workspace(self, raw: str = "") -> dict[str, Any]:
+        """Return a shallow, read-only project tree limited to the workspace root."""
+        root = self.config.resolve_workspace_dir()
+        self.config.ensure_workspace_writable(root)
+        target = (Path(raw).expanduser() if str(raw or "").strip() else root).resolve()
+        if not path_within(target, root):
+            raise ValueError("浏览路径必须位于当前工作区内")
+        if not target.exists() or not target.is_dir():
+            raise ValueError("工作区目录不存在")
+        entries = []
+        try:
+            children = sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
+        except OSError as exc:
+            raise ValueError(f"无法读取工作区目录：{exc}") from exc
+        for child in children[:500]:
+            if child.name in {".git", ".naiba_write_test"}:
+                continue
+            try:
+                is_dir = child.is_dir()
+                entries.append({
+                    "name": child.name,
+                    "path": str(child),
+                    "kind": "directory" if is_dir else "file",
+                    "size": None if is_dir else child.stat().st_size,
+                })
+            except OSError:
+                continue
+        return {"root": str(root), "path": str(target), "parent": str(target.parent) if target != root else "", "entries": entries}
+
     def _start_mcp_background(self) -> None:
         """应用启动后在后台连接所有已启用 MCP 服务，并保持到退出。"""
         try:
@@ -2171,6 +2200,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/file":
             query = urllib.parse.parse_qs(parsed.query)
             self._serve_local_file(query.get("path", [""])[0])
+        elif path == "/api/workspace/browse":
+            try:
+                query = urllib.parse.parse_qs(parsed.query)
+                self._json(APP.browse_workspace(query.get("path", [""])[0]))
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/install/dirs":
             self._json(APP.list_skill_dirs())
         elif path == "/api/mcp/status/light":

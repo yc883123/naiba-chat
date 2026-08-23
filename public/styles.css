@@ -379,11 +379,24 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .provider-current { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 9px; align-items: end; }
 .provider-current .control-button, .provider-current .danger-button { height: 40px; }
 .workspace-dialog-body { padding: 16px 18px; }
+.workspace-location-bar { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.workspace-location-bar b, .workspace-location-bar small { display:block; }
+.workspace-location-bar small { margin-top:4px; color:var(--muted); font-family:Consolas, monospace; overflow-wrap:anywhere; }
+.workspace-tree-actions { display:flex; gap:7px; flex:none; }
+.workspace-tree { min-height:220px; max-height:calc(100% - 220px); overflow:auto; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface); padding:5px; margin-bottom:14px; }
+.workspace-entry { display:grid; grid-template-columns:20px minmax(0,1fr) auto; gap:7px; align-items:center; width:100%; min-height:35px; padding:5px 8px; border:0; border-radius:4px; background:transparent; color:var(--text); text-align:left; }
+.workspace-entry:hover { background:var(--surface-2); }
+.workspace-entry-icon { color:var(--green); font-weight:700; }
+.workspace-entry-name { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.workspace-entry small { color:var(--muted); font-size:11px; }
 .workspace-dialog-body input { width: 100%; }
 .input-with-button { display:flex; gap:8px; align-items:center; }
 .input-with-button input { flex:1; min-width:0; }
-.official-mcp-card { display:flex; justify-content:space-between; gap:16px; align-items:center; padding:12px; margin:10px 0 14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface-2); }
+.official-mcp-card { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap; padding:12px; margin:10px 0 14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface-2); }
 .official-mcp-card small { display:block; color:var(--muted); margin-top:4px; }
+.official-mcp-actions { margin:0; justify-content:flex-start; }
+#enableLanActions { position:static; display:flex; justify-content:flex-start; flex-wrap:wrap; margin:12px 0 16px; }
+.tool-stack { position:static; width:100%; }
 .vision-provider-current { margin-bottom: 0; }
 .provider-divider { height: 1px; background: var(--line); margin: 2px 0 4px; }
 .provider-format-guide { margin: -3px 0 1px; padding: 9px 11px; border-left: 3px solid var(--green); background: var(--green-soft); color: var(--text); font-size: 12px; line-height: 1.55; }

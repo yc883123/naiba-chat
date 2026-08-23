@@ -139,7 +139,15 @@
       <button class="icon-button" data-close="workspaceDialog" type="button" title="关闭" aria-label="关闭">×</button>
     </div>
     <div class="workspace-dialog-body">
-      <label>目录路径
+      <div class="workspace-location-bar">
+        <div><b id="workspaceTreeTitle">当前工作区</b><small id="workspaceTreePath">-</small></div>
+        <div class="workspace-tree-actions">
+          <button class="control-button" id="workspaceUp" type="button" title="返回上级">上级</button>
+          <button class="control-button" id="workspaceRefresh" type="button" title="刷新文件列表">刷新</button>
+        </div>
+      </div>
+      <div class="workspace-tree" id="workspaceTree" aria-live="polite"><p class="activity">正在读取工作区…</p></div>
+      <label>项目根目录
         <span class="input-with-button"><input id="workspaceDialogInput" type="text" placeholder="留空使用程序目录下的 workspace"><button class="control-button" id="browseWorkspace" type="button">浏览…</button></span>
       </label>
       <div class="form-actions">
@@ -378,6 +386,7 @@
           <h3>MCP 服务</h3>
           <div class="official-mcp-card" id="officialComfyMcpCard">
             <div><b>官方 comfy-mcp（按需）</b><small id="officialComfyMcpStatus">普通聊天不会启动。对话明确使用官方 ComfyUI Skill 时，系统会自动检测、安装并注册。</small></div>
+            <div class="form-actions official-mcp-actions"><button class="control-button" id="inspectComfyMcp" type="button">检查状态</button><button class="primary-button" id="setupComfyMcp" type="button">安装并注册</button></div>
           </div>
           <div id="mcpList" class="connection-list"></div>
           <h3>手机访问</h3>

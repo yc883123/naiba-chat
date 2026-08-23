@@ -407,6 +407,11 @@ class MCPRegistry:
             connection.stop()
 
     def call(self, server_id: str, tool_name: str, arguments: dict[str, Any]) -> tuple[bool, str]:
+        # Normalize ids emitted by older Skill prompts. The legacy app and
+        # ComfyUI ids were removed from configuration; both now resolve to
+        # the first-party comfy-mcp registration when it exists.
+        if server_id in {"naiba-chat", "comfyui", "comfyui-mcp"} and "comfy-mcp" in self.connections:
+            server_id = "comfy-mcp"
         with self._lock:
             connection = self.connections.get(server_id)
         if not connection:
