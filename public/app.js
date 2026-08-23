@@ -2499,6 +2499,7 @@ async function saveWorkspaceSettings() {
     const result = await api('/api/settings', { method: 'POST', body: { workspace_dir: value } });
     Object.assign(state.bootstrap.settings, result.settings);
     state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
+    state.workspaceBrowsePath = state.bootstrap.resolved_workspace_dir;
     $('#workspaceDir').value = value;
     renderWorkspaceControl();
     $('#workspaceDialog').close();
