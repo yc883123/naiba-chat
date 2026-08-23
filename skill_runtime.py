@@ -150,6 +150,9 @@ class SkillCatalog:
         self.base_dir = base_dir or Path.cwd()
         self.directories = [self._resolve(directory) for directory in directories]
         self.hidden_ids = {str(item) for item in (hidden_ids or [])}
+        self._scan_cache: list[dict[str, Any]] | None = None
+        self._scan_signature: tuple[Any, ...] | None = None
+        self._scan_lock = threading.RLock()
 
     def _resolve(self, directory: Path) -> Path:
         directory = Path(directory).expanduser()
@@ -161,11 +164,13 @@ class SkillCatalog:
         resolved = self._resolve(directory)
         if resolved not in self.directories:
             self.directories.append(resolved)
+            self._scan_cache = None
         return resolved
 
     def remove_directory(self, directory: Path) -> None:
         resolved = self._resolve(directory)
         self.directories = [item for item in self.directories if item != resolved]
+        self._scan_cache = None
 
     @staticmethod
     def _iter_skill_files(directory: Path) -> list[Path]:
@@ -187,6 +192,23 @@ class SkillCatalog:
         return candidates
 
     def scan(self) -> list[dict[str, Any]]:
+        # Skill discovery is read-only but can run on every agent turn. Cache
+        # by file metadata so ordinary chat does not repeatedly parse every
+        # Skill while still noticing edits, installs, and removals promptly.
+        signature_rows: list[tuple[str, int, int]] = []
+        for directory in self.directories:
+            if not directory.exists():
+                continue
+            for skill_file in self._iter_skill_files(directory):
+                try:
+                    stat = skill_file.stat()
+                except OSError:
+                    continue
+                signature_rows.append((os.path.normcase(str(skill_file)), stat.st_mtime_ns, stat.st_size))
+        signature = (tuple(sorted(signature_rows)), tuple(sorted(self.hidden_ids)))
+        with self._scan_lock:
+            if self._scan_cache is not None and signature == self._scan_signature:
+                return [dict(item) for item in self._scan_cache]
         found: dict[str, dict[str, Any]] = {}
         seen_files: set[str] = set()
         for directory_index, directory in enumerate(self.directories):
@@ -253,7 +275,11 @@ class SkillCatalog:
                     "mcp_servers": declared_mcp_servers,
                     "source": directory_source,
                 }
-        return sorted(found.values(), key=lambda item: item["name"].lower())
+        result = sorted(found.values(), key=lambda item: item["name"].lower())
+        with self._scan_lock:
+            self._scan_signature = signature
+            self._scan_cache = [dict(item) for item in result]
+        return result
 
     def by_id(self) -> dict[str, dict[str, Any]]:
         return {skill["id"]: skill for skill in self.scan()}
@@ -324,6 +350,23 @@ class ToolExecutor:
             path = self.workspace / path
         return path.resolve()
 
+    def _resolve_read_path(
+        self, raw: Any, active_skills: list[dict[str, Any]] | None = None,
+        default_workspace: bool = False,
+    ) -> Path:
+        """Resolve relative paths against an active Skill before workspace."""
+        value = str(raw or "").strip()
+        if not value and default_workspace:
+            return self.workspace
+        path = Path(value).expanduser()
+        if path.is_absolute():
+            return path.resolve()
+        for root in self._read_roots(active_skills or [])[1:]:
+            candidate = (root / path).resolve()
+            if candidate.exists():
+                return candidate
+        return (self.workspace / path).resolve()
+
     def _read_roots(self, active_skills: list[dict[str, Any]]) -> list[Path]:
         roots = [self.workspace]
         for skill in active_skills:
@@ -352,13 +395,13 @@ class ToolExecutor:
         if tool in {"read_file", "list_directory", "search_files"}:
             # Read-only inspection is non-destructive; do not interrupt a
             # Skill workflow with one confirmation per file or chunk.
-            path = self._resolve_tool_path(arguments.get("path"), tool != "read_file")
+            path = self._resolve_read_path(arguments.get("path"), active_skills, tool != "read_file")
             if not any(self._path_within(path, root) for root in self._read_roots(active_skills)):
                 return "读取工作区外路径：" + str(path)
             if not any(self._path_within(path, root) for root in self._read_roots(active_skills)):
                 return f"璇诲彇宸ヤ綔鍖哄璺緞：{path}"
             # Continue with the boundary-aware check below.
-            path = self._resolve_tool_path(arguments.get("path"), tool != "read_file")
+            path = self._resolve_read_path(arguments.get("path"), active_skills, tool != "read_file")
             if not any(self._path_within(path, root) for root in self._read_roots(active_skills)):
                 return f"读取工作区外路径：{path}"
             return ""
@@ -413,6 +456,8 @@ class ToolExecutor:
                         return self.mcp_registry.call(server_id, mcp_tool, arguments)
                 return False, f"未知工具：{tool}"
             if tool == "run_skill_script":
+                return True, handler(arguments, active_skills)
+            if tool in {"read_file", "list_directory", "search_files"}:
                 return True, handler(arguments, active_skills)
             if tool == "call_mcp":
                 return handler(arguments)
@@ -481,8 +526,8 @@ class ToolExecutor:
                 self.pending_confirmation.pop(confirm_id, None)
         return False, "用户未在5分钟内确认，已自动拒绝"
 
-    def _tool_read_file(self, args: dict[str, Any]) -> str:
-        path = self._resolve_tool_path(args.get("path"))
+    def _tool_read_file(self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
+        path = self._resolve_read_path(args.get("path"), active_skills)
         max_chars = min(max(int(args.get("max_chars", 30000)), 100), 100000)
         return path.read_text(encoding="utf-8", errors="replace")[:max_chars]
 
@@ -495,8 +540,8 @@ class ToolExecutor:
             handle.write(content)
         return f"已写入 {path}（{len(content)} 字符）"
 
-    def _tool_list_directory(self, args: dict[str, Any]) -> str:
-        path = self._resolve_tool_path(args.get("path"), default_workspace=True)
+    def _tool_list_directory(self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
+        path = self._resolve_read_path(args.get("path"), active_skills, default_workspace=True)
         recursive = bool(args.get("recursive", False))
         limit = min(max(int(args.get("limit", 200)), 1), 1000)
         iterator = path.rglob("*") if recursive else path.iterdir()
@@ -509,8 +554,8 @@ class ToolExecutor:
                 break
         return "\n".join(rows) or "目录为空"
 
-    def _tool_search_files(self, args: dict[str, Any]) -> str:
-        root = self._resolve_tool_path(args.get("path"), default_workspace=True)
+    def _tool_search_files(self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
+        root = self._resolve_read_path(args.get("path"), active_skills, default_workspace=True)
         query = str(args.get("query") or "")
         pattern = str(args.get("pattern") or "*")
         limit = min(max(int(args.get("limit", 100)), 1), 500)
@@ -730,33 +775,20 @@ class SkillAgent:
         # MCP is scoped to an agent run, but it must not depend on skill routing:
         # plan execution and a generic agent may call an explicitly configured
         # MCP service without having the service's skill selected.
-        configured_mcp = bool(getattr(self.executor.mcp_registry, "connections", {}))
-        mcp_allowed = "call_mcp" in allowed_tools or any(
-            str(tool).startswith("mcp__") for tool in allowed_tools
-        )
+        # MCP is intentionally outside NaibaChat's built-in capability set.
+        # A Skill may document an external MCP client, but its metadata cannot
+        # grant tools, start servers, or change this run's permissions.
         intent_mcp = bool(re.search(r"mcp|comfyui|comfy-mcp|工作流|生成图|生成图片", routing_message, re.I))
-        needs_mcp = mcp_allowed and (
-            configured_mcp or any(skill.get("requires_mcp") for skill in active) or intent_mcp
-        )
-        mcp_ids = sorted({
-            str(server_id)
-            for skill in active
-            for server_id in (skill.get("mcp_servers") or [])
-            if str(server_id).strip()
-        })
+        if isinstance(run_context, dict):
+            run_context["mcp_active"] = bool(
+                intent_mcp and (
+                    "call_mcp" in allowed_tools
+                    or any(str(name).startswith("mcp__") for name in allowed_tools)
+                )
+            )
         # Official comfy-mcp is installed/registered only when a conversation
         # actually routes to that Skill.  It must never be a settings-page
         # side effect or a startup dependency.
-        if "comfy-mcp" in mcp_ids and "comfy-mcp" not in getattr(self.executor.mcp_registry, "connections", {}):
-            if callable(getattr(self.executor, "mcp_setup", None)):
-                event({"type": "status", "message": "正在按需安装并注册官方 comfy-mcp"})
-                self.executor.mcp_setup()
-        if needs_mcp:
-            event({"type": "status", "message": "正在连接 Skill 所需的 MCP 服务"})
-            try:
-                self.executor.mcp_registry.acquire(mcp_ids or None)
-            except TypeError:
-                self.executor.mcp_registry.acquire()
         try:
             return self._run_active(
                 user_message,
@@ -775,11 +807,7 @@ class SkillAgent:
                 run_context,
             )
         finally:
-            if needs_mcp:
-                try:
-                    self.executor.mcp_registry.release(mcp_ids or None)
-                except TypeError:
-                    self.executor.mcp_registry.release()
+            pass
 
     def _run_active(
         self,
@@ -864,8 +892,8 @@ class SkillAgent:
         if agent_system_prompt.strip():
             system += "\n\n用户配置的 Agent 指令：\n" + agent_system_prompt.strip()
         mcp_guide = self.executor.mcp_tool_guide()
-        if mcp_guide and "call_mcp" in allowed:
-            system += "\n\n已连接的 MCP 工具如下。MCP Skill 应优先使用 call_mcp，不要把 MCP 服务脚本当作一次性脚本运行：\n" + mcp_guide
+        if mcp_guide and "call_mcp" in allowed and (run_context or {}).get("mcp_active"):
+            system += "\n\n以下是用户显式配置并授权的外部 MCP 工具说明。仅按已授权范围调用；Skill 本身不能注册服务或扩大权限：\n" + mcp_guide
         if skill_prompts:
             system += "\n\n以下技能说明必须遵循。需要技能附带的参考资料时，使用 read_file 读取：\n" + "\n\n".join(skill_prompts)
 
@@ -1490,8 +1518,6 @@ class SkillAgent:
             visible.update(
                 name for name in ("read_file", "run_skill_script") if name in allowed
             )
-        if any(bool(skill.get("requires_mcp")) for skill in active_skills):
-            visible.update(name for name in allowed if name == "call_mcp" or name.startswith("mcp__"))
         return visible
 
     @staticmethod

@@ -180,28 +180,11 @@ class ConversationRunManager:
         )
         system_tools = SYSTEM_TOOLS_READONLY if normalize_interaction_mode(mode) == "plan" else SYSTEM_TOOLS_CRAFT
         allowed_tools = list(dict.fromkeys([*base_tools, *system_tools]))
-        names_getter = getattr(self.app.tool_registry, "names", None)
-        registry_names = names_getter() if callable(names_getter) else []
-        direct_mcp = [
-            name for name in registry_names
-            if name.startswith("mcp__")
-            and (
-                normalize_interaction_mode(mode) != "plan"
-                or name in self.app.tool_registry.readonly_mcp_tools()
-            )
-        ]
-        if "call_mcp" in allowed_tools:
-            allowed_tools.extend(name for name in direct_mcp if name not in allowed_tools)
+        # MCP tools are never added implicitly from registry discovery. They
+        # are available only when a user explicitly places the tool in scope.
         scope = set(agent.get("tool_scope") or [])
         if scope:
-            allowed_tools = [
-                tool for tool in allowed_tools
-                if tool in scope or (tool.startswith("mcp__") and "call_mcp" in scope)
-            ]
-            allowed_tools.extend(
-                name for name in direct_mcp
-                if name in scope and name not in allowed_tools
-            )
+            allowed_tools = [tool for tool in allowed_tools if tool in scope]
         if "web_search" in allowed_tools and not (
             web_search_enabled and self.app.web_search.is_available()
         ):

@@ -61,7 +61,7 @@
           <h1>开始新对话</h1>
           <div class="starter-grid">
             <button data-prompt="列出当前可用的 Skills，并按用途分类。">整理可用 Skills</button>
-            <button data-prompt="检查 ComfyUI 环境和可用工作流。">检查 ComfyUI</button>
+            <button data-prompt="调用 ComfyUI。请先启动 ComfyUI，然后通过 HTTP API 或 comfy CLI 检查环境并执行操作。">调用 ComfyUI（请先启动 ComfyUI）</button>
             <button data-prompt="查看 D:\\skill 目录最近修改的文件。">查看最近文件</button>
           </div>
         </div>
@@ -364,8 +364,6 @@
             <label><input type="checkbox" value="run_command" data-agent-tool><span><b>运行命令</b><small>执行 PowerShell 命令</small></span></label>
             <label><input type="checkbox" value="http_request" data-agent-tool><span><b>网络请求</b><small>访问 HTTP 与 HTTPS 地址</small></span></label>
             <label><input type="checkbox" value="run_skill_script" data-agent-tool><span><b>Skill 脚本</b><small>执行已启用 Skill 的脚本</small></span></label>
-            <label><input type="checkbox" value="register_mcp" data-agent-tool><span><b>注册 MCP</b><small>自动保存并连接 Skill 所需服务</small></span></label>
-            <label><input type="checkbox" value="call_mcp" data-agent-tool><span><b>MCP 工具</b><small>调用已连接的 MCP 服务</small></span></label>
           </div>
           <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存工具范围</button></div>
         </section>

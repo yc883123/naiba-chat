@@ -363,7 +363,7 @@ class AgentLoopTests(unittest.TestCase):
                 lambda *_args: None, cancel_event,
             )
 
-    def test_agent_connects_configured_mcp_without_selected_mcp_skill(self) -> None:
+    def test_agent_does_not_connect_mcp_without_explicit_tool_execution(self) -> None:
         class Registry:
             connections = {"comfyui": object()}
             acquired = 0
@@ -396,8 +396,8 @@ class AgentLoopTests(unittest.TestCase):
         )
 
         self.assertEqual("done", content)
-        self.assertEqual(1, Registry.acquired)
-        self.assertEqual(1, Registry.released)
+        self.assertEqual(0, Registry.acquired)
+        self.assertEqual(0, Registry.released)
 
 
 class ImageAttachmentTests(unittest.TestCase):
@@ -1944,7 +1944,7 @@ class MCPRegistrationTests(unittest.TestCase):
 
         self.assertEqual((True, "comfyui:get_environment:7"), result)
 
-    def test_existing_config_gains_automatic_mcp_registration_tool(self) -> None:
+    def test_existing_config_drops_legacy_mcp_registration_tools(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             path = Path(root) / "config.json"
             path.write_text(
@@ -1954,10 +1954,7 @@ class MCPRegistrationTests(unittest.TestCase):
 
             config = ConfigStore(path)
 
-            self.assertEqual(
-                ["run_skill_script", "register_mcp", "call_mcp"],
-                config.data["agent_tools"],
-            )
+            self.assertEqual(["run_skill_script"], config.data["agent_tools"])
 
     def test_mcp_server_upsert_preserves_other_settings(self) -> None:
         with tempfile.TemporaryDirectory() as root:

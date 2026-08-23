@@ -16,9 +16,7 @@
     "search_files",
     "run_command",
     "run_skill_script",
-    "http_request",
-    "register_mcp",
-    "call_mcp"
+    "http_request"
   ],
   "command_timeout": 120,
   "providers": [
@@ -61,7 +59,7 @@
       "id": "general",
       "name": "通用 Agent",
       "system_prompt": "",
-      "skill_ids": ["0a3afda21c5622e1", "e03778f862d10595"]
+      "skill_ids": []
     },
     {
       "id": "coding",

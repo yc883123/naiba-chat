@@ -92,7 +92,7 @@ class InteractionModeStorageTests(unittest.TestCase):
 class ModePermissionTests(unittest.TestCase):
     ALL = [
         "read_file", "write_file", "list_directory", "search_files",
-        "run_command", "run_skill_script", "http_request", "register_mcp", "call_mcp",
+        "run_command", "run_skill_script", "http_request",
     ]
 
     def test_craft_keeps_all_enabled_tools(self) -> None:

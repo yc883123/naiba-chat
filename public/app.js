@@ -625,7 +625,7 @@ function startEditMessage(row) {
   const attachments = row.__messageMetadata?.attachments || [];
   row.dataset.rawContent = currentText;
   body.innerHTML = `
-    <textarea class="edit-input" data-edit-input rows="5">${escapeHtml(currentText)}</textarea>
+    <textarea class="edit-input" data-edit-input rows="9">${escapeHtml(currentText)}</textarea>
     <div class="edit-attachments">${uploadedFileMarkup(attachments)}</div>
     <div class="edit-actions">
       <button class="primary-button" data-edit-confirm>重新发送</button>

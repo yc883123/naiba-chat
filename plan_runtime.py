@@ -34,8 +34,6 @@ ALL_TOOLS = (
     "run_command",
     "run_skill_script",
     "http_request",
-    "register_mcp",
-    "call_mcp",
 )
 READONLY_TOOLS = {"read_file", "list_directory", "search_files", "http_request"}
 

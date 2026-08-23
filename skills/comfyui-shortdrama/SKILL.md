@@ -7,6 +7,10 @@ description: 通用短剧批量生成模板：用 ComfyUI + MiniMax H3 Ref2VA �
 
 一套可复用的短剧自动化模板：把「分好段的短剧剧本」批量变成「15 秒视频片段」。只靠 ComfyUI HTTP API（`/prompt` + `/history` + `/view`），资产/地址/命名全部走 `config.json`，换剧不换代码。
 
+> 先启动 ComfyUI，再运行脚本。此 Skill 不依赖 MCP，也不会注册或安装
+> MCP；没有加载本 Skill 时，仍可用 NaibaChat 的通用 `http_request` 或
+> `run_command`/`comfy` CLI 直接调用 ComfyUI。
+
 ## 什么时候用
 
 - 剧本是单元 markdown（`单元0X_*.md`），每段 `## 第N段 …（0–15 秒）`，含 `**H3 提示词**` 的 ` ```text ``` ` 代码块（英文）和 `<Picture N>` / `<Audio N>` 参考标签。

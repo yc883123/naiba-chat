@@ -444,12 +444,10 @@ def default_config() -> dict[str, Any]:
             "run_command",
             "run_skill_script",
             "http_request",
-            "register_mcp",
-            "call_mcp",
         ],
         "command_timeout": 120,
         "providers": [],
-        # MCP 服务默认不注册；需要 MCP 的 Skill 可通过受控工具自动注册。
+        # MCP 服务默认不注册；只有用户显式配置并授权时才可连接。
         "mcp_servers": [],
         # 多 Agent 定义：每个 Agent 有独立的预设/规则（system_prompt）与固定 Skill（skill_ids）。
         "agents": [
@@ -505,7 +503,7 @@ def default_config() -> dict[str, Any]:
 # 权限切换不能扩大 preset 本身的工具集合。内置 Agent 使用当前对话选择的模型。
 _BUILT_IN_SCOPE_FULL = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
-    "run_skill_script", "http_request", "register_mcp", "call_mcp",
+    "run_skill_script", "http_request",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
     "capability_inventory", "activate_skill", "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
@@ -536,7 +534,7 @@ def built_in_agents() -> list[dict[str, Any]]:
             "id": "dsh-standard",
             "name": "dsh-standard（全能）",
             "system_prompt": (
-                "你是 naiba-chat 的全能内置 Agent，拥有完整工具、Skill、MCP、联网搜索与子任务能力。"
+                "你是 naiba-chat 的全能内置 Agent，拥有完整工具、Skill、联网搜索与子任务能力。MCP 仅在用户显式配置外部服务并授权工具时可用，不属于默认能力。"
                 "对任何领域的多步任务执行通用闭环：盘点能力与输入，补齐可恢复缺口，执行并收集后台结果，"
                 "验证产物，失败时依据证据修正后重试；涉及文件改动先说明范围。"
             ),
@@ -653,8 +651,17 @@ class ConfigStore:
         self.data.pop("max_agent_steps", None)
         self._migrate_default_agent_skills()
         tools = self.data.get("agent_tools")
-        if isinstance(tools, list) and "call_mcp" in tools and "register_mcp" not in tools:
-            tools.insert(tools.index("call_mcp"), "register_mcp")
+        # MCP is an explicit external integration, never a default capability.
+        # Remove the exact historical default pair while preserving a user's
+        # separately selected MCP tools and configured server definitions.
+        if isinstance(tools, list):
+            legacy_default = {
+                "read_file", "write_file", "list_directory", "search_files",
+                "run_command", "run_skill_script", "http_request",
+                "register_mcp", "call_mcp",
+            }
+            if set(tools) <= legacy_default:
+                self.data["agent_tools"] = [item for item in tools if item not in {"register_mcp", "call_mcp"}]
         # 在线/本地模型配置分层：为旧 providers 补全 kind/local_backend，并生成 default_model_key。
         self._migrate_model_profiles()
         self.save()
@@ -877,7 +884,7 @@ class ConfigStore:
                     elif key == "agent_tools":
                         valid_tools = {
                             "read_file", "write_file", "list_directory", "search_files",
-                            "run_command", "run_skill_script", "http_request", "register_mcp", "call_mcp",
+                            "run_command", "run_skill_script", "http_request",
                         }
                         requested = values[key] if isinstance(values[key], list) else []
                         self.data[key] = [tool for tool in requested if tool in valid_tools]
@@ -1824,13 +1831,20 @@ class NaibaChatApp:
              if isinstance(item, dict) and item.get("id") == "comfy-mcp"),
             None,
         )
+        connection_state = None
+        if "comfy-mcp" in self.mcp.connections:
+            connection_state = self.mcp.connections["comfy-mcp"].state()
+        workspace = self.config.resolve_workspace_dir()
         return {
             "comfy_mcp": comfy_mcp or "",
             "comfy": comfy or "",
+            "workspace": str(workspace),
+            "workspace_exists": workspace.is_dir(),
             "module_available": module_available,
             "registered": bool(registered),
             "enabled": bool(registered and registered.get("enabled", True)),
             "server": registered or {},
+            "connection": connection_state,
         }
 
     def setup_official_comfy_mcp(self, install: bool = False) -> dict[str, Any]:
@@ -1852,6 +1866,18 @@ class NaibaChatApp:
             "id": "comfy-mcp", "command": str(executable), "args": [],
             "env": env, "enabled": True,
         })
+        # An explicit setup action must finish the stdio handshake now.  A
+        # mere registry entry is otherwise reported as ready while the first
+        # tool call still sees a stopped connection.
+        connection = self.mcp.connections.get("comfy-mcp")
+        if connection:
+            try:
+                connection.start(timeout=30)
+            except Exception as exc:
+                result["connection"] = connection.state()
+                result["connection"]["error"] = str(exc)
+            else:
+                result["connection"] = connection.state()
         result["detection"] = self.inspect_official_comfy_mcp()
         return result
 

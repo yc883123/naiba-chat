@@ -514,7 +514,7 @@ class NativeToolAndMcpTests(unittest.TestCase):
         self.assertIn("tools", calls[0])
         self.assertNotIn("tools", calls[1])
 
-    def test_direct_mcp_tools_follow_mode_and_call_mcp_scope(self) -> None:
+    def test_direct_mcp_tools_are_not_discovered_from_registry(self) -> None:
         registry = SimpleNamespace(
             names=lambda: ["mcp__demo__read", "mcp__demo__write"],
             readonly_mcp_tools=lambda: ["mcp__demo__read"],
@@ -530,9 +530,9 @@ class NativeToolAndMcpTests(unittest.TestCase):
         craft = manager._resolve_allowed_tools("craft", agent, False)
         plan = manager._resolve_allowed_tools("plan", agent, False)
 
-        self.assertIn("mcp__demo__read", craft)
-        self.assertIn("mcp__demo__write", craft)
-        self.assertIn("mcp__demo__read", plan)
+        self.assertNotIn("mcp__demo__read", craft)
+        self.assertNotIn("mcp__demo__write", craft)
+        self.assertNotIn("mcp__demo__read", plan)
         self.assertNotIn("mcp__demo__write", plan)
 
     def test_agent_continues_with_native_tool_result_context(self) -> None:

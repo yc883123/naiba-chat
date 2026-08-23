@@ -1,4 +1,6 @@
 [ 
+  "Build87: decouple MCP from built-in NaibaChat capabilities; Skills provide guidance only, while ComfyUI remains available through generic HTTP/CLI tools and explicit external MCP clients.",
+  "Build87: cache Skill scans, resolve Skill-relative read paths without repeated read approvals, remove legacy ComfyUI MCP traces, and verify both HTTP and official comfy-mcp image generation locally.",
   "Build84: add a Windows native workspace folder picker, official comfy-mcp detection/install/registration, and real File-object image dragging for external ComfyUI pages.",
   "Build84: persist conversation workspace and reasoning effort, avoid loading domain Skills by default, and keep DeepSeek reasoning_content compatible across multi-turn tool calls.",
   "Build83: move the Token usage popover out of the scrollable composer, position it against the viewport, and keep long details internally scrollable so clicking the context ring never clips its contents.",
