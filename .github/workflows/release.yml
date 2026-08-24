@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.0-beta
-  RELEASE_TAG: v1.0-beta
-  PACKAGE_NAME: naiba-chat-1.0-beta-windows-x64
+  RELEASE_VERSION: 1.1-beta
+  RELEASE_TAG: v1.1-beta
+  PACKAGE_NAME: naiba-chat-1.1-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -83,11 +83,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.0 Beta release
+      - name: Publish 1.1 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.0 Beta
+          name: Naiba Chat 1.1 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -95,7 +95,7 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.0 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.1 Beta Windows build from `${{ github.sha }}`.
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.
