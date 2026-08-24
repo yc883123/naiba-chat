@@ -430,7 +430,7 @@ class ChatStorage:
         agent_id: str = "",
         interaction_mode: str = "craft",
         model_key: str = "",
-        permission_mode: str = "confirm",
+        permission_mode: str = "auto",
         web_search_enabled: bool = False,
         deep_reasoning_enabled: bool = False,
         lightweight_mode: bool = False,
@@ -441,7 +441,7 @@ class ChatStorage:
         conversation_id = uuid.uuid4().hex
         interaction_mode = "craft"
         if permission_mode not in ("confirm", "auto", "full"):
-            permission_mode = "confirm"
+            permission_mode = "auto"
         resolved_model_key = str(model_key or "").strip()
         if not resolved_model_key and provider_id:
             resolved_model_key = f"online:{provider_id}"
@@ -994,13 +994,18 @@ class ChatStorage:
         }
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            active = db.execute(
-                "SELECT id FROM background_tasks WHERE conversation_id = ? "
-                "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
-            if active:
-                raise RuntimeError(f"ACTIVE_RUN:{active['id']}")
+            # A parent chat Run is allowed to spawn child Jobs.  The previous
+            # global conversation lock rejected those children with
+            # ACTIVE_RUN, leaving the parent Agent stuck after it attempted a
+            # background operation.
+            if not parent_job_id:
+                active = db.execute(
+                    "SELECT id FROM background_tasks WHERE conversation_id = ? "
+                    "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if active:
+                    raise RuntimeError(f"ACTIVE_RUN:{active['id']}")
             conversation = db.execute(
                 "SELECT title_customized FROM conversations WHERE id = ?",
                 (conversation_id,),
@@ -1071,13 +1076,14 @@ class ChatStorage:
         owner = owner_session_id or conversation_id
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            active = db.execute(
-                "SELECT id FROM background_tasks WHERE conversation_id = ? "
-                "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
-            if active:
-                raise RuntimeError(f"ACTIVE_RUN:{active['id']}")
+            if not parent_job_id:
+                active = db.execute(
+                    "SELECT id FROM background_tasks WHERE conversation_id = ? "
+                    "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
+                    (conversation_id,),
+                ).fetchone()
+                if active:
+                    raise RuntimeError(f"ACTIVE_RUN:{active['id']}")
             db.execute(
                 "INSERT INTO background_tasks("
                 "id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "

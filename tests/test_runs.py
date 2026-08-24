@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import io
 import json
 import tempfile
 import unittest
@@ -311,6 +312,99 @@ class SkillPolicyTests(unittest.TestCase):
         self.assertIn("write_file", coding)
         self.assertNotIn("run_in_background", coding)
 
+    def test_comfyui_intent_exposes_direct_tools_without_skill_gateways(self) -> None:
+        allowed = {
+            "read_file", "run_command", "http_request", "run_in_background",
+            "job_output", "job_status", "job_wait", "capability_inventory",
+            "activate_skill", "register_mcp", "call_mcp",
+        }
+        schemas = [{"name": name, "description": name, "parameters": {}} for name in allowed]
+
+        visible = SkillAgent._visible_tool_names(
+            "ComfyUI 已经启动，提交工作流并生成图片", allowed, schemas, []
+        )
+
+        self.assertIn("http_request", visible)
+        self.assertIn("run_in_background", visible)
+        self.assertIn("job_wait", visible)
+        self.assertIn("read_file", visible)
+        self.assertNotIn("capability_inventory", visible)
+        self.assertNotIn("activate_skill", visible)
+        self.assertNotIn("register_mcp", visible)
+        self.assertNotIn("call_mcp", visible)
+
+    def test_explicit_mcp_intent_exposes_mcp_tools(self) -> None:
+        allowed = {"http_request", "register_mcp", "call_mcp", "capability_inventory", "activate_skill"}
+        schemas = [{"name": name, "description": name, "parameters": {}} for name in allowed]
+
+        visible = SkillAgent._visible_tool_names("配置 comfy-mcp", allowed, schemas, [])
+
+        self.assertIn("register_mcp", visible)
+        self.assertIn("call_mcp", visible)
+
+    def test_generic_comfyui_request_does_not_activate_shortdrama_skill(self) -> None:
+        skill = {
+            "id": "shortdrama", "name": "comfyui-shortdrama",
+            "description": "用 ComfyUI 批量生成短剧视频", "requires_mcp": False,
+        }
+
+        generic = SkillAgent._match_skills("用 ComfyUI 生成一张图片", [skill], 3)
+        drama = SkillAgent._match_skills("用 ComfyUI 批量生成短剧视频", [skill], 3)
+
+        self.assertEqual([], generic)
+        self.assertEqual([skill], drama)
+
+    def test_single_image_generation_does_not_activate_video_or_model_bridge_skills(self) -> None:
+        skills = [
+            {
+                "id": "video", "name": "minimax-drama-prompt",
+                "description": "将小说和对白划分为 MiniMax 10–15 秒文戏视频提示词",
+            },
+            {
+                "id": "bridge", "name": "comfyui-llama-model-bridge",
+                "description": "让 ComfyUI 模型目录与 llama.cpp、Ollama、LM Studio 互通",
+            },
+        ]
+
+        routed = SkillAgent._match_skills(
+            "选 3，正向：a beautiful mountain landscape，尺寸 1280x720，生成 1 张",
+            skills,
+            3,
+        )
+
+        self.assertEqual([], routed)
+
+    def test_choice_followup_inherits_previous_workflow_routing_context(self) -> None:
+        history = [
+            {"role": "user", "content": "运行这个 ComfyUI 工作流"},
+            {"role": "assistant", "content": "请选择：\n1. 立即提交并生成\n2. 先预览"},
+        ]
+
+        routed = ConversationRunManager._routing_message(
+            "选择 1：立即提交并生成（推荐）", history
+        )
+
+        self.assertIn("ComfyUI 工作流", routed)
+        self.assertIn("立即提交并生成", routed)
+
+    def test_parameter_only_generation_reply_inherits_previous_routing_context(self) -> None:
+        history = [
+            {"role": "user", "content": "使用 ComfyUI 生成图片"},
+            {
+                "role": "assistant",
+                "content": "请补充模型编号和正向提示词，我立刻为您提交生图任务。",
+            },
+            {"role": "user", "content": '"IL-Gembyte" a girl'},
+            {"role": "assistant", "content": "已提交！任务 ID：fake-id"},
+        ]
+
+        routed = ConversationRunManager._routing_message(
+            '"IL-Gembyte_20Emerald.safetensors" a 20 years old girl', history
+        )
+
+        self.assertIn("提交生图任务", routed)
+        self.assertIn("IL-Gembyte", routed)
+
 
 class NativeToolAndMcpTests(unittest.TestCase):
     def test_openai_request_contains_native_tool_schema(self) -> None:
@@ -350,7 +444,7 @@ class NativeToolAndMcpTests(unittest.TestCase):
         self.assertEqual("done", content)
         self.assertEqual("read_file", captured["tools"][0]["function"]["name"])
         self.assertEqual("auto", captured["tool_choice"])
-        self.assertFalse(captured["parallel_tool_calls"])
+        self.assertTrue(captured["parallel_tool_calls"])
 
     def test_provider_native_tool_schema_shapes(self) -> None:
         tool = [{
@@ -514,6 +608,52 @@ class NativeToolAndMcpTests(unittest.TestCase):
         self.assertIn("tools", calls[0])
         self.assertNotIn("tools", calls[1])
 
+    def test_online_rate_limit_honors_retry_after_and_reports_status(self) -> None:
+        calls = 0
+        events = []
+
+        class Response:
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b'{"choices":[{"message":{"content":"done"}}]}'
+
+        def fake_urlopen(request, timeout, cancel_event=None):
+            nonlocal calls
+            del timeout, cancel_event
+            calls += 1
+            if calls == 1:
+                raise model_runtime.urllib.error.HTTPError(
+                    request.full_url,
+                    429,
+                    "Too Many Requests",
+                    {"Content-Type": "application/json", "Retry-After": "2"},
+                    io.BytesIO(b'{"error":"requests-per-minute limit exceeded"}'),
+                )
+            return Response()
+
+        with (
+            patch.object(ModelRuntime, "_urlopen_cancelable", side_effect=fake_urlopen),
+            patch("model_runtime.time.sleep") as sleep,
+        ):
+            content, _reasoning, _usage = ModelRuntime._complete_online(
+                {"base_url": "https://proxy.test", "model": "m", "request_format": "openai_chat"},
+                [{"role": "user", "content": "work"}],
+                {"stream": False},
+                lambda event: events.append(event),
+            )
+
+        self.assertEqual("done", content)
+        self.assertEqual(2, calls)
+        sleep.assert_called_once_with(2.0)
+        self.assertTrue(any("供应商限流，2 秒后重试" in event.get("message", "") for event in events))
+
     def test_direct_mcp_tools_are_not_discovered_from_registry(self) -> None:
         registry = SimpleNamespace(
             names=lambda: ["mcp__demo__read", "mcp__demo__write"],
@@ -624,8 +764,32 @@ class ChildPolicyInheritanceTests(unittest.TestCase):
         self.assertEqual(context["allowed_tools"], jobs.specs[0].params["allowed_tools"])
         self.assertEqual(context["skill_policy"], jobs.specs[0].params["skill_policy"])
 
+    def test_waiting_for_unknown_job_returns_recoverable_tool_failure(self) -> None:
+        class MissingJobs(self.Jobs):
+            @staticmethod
+            def get(job_id, owner=""):
+                del job_id, owner
+                return None
+
+        handlers = job_tool_handler_factory(SimpleNamespace(jobs=MissingJobs()))
+
+        ok, result = handlers["job_wait"](
+            {"job_id": "invented-job", "timeout": 1},
+            [],
+            {"conversation_id": "conversation", "owner_session_id": "conversation"},
+        )
+
+        self.assertFalse(ok)
+        self.assertIn("不得猜测 Job ID", result)
+
 
 class RunFrontendTests(unittest.TestCase):
+    def test_frontend_previews_generated_images_and_videos(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        self.assertIn("localhost):8188", source)
+        self.assertIn("mp4|webm|mov|m4v|ogv", source)
+        self.assertIn('controls playsinline preload="metadata"', source)
+
     def test_frontend_detaches_and_resumes_conversation_owned_runs(self) -> None:
         source = Path("public/app.js").read_text(encoding="utf-8")
 

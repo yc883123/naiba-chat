@@ -151,6 +151,57 @@ class CapabilityRuntimeTests(unittest.TestCase):
             self.assertIn("parameters", payload["tools"][0])
             self.assertNotIn("write_file", [tool["name"] for tool in payload["tools"]])
 
+    def test_mcp_skill_is_hidden_without_explicit_user_mcp_intent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = self.make_app(root)
+            skill_dir = Path(app.catalog.directories[0]) / "official-mcp"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: official-mcp\ndescription: ComfyUI MCP helper\nrequires_mcp: true\n---\n",
+                encoding="utf-8",
+            )
+            runtime = CapabilityRuntime(app)
+
+            ok, ordinary_text = runtime.inventory(
+                {"query": "ComfyUI 已启动", "skills": ["official-mcp"]},
+                [],
+                {"routing_message": "ComfyUI 已启动"},
+            )
+            mcp_ok, mcp_text = runtime.inventory(
+                {"query": "配置 comfy mcp", "skills": ["official-mcp"]},
+                [],
+                {"routing_message": "配置 comfy mcp"},
+            )
+
+            self.assertTrue(ok)
+            self.assertTrue(mcp_ok)
+            self.assertEqual([], json.loads(ordinary_text)["skills"])
+            self.assertEqual(["official-mcp"], [item["name"] for item in json.loads(mcp_text)["skills"]])
+
+    def test_activate_mcp_skill_requires_explicit_user_intent(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            app = self.make_app(root)
+            skill_dir = Path(app.catalog.directories[0]) / "official-mcp"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: official-mcp\ndescription: ComfyUI MCP helper\nrequires_mcp: true\n---\n",
+                encoding="utf-8",
+            )
+            runtime = CapabilityRuntime(app)
+
+            blocked, blocked_text = runtime.activate_skill(
+                {"skills": ["official-mcp"]}, [], {"routing_message": "ComfyUI 已启动"}
+            )
+            allowed, allowed_text = runtime.activate_skill(
+                {"skills": ["official-mcp"]}, [], {"routing_message": "配置 comfy mcp"}
+            )
+
+            self.assertFalse(blocked)
+            self.assertIn("明确要求 MCP", blocked_text)
+            self.assertTrue(allowed, allowed_text)
+
 
 class CapabilityToolRegistrationTests(unittest.TestCase):
     def test_generic_orchestration_tools_replace_plan_tool(self):

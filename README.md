@@ -1,112 +1,127 @@
-# naiba-chat
+# Naiba Chat 1.0 Beta
 
-一个轻量级的本地 AI 对话助手，支持在线模型 API 调用、技能系统、MCP 工具集成。
+Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-## 功能特性
+1.0 Beta 的重点不是增加某一种固定工作流，而是让模型根据用户意图直接调用所需能力，持续执行到完成，并把过程状态和最终产物稳定地交还给用户。
 
-- **在线模型支持**：支持 OpenAI、Claude、Gemini、LM Studio 等多种 API 格式
-- **技能系统**：可扩展的技能插件，支持自定义脚本和工具
-- **MCP 工具集成**：支持 Model Context Protocol 工具调用
-- **Agent 模式**：支持多步推理和工具调用
-- **响应式 UI**：支持桌面和移动端访问
+## 1.0 Beta 主要能力
 
-## 快速开始
+- **意图直接触发工具**：工具不再依赖先启动某个 Skill。Skill 只提供领域说明和流程建议，不是能力开关。
+- **通用 Agent 自动化**：支持多步工具调用、后台 Job、状态查询、计划执行、子任务和失败后的有界恢复。
+- **更少的中断确认**：读取、检查和常规工作区操作可按权限模式自动执行；只有高风险操作、缺少凭据或不可推断的关键选择才需要用户确认。
+- **ComfyUI 自动任务**：可检查 API 工作流、修正运行参数、批量提交、轮询队列并收集图片、视频和音频产物。
+- **宿主管理产物**：生成结果由 Naiba Chat 宿主下载、校验、保存并附加到消息。模型不会自行扫描输出目录、猜文件名或读取刚生成的媒体，除非用户明确要求分析产物内容。
+- **图片与视频预览**：聊天内可直接预览常见图片和视频格式，也支持音频播放与文件下载。
+- **多模态路由**：原生视觉模型可直接接收图片；文本模型可按配置调用独立视觉后端，并复用相同图片与问题的视觉结果。
+- **在线与本地模型**：支持 OpenAI-compatible、Anthropic、Gemini、Ollama、LM Studio、llama.cpp 等常见接口。
+- **Skill 与 MCP 扩展**：Skill 可提供领域知识、模板和脚本；MCP 用于接入明确配置的外部工具服务。
+- **可校验更新**：Windows 更新包在安装前必须通过 SHA-256 校验，校验失败会拒绝替换程序。
 
-### 方式一：使用预编译版本（推荐）
+## 开始使用
 
-1. 下载最新的 `naiba-chat.exe` 文件
-2. 双击运行，程序会自动打开浏览器
-3. 在设置中配置 API 供应商和模型
+### 使用 Windows 版本
 
-### 方式二：从源码运行
+1. 下载 `naiba-chat-1.0-beta-windows-x64.zip`。
+2. 解压到一个可写目录。
+3. 运行 `naiba-chat.exe`。
+4. 在设置中添加在线 API 或本地模型服务。
 
-1. 确保已安装 Python 3.10+
-2. 克隆仓库：
-   ```bash
-   git clone https://github.com/yourusername/naiba-chat.git
-   cd naiba-chat
-   ```
-3. 创建虚拟环境并激活：
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate  # Windows
-   # 或
-   source .venv/bin/activate  # Linux/macOS
-   ```
-4. 安装依赖（仅 launcher 需要）：
-   ```bash
-   pip install pywebview pystray pillow
-   ```
-5. 运行服务器：
-   ```bash
-   python server.py
-   ```
-6. 打开浏览器访问 `http://localhost:8765`
+首次运行会创建本地数据目录。升级时请直接替换程序文件，不要删除原有 `data` 目录和配置文件。
 
-### 手机访问
+### 从源码运行
 
-- 新安装默认监听局域网，界面会显示当前默认网络对应的手机访问地址。
-- 手机与电脑必须连接同一局域网，并使用界面显示的访问口令登录。
-- Windows 防火墙需要允许 `naiba-chat` 或配置的服务端口（默认 `8765`）通过。
-- 如果设置为仅本机访问，连接状态页会显示“当前仅本机访问”；点击“启用手机访问”并完全退出、重新启动程序后生效。
-- VPN、虚拟网卡和自动配置的 `169.254.x.x` 地址不会作为手机访问地址显示。
+需要 Windows、Python 3.11 或更高版本。
 
-## 配置说明
-
-### API 供应商配置
-
-在设置页面中添加 API 供应商：
-- **名称**：供应商显示名称
-- **API URL**：API 端点地址
-- **API Key**：API 密钥
-- **请求格式**：选择对应的 API 格式
-- **模型名称**：使用的模型名称
-
-使用 Ollama 时，全局运行参数中的 `context_size` 会作为 `num_ctx` 发送；也可以在 Ollama 供应商中填写上下文 Tokens 覆盖全局值。上下文值应不小于实际提示词长度，否则 Ollama 会返回 context size exceeded 错误。
-
-### 技能系统
-
-技能文件位于 `skills/` 目录，每个技能是一个文件夹，包含：
-- `SKILL.md`：技能描述文件
-- 脚本文件：Python 或 PowerShell 脚本
-
-### MCP 服务
-
-支持 Model Context Protocol 工具调用，可在设置中添加 MCP 服务器。
-
-## 项目结构
-
-```
-naiba-chat/
-├── server.py          # 主服务器
-├── config.json        # 配置文件（自动生成）
-├── storage.py         # 数据存储
-├── chat.py            # 对话管理
-├── skills/            # 技能目录
-├── public/            # 前端文件
-│   ├── index.html
-│   ├── app.js
-│   └── styles.css
-└── README.md
+```powershell
+git clone https://github.com/yc883123/naiba-chat.git
+Set-Location naiba-chat
+python -m pip install pywebview pystray pillow "mcp==1.29.0"
+python server.py
 ```
 
-## 开发说明
+服务默认地址为 `http://127.0.0.1:8765`。
 
-### 添加新技能
+## 模型配置
 
-1. 在 `skills/` 目录创建新文件夹
-2. 创建 `SKILL.md` 文件描述技能
-3. 添加脚本文件
-4. 重启服务或点击"重新扫描"
+在“设置 → 模型”中添加供应商，填写：
 
-### 自定义 MCP 服务
+- API 地址
+- API Key（本地服务通常可以留空）
+- 模型名称
+- 请求格式
+- 是否支持图片输入
+- 上下文长度和生成参数
 
-在设置中添加 MCP 服务器配置，支持 stdio 和 HTTP 两种连接方式。
+本地模型建议先使用界面中的连接测试确认模型目录、文本推理和图片能力。模型是否能稳定执行工具，仍取决于模型自身的工具调用能力和上下文能力。
 
-## 许可证
+## ComfyUI
 
-MIT License
+Naiba Chat 默认连接：
 
-## 贡献
+```text
+http://127.0.0.1:8188
+```
 
-欢迎提交 Issue 和 Pull Request！
+使用前请确保 ComfyUI 已启动，并且目标节点、模型和素材在 ComfyUI 中可用。
+
+当前内置流程接收 ComfyUI **API 工作流**。前端保存的 UI JSON（通常包含 `nodes` 和 `links`）不能直接提交，需要先在 ComfyUI 中导出 API 格式。
+
+任务提交后由宿主完成以下工作：
+
+1. 校验并规范化工作流参数。
+2. 向 `/prompt` 提交任务。
+3. 轮询任务历史和执行状态。
+4. 自动收集图片、视频或音频产物。
+5. 保存到应用管理的数据目录并附加到最终消息。
+6. 在聊天界面提供预览或下载。
+
+这条链路不要求模型读取产物本身。需要评价画面、OCR、定位对象或比较图片时，用户应明确提出分析要求。
+
+## 工具、Skill 与 MCP 的关系
+
+- **内置工具**：由当前任务意图直接触发，例如文件操作、命令执行、后台任务、ComfyUI 和视觉处理。
+- **Skill**：提供特定领域的说明、模板、脚本和检查清单，不决定工具是否可用。
+- **MCP**：接入外部工具服务；只有任务明确需要对应 MCP 服务时才会连接或调用。
+
+因此，生成图片不需要先启动短剧 Skill，普通编程、资料整理、自动化处理和媒体任务也使用同一套运行机制。
+
+## 数据与安全
+
+- 对话、设置、附件和任务状态保存在本地数据目录。
+- API Key 不应提交到 Git；示例配置不包含真实凭据。
+- 局域网访问需要访问口令，默认仅本机访问时不要求口令。
+- 文件预览只允许应用工作区和受管理数据目录中的文件。
+- 高风险写入、删除、外部发布和凭据操作仍受权限策略保护。
+
+## 自动更新校验
+
+发布资产包含：
+
+- `naiba-chat.exe`
+- `naiba-chat-update.json`
+- `naiba-chat-1.0-beta-windows-x64.zip`
+
+更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
+
+## Beta 说明
+
+这是 1.0 Beta，适合实际使用和反馈，但仍有以下边界：
+
+- 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
+- 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
+- ComfyUI 自定义节点和工作流输入差异很大，复杂模板仍可能需要一次参数适配。
+- 自动化任务应在交付前检查最终文件；涉及发布、删除或覆盖的重要操作应保留备份。
+
+## 测试与构建
+
+```powershell
+node --check public/app.js
+python -m unittest discover -s tests -q
+$env:NAIBA_BUILD_VERSION = "1.0-beta"
+python -m PyInstaller --noconfirm --clean naiba-chat.spec
+```
+
+## 项目地址
+
+- GitHub：<https://github.com/yc883123/naiba-chat>
+- Issues：<https://github.com/yc883123/naiba-chat/issues>

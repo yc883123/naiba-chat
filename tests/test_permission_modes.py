@@ -134,6 +134,42 @@ class FakeMCP:
         return ""
 
 
+class AnnotatedMCP:
+    def __init__(self):
+        self.connections = {
+            "demo": types.SimpleNamespace(tools=[
+                {"name": "inspect", "annotations": {"readOnlyHint": True}},
+                {"name": "generate", "annotations": {"destructiveHint": False}},
+                {"name": "delete", "annotations": {"destructiveHint": True}},
+            ])
+        }
+
+    def tool_guide(self):
+        return ""
+
+    def call(self, server, tool, arguments):
+        return True, f"{server}.{tool}"
+
+
+class AutoPermissionRegressionTests(unittest.TestCase):
+    def test_auto_mode_does_not_confirm_each_command_or_safe_mcp_call(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            executor = ToolExecutor(Path(root), "python", 30, AnnotatedMCP(), permission_mode="auto")
+            ok, result = executor.execute("pwsh", {"command": "Write-Output ok"}, [])
+            self.assertTrue(ok, result)
+            self.assertNotIn("NEED_CONFIRM", result)
+            ok, result = executor.execute("mcp__demo__generate", {}, [])
+            self.assertEqual((True, "demo.generate"), (ok, result))
+            ok, result = executor.execute("mcp__demo__delete", {}, [])
+            self.assertFalse(ok)
+            self.assertTrue(result.startswith("NEED_CONFIRM:"))
+
+    def test_readonly_mcp_never_requires_confirmation(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            executor = ToolExecutor(Path(root), "python", 30, AnnotatedMCP(), permission_mode="confirm")
+            self.assertEqual((True, "demo.inspect"), executor.execute("mcp__demo__inspect", {}, []))
+
+
 class PerRunExecutorTests(unittest.TestCase):
     def test_run_executors_have_independent_modes_and_confirmation_state(self) -> None:
         with tempfile.TemporaryDirectory() as root:

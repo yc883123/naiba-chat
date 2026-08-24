@@ -101,6 +101,8 @@ class CapabilityRuntime:
         tool_rows = tool_rows[:12]
 
         requested_skill_keys = {name.lower() for name in requested_skills}
+        routing_message = str((run_context or {}).get("routing_message") or query).lower()
+        mcp_intent = "mcp" in routing_message
         skill_rows = [
             {
                 "id": str(skill.get("id") or ""),
@@ -109,12 +111,18 @@ class CapabilityRuntime:
                 "requires_mcp": bool(skill.get("requires_mcp")),
             }
             for skill in skills
-            if not query
-            or str(skill.get("id") or "").lower() in requested_skill_keys
-            or str(skill.get("name") or "").lower() in requested_skill_keys
-            or relevance(
-                f"{skill.get('name') or ''} {skill.get('description') or ''}"
-            ) > 0
+            if (
+                not skill.get("requires_mcp")
+                or mcp_intent
+            )
+            and (
+                not query
+                or str(skill.get("id") or "").lower() in requested_skill_keys
+                or str(skill.get("name") or "").lower() in requested_skill_keys
+                or relevance(
+                    f"{skill.get('name') or ''} {skill.get('description') or ''}"
+                ) > 0
+            )
         ]
         skill_rows.sort(
             key=lambda item: (
@@ -150,7 +158,8 @@ class CapabilityRuntime:
                 "调用已列出的工具时，优先使用接口工具；若该工具没有作为接口工具出现，"
                 "输出兼容 JSON 动作："
                 '{"type":"tool","tool":"工具名","arguments":{...}}。'
-                "需要 Skill 时先调用 activate_skill。"
+                "只有 skills 数组确实列出所需 Skill 时，才可使用其中的准确 ID 或完整名称调用 "
+                "activate_skill；不得猜测 Skill 名称。"
             ),
         }
         return True, json.dumps(result, ensure_ascii=False)
@@ -183,6 +192,17 @@ class CapabilityRuntime:
                 selected.append(skill)
         if missing:
             return False, "未找到或不允许激活 Skill：" + "、".join(missing)
+        routing_message = str((run_context or {}).get("routing_message") or "").lower()
+        blocked_mcp = [
+            str(skill.get("name") or skill.get("id") or "")
+            for skill in selected
+            if skill.get("requires_mcp") and "mcp" not in routing_message
+        ]
+        if blocked_mcp:
+            return False, (
+                "MCP Skill 只能在用户明确要求 MCP 配置或连接时激活："
+                + "、".join(blocked_mcp)
+            )
         active_ids = {str(skill.get("id") or "") for skill in active_skills}
         activated: list[dict[str, str]] = []
         for skill in selected:

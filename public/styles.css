@@ -29,7 +29,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .text-context-menu[hidden] { display: none; }
 .text-context-menu button[hidden] { display: none; }
 .text-context-menu button { display: block; width: 100%; min-height: 32px; padding: 5px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text); text-align: left; }
-.text-context-menu button:hover:not(:disabled) { background: var(--surface-2); }
+.text-context-menu button:hover:not(:disabled),
+.text-context-menu button:focus-visible { background: var(--surface-2); outline: 2px solid var(--green); outline-offset: -2px; }
 .text-context-menu button[data-context-action="quote"] { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 4px 4px; color: var(--green); font-weight: 600; }
 
 .app-shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100dvh; max-height: 100dvh; min-height: 0; overflow: hidden; }

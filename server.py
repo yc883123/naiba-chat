@@ -1598,7 +1598,11 @@ def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dic
 
 
 def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
-    extensions = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".mp4", ".webm", ".wav", ".mp3")
+    extensions = (
+        ".png", ".jpg", ".jpeg", ".webp", ".gif",
+        ".mp4", ".webm", ".mov", ".m4v", ".ogv",
+        ".wav", ".mp3", ".m4a", ".ogg", ".flac",
+    )
     candidates: list[str] = []
 
     def visit(value: Any) -> None:
@@ -1622,10 +1626,43 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
     unique = []
     seen = set()
     for item in candidates:
-        if item in seen:
+        source = item
+        parsed = urllib.parse.urlparse(item)
+        query = urllib.parse.parse_qs(parsed.query)
+        local_path = Path(item).expanduser()
+        is_local_file = local_path.is_file()
+        name = (
+            local_path.name
+            if is_local_file
+            else Path((query.get("filename") or [parsed.path])[0]).name
+        ) or "生成结果"
+        is_local_comfy = (
+            parsed.scheme in {"http", "https"}
+            and parsed.hostname in {"127.0.0.1", "localhost"}
+            and parsed.port == 8188
+        )
+        # The host, not the model, collects and caches generated media. This
+        # makes previews durable and keeps arbitrary output paths outside the
+        # file-serving allowlist.
+        if is_local_comfy or is_local_file:
+            try:
+                generated_dir = (DATA_DIR / "generated").resolve()
+                generated_dir.mkdir(parents=True, exist_ok=True)
+                digest = hashlib.sha256(item.encode("utf-8", errors="replace")).hexdigest()[:16]
+                destination = generated_dir / f"{digest}_{name}"
+                if not destination.is_file() or destination.stat().st_size <= 0:
+                    if is_local_comfy:
+                        with urllib.request.urlopen(item, timeout=120) as response, destination.open("wb") as handle:
+                            shutil.copyfileobj(response, handle, length=1024 * 1024)
+                    else:
+                        shutil.copy2(local_path.resolve(), destination)
+                source = str(destination)
+            except (OSError, urllib.error.URLError, ValueError):
+                source = item
+        if source in seen:
             continue
-        seen.add(item)
-        unique.append({"name": Path(urllib.parse.urlparse(item).path).name or "生成结果", "source": item})
+        seen.add(source)
+        unique.append({"name": name, "source": source})
     return unique[:20]
 
 
@@ -1642,10 +1679,13 @@ def _infer_supports_images(provider: dict[str, Any]) -> bool:
         return explicit
     base_url = str(provider.get("base_url") or "").lower()
     model = str(provider.get("model") or "").strip().lower()
-    if model == "deepseek-v4-flash-vision-exp":
-        return True
     if "api.deepseek.com" in base_url or "deepseek.com" in base_url:
-        return False
+        deepseek_vision_hints = (
+            "deepseek-vl", "vision", "multimodal", "omni", "-vl", "_vl", "vl2",
+        )
+        return model == "deepseek-v4-flash-vision-exp" or any(
+            hint in model for hint in deepseek_vision_hints
+        )
     try:
         from vision_runtime import VisionRouter
 
@@ -1781,6 +1821,10 @@ class NaibaChatApp:
         self.tool_registry.register_system_handler("subagent", subagent_handler_factory(self))
         for _name, _handler in job_tool_handler_factory(self).items():
             self.tool_registry.register_system_handler(_name, _handler)
+        self.tool_registry.register_system_handler("todo_write", self._todo_write_handler)
+        self.tool_registry.register_system_handler("artifact_report", self._artifact_report_handler)
+        self.tool_registry.register_system_handler("comfyui_prepare_workflow", self._comfyui_prepare_workflow_handler)
+        self.tool_registry.register_system_handler("comfyui_batch", self._comfyui_batch_handler)
         from capability_runtime import CapabilityRuntime
 
         self.capabilities = CapabilityRuntime(self)
@@ -1797,6 +1841,10 @@ class NaibaChatApp:
 
         self.web_search = WebSearchRuntime(self)
         self.tool_registry.register_system_handler("web_search", self._web_search_handler)
+        # Storage marks in-flight runs as interrupted on startup. Deterministic
+        # jobs that explicitly opted into resume are safely re-created from
+        # their durable checkpoint and persisted parameters.
+        self.jobs.resume_interrupted()
         # Local smoke/test builds can opt out without changing persisted user settings.
         auto_update = os.environ.get("NAIBA_DISABLE_AUTO_UPDATE", "").strip().lower() not in {"1", "true", "yes"}
         self.updater = UpdateManager(APP_DIR, DATA_DIR, auto_update=auto_update)
@@ -1812,6 +1860,212 @@ class NaibaChatApp:
         query = str(args.get("query") or args.get("q") or "")
         max_results = args.get("max_results")
         return self.web_search.search(query, int(max_results) if isinstance(max_results, (int, float)) else None)
+
+    def _todo_write_handler(
+        self,
+        args: dict[str, Any],
+        _skills: Any,
+        run_context: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        run_id = str((run_context or {}).get("run_id") or (run_context or {}).get("job_id") or "")
+        if not run_id:
+            return False, "无法确定当前运行，不能保存任务清单"
+        raw = (args or {}).get("todos")
+        if not isinstance(raw, list) or len(raw) > 100:
+            return False, "todos 必须是最多 100 项的数组"
+        todos: list[dict[str, str]] = []
+        active = 0
+        for index, item in enumerate(raw, 1):
+            if not isinstance(item, dict):
+                return False, f"第 {index} 项不是对象"
+            content = str(item.get("content") or "").strip()
+            status = str(item.get("status") or "pending")
+            if not content or status not in {"pending", "in_progress", "completed"}:
+                return False, f"第 {index} 项缺少 content 或 status 无效"
+            active += int(status == "in_progress")
+            todos.append({"id": str(item.get("id") or index), "content": content[:1000], "status": status})
+        if active > 1:
+            return False, "同时最多只能有一个 in_progress 任务"
+        self.storage.append_run_event(run_id, {"type": "todo_state", "todos": todos})
+        return True, json.dumps({"saved": True, "todos": todos}, ensure_ascii=False)
+
+    def _artifact_report_handler(
+        self,
+        args: dict[str, Any],
+        _skills: Any,
+        _run_context: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        paths = (args or {}).get("paths")
+        if not isinstance(paths, list) or not paths or len(paths) > 200:
+            return False, "paths 必须是 1 到 200 个文件路径"
+        require_nonempty = bool((args or {}).get("require_nonempty", True))
+        rows: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
+        for raw in paths:
+            path = Path(str(raw or "")).expanduser().resolve()
+            try:
+                if not path.is_file():
+                    raise FileNotFoundError(path)
+                size = path.stat().st_size
+                if require_nonempty and size <= 0:
+                    raise ValueError("文件为空")
+                digest = hashlib.sha256()
+                with path.open("rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                rows.append({"path": str(path), "size": size, "sha256": digest.hexdigest()})
+            except (OSError, ValueError) as exc:
+                errors.append({"path": str(path), "error": str(exc)})
+        result = {"status": "verified" if rows and not errors else ("partial" if rows else "failed"), "label": str((args or {}).get("label") or ""), "artifacts": rows, "errors": errors}
+        return (not errors), json.dumps(result, ensure_ascii=False)
+
+    def _comfyui_batch_handler(
+        self,
+        args: dict[str, Any],
+        _skills: Any,
+        run_context: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        """Submit a batch of API-format workflows through the durable JobRegistry."""
+        from job_registry import JobSpec
+
+        ctx = run_context or {}
+        conversation_id = str(ctx.get("conversation_id") or "")
+        if not conversation_id:
+            return False, "无法确定当前对话，不能创建 ComfyUI Job"
+        values = args or {}
+        workflows = values.get("workflows")
+        if isinstance(workflows, str):
+            try:
+                workflows = json.loads(workflows)
+            except json.JSONDecodeError as exc:
+                return False, f"workflows 字符串不是合法 JSON：{exc}"
+        workflow_paths = values.get("workflow_paths")
+        if workflows is None and isinstance(workflow_paths, list) and workflow_paths:
+            workflows = []
+            for raw_path in workflow_paths:
+                try:
+                    workflow = self._load_comfyui_workflow(str(raw_path))
+                except (OSError, ValueError, json.JSONDecodeError) as exc:
+                    return False, f"工作流文件读取失败：{exc}"
+                workflows.append(workflow)
+        if workflows is None:
+            one = values.get("workflow")
+            shots = values.get("shots", 1)
+            if not isinstance(one, dict):
+                return False, "需要 workflows 数组，或提供 workflow 对象"
+            try:
+                count = max(1, min(int(shots), 200))
+            except (TypeError, ValueError):
+                return False, "shots 必须是正整数"
+            workflows = [one for _ in range(count)]
+        if not isinstance(workflows, list) or not workflows or not all(isinstance(item, dict) for item in workflows):
+            return False, "workflows 必须是非空的 API 工作流对象数组"
+        if len(workflows) > 200:
+            return False, "单次最多提交 200 个工作流"
+        try:
+            workflows = [self._normalize_comfyui_runtime_workflow(item) for item in workflows]
+        except ValueError as exc:
+            return False, str(exc)
+        owner = str(ctx.get("owner_session_id") or conversation_id)
+        spec = JobSpec(
+            kind="comfyui",
+            conversation_id=conversation_id,
+            params={
+                "comfyui_url": str(values.get("comfyui_url") or "http://127.0.0.1:8188"),
+                "workflows": workflows,
+                "wait_timeout": max(1, min(int(values.get("timeout", 7200)), 86400)),
+            },
+            label="ComfyUI 批量生成",
+            parent_job_id=str(ctx.get("run_id") or ctx.get("job_id") or "") or None,
+            owner_session_id=owner,
+            resumable=True,
+        )
+        job_id = self.jobs.start(spec, owner=owner)
+        if bool(values.get("wait")):
+            snapshot = self.jobs.wait(job_id, float(spec.params["wait_timeout"]), owner=owner)
+            return True, json.dumps(snapshot or {"id": job_id}, ensure_ascii=False)
+        return True, json.dumps({"job_id": job_id, "status": "queued", "total": len(workflows)}, ensure_ascii=False)
+
+    @staticmethod
+    def _normalize_comfyui_runtime_workflow(value: Any) -> dict[str, Any]:
+        """Normalize an API workflow and replace invalid negative random seeds."""
+        workflow = NaibaChatApp._normalize_comfyui_workflow(value)
+        normalized = json.loads(json.dumps(workflow, ensure_ascii=False))
+        for node in normalized.values():
+            inputs = node.get("inputs") if isinstance(node, dict) else None
+            if not isinstance(inputs, dict):
+                continue
+            for key in ("seed", "noise_seed"):
+                raw = inputs.get(key)
+                if isinstance(raw, (int, float)) and raw < 0:
+                    inputs[key] = secrets.randbelow(2 ** 63)
+        return normalized
+
+    @staticmethod
+    def _load_comfyui_workflow(raw_path: str) -> dict[str, Any]:
+        path_text = str(raw_path or "").strip()
+        if not path_text:
+            raise ValueError("工作流路径为空")
+        path = Path(path_text).expanduser().resolve()
+        if not path.is_file():
+            raise FileNotFoundError(path)
+        if path.suffix.lower() != ".json":
+            raise ValueError("工作流文件必须是 .json")
+        if path.stat().st_size > 20 * 1024 * 1024:
+            raise ValueError("工作流文件超过 20 MB")
+        value = json.loads(path.read_text(encoding="utf-8"))
+        return NaibaChatApp._normalize_comfyui_workflow(value)
+
+    @staticmethod
+    def _normalize_comfyui_workflow(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise ValueError("工作流 JSON 必须是对象")
+        # Accept the common {prompt: {...}} wrapper produced by API clients.
+        candidate = value.get("prompt") if isinstance(value.get("prompt"), dict) else value
+        # UI exports contain a nodes array and links; they are not POST /prompt payloads.
+        if isinstance(candidate.get("nodes"), list) or isinstance(candidate.get("links"), list):
+            raise ValueError("检测到 ComfyUI UI JSON，请先导出 API 格式工作流")
+        if not candidate:
+            raise ValueError("工作流为空")
+        invalid = [key for key, node in candidate.items() if not isinstance(node, dict)]
+        if invalid:
+            raise ValueError(f"API 工作流节点值必须是对象：{', '.join(map(str, invalid[:5]))}")
+        return candidate
+
+    def _comfyui_prepare_workflow_handler(
+        self,
+        args: dict[str, Any],
+        _skills: Any,
+        _run_context: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        values = args or {}
+        try:
+            if isinstance(values.get("workflow"), dict):
+                raw = values["workflow"]
+            else:
+                raw = json.loads(Path(str(values.get("path") or "")).expanduser().resolve().read_text(encoding="utf-8"))
+            normalized = self._normalize_comfyui_workflow(raw)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            text = json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False)
+            return False, text
+        nodes = []
+        for node_id, node in list(normalized.items())[:2000]:
+            inputs = node.get("inputs") if isinstance(node, dict) else {}
+            nodes.append({
+                "id": str(node_id),
+                "class_type": str(node.get("class_type") or ""),
+                "input_count": len(inputs) if isinstance(inputs, dict) else 0,
+            })
+        result: dict[str, Any] = {
+            "valid": True,
+            "format": "api",
+            "node_count": len(normalized),
+            "nodes": nodes,
+            "has_output_node": any(str(item.get("class_type") or "").lower().startswith(("save", "video", "preview")) for item in nodes),
+        }
+        if bool(values.get("include_workflow")):
+            result["workflow"] = normalized
+        return True, json.dumps(result, ensure_ascii=False)
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         config = self.config.upsert_mcp_server(values)
@@ -2270,7 +2524,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST)
                 return
             interaction_mode = "craft"
-            permission_mode = str(body.get("permission_mode") or "confirm")
+            permission_mode = str(body.get("permission_mode") or "auto")
             web_search_enabled = body.get("web_search_enabled", False)
             deep_reasoning_enabled = body.get("deep_reasoning_enabled", False)
             reasoning_effort = body.get("reasoning_effort")
@@ -3246,7 +3500,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         if not confirm_id or not run_id:
             self._json({"error": "run_id 和 confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
             return
-        result_pair = APP.runs.confirm_tool(run_id, confirm_id)
+        # Do not hold the browser's approval request open while a generation,
+        # command or MCP action runs for minutes. The owning Run keeps waiting
+        # for the real result through the confirmation condition.
+        result_pair = APP.runs.confirm_tool_async(run_id, confirm_id)
         if result_pair is None:
             self._json({"error": "确认请求不属于该运行或已失效"}, HTTPStatus.CONFLICT)
             return

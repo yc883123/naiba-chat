@@ -24,8 +24,11 @@ SUBAGENT_ALLOWED_TOOLS = [
     "read_file",
     "list_directory",
     "search_files",
+    "glob_files",
     "write_file",
+    "edit_file",
     "run_command",
+    "pwsh",
     "run_skill_script",
     "http_request",
     "call_mcp",
@@ -210,6 +213,19 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
             return False, "spec 必须包含 kind"
         owner = _owner(ctx)
         params = dict(spec_dict.get("params", {}))
+        if str(spec_dict.get("kind") or "") == "comfyui" and not (
+            isinstance(params.get("workflow"), dict)
+            or (isinstance(params.get("workflows"), list) and params.get("workflows"))
+        ):
+            return False, "comfyui Job 必须提供 workflow/workflows；已有 API 工作流时请优先调用 comfyui_batch"
+        idempotency_key = str((arguments or {}).get("idempotency_key") or "").strip()[:200]
+        if idempotency_key:
+            for existing in jobs.list(owner=owner, active_only=True):
+                snapshot = app.storage.get_run_snapshot(str(existing.get("id") or "")) or {}
+                existing_params = snapshot.get("params") if isinstance(snapshot, dict) else {}
+                if isinstance(existing_params, dict) and existing_params.get("_idempotency_key") == idempotency_key:
+                    return True, f"Job 已存在，复用 Job ID：{existing['id']}"
+            params["_idempotency_key"] = idempotency_key
         params.setdefault("skill_policy", dict(ctx.get("skill_policy") or {"mode": "auto", "skill_ids": []}))
         params.setdefault("allowed_tools", [str(tool) for tool in ctx.get("allowed_tools") or []])
         spec = JobSpec(
@@ -230,6 +246,8 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
             return False, "缺少 job_id"
+        if not jobs.get(job_id, owner=owner):
+            return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
         out = jobs.read(job_id, int((arguments or {}).get("cursor", 0) or 0), owner=owner)
         events = out.get("events", [])
         text = "\n".join(
@@ -255,8 +273,13 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
             return False, "缺少 job_id"
+        if not jobs.get(job_id, owner=owner):
+            return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
         timeout = int((arguments or {}).get("timeout", 600) or 600)
-        job = jobs.wait(job_id, timeout, owner=owner)
+        try:
+            job = jobs.wait(job_id, timeout, owner=owner)
+        except LookupError:
+            return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
         if not job:
             return False, "Job 不存在或无权访问"
         if job["status"] == "completed":

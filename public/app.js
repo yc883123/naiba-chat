@@ -95,8 +95,8 @@ async function copyText(text) {
   if (!copied) throw new Error('浏览器未允许访问剪贴板');
 }
 
-let contextMenuTarget = null;
 let contextMenuSelection = '';
+let contextMenuPreviousFocus = null;
 
 function editableElement(target) {
   if (!(target instanceof Element)) return null;
@@ -109,43 +109,18 @@ function editableElement(target) {
   return editable;
 }
 
-function editableSelection(element) {
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    const start = Number.isInteger(element.selectionStart) ? element.selectionStart : 0;
-    const end = Number.isInteger(element.selectionEnd) ? element.selectionEnd : start;
-    return String(element.value || '').slice(start, end);
-  }
-  return String(window.getSelection()?.toString() || '');
-}
-
-function replaceEditableSelection(element, replacement) {
-  if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-    const value = String(element.value || '');
-    const start = Number.isInteger(element.selectionStart) ? element.selectionStart : value.length;
-    const end = Number.isInteger(element.selectionEnd) ? element.selectionEnd : start;
-    element.value = value.slice(0, start) + replacement + value.slice(end);
-    const cursor = start + replacement.length;
-    try { element.setSelectionRange(cursor, cursor); } catch (_) { /* number inputs */ }
-    element.dispatchEvent(new Event('input', { bubbles: true }));
-    return;
-  }
-  document.execCommand('insertText', false, replacement);
-  element.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
 function ensureContextMenu() {
   let menu = $('#textContextMenu');
   if (menu) return menu;
   menu = document.createElement('div');
   menu.id = 'textContextMenu';
   menu.className = 'text-context-menu';
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', '选中文本操作');
   menu.hidden = true;
   menu.innerHTML = `
-    <button type="button" data-context-action="cut">剪切</button>
-    <button type="button" data-context-action="copy">复制</button>
-    <button type="button" data-context-action="paste">粘贴</button>
-    <button type="button" data-context-action="select-all">全选</button>
-    <button type="button" data-context-action="quote">快速发送</button>`;
+    <button type="button" role="menuitem" data-context-action="copy">复制选中</button>
+    <button type="button" role="menuitem" data-context-action="quote">快速发送</button>`;
   document.body.append(menu);
   return menu;
 }
@@ -155,64 +130,32 @@ function hideTextContextMenu() {
   if (menu) menu.hidden = true;
 }
 
-function showTextContextMenu(event, mode, target = null, selection = '') {
+function showTextContextMenu(event, selection = '') {
   const menu = ensureContextMenu();
-  contextMenuTarget = target;
   contextMenuSelection = selection;
-  menu.dataset.mode = mode;
-  menu.querySelectorAll('[data-context-action]').forEach((button) => {
-    const action = button.dataset.contextAction;
-    button.hidden = mode === 'selection'
-      ? !['copy', 'quote'].includes(action)
-      : action === 'quote';
-    if (mode === 'editable' && ['cut', 'copy'].includes(action)) {
-      button.disabled = !editableSelection(target);
-    } else {
-      button.disabled = false;
-    }
-  });
+  contextMenuPreviousFocus = document.activeElement;
   menu.hidden = false;
   const width = menu.offsetWidth;
   const height = menu.offsetHeight;
   menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6))}px`;
   menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6))}px`;
+  menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
 }
 
 async function runTextContextAction(action) {
-  const menu = ensureContextMenu();
-  const mode = menu.dataset.mode;
   try {
-    if (mode === 'selection') {
-      if (action === 'copy') {
-        await copyText(contextMenuSelection);
-        toast('已复制选中内容');
-      } else if (action === 'quote') {
-        const input = $('#messageInput');
-        const quoted = `“${contextMenuSelection.trim()}”`;
-        const prefix = input.value.length ? '\n\n' : '';
-        input.value += prefix + quoted;
-        input.focus();
-        input.setSelectionRange(input.value.length, input.value.length);
-        resizeTextarea();
-        toast('已引用到输入框');
-      }
-      return;
-    }
-    const target = contextMenuTarget;
-    if (!target) return;
-    if (action === 'copy' || action === 'cut') {
-      const selected = editableSelection(target);
-      if (!selected) return;
-      await copyText(selected);
-      if (action === 'cut' && !target.readOnly && !target.disabled) replaceEditableSelection(target, '');
-    } else if (action === 'paste') {
-      if (target.readOnly || target.disabled) return;
-      if (!navigator.clipboard?.readText) throw new Error('当前浏览器不允许读取剪贴板');
-      replaceEditableSelection(target, await navigator.clipboard.readText());
-    } else if (action === 'select-all') {
-      target.focus();
-      if (typeof target.select === 'function') target.select();
-      else document.execCommand('selectAll');
+    if (action === 'copy') {
+      await copyText(contextMenuSelection);
+      toast('已复制选中内容');
+    } else if (action === 'quote') {
+      const input = $('#messageInput');
+      const quoted = `"${contextMenuSelection.trim()}"`;
+      input.value = String(input.value || '').replace(/\s+$/, '') + quoted;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      resizeTextarea();
+      toast('已追加到输入框');
     }
   } catch (error) {
     toast(`剪贴板操作失败：${error.message}`);
@@ -318,7 +261,7 @@ function markdown(text) {
 
 function fileUrl(source) {
   const value = String(source || '');
-  if (/^https?:\/\//i.test(value)) return value;
+  if (/^https?:\/\//i.test(value) && !/^https?:\/\/(?:127\.0\.0\.1|localhost):8188\//i.test(value)) return value;
   return `/api/file?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(value)}`;
 }
 
@@ -326,15 +269,15 @@ function mediaMarkup(attachments = []) {
   if (!attachments.length) return '';
   const items = attachments.map((attachment) => {
     const source = attachment.source || attachment.path;
-    const lower = String(source).toLowerCase().split('?')[0];
+    const lower = `${String(source).toLowerCase().split('?')[0]} ${String(attachment.name || '').toLowerCase()}`;
     const url = fileUrl(source);
     const safeUrl = escapeHtml(url);
     const name = escapeHtml(attachment.name || '生成文件');
     if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
       return `<a class="media-image-link" href="${safeUrl}" target="_blank" rel="noreferrer"><img draggable="true" src="${safeUrl}" alt="${name}" loading="lazy" onerror="this.remove(); this.parentElement.classList.add('media-failed')"><span>打开 ${name}</span></a>`;
     }
-    if (/\.(mp4|webm)$/.test(lower)) return `<video src="${safeUrl}" controls playsinline></video>`;
-    if (/\.(wav|mp3|m4a)$/.test(lower)) return `<audio src="${safeUrl}" controls></audio>`;
+    if (/\.(mp4|webm|mov|m4v|ogv)(?:\s|$)/.test(lower)) return `<video src="${safeUrl}" controls playsinline preload="metadata"></video>`;
+    if (/\.(wav|mp3|m4a|ogg|flac)(?:\s|$)/.test(lower)) return `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
     return `<a class="file-chip" href="${safeUrl}" target="_blank" rel="noreferrer">${name}</a>`;
   }).join('');
   return `<div class="media-grid">${items}</div>`;
@@ -883,8 +826,8 @@ function taskStatusLabel(status) {
 
 function currentPermissionMode() {
   const conversation = state.conversations.find((item) => item.id === state.conversationId);
-  const mode = conversation?.permission_mode || 'confirm';
-  return ['confirm', 'auto', 'full'].includes(mode) ? mode : 'confirm';
+  const mode = conversation?.permission_mode || 'auto';
+  return ['confirm', 'auto', 'full'].includes(mode) ? mode : 'auto';
 }
 
 function renderPermissionModeSwitch() {
@@ -1466,7 +1409,7 @@ async function createConversation() {
     method: 'POST',
     body: {
       interaction_mode: 'craft',
-      permission_mode: 'confirm',
+      permission_mode: 'auto',
       web_search_enabled: false,
       deep_reasoning_enabled: false,
       agent_id: $('#agentSelect')?.value || state.bootstrap?.default_agent_id || '',
@@ -3198,6 +3141,11 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       : event.message;
     setActivity(statusMessage);
     $('#runtimeStatus').textContent = statusMessage;
+  } else if (event.type === 'response_retracted') {
+    clearStreamingAnswer(answer);
+    row.querySelectorAll('.reasoning-block').forEach((block) => block.remove());
+    delete row.dataset.reasoningStreamed;
+    setActivity(event.reason || '正在核验执行结果');
   } else if (event.type === 'skills') {
     setActivity(`已启用 ${event.skills.map((skill) => skill.name).join('、')}`);
   } else if (event.type === 'tools_available') {
@@ -3557,6 +3505,7 @@ function closeSidebar() {
 
 function bindEvents() {
   document.addEventListener('contextmenu', (event) => {
+    hideTextContextMenu();
     const editable = editableElement(event.target);
     if (editable) {
       // Let the browser's native edit menu handle paste/copy.  Chromium's
@@ -3566,19 +3515,43 @@ function bindEvents() {
     }
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
-    const node = selection.getRangeAt(0).commonAncestorContainer;
-    const element = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
-    if (!element?.closest('.answer-content')) return;
+    const range = selection.getRangeAt(0);
+    const startNode = range.startContainer.nodeType === Node.ELEMENT_NODE
+      ? range.startContainer : range.startContainer.parentElement;
+    const endNode = range.endContainer.nodeType === Node.ELEMENT_NODE
+      ? range.endContainer : range.endContainer.parentElement;
+    const messageBody = startNode?.closest('.message-body');
+    if (!messageBody || endNode?.closest('.message-body') !== messageBody) return;
     event.preventDefault();
-    showTextContextMenu(event, 'selection', null, selection.toString());
+    showTextContextMenu(event, selection.toString());
   });
   document.addEventListener('pointerdown', (event) => {
     if (!event.target.closest?.('#textContextMenu')) hideTextContextMenu();
   });
-  ensureContextMenu().addEventListener('click', (event) => {
+  const textContextMenu = ensureContextMenu();
+  textContextMenu.addEventListener('click', (event) => {
     const button = event.target.closest('[data-context-action]');
     if (button) runTextContextAction(button.dataset.contextAction);
   });
+  textContextMenu.addEventListener('keydown', (event) => {
+    const buttons = [...textContextMenu.querySelectorAll('button:not(:disabled)')];
+    const index = buttons.indexOf(document.activeElement);
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      hideTextContextMenu();
+      contextMenuPreviousFocus?.focus?.({ preventScroll: true });
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const offset = event.key === 'ArrowDown' ? 1 : -1;
+      buttons[(index + offset + buttons.length) % buttons.length]?.focus();
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault();
+      buttons[event.key === 'Home' ? 0 : buttons.length - 1]?.focus();
+    }
+  });
+  window.addEventListener('blur', hideTextContextMenu);
+  window.addEventListener('resize', hideTextContextMenu);
+  window.addEventListener('scroll', hideTextContextMenu, true);
   $('#authForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     try {

@@ -1098,6 +1098,89 @@ class PermissionTests(unittest.TestCase):
             self.assertTrue(success)
             self.assertEqual("full", outside.read_text(encoding="utf-8"))
 
+    def test_read_file_relative_path_resolves_within_active_skill_root(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            workspace = root_path / "workspace"
+            skill = root_path / "skill"
+            reference = skill / "references" / "guide.txt"
+            workspace.mkdir()
+            reference.parent.mkdir(parents=True)
+            reference.write_text("skill reference", encoding="utf-8")
+            executor = self.executor(workspace, "auto")
+
+            success, result = executor.execute(
+                "read_file",
+                {"path": "references/guide.txt"},
+                [{"root": str(skill)}],
+            )
+
+            self.assertTrue(success)
+            self.assertEqual("skill reference", result)
+
+    def test_workspace_relative_read_keeps_backward_compatible_precedence(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            workspace = root_path / "workspace"
+            skill = root_path / "skill"
+            for base, value in ((workspace, "workspace"), (skill, "skill")):
+                target = base / "references" / "same.txt"
+                target.parent.mkdir(parents=True)
+                target.write_text(value, encoding="utf-8")
+            executor = self.executor(workspace, "auto")
+
+            success, result = executor.execute(
+                "read_file", {"path": "references/same.txt"}, [{"root": str(skill)}]
+            )
+
+            self.assertTrue(success)
+            self.assertEqual("workspace", result)
+
+    def test_ambiguous_relative_read_across_active_skills_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            workspace = root_path / "workspace"
+            workspace.mkdir()
+            active = []
+            for name in ("one", "two"):
+                skill = root_path / name
+                target = skill / "references" / "same.txt"
+                target.parent.mkdir(parents=True)
+                target.write_text(name, encoding="utf-8")
+                active.append({"root": str(skill)})
+            executor = self.executor(workspace, "auto")
+
+            success, result = executor.execute(
+                "read_file", {"path": "references/same.txt"}, active
+            )
+
+            self.assertFalse(success)
+            self.assertIn("多个 active Skill", result)
+
+    def test_legacy_local_call_mcp_read_keeps_active_skill_context(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            root_path = Path(root)
+            workspace = root_path / "workspace"
+            skill = root_path / "skill"
+            reference = skill / "references" / "legacy.txt"
+            workspace.mkdir()
+            reference.parent.mkdir(parents=True)
+            reference.write_text("legacy reference", encoding="utf-8")
+            executor = self.executor(workspace, "auto")
+
+            success, result = executor.execute(
+                "call_mcp",
+                {
+                    "server": "naiba-chat",
+                    "tool": "read_file",
+                    "arguments": {"path": "references/legacy.txt"},
+                },
+                [{"root": str(skill)}],
+            )
+
+            self.assertTrue(success)
+            self.assertEqual("legacy reference", result)
+
     def test_permission_mode_can_be_updated_and_is_validated(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             store = ConfigStore(Path(root) / "config.json")
@@ -1489,9 +1572,11 @@ class ConversationSearchPersistenceTests(unittest.TestCase):
         self.assertNotIn('value="vision"> 视觉识图与图片附件', markup)
         self.assertNotIn('value="deep_reasoning"> 深度推理', markup)
         self.assertNotIn('value="web_search"> 联网搜索', markup)
-        self.assertIn("data-context-action=\"paste\"", source)
+        self.assertIn("browser's native edit menu", source)
+        self.assertIn("role=\"menuitem\"", source)
         self.assertIn("data-context-action=\"quote\"", source)
-        self.assertIn("closest('.answer-content')", source)
+        self.assertIn("closest('.message-body')", source)
+        self.assertIn("window.addEventListener('scroll', hideTextContextMenu, true)", source)
 
 
 class PublicRepositoryHygieneTests(unittest.TestCase):
@@ -1550,6 +1635,32 @@ class UpdateManifestTests(unittest.TestCase):
         self.assertEqual(26, UpdateManager._build_number("build-26"))
         self.assertEqual(25, UpdateManager._build_number("BUILD-25"))
         self.assertIsNone(UpdateManager._build_number("source"))
+
+    def test_beta_release_versions_are_ordered_without_mixing_legacy_builds(self) -> None:
+        self.assertEqual((1, 0, 0, 0, 0), UpdateManager._release_version_key("1.0-beta"))
+        self.assertEqual((1, 0, 0, 0, 2), UpdateManager._release_version_key("v1.0.0-beta.2"))
+        self.assertEqual((1, 0, 0, 1, 0), UpdateManager._release_version_key("1.0.0"))
+        self.assertIsNone(UpdateManager._release_version_key("build-87"))
+
+    def test_stable_release_is_not_downgraded_to_beta(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            manager = UpdateManager(Path(root), Path(root) / "data")
+            manager.build = {"version": "1.0.0", "commit": "c" * 40}
+            manifest = {
+                "repository": "yc883123/naiba-chat",
+                "commit": "d" * 40,
+                "sha256": "e" * 64,
+                "asset": "naiba-chat.exe",
+                "version": "1.0-beta",
+            }
+            with (
+                patch.object(UpdateManager, "mode", new_callable=PropertyMock, return_value="executable"),
+                patch.object(UpdateManager, "_request_json", return_value=manifest),
+            ):
+                status = manager.check(force=True)
+
+            self.assertFalse(status["update_available"])
+            self.assertEqual("current", status["phase"])
 
     def test_executable_update_check_does_not_offer_an_older_build(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -1759,6 +1870,46 @@ class SkillIdentityTests(unittest.TestCase):
             self.assertTrue(result["hidden"])
             self.assertTrue(skill_file.exists())
             self.assertEqual([], SkillCatalog([Path(root)], hidden_ids=[skill["id"]]).scan())
+
+
+class SkillCacheTests(unittest.TestCase):
+    def test_scan_reuses_cache_and_reflects_skill_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            skill_dir = Path(root) / "demo"
+            skill_dir.mkdir()
+            skill_file = skill_dir / "SKILL.md"
+            skill_file.write_text(
+                "---\nname: demo\ndescription: first\n---\nbody",
+                encoding="utf-8",
+            )
+            catalog = SkillCatalog([Path(root)])
+
+            first = catalog.scan()
+            cached = catalog.scan()
+            skill_file.write_text(
+                "---\nname: demo\ndescription: changed and longer\n---\nbody",
+                encoding="utf-8",
+            )
+            changed = catalog.scan()
+
+            self.assertEqual(first, cached)
+            self.assertEqual("first", first[0]["description"])
+            self.assertEqual("changed and longer", changed[0]["description"])
+
+    def test_read_skill_content_caches_and_revalidates(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            skill_file = Path(root) / "SKILL.md"
+            skill_file.write_text("first", encoding="utf-8")
+            catalog = SkillCatalog([Path(root)])
+
+            first = catalog.read_skill_content(skill_file)
+            cached = catalog.read_skill_content(skill_file)
+            skill_file.write_text("second and longer", encoding="utf-8")
+            changed = catalog.read_skill_content(skill_file)
+
+            self.assertEqual("first", first)
+            self.assertEqual(first, cached)
+            self.assertEqual("second and longer", changed)
 
 
 class MCPRegistrationTests(unittest.TestCase):
@@ -2138,7 +2289,7 @@ class ToolProtocolStreamTests(unittest.TestCase):
 
 
 class ReasoningAndNativeToolTests(unittest.TestCase):
-    def test_reasoning_is_streamed_before_visible_text_and_closed(self) -> None:
+    def test_reasoning_is_published_only_after_response_is_known_to_be_final(self) -> None:
         chunks = [
             {"choices": [{"delta": {"reasoning_content": "先分析"}}]},
             {"choices": [{"delta": {"reasoning_content": "再判断"}}]},
@@ -2151,13 +2302,40 @@ class ReasoningAndNativeToolTests(unittest.TestCase):
             lambda event: events.append(event),
         )
         types = [event.get("type") for event in events]
-        self.assertEqual("reasoning_start", types[0])
+        self.assertEqual("delta", types[0])
         self.assertEqual(
-            ["先分析", "再判断"],
+            ["先分析再判断"],
             [event["content"] for event in events if event.get("type") == "reasoning_delta"],
         )
-        self.assertLess(types.index("reasoning_end"), types.index("delta"))
+        self.assertLess(types.index("delta"), types.index("reasoning_start"))
+        self.assertLess(types.index("reasoning_start"), types.index("reasoning_end"))
         self.assertEqual("最终答案", result["content"])
+
+    def test_reasoning_before_native_tool_call_is_never_published(self) -> None:
+        chunks = [
+            {"choices": [{"delta": {"reasoning_content": "先读取文件"}}]},
+            {"choices": [{"delta": {"tool_calls": [
+                {"index": 0, "id": "call_1", "function": {"name": "read_file", "arguments": '{"path":"x"}'}}
+            ]}}]},
+        ]
+        events = []
+        result = ModelRuntime._read_sse_response(
+            [f"data: {json.dumps(chunk, ensure_ascii=False)}".encode("utf-8") for chunk in chunks],
+            "openai_chat",
+            lambda event: events.append(event),
+        )
+        self.assertFalse(any(str(event.get("type", "")).startswith("reasoning") for event in events))
+        self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
+
+    def test_short_plain_text_streams_without_fixed_128_character_delay(self) -> None:
+        events = []
+        lines = [
+            f"data: {json.dumps({'choices': [{'delta': {'content': part}}]}, ensure_ascii=False)}".encode("utf-8")
+            for part in ("短", "回答", "也要", "连续显示")
+        ]
+        ModelRuntime._read_sse_response(lines, "openai_chat", lambda event: events.append(event))
+        deltas = [event["content"] for event in events if event.get("type") == "delta"]
+        self.assertEqual(["短", "回答", "也要", "连续显示"], deltas)
 
     def test_openai_payload_includes_native_tools(self) -> None:
         captured = {}
@@ -2202,7 +2380,7 @@ class ReasoningAndNativeToolTests(unittest.TestCase):
             )
         self.assertEqual("auto", captured["payload"]["tool_choice"])
         self.assertEqual("read_file", captured["payload"]["tools"][0]["function"]["name"])
-        self.assertFalse(captured["payload"]["parallel_tool_calls"])
+        self.assertTrue(captured["payload"]["parallel_tool_calls"])
 
 
 class ToolProtocolAgentLoopTests(unittest.TestCase):
@@ -2314,6 +2492,68 @@ class ToolProtocolAgentLoopTests(unittest.TestCase):
         )
         self.assertEqual("已读取文件并完成总结。", content)
         self.assertNotIn("read_file", content)
+
+    def test_comfyui_submission_claim_without_tool_evidence_is_retracted(self) -> None:
+        events: list[dict[str, Any]] = []
+        calls = {"n": 0}
+
+        def complete(profile, messages, options, event):
+            calls["n"] += 1
+            return (
+                "已提交！任务 ID：fake-id，正在等待生成结果……"
+                if calls["n"] == 1
+                else "尚缺少可执行的 API 工作流，无法提交。"
+            )
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, runs, _reasoning, _usage = agent.run(
+            "生成图片", [], {}, {}, False, [], "", ["read_file"],
+            lambda event: events.append(event), lambda *_args: None,
+            run_context={"routing_message": "使用 ComfyUI 生成图片"},
+        )
+
+        self.assertEqual([], runs)
+        self.assertNotIn("fake-id", content)
+        self.assertIn("response_retracted", [event.get("type") for event in events])
+        self.assertEqual(2, calls["n"])
+
+    def test_comfyui_submission_claim_with_batch_evidence_is_accepted(self) -> None:
+        runs = [{
+            "tool": "comfyui_batch",
+            "arguments": {"workflow": {"1": {"class_type": "SaveImage"}}},
+            "result": '{"job_id":"real-job"}',
+            "success": True,
+        }]
+        self.assertFalse(SkillAgent._unsupported_comfyui_submission_claim(
+            "使用 ComfyUI 生成图片",
+            "已提交，任务 ID：real-job",
+            runs,
+        ))
+
+    def test_unverified_comfyui_submission_history_is_replaced_before_model_call(self) -> None:
+        captured: list[list[dict[str, Any]]] = []
+
+        def complete(profile, messages, options, event):
+            captured.append(messages)
+            return "当前没有已提交任务。"
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, _runs, _reasoning, _usage = agent.run(
+            "继续生成图片",
+            [{
+                "role": "assistant",
+                "content": "已提交！任务 ID：fake-job，正在等待生成结果。",
+                "metadata": {"tool_runs": []},
+            }],
+            {}, {}, False, [], "", ["read_file"],
+            lambda _event: None, lambda *_args: None,
+            run_context={"routing_message": "使用 ComfyUI 继续生成图片"},
+        )
+
+        self.assertEqual("当前没有已提交任务。", content)
+        history_text = "\n".join(str(item.get("content") or "") for item in captured[0])
+        self.assertIn("视为从未提交", history_text)
+        self.assertNotIn("fake-job", history_text)
 
     def test_identical_successful_tool_calls_stop_as_no_progress(self) -> None:
         events: list[dict[str, Any]] = []

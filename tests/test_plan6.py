@@ -52,6 +52,12 @@ class SupportsImagesTest(TestCase):
             base_url="https://api.deepseek.com",
         )))
 
+    def test_future_deepseek_vl_model_is_inferred_on_official_api(self):
+        self.assertTrue(server._infer_supports_images(self._provider(
+            model="deepseek-vl2",
+            base_url="https://api.deepseek.com",
+        )))
+
     def test_gemini_inferred_true(self):
         self.assertTrue(server._infer_supports_images(self._provider(model="gemini-2.0", base_url="https://x")))
 
@@ -345,7 +351,7 @@ class PrepareHistoryCleaningTest(TestCase):
                 history,
                 {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"},
             )
-        self.assertIn("已自动识图", note)
+        self.assertIn("自动识图失败", note)
         content = out[0]["content"]
         self.assertIsInstance(content, list)
         self.assertTrue(all(part.get("type") != "image" for part in content))
@@ -403,7 +409,7 @@ class PrepareHistoryCleaningTest(TestCase):
                 vision_budget=budget,
             )
 
-        self.assertIn("已自动识图", note)
+        self.assertIn("自动识图失败", note)
         self.assertIn("backend timeout", json.dumps(out, ensure_ascii=False))
 
     def test_vision_budget_key_includes_tool_and_parameters(self):
@@ -463,7 +469,75 @@ class PrepareHistoryCleaningTest(TestCase):
             )
         blob = json.dumps(out, ensure_ascii=False)
         self.assertNotIn("vision_describe", blob)
-        self.assertIn("already analyzed this image", blob)
+        self.assertIn("vision_pixel_diff", blob)
+
+    def test_user_text_that_mentions_vision_describe_is_preserved(self):
+        router = self._router(auto_route=True)
+        original = "请解释 vision_describe 工具，不要改写这句话。"
+        history = [{"role": "user", "content": [{"type": "text", "text": original}]}]
+
+        out, note = router.prepare_history(
+            history, {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"}
+        )
+
+        self.assertEqual("", note)
+        self.assertEqual(original, out[0]["content"][0]["text"])
+
+    def test_same_image_and_question_reuse_route_cache(self):
+        router = self._router(auto_route=True)
+        profile = {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"}
+        with mock.patch.object(router, "describe_parts", return_value="视觉证据") as describe:
+            first, first_note = router.prepare_history(self._img_history(), profile)
+            self.assertTrue(router.auto_route_cache_covers(self._img_history()))
+            second, second_note = router.prepare_history(self._img_history(), profile)
+
+        describe.assert_called_once()
+        self.assertIn("已自动识图", first_note)
+        self.assertIn("已复用历史识图结果", second_note)
+        self.assertEqual(
+            first[0]["content"][0]["text"],
+            second[0]["content"][0]["text"],
+        )
+
+    def test_changed_file_at_same_path_invalidates_route_cache(self):
+        router = self._router(auto_route=True)
+        profile = {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"}
+        with tempfile.TemporaryDirectory() as tmp:
+            image = Path(tmp) / "same.png"
+            image.write_bytes(b"first")
+
+            def history():
+                return [{
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "看这张图"},
+                        {"type": "image", "path": str(image), "name": image.name},
+                    ],
+                }]
+
+            with mock.patch.object(router, "describe_parts", side_effect=["第一版", "第二版"]) as describe:
+                router.prepare_history(history(), profile)
+                image.write_bytes(b"second-version")
+                router.prepare_history(history(), profile)
+
+        self.assertEqual(2, describe.call_count)
+
+    def test_multi_image_description_is_not_saved_as_single_path_memory(self):
+        router = self._router(auto_route=True)
+        history = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "比较"},
+                {"type": "image", "data": "A", "path": "C:/images/a.png"},
+                {"type": "image", "data": "B", "path": "C:/images/b.png"},
+            ],
+        }]
+        with mock.patch.object(router, "describe_parts", return_value="联合描述"):
+            router.prepare_history(
+                history, {"model": "deepseek-chat", "base_url": "https://api.deepseek.com"}
+            )
+
+        self.assertEqual({}, router._path_cache)
 
     def test_auto_route_off_keeps_original_image_for_deepseek_vision(self):
         history = self._img_history()

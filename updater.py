@@ -119,6 +119,21 @@ class UpdateManager:
         match = re.fullmatch(r"build-(\d+)", str(version or "").strip(), flags=re.IGNORECASE)
         return int(match.group(1)) if match else None
 
+    @staticmethod
+    def _release_version_key(version: str) -> tuple[int, int, int, int, int] | None:
+        """Parse stable and beta release labels without mixing them with legacy builds."""
+        match = re.fullmatch(
+            r"v?(\d+)\.(\d+)(?:\.(\d+))?(?:[-._ ]?(beta|b)(?:[-._ ]?(\d+))?)?",
+            str(version or "").strip(),
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        major, minor, patch = (int(match.group(1)), int(match.group(2)), int(match.group(3) or 0))
+        is_beta = bool(match.group(4))
+        beta_number = int(match.group(5) or 0) if is_beta else 0
+        return (major, minor, patch, 0 if is_beta else 1, beta_number)
+
     @property
     def supported(self) -> bool:
         return bool(os.name == "nt" and (getattr(sys, "frozen", False) or self._source_repository()))
@@ -258,6 +273,8 @@ class UpdateManager:
             )
             current_number = self._build_number(self.build.get("version", ""))
             latest_number = self._build_number(manifest.get("version", ""))
+            current_release = self._release_version_key(self.build.get("version", ""))
+            latest_release = self._release_version_key(manifest.get("version", ""))
             update_available = manifest["commit"] != self.build.get("commit")
             if current_number is not None and latest_number is not None:
                 # Build numbers prevent downgrades, while a republished build
@@ -266,6 +283,14 @@ class UpdateManager:
                     latest_number > current_number
                     or (
                         latest_number == current_number
+                        and manifest["commit"] != self.build.get("commit")
+                    )
+                )
+            elif current_release is not None and latest_release is not None:
+                update_available = (
+                    latest_release > current_release
+                    or (
+                        latest_release == current_release
                         and manifest["commit"] != self.build.get("commit")
                     )
                 )

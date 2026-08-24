@@ -34,8 +34,11 @@ ALL_TOOLS = (
     "run_command",
     "run_skill_script",
     "http_request",
+    "glob_files",
+    "edit_file",
+    "pwsh",
 )
-READONLY_TOOLS = {"read_file", "list_directory", "search_files", "http_request"}
+READONLY_TOOLS = {"read_file", "list_directory", "search_files", "glob_files", "http_request"}
 
 PLAN_PREPARE_PROMPT = (
     "## Plan 计划模式\n"
@@ -88,7 +91,7 @@ class ReadOnlyToolExecutor:
     写类工具在 SkillAgent 层已通过 allowed_tools 过滤，本代理作为最后防线。
     """
 
-    BLOCKED_TOOLS = {"write_file", "run_command", "run_skill_script", "register_mcp"}
+    BLOCKED_TOOLS = {"write_file", "edit_file", "run_command", "pwsh", "run_skill_script", "register_mcp"}
 
     def __init__(self, inner: ToolExecutor):
         self._inner = inner
@@ -138,7 +141,7 @@ class CraftToolExecutor:
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
     ) -> tuple[bool, str]:
-        if tool == "write_file" and getattr(self._inner, "permission_mode", "confirm") != "deny":
+        if tool in {"write_file", "edit_file"} and getattr(self._inner, "permission_mode", "confirm") != "deny":
             path = self._inner._resolve_tool_path((arguments or {}).get("path"))
             if self._inner._path_within(path, self._inner.workspace):
                 return self._inner._execute_unchecked(tool, arguments, active_skills)

@@ -250,10 +250,19 @@ class JobRegistry:
         checkpoint = dict(job["checkpoint"])
         if extra_checkpoint:
             checkpoint.update(extra_checkpoint)
+        # Job parameters live in the durable run snapshot.  Do not rely on
+        # the final result (which intentionally contains only outputs), or a
+        # resumed ComfyUI batch would lose its workflow list after restart.
+        persisted = self.app.storage.get_run_snapshot(job_id) or {}
+        persisted_params = persisted.get("params") if isinstance(persisted, dict) else {}
+        if not isinstance(persisted_params, dict):
+            persisted_params = {}
+        if not persisted_params:
+            persisted_params = dict(job.get("result", {}).get("params", {})) if isinstance(job.get("result"), dict) else {}
         spec = JobSpec(
             kind=job["kind"],
             conversation_id=job["conversation_id"],
-            params=dict(job.get("result", {}).get("params", {})) or {},
+            params=persisted_params,
             label=job.get("current_step") or f"恢复 Job({job['kind']})",
             parent_job_id=job["parent_job_id"] or None,
             owner_session_id=job["owner_session_id"],
@@ -284,6 +293,27 @@ class JobRegistry:
             raise
         except Exception as exc:  # noqa: BLE001
             raise ValueError(f"重试失败：{exc}") from exc
+
+    def resume_interrupted(self) -> list[str]:
+        """Resume durable, explicitly resumable jobs interrupted by restart."""
+        resumed: list[str] = []
+        for job in self.app.storage.list_background_tasks("", active_only=False, limit=200):
+            if str(job.get("status") or "") != "interrupted":
+                continue
+            snapshot = self.app.storage.get_run_snapshot(str(job.get("id") or "")) or {}
+            job_spec = snapshot.get("job_spec") if isinstance(snapshot, dict) else {}
+            if not isinstance(job_spec, dict) or not bool(job_spec.get("resumable")):
+                continue
+            # Only deterministic workers can safely resume automatically.
+            if str(job.get("kind") or "") not in {"comfyui", "check", "http_poll"}:
+                continue
+            try:
+                new_id = self.resume(str(job["id"]), owner=str(job.get("owner_session_id") or "") or None)
+                if new_id:
+                    resumed.append(new_id)
+            except Exception:
+                traceback.print_exc()
+        return resumed
 
     # ---- 通用 Worker 框架 ----
     def _run_unknown(self, job_id: str, spec: JobSpec, cancel: threading.Event) -> None:
@@ -472,7 +502,11 @@ class JobRegistry:
     # ---- ComfyUI 专用 Worker（持续检查 + 唤醒 + 可恢复） ----
     def _run_comfyui(self, job_id: str, spec: JobSpec, cancel: threading.Event) -> None:
         params = spec.params or {}
-        comfy_url = str(params.get("comfyui_url") or self.app.config.data.get("comfyui_url") or "").rstrip("/")
+        comfy_url = str(
+            params.get("comfyui_url")
+            or self.app.config.data.get("comfyui_url")
+            or "http://127.0.0.1:8188"
+        ).rstrip("/")
         if not comfy_url:
             self._set_status(job_id, "running", current_step="未配置 ComfyUI URL")
             self._finish(job_id, "failed", error="未配置 ComfyUI URL")
@@ -486,6 +520,13 @@ class JobRegistry:
         # 1. 验证 ComfyUI 可达
         if not self._comfyui_reachable(comfy_url):
             self._finish(job_id, "failed", error="ComfyUI 服务不可达", result={"comfyui_url": comfy_url})
+            return
+
+        # High-level batch calls use a list of already prepared API workflows.
+        # Keep the legacy single-workflow path below for compatibility.
+        workflows = params.get("workflows")
+        if isinstance(workflows, list) and workflows:
+            self._run_comfyui_batch(job_id, spec, cancel, comfy_url, workflows)
             return
 
         self._set_status(job_id, "running", current_step=f"开始生成 {shots} 段", progress=0,
@@ -534,6 +575,104 @@ class JobRegistry:
             result={"completed_shots": completed_shots, "prompt_ids": prompt_ids, "errors": errors},
         )
 
+    def _run_comfyui_batch(
+        self,
+        job_id: str,
+        spec: JobSpec,
+        cancel: threading.Event,
+        comfy_url: str,
+        workflows: list[dict[str, Any]],
+    ) -> None:
+        """Fire all prompts first, then poll them as one durable batch."""
+        checkpoint = dict(spec.checkpoint or {})
+        submitted = list(checkpoint.get("submitted") or [])
+        completed = list(checkpoint.get("completed") or [])
+        errors: list[dict[str, Any]] = list(checkpoint.get("errors") or [])
+        total = len(workflows)
+        self._set_status(job_id, "running", current_step=f"提交 {total} 个工作流", progress=0,
+                         checkpoint={"submitted": submitted, "completed": completed, "errors": errors})
+
+        # Submit only work not present in the checkpoint, making resume safe.
+        for index in range(len(submitted), total):
+            if cancel.is_set():
+                self._finish(job_id, "cancelled", error="用户取消",
+                             result={"prompt_ids": submitted, "completed": completed, "errors": errors})
+                return
+            prompt_id = self._comfyui_submit(comfy_url, workflows[index], index)
+            if not prompt_id:
+                errors.append({"index": index, "error": "提交失败"})
+                self._finish(job_id, "failed", error=f"第 {index + 1} 段提交失败",
+                             result={"prompt_ids": submitted, "completed": completed, "errors": errors})
+                return
+            submitted.append(prompt_id)
+            self.app.storage.update_job(
+                job_id,
+                progress=round((index + 1) / max(total, 1) * 30, 1),
+                current_step=f"已提交 {index + 1}/{total}",
+                checkpoint={"submitted": submitted, "completed": completed, "errors": errors},
+            )
+            self._emit(job_id, {"type": "job_check", "phase": "batch_submitted", "index": index, "prompt_id": prompt_id, "total": total})
+
+        # Poll each prompt independently; completed entries are checkpointed so
+        # interruption does not resubmit or lose already finished segments.
+        done_indexes = {int(item.get("index")) for item in completed if isinstance(item, dict) and str(item.get("index", "")).isdigit()}
+        deadline = time.monotonic() + float(spec.params.get("wait_timeout", 7200) or 7200)
+        while len(done_indexes) < total:
+            if cancel.is_set():
+                self._finish(job_id, "cancelled", error="用户取消",
+                             result={"prompt_ids": submitted, "completed": completed, "errors": errors})
+                return
+            if time.monotonic() > deadline:
+                self._finish(job_id, "failed", error="ComfyUI 批量轮询超时",
+                             result={"prompt_ids": submitted, "completed": completed, "errors": errors})
+                return
+            for index, prompt_id in enumerate(submitted):
+                if index in done_indexes:
+                    continue
+                ok, files, reason = self._comfyui_history_once(comfy_url, prompt_id)
+                if ok:
+                    completed.append({"index": index, "prompt_id": prompt_id, "files": files})
+                    done_indexes.add(index)
+                    self._emit(job_id, {"type": "job_check", "phase": "batch_done", "index": index, "files": files, "total": total})
+                elif reason and reason.startswith("ERROR:"):
+                    errors.append({"index": index, "prompt_id": prompt_id, "error": reason[6:]})
+                    done_indexes.add(index)
+                    self._emit(job_id, {"type": "job_check", "phase": "batch_failed", "index": index, "error": reason[6:]})
+            progress = 30 + (len(done_indexes) / max(total, 1) * 70)
+            self.app.storage.update_job(
+                job_id, progress=round(progress, 1), current_step=f"完成 {len(done_indexes)}/{total}",
+                checkpoint={"submitted": submitted, "completed": completed, "errors": errors},
+            )
+            if len(done_indexes) < total:
+                time.sleep(1.0 if total <= 4 else 3.0)
+        status = "completed" if not errors else ("failed" if not completed else "completed")
+        self._finish(job_id, status, error="" if not errors else "部分工作流失败",
+                     result={"prompt_ids": submitted, "completed": completed, "errors": errors, "total": total})
+
+    def _comfyui_history_once(self, base: str, prompt_id: str) -> tuple[bool, list[str], str]:
+        """Return (done, output files, reason); empty history means still running."""
+        try:
+            with urllib.request.urlopen(f"{base}/history/{prompt_id}", timeout=30) as resp:
+                history = json.loads(resp.read(200000).decode("utf-8", errors="replace"))
+            entry = history.get(prompt_id) if isinstance(history, dict) else None
+            if not entry:
+                return False, [], ""
+            status = (entry.get("status") or {}).get("status_str", "")
+            if status and status not in {"success", "completed"}:
+                if status in {"error", "failed"}:
+                    return False, [], f"ERROR:ComfyUI 状态 {status}"
+                return False, [], ""
+            files = self._comfyui_output_urls(base, entry)
+            if not files:
+                return False, [], "ERROR:未找到输出文件"
+            return True, files, ""
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return False, [], ""
+            return False, [], f"ERROR:HTTP {exc.code}"
+        except Exception:
+            return False, [], ""
+
     def _comfyui_reachable(self, base: str) -> bool:
         try:
             with urllib.request.urlopen(f"{base}/system_stats", timeout=10) as resp:
@@ -541,9 +680,27 @@ class JobRegistry:
         except Exception:
             return False
 
+    @staticmethod
+    def _comfyui_output_urls(base: str, entry: dict[str, Any]) -> list[str]:
+        files: list[str] = []
+        for node in (entry.get("outputs") or {}).values():
+            if not isinstance(node, dict):
+                continue
+            for kind in ("images", "gifs", "videos", "audio"):
+                for item in node.get(kind, []) or []:
+                    if not isinstance(item, dict) or not item.get("filename"):
+                        continue
+                    query = urllib.parse.urlencode({
+                        "filename": str(item["filename"]),
+                        "subfolder": str(item.get("subfolder") or ""),
+                        "type": str(item.get("type") or "output"),
+                    })
+                    files.append(f"{base}/view?{query}")
+        return files
+
     def _comfyui_submit(self, base: str, workflow: dict[str, Any], index: int) -> str | None:
-        payload = dict(workflow)
-        payload.setdefault("client_id", uuid.uuid4().hex)
+        del index
+        payload = {"prompt": workflow, "client_id": uuid.uuid4().hex}
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             f"{base}/prompt", data=data, headers={"Content-Type": "application/json"}, method="POST"
@@ -573,17 +730,10 @@ class JobRegistry:
                     history = json.loads(resp.read(200000).decode("utf-8", errors="replace"))
                 entry = history.get(prompt_id) if isinstance(history, dict) else None
                 if entry:
-                    outputs = entry.get("outputs", {})
-                    files: list[str] = []
-                    for node in outputs.values():
-                        for item in node.get("files", []):
-                            rel = item.get("filename")
-                            if rel:
-                                files.append(rel)
+                    files = self._comfyui_output_urls(base, entry)
                     # 验证文件存在且非空
                     ok_all = bool(files)
-                    for rel in files:
-                        url = f"{base}/view?filename={urllib.parse.quote(rel)}"
+                    for url in files:
                         try:
                             with urllib.request.urlopen(url, timeout=20) as r:
                                 if int(r.headers.get("Content-Length", "0")) == 0:
@@ -601,7 +751,7 @@ class JobRegistry:
                     return False, [], f"第 {index + 1} 段查询错误：HTTP {exc.code}"
             except Exception:
                 pass
-            time.sleep(3.0)
+            time.sleep(1.0)
 
     def shutdown(self, timeout: float = 10.0) -> None:
         with self._lock:

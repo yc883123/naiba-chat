@@ -45,7 +45,6 @@ _JSON_TOOL_ANYWHERE = re.compile(
     r'\{(?=[\s\S]{0,96}"(?:type|tool)"\s*:)',
     re.IGNORECASE,
 )
-_STREAM_GUARD_CHARS = 128
 # Upper bound (chars) for buffering an ambiguous leading fragment before we
 # give up and treat it as plain text, so a malformed stream can never stall.
 _AGENT_BUFFER_LIMIT = 1024
@@ -198,11 +197,26 @@ class _InlineReasoningParser:
                 (reasoning if self.inside else visible).append(self.buffer)
                 self.buffer = ""
                 break
-            # Retain a possible partial marker split across SSE chunks.
-            keep = max(len(marker) for marker in markers) - 1
-            if len(self.buffer) <= keep:
-                break
-            chunk, self.buffer = self.buffer[:-keep], self.buffer[-keep:]
+            # Retain only a suffix that can actually become a marker in the
+            # next SSE chunk.  A fixed tail made every short answer arrive in
+            # bursts even when it contained no reasoning tag at all.
+            lower = self.buffer.lower()
+            keep = 0
+            for marker in markers:
+                limit = min(len(marker) - 1, len(lower))
+                for size in range(1, limit + 1):
+                    if marker.startswith(lower[-size:]):
+                        keep = max(keep, size)
+            if keep:
+                if keep == len(self.buffer):
+                    # The entire buffer may be the beginning of a marker
+                    # (for example ``<thi``). Keep it for the next SSE chunk
+                    # and stop this pass instead of looping over unchanged
+                    # data forever.
+                    break
+                chunk, self.buffer = self.buffer[:-keep], self.buffer[-keep:]
+            else:
+                chunk, self.buffer = self.buffer, ""
             (reasoning if self.inside else visible).append(chunk)
         return "".join(visible), "".join(reasoning)
 
@@ -791,7 +805,7 @@ class ModelRuntime:
             if native_tools:
                 payload["tools"] = native_tools
                 payload["tool_choice"] = "auto"
-                payload["parallel_tool_calls"] = False
+                payload["parallel_tool_calls"] = True
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
             # DeepSeek selects thinking behavior from the model itself; its
             # OpenAI-compatible endpoint does not accept OpenAI's
@@ -824,7 +838,7 @@ class ModelRuntime:
             if native_tools:
                 payload["tools"] = native_tools
                 payload["tool_choice"] = "auto"
-                payload["parallel_tool_calls"] = False
+                payload["parallel_tool_calls"] = True
             reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
             if reasoning_params:
                 payload.update(reasoning_params)
@@ -924,7 +938,7 @@ class ModelRuntime:
                     "stream": stream_enabled,
                     "tools": native_tools,
                     "tool_choice": "auto",
-                    "parallel_tool_calls": False,
+                    "parallel_tool_calls": True,
                 }
                 if temperature is not None:
                     payload["temperature"] = temperature
@@ -1184,8 +1198,31 @@ class ModelRuntime:
                     and exc.code in {429, 502, 503, 504}
                     and attempt + 1 < attempts
                 ):
-                    if cancel_event and cancel_event.wait(1.5 * (attempt + 1)):
-                        raise RuntimeError("任务已取消")
+                    if exc.code == 429:
+                        retry_after = ""
+                        if exc.headers:
+                            retry_after = str(exc.headers.get("Retry-After") or "").strip()
+                        try:
+                            delay = max(1.0, min(float(retry_after), 60.0))
+                        except (TypeError, ValueError):
+                            delay = min(10.0 * (2 ** attempt), 60.0)
+                        retry_message = (
+                            f"供应商限流，{delay:g} 秒后重试"
+                            f"（{attempt + 1}/{attempts - 1}）"
+                        )
+                    else:
+                        delay = min(1.5 * (attempt + 1), 5.0)
+                        retry_message = (
+                            f"供应商暂时不可用（HTTP {exc.code}），{delay:g} 秒后重试"
+                            f"（{attempt + 1}/{attempts - 1}）"
+                        )
+                    if status:
+                        status({"type": "status", "message": retry_message})
+                    if cancel_event:
+                        if cancel_event.wait(delay):
+                            raise RuntimeError("任务已取消")
+                    else:
+                        time.sleep(delay)
                     continue
                 raise RuntimeError(f"{target_detail}返回 HTTP {exc.code}: {detail}") from exc
             except (urllib.error.URLError, OSError) as exc:
@@ -1387,8 +1424,6 @@ class ModelRuntime:
         pending = ""
         reasoning_parts: list[str] = []
         tool_protocol = False
-        reasoning_started = False
-        reasoning_ended = False
         inline_parser = _InlineReasoningParser()
         native_tool_calls: dict[int, dict[str, str]] = {}
         for raw_line in response:
@@ -1415,38 +1450,23 @@ class ModelRuntime:
             text, inline_reasoning = inline_parser.feed(text)
             reasoning = reasoning + inline_reasoning
             if reasoning:
-                if status and not reasoning_started:
-                    status({"type": "reasoning_start"})
-                    reasoning_started = True
                 reasoning_parts.append(reasoning)
-                if status:
-                    status({"type": "reasoning_delta", "content": reasoning})
             if not text:
                 continue
-            if status and reasoning_started and not reasoning_ended:
-                status({"type": "reasoning_end"})
-                reasoning_ended = True
             full_content_parts.append(text)
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         final_text, final_reasoning = inline_parser.feed("", final=True)
         if final_reasoning:
-            if status and not reasoning_started:
-                status({"type": "reasoning_start"})
-                reasoning_started = True
-            if status:
-                status({"type": "reasoning_delta", "content": final_reasoning})
+            reasoning_parts.append(final_reasoning)
         if final_text:
-            if status and reasoning_started and not reasoning_ended:
-                status({"type": "reasoning_end"})
-                reasoning_ended = True
             full_content_parts.append(final_text)
             pending += final_text
         if not tool_protocol:
-            ModelRuntime._forward_guarded_text(pending, status, final=True)
-        if status and reasoning_started and not reasoning_ended:
-            status({"type": "reasoning_end"})
+            pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status, final=True)
+        if not tool_protocol and not native_tool_calls:
+            ModelRuntime._emit_buffered_reasoning(status, "".join(reasoning_parts))
         return {
             "content": (
                 ModelRuntime._build_action_from_native_tool_calls(native_tool_calls)
@@ -1483,8 +1503,6 @@ class ModelRuntime:
         reasoning_parts: list[str] = []
         native_tool_calls: dict[int, dict[str, str]] = {}
         tool_protocol = False
-        reasoning_started = False
-        reasoning_ended = False
         inline_parser = _InlineReasoningParser()
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
@@ -1504,17 +1522,9 @@ class ModelRuntime:
             text, inline_reasoning = inline_parser.feed(text)
             reasoning = reasoning + inline_reasoning
             if reasoning:
-                if status and not reasoning_started:
-                    status({"type": "reasoning_start"})
-                    reasoning_started = True
                 reasoning_parts.append(reasoning)
-                if status:
-                    status({"type": "reasoning_delta", "content": reasoning})
             if tool_calls:
                 # Native OpenAI tool calls must not appear as answer text.
-                if status and reasoning_started and not reasoning_ended:
-                    status({"type": "reasoning_end"})
-                    reasoning_ended = True
                 if not tool_protocol:
                     ModelRuntime._forward_guarded_text(pending, status, final=True)
                     pending = ""
@@ -1532,30 +1542,20 @@ class ModelRuntime:
                 continue
             if not text:
                 continue
-            if status and reasoning_started and not reasoning_ended:
-                status({"type": "reasoning_end"})
-                reasoning_ended = True
             full_content_parts.append(text)
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         final_text, final_reasoning = inline_parser.feed("", final=True)
         if final_reasoning:
-            if status and not reasoning_started:
-                status({"type": "reasoning_start"})
-                reasoning_started = True
-            if status:
-                status({"type": "reasoning_delta", "content": final_reasoning})
+            reasoning_parts.append(final_reasoning)
         if final_text:
-            if status and reasoning_started and not reasoning_ended:
-                status({"type": "reasoning_end"})
-                reasoning_ended = True
             full_content_parts.append(final_text)
             pending += final_text
         if not tool_protocol:
-            ModelRuntime._forward_guarded_text(pending, status, final=True)
-        if status and reasoning_started and not reasoning_ended:
-            status({"type": "reasoning_end"})
+            pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status, final=True)
+        if not tool_protocol and not native_tool_calls:
+            ModelRuntime._emit_buffered_reasoning(status, "".join(reasoning_parts))
         usage = ModelRuntime._online_usage(request_format, chunks)
         if native_tool_calls:
             # Convert to the internal action structure the Agent Loop consumes.
@@ -1576,8 +1576,6 @@ class ModelRuntime:
         pending = ""
         reasoning_parts: list[str] = []
         tool_protocol = False
-        reasoning_started = False
-        reasoning_ended = False
         inline_parser = _InlineReasoningParser()
         for raw_line in response:
             line = raw_line.decode("utf-8", errors="replace").strip()
@@ -1604,12 +1602,7 @@ class ModelRuntime:
             if event_type in ("reasoning.delta", "reasoning.full"):
                 reasoning = ModelRuntime._text_value(chunk.get("content"))
                 if reasoning:
-                    if status and not reasoning_started:
-                        status({"type": "reasoning_start"})
-                        reasoning_started = True
                     reasoning_parts.append(reasoning)
-                    if status:
-                        status({"type": "reasoning_delta", "content": reasoning})
                 continue
             if event_type in ("message.delta", "message.full"):
                 text = ModelRuntime._text_value(chunk.get("content"))
@@ -1618,39 +1611,23 @@ class ModelRuntime:
                 text = ModelRuntime._text_value(chunk.get("content") or chunk.get("text"))
             text, inline_reasoning = inline_parser.feed(text)
             if inline_reasoning:
-                if status and not reasoning_started:
-                    status({"type": "reasoning_start"})
-                    reasoning_started = True
                 reasoning_parts.append(inline_reasoning)
-                if status:
-                    status({"type": "reasoning_delta", "content": inline_reasoning})
             if not text:
                 continue
-            if status and reasoning_started and not reasoning_ended:
-                status({"type": "reasoning_end"})
-                reasoning_ended = True
             full_content_parts.append(text)
             if not tool_protocol:
                 pending += text
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         final_text, final_reasoning = inline_parser.feed("", final=True)
         if final_reasoning:
-            if status and not reasoning_started:
-                status({"type": "reasoning_start"})
-                reasoning_started = True
             reasoning_parts.append(final_reasoning)
-            if status:
-                status({"type": "reasoning_delta", "content": final_reasoning})
         if final_text:
-            if status and reasoning_started and not reasoning_ended:
-                status({"type": "reasoning_end"})
-                reasoning_ended = True
             full_content_parts.append(final_text)
             pending += final_text
         if not tool_protocol:
-            ModelRuntime._forward_guarded_text(pending, status, final=True)
-        if status and reasoning_started and not reasoning_ended:
-            status({"type": "reasoning_end"})
+            pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status, final=True)
+        if not tool_protocol:
+            ModelRuntime._emit_buffered_reasoning(status, "".join(reasoning_parts))
         return {
             "content": ModelRuntime._clean_content("".join(full_content_parts)),
             "reasoning": "".join(reasoning_parts),
@@ -1799,6 +1776,48 @@ class ModelRuntime:
         return min(offsets) if offsets else None
 
     @staticmethod
+    def _possible_protocol_suffix_length(buffer: str) -> int:
+        """Return only the ambiguous suffix that must wait for the next chunk.
+
+        Ordinary answer text should be forwarded immediately.  We retain a
+        short partial XML marker (for example ``<tool_ca``) or a partial JSON
+        first field (for example ``{\"ty``), rather than delaying every stream
+        by a fixed number of characters.
+        """
+        lower = buffer.lower()
+        keep = 0
+        for token in ("<tool_calls", "<invoke", "<tool"):
+            limit = min(len(token) - 1, len(lower))
+            for size in range(1, limit + 1):
+                if token.startswith(lower[-size:]):
+                    keep = max(keep, size)
+
+        brace = buffer.rfind("{")
+        if brace >= 0:
+            fragment = buffer[brace:]
+            rest = fragment[1:].lstrip()
+            possible = not rest
+            if rest.startswith('"'):
+                field = rest[1:]
+                if '"' in field:
+                    name, tail = field.split('"', 1)
+                    possible = name.lower() in {"type", "tool"} and not tail.strip()
+                else:
+                    possible = any(name.startswith(field.lower()) for name in ("type", "tool"))
+            if possible:
+                keep = max(keep, len(fragment))
+        return keep
+
+    @staticmethod
+    def _emit_buffered_reasoning(status: StatusCallback | None, reasoning: str) -> None:
+        """Publish reasoning only after the response is known to be user-facing."""
+        if not status or not reasoning.strip():
+            return
+        status({"type": "reasoning_start"})
+        status({"type": "reasoning_delta", "content": reasoning})
+        status({"type": "reasoning_end"})
+
+    @staticmethod
     def _forward_guarded_text(
         pending: str,
         status: StatusCallback | None,
@@ -1809,6 +1828,9 @@ class ModelRuntime:
         Returns the unflushed tail and whether a tool protocol was detected.
         Once detected, callers suppress the remainder of that model response.
         """
+        classification = ModelRuntime._classify_agent_output(pending)
+        if classification == "tool":
+            return "", True
         offset = ModelRuntime._tool_protocol_offset(pending)
         if offset is not None:
             visible = pending[:offset]
@@ -1819,12 +1841,13 @@ class ModelRuntime:
             if pending and status:
                 status({"type": "delta", "content": pending})
             return "", False
-        if len(pending) <= _STREAM_GUARD_CHARS:
+        keep = ModelRuntime._possible_protocol_suffix_length(pending)
+        if keep >= len(pending):
             return pending, False
-        visible = pending[:-_STREAM_GUARD_CHARS]
+        visible = pending[:-keep] if keep else pending
         if visible and status:
             status({"type": "delta", "content": visible})
-        return pending[-_STREAM_GUARD_CHARS:], False
+        return pending[-keep:] if keep else "", False
 
     @staticmethod
     def _stream_delta(request_format: str, chunk: dict[str, Any]) -> tuple[str, str]:

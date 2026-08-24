@@ -277,6 +277,58 @@ def build_core_tool_specs() -> list[ToolSpec]:
             permission="confirm",
         ),
         ToolSpec(
+            name="glob_files",
+            description="按 glob 模式快速列出文件；只读、适合先定位脚本和配置。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": _string("搜索根目录", ""),
+                    "pattern": _string("glob 模式，例如 **/*.py", "**/*"),
+                    "limit": {"type": "integer", "default": 200},
+                },
+                "required": [],
+            },
+            side_effect=False,
+            retryable=True,
+            timeout=60,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="edit_file",
+            description="对文本文件执行精确替换；要求 old_text 唯一匹配，避免脚本误改。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": _string("文件路径"),
+                    "old_text": {"type": "string", "description": "必须唯一出现的原文"},
+                    "new_text": {"type": "string", "description": "替换文本"},
+                    "all": {"type": "boolean", "description": "允许替换全部匹配；默认 false", "default": False},
+                },
+                "required": ["path", "old_text", "new_text"],
+            },
+            side_effect=True,
+            retryable=False,
+            timeout=60,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="pwsh",
+            description="执行 Windows PowerShell；与 Harness 的 pwsh 工具对应，支持短任务和脚本启动。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "command": _string("PowerShell 命令"),
+                    "cwd": _string("工作目录", ""),
+                    "timeout": {"type": "integer", "default": 120},
+                },
+                "required": ["command"],
+            },
+            side_effect=True,
+            retryable=False,
+            timeout=120,
+            permission="confirm",
+        ),
+        ToolSpec(
             name="run_command",
             description="在指定工作目录执行 PowerShell 命令。",
             parameters={
@@ -467,6 +519,49 @@ def build_job_tool_specs() -> list[ToolSpec]:
     """声明通用任务工具与子 Agent 工具的 Harness 元数据。"""
     return [
         ToolSpec(
+            name="todo_write",
+            description="保存当前运行的结构化任务清单；用于多步骤任务持续更新进度。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {"type": "string"},
+                                "content": {"type": "string"},
+                                "status": {"type": "string", "enum": ["pending", "in_progress", "completed"]},
+                            },
+                            "required": ["content", "status"],
+                        },
+                    }
+                },
+                "required": ["todos"],
+            },
+            side_effect=False,
+            retryable=False,
+            timeout=30,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="artifact_report",
+            description="校验并登记任务产物文件，返回大小与 SHA-256；适用于代码、文档、媒体等任何任务。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "paths": {"type": "array", "items": {"type": "string"}, "description": "产物路径"},
+                    "label": {"type": "string", "default": ""},
+                    "require_nonempty": {"type": "boolean", "default": True},
+                },
+                "required": ["paths"],
+            },
+            side_effect=False,
+            retryable=True,
+            timeout=60,
+            permission="confirm",
+        ),
+        ToolSpec(
             name="run_in_background",
             description=(
                 "提交一个后台 Job 并立即返回 Job ID；随后用 job_output/job_status/job_wait 查询结果。"
@@ -480,6 +575,7 @@ def build_job_tool_specs() -> list[ToolSpec]:
                         "description": "Job 规格：{kind, params, label, resumable, checkpoint}",
                     },
                     "parent_job_id": {"type": "string", "default": ""},
+                    "idempotency_key": {"type": "string", "description": "可选去重键；同一会话中运行中的相同键直接返回已有 Job", "default": ""},
                 },
                 "required": ["spec"],
             },
@@ -572,6 +668,99 @@ def build_job_tool_specs() -> list[ToolSpec]:
     ]
 
 
+def build_harness_alias_specs() -> list[ToolSpec]:
+    return [
+        ToolSpec(name="read", description="Harness 兼容别名：读取文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"max_chars":{"type":"integer","default":30000}},"required":["path"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
+        ToolSpec(name="write", description="Harness 兼容别名：写入文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"content":{"type":"string"},"append":{"type":"boolean","default":False}},"required":["path","content"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
+        ToolSpec(name="edit", description="Harness 兼容别名：精确编辑文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"old_text":{"type":"string"},"new_text":{"type":"string"},"all":{"type":"boolean","default":False}},"required":["path","old_text","new_text"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
+        ToolSpec(name="glob", description="Harness 兼容别名：glob 文件。", parameters={"type":"object","properties":{"path":_string("根目录",""),"pattern":_string("glob 模式","**/*"),"limit":{"type":"integer","default":200}},"required":[]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
+        ToolSpec(name="grep", description="Harness 兼容别名：搜索文本。", parameters={"type":"object","properties":{"path":_string("根目录",""),"query":_string("搜索文本"),"pattern":_string("文件模式","*"),"limit":{"type":"integer","default":100}},"required":["query"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
+    ]
+
+
+def build_comfyui_tool_specs() -> list[ToolSpec]:
+    """High-level ComfyUI orchestration tools.
+
+    These are only thin orchestration wrappers; they do not bundle ComfyUI,
+    models, or any third-party runtime into NaibaChat.
+    """
+    return [
+        ToolSpec(
+            name="comfyui_prepare_workflow",
+            description=(
+                "读取并快速检查 ComfyUI 工作流 JSON。识别 API JSON 与前端 UI JSON，返回节点/错误摘要；"
+                "不会把大型工作流全文塞回对话，也不会自动启动 Skill。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "工作流 JSON 文件路径"},
+                    "workflow": {"type": "object", "description": "内联工作流 JSON"},
+                    "include_workflow": {"type": "boolean", "description": "是否返回规范化后的完整 API JSON", "default": False},
+                },
+                "required": [],
+            },
+            side_effect=False,
+            retryable=True,
+            timeout=60,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="comfyui_batch",
+            description=(
+                "一次提交多个 ComfyUI API 工作流并在后台统一轮询。适合生图、短剧分段和视频生成；"
+                "直接返回 Job ID，随后用 job_status/job_wait/job_output 查询。无需先激活 Skill。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "workflows": {
+                        "type": "array",
+                        "description": "ComfyUI API 格式工作流数组；每个元素对应一个片段",
+                        "items": {"type": "object"},
+                    },
+                    "workflow_paths": {
+                        "type": "array",
+                        "description": "API 工作流 JSON 文件路径数组；适合脚本/批处理，避免在对话中搬运大 JSON",
+                        "items": {"type": "string"},
+                    },
+                    "workflow": {
+                        "type": "object",
+                        "description": "单个工作流的简写；与 shots 一起使用可重复提交",
+                    },
+                    "shots": {
+                        "type": "integer",
+                        "description": "重复提交单个 workflow 的次数",
+                        "minimum": 1,
+                        "default": 1,
+                    },
+                    "comfyui_url": {
+                        "type": "string",
+                        "description": "ComfyUI 地址，默认读取应用配置",
+                        "default": "",
+                    },
+                    "wait": {
+                        "type": "boolean",
+                        "description": "是否等待全部片段完成；默认 false，立即返回 Job ID",
+                        "default": False,
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "等待超时时间（秒）",
+                        "minimum": 1,
+                        "default": 7200,
+                    },
+                },
+                "required": [],
+            },
+            side_effect=True,
+            retryable=False,
+            timeout=300,
+            permission="confirm",
+        ),
+    ]
+
+
 def build_capability_tool_specs() -> list[ToolSpec]:
     """Tools used by the generic orchestration loop to discover and fill gaps."""
     return [
@@ -645,7 +834,9 @@ def build_capability_tool_specs() -> list[ToolSpec]:
 def build_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_many(build_core_tool_specs())
+    registry.register_many(build_harness_alias_specs())
     registry.register_many(build_job_tool_specs())
+    registry.register_many(build_comfyui_tool_specs())
     registry.register_many(build_capability_tool_specs())
     registry.register_many(build_vision_tool_specs())
     registry.register_many(build_search_tool_specs())
