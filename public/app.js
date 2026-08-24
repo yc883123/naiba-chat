@@ -97,6 +97,10 @@ async function copyText(text) {
 
 let contextMenuSelection = '';
 let contextMenuPreviousFocus = null;
+let contextMenuMode = 'selection'; // 'selection' | 'edit'
+let contextMenuTarget = null;
+let contextMenuRangeStart = 0;
+let contextMenuRangeEnd = 0;
 
 function editableElement(target) {
   if (!(target instanceof Element)) return null;
@@ -116,13 +120,30 @@ function ensureContextMenu() {
   menu.id = 'textContextMenu';
   menu.className = 'text-context-menu';
   menu.setAttribute('role', 'menu');
-  menu.setAttribute('aria-label', '选中文本操作');
+  menu.setAttribute('aria-label', '文本操作');
   menu.hidden = true;
-  menu.innerHTML = `
-    <button type="button" role="menuitem" data-context-action="copy">复制选中</button>
-    <button type="button" role="menuitem" data-context-action="quote">快速发送</button>`;
   document.body.append(menu);
   return menu;
+}
+
+function setContextMenuItems() {
+  const menu = ensureContextMenu();
+  if (contextMenuMode === 'edit') {
+    menu.setAttribute('aria-label', '文本框操作');
+    menu.innerHTML = `
+      <button type="button" role="menuitem" data-context-action="undo">撤销</button>
+      <button type="button" role="menuitem" data-context-action="redo">重做</button>
+      <button type="button" role="menuitem" data-context-action="cut">剪切</button>
+      <button type="button" role="menuitem" data-context-action="copy">复制</button>
+      <button type="button" role="menuitem" data-context-action="paste">粘贴</button>
+      <button type="button" role="menuitem" data-context-action="delete">删除</button>
+      <button type="button" role="menuitem" data-context-action="select-all">全选</button>`;
+  } else {
+    menu.setAttribute('aria-label', '选中文本操作');
+    menu.innerHTML = `
+      <button type="button" role="menuitem" data-context-action="copy">复制选中</button>
+      <button type="button" role="menuitem" data-context-action="quote">快速发送</button>`;
+  }
 }
 
 function hideTextContextMenu() {
@@ -130,20 +151,124 @@ function hideTextContextMenu() {
   if (menu) menu.hidden = true;
 }
 
-function showTextContextMenu(event, selection = '') {
+function showTextContextMenu(event, selection = '', mode = 'selection', target = null) {
   const menu = ensureContextMenu();
   contextMenuSelection = selection;
+  contextMenuMode = mode;
+  contextMenuTarget = target;
   contextMenuPreviousFocus = document.activeElement;
+  if (target && typeof target.selectionStart === 'number') {
+    contextMenuRangeStart = target.selectionStart;
+    contextMenuRangeEnd = target.selectionEnd;
+  } else {
+    contextMenuRangeStart = 0;
+    contextMenuRangeEnd = 0;
+  }
+  setContextMenuItems();
   menu.hidden = false;
   const width = menu.offsetWidth;
   const height = menu.offsetHeight;
   menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6))}px`;
   menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6))}px`;
-  menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
+  // 不要自动聚焦菜单按钮，否则文本框会失焦，选中高亮会消失。
+}
+
+function focusContextTarget() {
+  const el = contextMenuTarget;
+  if (!el) return;
+  el.focus({ preventScroll: true });
+  if (typeof el.setSelectionRange === 'function') {
+    try {
+      el.setSelectionRange(contextMenuRangeStart, contextMenuRangeEnd);
+    } catch (_) { /* 忽略 */ }
+  }
+}
+
+function editableSelectedText() {
+  const el = contextMenuTarget;
+  if (!el) return '';
+  if (typeof el.value === 'string' && typeof el.selectionStart === 'number') {
+    return el.value.substring(el.selectionStart, el.selectionEnd);
+  }
+  const sel = window.getSelection();
+  return sel ? sel.toString() : '';
+}
+
+function insertTextIntoEditable(text) {
+  const el = contextMenuTarget;
+  if (!el) return false;
+  if (typeof el.value === 'string' && typeof el.selectionStart === 'number') {
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    el.value = el.value.slice(0, start) + text + el.value.slice(end);
+    el.setSelectionRange(start + text.length, start + text.length);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return true;
+  }
+  if (el.isContentEditable) {
+    el.focus();
+    return document.execCommand('insertText', false, text);
+  }
+  return false;
 }
 
 async function runTextContextAction(action) {
   try {
+    if (contextMenuMode === 'edit') {
+      if (['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'select-all'].includes(action)) {
+        focusContextTarget();
+      }
+      if (action === 'undo') {
+        document.execCommand('undo');
+        toast('已撤销');
+      } else if (action === 'redo') {
+        document.execCommand('redo');
+        toast('已重做');
+      } else if (action === 'cut') {
+        if (document.execCommand('cut')) toast('已剪切');
+        else toast('剪切失败：浏览器未授权');
+      } else if (action === 'copy') {
+        const text = editableSelectedText();
+        if (text) {
+          await copyText(text);
+          toast('已复制');
+        } else {
+          toast('没有可复制的内容');
+        }
+      } else if (action === 'paste') {
+        let ok = false;
+        try { ok = document.execCommand('paste'); } catch (_) { /* 忽略 */ }
+        if (!ok && navigator.clipboard?.readText) {
+          try {
+            const text = await navigator.clipboard.readText();
+            ok = insertTextIntoEditable(text);
+          } catch (_) { /* 忽略 */ }
+        }
+        if (ok) toast('已粘贴');
+        else toast('粘贴失败：浏览器未授权');
+      } else if (action === 'delete') {
+        const el = contextMenuTarget;
+        if (el && typeof el.value === 'string' && typeof el.selectionStart === 'number') {
+          if (el.selectionStart === el.selectionEnd) {
+            toast('请先选择要删除的内容');
+          } else {
+            insertTextIntoEditable('');
+            toast('已删除');
+          }
+        } else if (document.execCommand('delete')) {
+          toast('已删除');
+        } else {
+          toast('删除失败');
+        }
+      } else if (action === 'select-all') {
+        const el = contextMenuTarget;
+        if (el && typeof el.select === 'function') el.select();
+        else if (el && typeof el.setSelectionRange === 'function') el.setSelectionRange(0, el.value.length);
+        else document.execCommand('selectAll');
+      }
+      return;
+    }
+
     if (action === 'copy') {
       await copyText(contextMenuSelection);
       toast('已复制选中内容');
@@ -158,7 +283,7 @@ async function runTextContextAction(action) {
       toast('已追加到输入框');
     }
   } catch (error) {
-    toast(`剪贴板操作失败：${error.message}`);
+    toast(`操作失败：${error.message}`);
   } finally {
     hideTextContextMenu();
   }
@@ -3508,9 +3633,8 @@ function bindEvents() {
     hideTextContextMenu();
     const editable = editableElement(event.target);
     if (editable) {
-      // Let the browser's native edit menu handle paste/copy.  Chromium's
-      // Clipboard API is permission-gated on LAN HTTP pages, while the native
-      // menu still works for workspace and API inputs.
+      event.preventDefault();
+      showTextContextMenu(event, '', 'edit', editable);
       return;
     }
     const selection = window.getSelection();
@@ -3523,12 +3647,16 @@ function bindEvents() {
     const messageBody = startNode?.closest('.message-body');
     if (!messageBody || endNode?.closest('.message-body') !== messageBody) return;
     event.preventDefault();
-    showTextContextMenu(event, selection.toString());
+    showTextContextMenu(event, selection.toString(), 'selection', null);
   });
   document.addEventListener('pointerdown', (event) => {
     if (!event.target.closest?.('#textContextMenu')) hideTextContextMenu();
   });
   const textContextMenu = ensureContextMenu();
+  textContextMenu.addEventListener('mousedown', (event) => {
+    // 阻止菜单按钮抢走文本框焦点，保持选中状态可见。
+    if (event.target.closest?.('[data-context-action]')) event.preventDefault();
+  });
   textContextMenu.addEventListener('click', (event) => {
     const button = event.target.closest('[data-context-action]');
     if (button) runTextContextAction(button.dataset.contextAction);

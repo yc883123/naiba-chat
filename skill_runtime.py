@@ -977,6 +977,20 @@ class SkillAgent:
         remaining_skill_chars = 52000
         exclusive_skills = str(((run_context or {}).get("skill_policy") or {}).get("mode") or "") == "exclusive"
 
+        # 混合注入策略：
+        # - 首次/历史中没有完整 SKILL.md 时，注入完整内容；
+        # - 如果历史中已经包含该 SKILL.md 的稳定内容片段，则只注入轻量技能卡，
+        #   提示模型按需 read_file，既省 token 又不丢失关键入口。
+        history_blob = "\n".join(
+            ("\n".join(str(part.get("text") or "") for part in item.get("content") if isinstance(part, dict))
+             if isinstance(item.get("content"), list) else str(item.get("content") or ""))
+            for item in (history or [])
+        )
+
+        def skill_content_signature(content: str) -> str:
+            normalized = content.strip()
+            return normalized[:160] if normalized else ""
+
         def read_active_skill(skill: dict[str, Any]) -> str:
             reader = getattr(self.catalog, "read_skill_content", None)
             if callable(reader):
@@ -988,6 +1002,21 @@ class SkillAgent:
                 content = read_active_skill(skill)
             except OSError as exc:
                 content = f"无法读取技能：{exc}"
+
+            skill_path = str(skill.get("path") or "")
+            signature = skill_content_signature(content)
+            already_loaded = bool(skill_path and skill_path in history_blob and signature and signature in history_blob)
+            if already_loaded:
+                # 完整 SKILL.md 已经在本轮历史中，不再重复注入全文。
+                description = str(skill.get("description") or "未提供描述")
+                content = (
+                    f"[Skill 已加载] 名称：{skill['name']}\n"
+                    f"根目录：{skill['root']}\n"
+                    f"说明：{description}\n"
+                    f"完整 SKILL.md 已在上下文中；如需要最新内容或 references 文件，"
+                    f"请使用 read_file 读取 \"{skill_path}\" 或 {skill['root']}/references/ 下的文件。"
+                )
+
             allowance = 18000 if exclusive_skills else min(18000, remaining_skill_chars)
             if allowance <= 0:
                 break
