@@ -389,7 +389,7 @@ class ConversationRunManager:
                 ),
                 "web_search_enabled": web_search_enabled,
                 "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
-                "reasoning_effort": str(conversation.get("reasoning_effort") or ("medium" if conversation.get("deep_reasoning_enabled") else "off")),
+                "reasoning_effort": str(conversation.get("reasoning_effort") or ("medium" if conversation.get("deep_reasoning_enabled") else "auto")),
                 "lightweight_mode": lightweight_mode,
                 "lightweight_disabled_features": sorted(disabled_features),
                 "allowed_tools": allowed_tools,
@@ -622,13 +622,23 @@ class ConversationRunManager:
                 str(item) for item in (snapshot.get("lightweight_disabled_features") or [])
             } if lightweight_mode else set()
             lightweight_direct = {"tools", "skills"}.issubset(disabled_features)
-            reasoning_effort = str(
-                snapshot.get("reasoning_effort")
-                or ("medium" if snapshot.get("deep_reasoning_enabled", False) else "off")
-            ).strip().lower()
-            if reasoning_effort not in {"off", "low", "medium", "high", "auto"}:
-                reasoning_effort = "off"
-            profile["reasoning_effort"] = reasoning_effort
+            conversation_effort = str(snapshot.get("reasoning_effort") or "").strip().lower()
+            if conversation_effort in {"off", "low", "medium", "high"}:
+                # 会话显式指定了思维强度，覆盖 provider 设置。
+                profile["reasoning_effort"] = conversation_effort
+            elif conversation_effort == "auto":
+                # 跟随 API/provider 设置：保留 profile 里已加载的 provider 值
+                # （默认 auto：不发送 reasoning 参数，交由模型自行决定）。
+                effort = str(profile.get("reasoning_effort") or "").strip().lower()
+                profile["reasoning_effort"] = (
+                    effort if effort in {"auto", "off", "low", "medium", "high"} else "auto"
+                )
+            else:
+                # 旧数据/reasoning_effort 为空：沿用既有回退，避免静默改变旧会话行为。
+                profile["reasoning_effort"] = (
+                    "medium" if snapshot.get("deep_reasoning_enabled", False) else "off"
+                )
+            reasoning_effort = profile["reasoning_effort"]
             history = build_model_history(snapshot.get("conversation_messages") or [])
             # 视觉自动路由（Phase 1）：文本大脑不支持看图时，把图片改写为不可信描述注入；
             # 纯文本大脑绝不会收到原始 image_url。

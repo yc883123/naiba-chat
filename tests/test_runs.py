@@ -21,6 +21,15 @@ class RunStorageTests(unittest.TestCase):
     def make_storage(self, root: str) -> ChatStorage:
         return ChatStorage(Path(root) / "chat.db")
 
+    def test_new_conversation_defaults_to_auto_reasoning(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            # A new conversation inherits the provider/API reasoning_effort
+            # ("auto" = send no reasoning parameter, let the model decide)
+            # instead of forcing "off" (no thinking) by default.
+            self.assertEqual("auto", conversation["reasoning_effort"])
+
     def test_chat_run_creation_is_atomic_and_freezes_history(self) -> None:
         with tempfile.TemporaryDirectory() as root:
             storage = self.make_storage(root)
@@ -909,6 +918,22 @@ class ContextWindowGuardTests(unittest.TestCase):
         self.assertIn("function updateContextComposerLock(busy = false)", source)
         self.assertIn("state.contextAtCeiling", source)
         self.assertIn("updateContextComposerLock(Boolean(state.chatBusy))", source)
+
+
+class ContentTextExtractionTests(unittest.TestCase):
+    def test_string_content_passes_through(self) -> None:
+        self.assertEqual("hello", SkillAgent._content_text("hello"))
+
+    def test_multipart_list_keeps_only_text(self) -> None:
+        content = [
+            {"type": "text", "text": "已提交 claim"},
+            {"type": "image", "data": "AAA", "media_type": "image/png"},
+        ]
+        self.assertEqual("已提交 claim", SkillAgent._content_text(content))
+
+    def test_image_only_list_yields_empty_text(self) -> None:
+        content = [{"type": "image", "data": "AAA", "media_type": "image/png"}]
+        self.assertEqual("", SkillAgent._content_text(content))
 
 
 if __name__ == "__main__":

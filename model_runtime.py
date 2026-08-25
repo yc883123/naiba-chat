@@ -1886,6 +1886,12 @@ class ModelRuntime:
                 key in chunk for key in ("prompt_eval_count", "eval_count")
             ):
                 candidate = chunk
+            # Responses 流式：usage 随最后一条 response.completed / response.incomplete
+            # 事件嵌套在 response 对象里，不在顶层 chunk 上。
+            if candidate is None and request_format == "codex_responses":
+                response_obj = chunk.get("response")
+                if isinstance(response_obj, dict):
+                    candidate = response_obj.get("usage")
             if isinstance(candidate, dict):
                 usage = candidate
         if not usage:

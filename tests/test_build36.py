@@ -110,6 +110,7 @@ class LMStudioProtocolTests(unittest.TestCase):
         self.assertEqual(ModelRuntime._reasoning_params("lm_studio", "high"), {"reasoning": "high"})
         self.assertEqual(ModelRuntime._reasoning_params("ollama", "medium"), {"think": "medium"})
         self.assertEqual(ModelRuntime._reasoning_params("openai_chat", "low"), {"reasoning_effort": "low"})
+        self.assertEqual(ModelRuntime._reasoning_params("openai_chat", "auto"), {})
         self.assertEqual(ModelRuntime._reasoning_params("openai_chat", "off"), {})
         self.assertEqual(
             ModelRuntime._reasoning_params("codex_responses", "high"),

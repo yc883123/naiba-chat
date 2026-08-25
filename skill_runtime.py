@@ -1160,11 +1160,15 @@ class SkillAgent:
         for item in selected_history:
             if item.get("role") in {"user", "assistant"} and item.get("content"):
                 history_content = item["content"]
-                if item.get("role") == "assistant" and isinstance(history_content, str):
+                if item.get("role") == "assistant":
                     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
                     history_runs = metadata.get("tool_runs") if isinstance(metadata.get("tool_runs"), list) else []
+                    # Run the anti-hallucination guard on the message's plain text
+                    # regardless of whether content is a string or a multipart list,
+                    # so a fabricated submission claim is not replayed verbatim just
+                    # because the message also carries image parts.
                     if self._unsupported_comfyui_submission_claim(
-                        routing_message, history_content, history_runs
+                        routing_message, self._content_text(history_content), history_runs
                     ):
                         history_content = (
                             "[系统校正：这条历史回复声称已提交 ComfyUI/Job，但没有成功提交工具证据。"
@@ -1822,6 +1826,26 @@ class SkillAgent:
         fixed_tokens = cls._estimate_content_tokens(system_prompt) + 512
         history_budget = max(256, limit - output_reserve - fixed_tokens)
         return limit, history_budget
+
+    @staticmethod
+    def _content_text(content: Any) -> str:
+        """Retrieve the plain-text payload of a message for inspections.
+
+        Accepts either a plain string or the OpenAI multimodal ``content`` list
+        (a sequence of ``{"type": "text"|"image", ...}`` parts, as produced for
+        image-bearing user messages), so anti-hallucination guards that run on
+        replayed assistant history are not bypassed merely because the message
+        carries multipart content.
+        """
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            return "\n".join(
+                str(part.get("text") or "")
+                for part in content
+                if isinstance(part, dict) and part.get("type") == "text" and part.get("text")
+            )
+        return str(content or "")
 
     @classmethod
     def _context_fits(

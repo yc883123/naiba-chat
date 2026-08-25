@@ -573,6 +573,34 @@ class ImageAttachmentTests(unittest.TestCase):
         )
         self.assertEqual(80.0, summary["cache_hit_rate"])
 
+    def test_codex_responses_streaming_usage_reads_nested_response(self) -> None:
+        # DeepSeek's Responses API ends the stream with a response.completed event
+        # whose usage lives inside response.usage, not on the top-level chunk.
+        chunks = [
+            {"type": "response.output_text.delta", "delta": "hi"},
+            {
+                "type": "response.completed",
+                "response": {
+                    "usage": {
+                        "input_tokens": 1000,
+                        "output_tokens": 50,
+                        "total_tokens": 1050,
+                        "input_tokens_details": {"cached_tokens": 800},
+                    }
+                },
+            },
+        ]
+
+        self.assertEqual(
+            {
+                "input_tokens": 1000,
+                "output_tokens": 50,
+                "total_tokens": 1050,
+                "cached_tokens": 800,
+            },
+            ModelRuntime._online_usage("codex_responses", chunks),
+        )
+
 
     def test_summarizes_cache_usage_across_agent_steps(self) -> None:
         summary = SkillAgent._summarize_usage(
@@ -2573,6 +2601,37 @@ class ToolProtocolAgentLoopTests(unittest.TestCase):
             [{
                 "role": "assistant",
                 "content": "已提交！任务 ID：fake-job，正在等待生成结果。",
+                "metadata": {"tool_runs": []},
+            }],
+            {}, {}, False, [], "", ["read_file"],
+            lambda _event: None, lambda *_args: None,
+            run_context={"routing_message": "使用 ComfyUI 继续生成图片"},
+        )
+
+        self.assertEqual("当前没有已提交任务。", content)
+        history_text = "\n".join(str(item.get("content") or "") for item in captured[0])
+        self.assertIn("视为从未提交", history_text)
+        self.assertNotIn("fake-job", history_text)
+
+    def test_multipart_assistant_claim_is_also_replaced_before_model_call(self) -> None:
+        # A multipart (multimodal) assistant message must still be inspected for a
+        # fabricated submission claim; before the hardening the isinstance(content,
+        # str) gate let such a claim replay verbatim whenever content was a list.
+        captured: list[list[dict[str, Any]]] = []
+
+        def complete(profile, messages, options, event):
+            captured.append(messages)
+            return "当前没有已提交任务。"
+
+        agent = SkillAgent(self.Catalog(), self.Executor(), complete)
+        content, _runs, _reasoning, _usage = agent.run(
+            "继续生成图片",
+            [{
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "已提交！任务 ID：fake-job，正在等待生成结果。"},
+                    {"type": "image", "data": "AAA", "media_type": "image/png"},
+                ],
                 "metadata": {"tool_runs": []},
             }],
             {}, {}, False, [], "", ["read_file"],

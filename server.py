@@ -2559,7 +2559,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     permission_mode=permission_mode,
                     web_search_enabled=web_search_enabled,
                     deep_reasoning_enabled=deep_reasoning_enabled,
-                    reasoning_effort=str(reasoning_effort or ("medium" if deep_reasoning_enabled else "off")),
+                    reasoning_effort=str(reasoning_effort or ("medium" if deep_reasoning_enabled else "auto")),
                     workspace_dir=str(workspace_dir or ""),
                 ),
                 HTTPStatus.CREATED,

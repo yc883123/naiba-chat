@@ -39,7 +39,7 @@ const state = {
   visionStartedAt: 0,
   webSearchEnabled: false,
   deepReasoningEnabled: false,
-  reasoningEffort: 'off',
+  reasoningEffort: 'auto',
   lightweightMode: false,
   lightweightDisabledFeatures: ['tools', 'skills'],
   contextUsage: null,
@@ -1575,7 +1575,7 @@ async function createConversation() {
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
   updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
-  state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'off');
+  state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
@@ -1608,7 +1608,7 @@ async function openConversation(id) {
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
   updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
-  state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'off');
+  state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
   state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
   state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
@@ -3124,12 +3124,13 @@ function updateDeepReasoningButton() {
   if (!btn) return;
   const disabled = Boolean(state.chatRunId || state.abortController);
   btn.disabled = disabled;
-  const effort = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'off');
-  state.deepReasoningEnabled = effort !== 'off';
-  btn.classList.toggle('active', state.deepReasoningEnabled);
+  const effort = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'auto');
+  const auto = effort === 'auto';
+  const active = auto || effort !== 'off';
+  btn.classList.toggle('active', active);
   btn.dataset.reasoningEffort = effort;
-  btn.setAttribute('aria-pressed', String(state.deepReasoningEnabled));
-  btn.title = state.deepReasoningEnabled ? '深度思考：开启' : '深度思考：关闭';
+  btn.setAttribute('aria-pressed', String(active));
+  btn.title = auto ? '深度思考：跟随 API（自动）' : (effort !== 'off' ? '深度思考：开启' : '深度思考：关闭');
 }
 
 async function toggleDeepReasoning() {
@@ -3140,8 +3141,8 @@ async function toggleDeepReasoning() {
     menu.hidden = !menu.hidden;
     if (!menu.hidden) return;
   }
-  const levels = ['off', 'low', 'medium', 'high'];
-  const previous = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'off');
+  const levels = ['auto', 'off', 'low', 'medium', 'high'];
+  const previous = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   const next = levels[(levels.indexOf(previous) + 1) % levels.length];
   state.reasoningEffort = next;
   state.deepReasoningEnabled = next !== 'off';
@@ -3153,7 +3154,8 @@ async function toggleDeepReasoning() {
     });
     const index = state.conversations.findIndex((item) => item.id === state.conversationId);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    toast(state.deepReasoningEnabled ? '深度思考已开启（本对话）' : '深度思考已关闭（本对话）');
+    if (next === 'auto') toast('思考强度：跟随 API（自动，本对话）');
+    else toast(state.deepReasoningEnabled ? `深度思考已开启（${next}，本对话）` : '深度思考已关闭（本对话）');
   } catch (error) {
     state.reasoningEffort = previous;
     state.deepReasoningEnabled = previous !== 'off';
@@ -3852,7 +3854,7 @@ function bindEvents() {
         method: 'POST', body: { reasoning_effort: effort, deep_reasoning_enabled: state.deepReasoningEnabled },
       });
       $('#reasoningMenu').hidden = true;
-      toast(`思考强度：${effort}`);
+      toast(effort === 'auto' ? '思考强度：跟随 API（自动）' : `思考强度：${effort}`);
     } catch (error) {
       state.reasoningEffort = previous;
       state.deepReasoningEnabled = previous !== 'off';

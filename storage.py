@@ -435,7 +435,7 @@ class ChatStorage:
         deep_reasoning_enabled: bool = False,
         lightweight_mode: bool = False,
         workspace_dir: str = "",
-        reasoning_effort: str = "off",
+        reasoning_effort: str = "auto",
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
         conversation_id = uuid.uuid4().hex
@@ -462,7 +462,7 @@ class ChatStorage:
                     "",
                     1,
                     str(workspace_dir or ""),
-                    str(reasoning_effort or ("medium" if deep_reasoning_enabled else "off")),
+                    str(reasoning_effort or ("medium" if deep_reasoning_enabled else "auto")),
                     provider_id or "",
                     resolved_model_key,
                     agent_id or "",
