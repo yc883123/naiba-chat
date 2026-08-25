@@ -166,6 +166,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .reasoning-block { margin: 8px 0 12px; border-left: 2px solid #6c8cd9; background: #f4f6fb; border-radius: 0 var(--radius) var(--radius) 0; padding: 6px 10px; }
 .reasoning-block summary { cursor: pointer; color: #4361a8; font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }
+.reasoning-block.tool-reasoning { border-left-color: #b0b8c8; background: #fafbfd; }
+.reasoning-block.tool-reasoning summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92%; }
 .edit-attachments { margin: 8px 0; }
 .edit-attachments .media-grid { max-width: 100%; }
 .edit-attachments img { max-width: 180px; max-height: 140px; object-fit: contain; }

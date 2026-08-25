@@ -421,7 +421,7 @@ function reasoningMarkup(reasoning) {
   const list = Array.isArray(reasoning) ? reasoning.filter(Boolean) : (reasoning ? [reasoning] : []);
   if (!list.length) return '';
   const text = list.join('\n\n---\n\n');
-  return `<details class="reasoning-block">
+  return `<details class="reasoning-block" open>
     <summary>思考过程（${list.length} 段）</summary>
     <div class="reasoning-content">${markdown(text)}</div>
   </details>`;
@@ -2856,6 +2856,20 @@ function createStreamingReasoningBlock(answer) {
   return block;
 }
 
+function collapseToolReasoningBlock() {
+  // 工具调用步骤的思考：坍缩为单行摘要，可点击展开（tool_start 到来时调用）。
+  const block = state.streamingReasoningBlock;
+  if (!block) return;
+  const content = block.querySelector('.reasoning-content');
+  block.open = false;
+  block.classList.add('tool-reasoning');
+  block.dataset.tool = 'true';
+  const summary = block.querySelector('summary');
+  const preview = (content?.dataset.raw || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  if (summary) summary.textContent = preview ? `工具思考：${preview}…` : '工具思考';
+  state.streamingReasoningBlock = null;
+}
+
 function createRunRow(run) {
   const row = messageElement({ role: 'assistant', content: '' }, true);
   row.dataset.runId = String(run.id || '');
@@ -3317,6 +3331,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       scheduleStreamingMarkdown(answer, next);
     }
   } else if (event.type === 'reasoning_start') {
+    state.streamingReasoningBlock = null;
     row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
       block.dataset.active = 'false';
       if (!(block.querySelector('.reasoning-content')?.dataset.raw || '').trim()) block.remove();
@@ -3327,15 +3342,20 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     if (!block) {
       block = createStreamingReasoningBlock(answer);
     }
+    state.streamingReasoningBlock = block;
     const content = block.querySelector('.reasoning-content');
     scheduleStreamingMarkdown(content, (content.dataset.raw || '') + String(event.content || ''));
     row.dataset.reasoningStreamed = 'true';
   } else if (event.type === 'reasoning_end') {
-    row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
-      block.open = false;
+    // 工具 vs 正式的分类不在此处做（正文 delta 无法可靠区分：模型可能在工具前
+    // 先叙说一句）。这里保持展开；接下来若 tool_start 到来，由 collapseToolReasoningBlock
+    // 坍缩成单行；若一直无 tool_start（正式回复）则保持展开。
+    const block = state.streamingReasoningBlock;
+    if (block) {
       block.dataset.active = 'false';
-      if (!(block.querySelector('.reasoning-content')?.dataset.raw || '').trim()) block.remove();
-    });
+      const content = block.querySelector('.reasoning-content');
+      if (!(content?.dataset.raw || '').trim()) block.remove();
+    }
   } else if (event.type === 'reasoning' && !row.dataset.reasoningStreamed) {
     // 实时显示推理内容到可折叠块
     let block = row.querySelector('.reasoning-block');
@@ -3351,6 +3371,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
   } else if (event.type === 'tool_start') {
     clearStreamingAnswer(answer);
+    collapseToolReasoningBlock();
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
     stack.className = 'tool-stack';
     const details = document.createElement('details');
@@ -3365,6 +3386,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     scrollToBottom();
   } else if (event.type === 'tool_start_legacy') {
     clearStreamingAnswer(answer);
+    collapseToolReasoningBlock();
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
     stack.className = 'tool-stack';
     stack.insertAdjacentHTML('beforeend', `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`);

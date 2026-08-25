@@ -2347,7 +2347,7 @@ class ToolProtocolStreamTests(unittest.TestCase):
 
 
 class ReasoningAndNativeToolTests(unittest.TestCase):
-    def test_reasoning_is_published_only_after_response_is_known_to_be_final(self) -> None:
+    def test_reasoning_is_streamed_live_and_incrementally(self) -> None:
         chunks = [
             {"choices": [{"delta": {"reasoning_content": "先分析"}}]},
             {"choices": [{"delta": {"reasoning_content": "再判断"}}]},
@@ -2360,16 +2360,17 @@ class ReasoningAndNativeToolTests(unittest.TestCase):
             lambda event: events.append(event),
         )
         types = [event.get("type") for event in events]
-        self.assertEqual("delta", types[0])
+        # 思考在内容之前实时到达，逐段推送而不是攒到结尾一次性吐。
+        self.assertEqual("reasoning_start", types[0])
         self.assertEqual(
-            ["先分析再判断"],
+            ["先分析", "再判断"],
             [event["content"] for event in events if event.get("type") == "reasoning_delta"],
         )
-        self.assertLess(types.index("delta"), types.index("reasoning_start"))
-        self.assertLess(types.index("reasoning_start"), types.index("reasoning_end"))
+        self.assertLess(types.index("reasoning_start"), types.index("delta"))
+        self.assertLess(types.index("delta"), types.index("reasoning_end"))
         self.assertEqual("最终答案", result["content"])
 
-    def test_reasoning_before_native_tool_call_is_never_published(self) -> None:
+    def test_reasoning_before_native_tool_call_is_now_streamed(self) -> None:
         chunks = [
             {"choices": [{"delta": {"reasoning_content": "先读取文件"}}]},
             {"choices": [{"delta": {"tool_calls": [
@@ -2382,7 +2383,9 @@ class ReasoningAndNativeToolTests(unittest.TestCase):
             "openai_chat",
             lambda event: events.append(event),
         )
-        self.assertFalse(any(str(event.get("type", "")).startswith("reasoning") for event in events))
+        reasoning = [event for event in events if str(event.get("type", "")).startswith("reasoning")]
+        self.assertEqual(["reasoning_start", "reasoning_delta", "reasoning_end"], [event["type"] for event in reasoning])
+        self.assertEqual(["先读取文件"], [event["content"] for event in reasoning if event.get("type") == "reasoning_delta"])
         self.assertEqual("tool", SkillAgent._parse_action(result["content"])["type"])
 
     def test_short_plain_text_streams_without_fixed_128_character_delay(self) -> None:

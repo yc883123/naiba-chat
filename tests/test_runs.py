@@ -936,5 +936,22 @@ class ContentTextExtractionTests(unittest.TestCase):
         self.assertEqual("", SkillAgent._content_text(content))
 
 
+class ReasoningStreamingUiTests(unittest.TestCase):
+    def test_final_reasoning_is_open_and_tool_reasoning_is_collapsible(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        styles = Path("public/styles.css").read_text(encoding="utf-8")
+
+        # 正式回复/最终答案：思考保持展开（不折叠）。
+        self.assertIn('<details class="reasoning-block" open>', source)
+        # 工具调用步骤：由权威信号 tool_start 把当前思考块坍缩为单行、可点击展开。
+        self.assertIn("function collapseToolReasoningBlock()", source)
+        self.assertIn("collapseToolReasoningBlock()", source)
+        self.assertIn("block.classList.add('tool-reasoning')", source)
+        self.assertIn("block.open = false;", source)
+        self.assertIn(".reasoning-block.tool-reasoning", styles)
+        # 步骤边界重置。
+        self.assertIn("state.streamingReasoningBlock = null", source)
+
+
 if __name__ == "__main__":
     unittest.main()

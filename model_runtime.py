@@ -221,6 +221,40 @@ class _InlineReasoningParser:
         return "".join(visible), "".join(reasoning)
 
 
+class _ReasoningStreamer:
+    """Stream reasoning deltas live when a provider exposes them incrementally.
+
+    ``feed`` emits ``reasoning_start`` once, then a ``reasoning_delta`` per
+    incoming piece. ``finish`` closes with ``reasoning_end`` when streaming was
+    possible; otherwise (a model that only returns a lump of thinking at the end,
+    or none at all) it falls back to a one-shot ``_emit_buffered_reasoning`` so
+    the reasoning is still shown, just not incrementally.
+    """
+
+    def __init__(self, status: StatusCallback | None, parts: list[str]):
+        self.status = status
+        self.parts = parts
+        self.started = False
+
+    def feed(self, reasoning: str) -> None:
+        if not reasoning:
+            return
+        self.parts.append(reasoning)
+        if self.status is not None:
+            if not self.started:
+                self.status({"type": "reasoning_start"})
+                self.started = True
+            self.status({"type": "reasoning_delta", "content": reasoning})
+
+    def finish(self) -> None:
+        if self.started:
+            if self.status is not None:
+                self.status({"type": "reasoning_end"})
+        else:
+            # 兜底：模型未实时暴露思考（增量解析没有触发），改为结尾一次性输出。
+            ModelRuntime._emit_buffered_reasoning(self.status, "".join(self.parts))
+
+
 class ModelRuntime:
     """在线模型调用。"""
 
@@ -1423,6 +1457,7 @@ class ModelRuntime:
         full_content_parts: list[str] = []
         pending = ""
         reasoning_parts: list[str] = []
+        reasoning_streamer = _ReasoningStreamer(status, reasoning_parts)
         tool_protocol = False
         inline_parser = _InlineReasoningParser()
         native_tool_calls: dict[int, dict[str, str]] = {}
@@ -1450,7 +1485,7 @@ class ModelRuntime:
             text, inline_reasoning = inline_parser.feed(text)
             reasoning = reasoning + inline_reasoning
             if reasoning:
-                reasoning_parts.append(reasoning)
+                reasoning_streamer.feed(reasoning)
             if not text:
                 continue
             full_content_parts.append(text)
@@ -1459,14 +1494,13 @@ class ModelRuntime:
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         final_text, final_reasoning = inline_parser.feed("", final=True)
         if final_reasoning:
-            reasoning_parts.append(final_reasoning)
+            reasoning_streamer.feed(final_reasoning)
         if final_text:
             full_content_parts.append(final_text)
             pending += final_text
         if not tool_protocol:
             pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status, final=True)
-        if not tool_protocol and not native_tool_calls:
-            ModelRuntime._emit_buffered_reasoning(status, "".join(reasoning_parts))
+        reasoning_streamer.finish()
         return {
             "content": (
                 ModelRuntime._build_action_from_native_tool_calls(native_tool_calls)
@@ -1501,6 +1535,7 @@ class ModelRuntime:
         full_content_parts: list[str] = []
         pending = ""
         reasoning_parts: list[str] = []
+        reasoning_streamer = _ReasoningStreamer(status, reasoning_parts)
         native_tool_calls: dict[int, dict[str, str]] = {}
         tool_protocol = False
         inline_parser = _InlineReasoningParser()
@@ -1522,7 +1557,7 @@ class ModelRuntime:
             text, inline_reasoning = inline_parser.feed(text)
             reasoning = reasoning + inline_reasoning
             if reasoning:
-                reasoning_parts.append(reasoning)
+                reasoning_streamer.feed(reasoning)
             if tool_calls:
                 # Native OpenAI tool calls must not appear as answer text.
                 if not tool_protocol:
@@ -1548,14 +1583,13 @@ class ModelRuntime:
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         final_text, final_reasoning = inline_parser.feed("", final=True)
         if final_reasoning:
-            reasoning_parts.append(final_reasoning)
+            reasoning_streamer.feed(final_reasoning)
         if final_text:
             full_content_parts.append(final_text)
             pending += final_text
         if not tool_protocol:
             pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status, final=True)
-        if not tool_protocol and not native_tool_calls:
-            ModelRuntime._emit_buffered_reasoning(status, "".join(reasoning_parts))
+        reasoning_streamer.finish()
         usage = ModelRuntime._online_usage(request_format, chunks)
         if native_tool_calls:
             # Convert to the internal action structure the Agent Loop consumes.
@@ -1575,6 +1609,7 @@ class ModelRuntime:
         full_content_parts: list[str] = []
         pending = ""
         reasoning_parts: list[str] = []
+        reasoning_streamer = _ReasoningStreamer(status, reasoning_parts)
         tool_protocol = False
         inline_parser = _InlineReasoningParser()
         for raw_line in response:
@@ -1602,7 +1637,7 @@ class ModelRuntime:
             if event_type in ("reasoning.delta", "reasoning.full"):
                 reasoning = ModelRuntime._text_value(chunk.get("content"))
                 if reasoning:
-                    reasoning_parts.append(reasoning)
+                    reasoning_streamer.feed(reasoning)
                 continue
             if event_type in ("message.delta", "message.full"):
                 text = ModelRuntime._text_value(chunk.get("content"))
@@ -1611,7 +1646,7 @@ class ModelRuntime:
                 text = ModelRuntime._text_value(chunk.get("content") or chunk.get("text"))
             text, inline_reasoning = inline_parser.feed(text)
             if inline_reasoning:
-                reasoning_parts.append(inline_reasoning)
+                reasoning_streamer.feed(inline_reasoning)
             if not text:
                 continue
             full_content_parts.append(text)
@@ -1620,14 +1655,13 @@ class ModelRuntime:
                 pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status)
         final_text, final_reasoning = inline_parser.feed("", final=True)
         if final_reasoning:
-            reasoning_parts.append(final_reasoning)
+            reasoning_streamer.feed(final_reasoning)
         if final_text:
             full_content_parts.append(final_text)
             pending += final_text
         if not tool_protocol:
             pending, tool_protocol = ModelRuntime._forward_guarded_text(pending, status, final=True)
-        if not tool_protocol:
-            ModelRuntime._emit_buffered_reasoning(status, "".join(reasoning_parts))
+        reasoning_streamer.finish()
         return {
             "content": ModelRuntime._clean_content("".join(full_content_parts)),
             "reasoning": "".join(reasoning_parts),
