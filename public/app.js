@@ -2346,6 +2346,25 @@ function formatBytes(bytes) {
   return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+async function cleanImageCache() {
+  const btn = $('#cleanImageCache');
+  if (!btn) return;
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '清理中…';
+  try {
+    const result = await api('/api/imaging/clean', { method: 'POST', body: {} });
+    state.bootstrap.image_cache_bytes = Number(result.size || 0);
+    $('#imageCacheSize').textContent = formatBytes(Number(result.size || 0));
+    toast(`已清理 ${formatBytes(Number(result.freed || 0))}（删除 ${Number(result.removed || 0)} 个文件）`);
+  } catch (error) {
+    toast(`清理失败：${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+}
+
 function renderWorkspaceControl() {
   const resolved = String(state.bootstrap?.resolved_workspace_dir || '').trim();
   const raw = String(state.bootstrap?.settings?.workspace_dir || 'workspace').trim() || 'workspace';
@@ -4238,6 +4257,7 @@ function bindEvents() {
   $('#cancelAgent').addEventListener('click', hideAgentForm);
   $('#saveAgentForm').addEventListener('click', saveAgentForm);
   $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
+  $('#cleanImageCache')?.addEventListener('click', cleanImageCache);
   $('#imageUploadOriginal')?.addEventListener('change', renderImageCompressRow);
   $('#imageLightboxClose')?.addEventListener('click', closeImageLightbox);
   $('#imageLightbox')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) closeImageLightbox(); });

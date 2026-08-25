@@ -502,6 +502,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .imaging-grid label { display: grid; gap: 6px; }
 .imaging-grid label input, .imaging-grid label select { margin-top: 0; }
 .imaging-grid label .hint { margin: 0; color: var(--muted); line-height: 1.4; }
+.image-cache-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; color: var(--muted); font-size: 12px; }
+.image-cache-row .control-button { min-height: 26px; padding: 0 10px; font-size: 12px; }
 #imageCompressRow[hidden] { display: none; }
 @media (max-width: 520px) {
   .imaging-grid { grid-template-columns: 1fr; }

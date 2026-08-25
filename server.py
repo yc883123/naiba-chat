@@ -191,6 +191,74 @@ def _uploads_total_bytes() -> int:
     return total
 
 
+IMAGE_CACHE_CLEAN_LIMIT = 128 * 1024 * 1024  # 128 MB
+
+
+def _clean_uploads_cache(limit: int = IMAGE_CACHE_CLEAN_LIMIT) -> dict[str, Any]:
+    """清理旧图片缓存：只保留最新的、总大小不超过 limit 的图片（主图+缩略图成组）。
+
+    返回 {removed: 删除文件数, freed: 释放字节数, size: 清理后剩余字节数}。
+    """
+    uploads_dir = (DATA_DIR / "uploads").resolve()
+    if not uploads_dir.is_dir():
+        return {"removed": 0, "freed": 0, "size": 0}
+    # 以"主图 + 其缩略图"成组：主图名 X.ext 与其缩略图 X_thumb.webp 归为一组（共享前缀 X）。
+    groups: dict[str, list[Path]] = {}
+    for path in uploads_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        name = path.name
+        if name.endswith("_thumb.webp"):
+            key = name[: -len("_thumb.webp")]
+        else:
+            key = path.stem
+        groups.setdefault(key, []).append(path)
+
+    def _group_mtime(paths: list[Path]) -> int:
+        latest = 0
+        for p in paths:
+            try:
+                latest = max(latest, int(p.stat().st_mtime))
+            except OSError:
+                continue
+        return latest
+
+    def _group_size(paths: list[Path]) -> int:
+        total = 0
+        for p in paths:
+            try:
+                total += p.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    entries: list[tuple[int, str, list[Path]]] = [
+        (_group_mtime(paths), key, paths) for key, paths in groups.items()
+    ]
+    entries.sort(key=lambda item: item[0], reverse=True)  # 新 -> 旧
+    kept_keys: set[str] = set()
+    kept_size = 0
+    for mtime, key, paths in entries:
+        group_size = _group_size(paths)
+        if kept_size + group_size <= limit:
+            kept_size += group_size
+            kept_keys.add(key)
+    removed = 0
+    freed = 0
+    for mtime, key, paths in entries:
+        if key in kept_keys:
+            continue
+        for p in paths:
+            try:
+                size = p.stat().st_size
+                p.unlink()
+                removed += 1
+                freed += size
+            except OSError:
+                continue
+    return {"removed": removed, "freed": freed, "size": _uploads_total_bytes()}
+
+
 def _config_has_providers(path: Path) -> bool:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -2872,6 +2940,13 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json(APP.config.upsert_model_profile(body))
             except Exception as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/imaging/clean":
+            try:
+                result = _clean_uploads_cache()
+            except OSError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            else:
+                self._json(result)
         elif path == "/api/settings":
             try:
                 if "data_dir" in body:
