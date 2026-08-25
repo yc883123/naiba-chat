@@ -86,6 +86,24 @@ LOCK_PATH = DATA_DIR / "server.lock"
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
+# 部分系统 mimetypes 未注册 webp/avif 等，导致 <img> 接到 application/octet-stream
+# 配合 nosniff 而拒绝渲染（缩略图破图）。提供显式兜底映射。
+_MEDIA_MIME_FALLBACK = {
+    ".webp": "image/webp",
+    ".avif": "image/avif",
+    ".gif": "image/gif",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".mov": "video/quicktime",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".ogv": "video/ogg",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".flac": "audio/flac",
+    ".svg": "image/svg+xml",
+}
+
 
 def _thumb_webp_path(main_path: Path) -> Path:
     """Given a cached main image path, derive the WebP thumbnail path."""
@@ -3252,6 +3270,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             data = path.read_bytes()
             content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+            if content_type == "application/octet-stream":
+                content_type = _MEDIA_MIME_FALLBACK.get(path.suffix.lower(), content_type)
         self.send_response(HTTPStatus.OK)
         self.send_header(
             "Content-Type",
