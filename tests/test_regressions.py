@@ -1816,6 +1816,27 @@ class UpdateManifestTests(unittest.TestCase):
             self.assertTrue(status["update_available"])
             self.assertEqual("available", status["phase"])
 
+    def test_dev_git_hash_build_is_never_downgraded(self) -> None:
+        # 本地/dev 构建 version 是 git hash，无法解析时不得把新构建降级成清单里的旧版。
+        with tempfile.TemporaryDirectory() as root:
+            manager = UpdateManager(Path(root), Path(root) / "data")
+            manager.build = {"version": "99c1fab44c1e", "commit": "9" * 40}
+            manifest = {
+                "repository": "yc883123/naiba-chat",
+                "commit": "0" * 40,
+                "sha256": "e" * 64,
+                "asset": "naiba-chat.exe",
+                "version": "1.1-beta",
+            }
+            with (
+                patch.object(UpdateManager, "mode", new_callable=PropertyMock, return_value="executable"),
+                patch.object(UpdateManager, "_request_json", return_value=manifest),
+            ):
+                status = manager.check(force=True)
+
+            self.assertFalse(status["update_available"])
+            self.assertEqual("current", status["phase"])
+
     def test_frozen_update_restart_resets_pyinstaller_environment(self) -> None:
         source = Path("updater.py").read_text(encoding="utf-8")
 

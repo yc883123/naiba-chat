@@ -275,7 +275,7 @@ class UpdateManager:
             latest_number = self._build_number(manifest.get("version", ""))
             current_release = self._release_version_key(self.build.get("version", ""))
             latest_release = self._release_version_key(manifest.get("version", ""))
-            update_available = manifest["commit"] != self.build.get("commit")
+            update_available = False
             if current_number is not None and latest_number is not None:
                 # Build numbers prevent downgrades, while a republished build
                 # with a different commit must still reach existing clients.
@@ -294,6 +294,8 @@ class UpdateManager:
                         and manifest["commit"] != self.build.get("commit")
                     )
                 )
+            # 其它情形（当前构建版本不是可解析的发布版本，例如本地/dev 的 git hash）
+            # 无法确认 manifest 是否更新，为免把新构建降级成清单里的旧版本，保持不更新。
             manifest["update_available"] = update_available
             with self.lock:
                 self.latest = manifest
