@@ -1710,18 +1710,52 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
         ".mp4", ".webm", ".mov", ".m4v", ".ogv",
         ".wav", ".mp3", ".m4a", ".ogg", ".flac",
     )
-    candidates: list[str] = []
+    # 结构化媒体记录里存放"真实路径/URL"的键。识别到这类 dict 时只产出单个附件，
+    # 其 thumb_path/name 作为该附件的元数据，而不是被当作独立附件再次扫描。
+    source_keys = ("path", "source", "url", "view_url", "file")
+    thumb_keys = ("thumb_path", "thumbnail", "thumb_url")
+    name_keys = ("name", "filename")
+    candidates: list[dict[str, str]] = []
+
+    def is_media(text: str) -> bool:
+        return text.lower().split("?")[0].endswith(extensions)
+
+    def record(source: str, name: str = "", thumb: str = "") -> None:
+        if source and is_media(source):
+            candidates.append({"source": source, "name": name or "", "thumb_path": thumb or ""})
 
     def visit(value: Any) -> None:
         if isinstance(value, str):
-            if value.lower().split("?")[0].endswith(extensions):
-                candidates.append(value)
-        elif isinstance(value, list):
+            if is_media(value):
+                record(value)
+            return
+        if isinstance(value, list):
             for item in value:
                 visit(item)
-        elif isinstance(value, dict):
-            for item in value.values():
-                visit(item)
+            return
+        if not isinstance(value, dict):
+            return
+        # dict 可能是一条结构化媒体记录：含 path/source/url/view_url 之一。
+        # 命中时单独产出该附件，并携带其 thumb_path/name 元数据，随后停止递归，
+        # 避免把 name / thumb_path 当作独立附件再次扫描。
+        media_source = next(
+            (str(value[key]) for key in source_keys if isinstance(value.get(key), str)
+             and is_media(str(value[key]))),
+            "",
+        )
+        if media_source:
+            thumb = next(
+                (str(value[key]) for key in thumb_keys if isinstance(value.get(key), str)),
+                "",
+            )
+            name = next(
+                (str(value[key]) for key in name_keys if isinstance(value.get(key), str)),
+                "",
+            )
+            record(media_source, name, thumb)
+            return
+        for item in value.values():
+            visit(item)
 
     for run in runs:
         result = run.get("result", "")
@@ -1733,16 +1767,21 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
     unique = []
     seen = set()
     for item in candidates:
-        source = item
-        parsed = urllib.parse.urlparse(item)
+        source = item["source"]
+        parsed = urllib.parse.urlparse(source)
         query = urllib.parse.parse_qs(parsed.query)
-        local_path = Path(item).expanduser()
+        local_path = Path(source).expanduser()
         is_local_file = local_path.is_file()
         name = (
-            local_path.name
-            if is_local_file
-            else Path((query.get("filename") or [parsed.path])[0]).name
-        ) or "生成结果"
+            item.get("name")
+            or (
+                local_path.name
+                if is_local_file
+                else Path((query.get("filename") or [parsed.path])[0]).name
+            )
+            or "生成结果"
+        )
+        thumb_path = item.get("thumb_path") or ""
         is_local_comfy = (
             parsed.scheme in {"http", "https"}
             and parsed.hostname in {"127.0.0.1", "localhost"}
@@ -1757,26 +1796,29 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
             if already_cached:
                 # 已在宿主 uploads 缓存目录（且带缩略图）：保留 uploads 路径即可服务与展示，
                 # 不用再重复拷贝到 generated。
-                source = item
+                source = source
             else:
                 try:
                     generated_dir = (DATA_DIR / "generated").resolve()
                     generated_dir.mkdir(parents=True, exist_ok=True)
-                    digest = hashlib.sha256(item.encode("utf-8", errors="replace")).hexdigest()[:16]
+                    digest = hashlib.sha256(source.encode("utf-8", errors="replace")).hexdigest()[:16]
                     destination = generated_dir / f"{digest}_{name}"
                     if not destination.is_file() or destination.stat().st_size <= 0:
                         if is_local_comfy:
-                            with urllib.request.urlopen(item, timeout=120) as response, destination.open("wb") as handle:
+                            with urllib.request.urlopen(source, timeout=120) as response, destination.open("wb") as handle:
                                 shutil.copyfileobj(response, handle, length=1024 * 1024)
                         else:
                             shutil.copy2(local_path.resolve(), destination)
                     source = str(destination)
                 except (OSError, urllib.error.URLError, ValueError):
-                    source = item
+                    source = source
         if source in seen:
             continue
         seen.add(source)
-        unique.append({"name": name, "source": source})
+        attachment = {"name": name, "source": source}
+        if thumb_path:
+            attachment["thumb_path"] = thumb_path
+        unique.append(attachment)
     return unique[:20]
 
 

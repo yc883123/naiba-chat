@@ -98,6 +98,26 @@ class ComfyUIToolTests(unittest.TestCase):
             self.assertTrue(cached.is_file())
             self.assertEqual((data_dir / "generated").resolve(), cached.parent)
 
+    def test_extract_attachments_structured_image_record_is_single_attachment(self):
+        # vision_read_folder 返回 {note, images:[{name,path,thumb_path,...}]}：
+        # 应产出单个附件（source=path，thumb_path 作为元数据），而不是把 name /
+        # thumb_path 当作独立附件造成缩略图破图。
+        result = json.dumps({
+            "note": "读取完成",
+            "images": [{
+                "name": "ComfyUI_00001.png",
+                "path": "C:/data/uploads/naiba_chat_123_ComfyUI_00001.png",
+                "thumb_path": "C:/data/uploads/naiba_chat_123_ComfyUI_00001_thumb.webp",
+                "width": 1024,
+                "height": 768,
+            }],
+        })
+        attachments = server.extract_attachments([{"tool": "vision_read_folder", "result": result}])
+        self.assertEqual(1, len(attachments))
+        self.assertEqual("C:/data/uploads/naiba_chat_123_ComfyUI_00001.png", attachments[0]["source"])
+        self.assertEqual("C:/data/uploads/naiba_chat_123_ComfyUI_00001_thumb.webp", attachments[0]["thumb_path"])
+        self.assertEqual("ComfyUI_00001.png", attachments[0]["name"])
+
 
 if __name__ == "__main__":
     unittest.main()
