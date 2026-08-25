@@ -84,6 +84,95 @@ STATUS_PATH = DATA_DIR / "server.json"
 LOCK_PATH = DATA_DIR / "server.lock"
 
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _thumb_webp_path(main_path: Path) -> Path:
+    """Given a cached main image path, derive the WebP thumbnail path."""
+    return main_path.with_name(main_path.stem + "_thumb.webp")
+
+
+def _fit_image_pixels(img: Any, max_pixels: int) -> Any:
+    """Scale ``img`` down with Lanczos so width*height <= max_pixels."""
+    from PIL import Image
+
+    width, height = img.width, img.height
+    if width * height <= max_pixels:
+        return img.copy()
+    ratio = (max_pixels / (width * height)) ** 0.5
+    nw = max(1, int(width * ratio))
+    nh = max(1, int(height * ratio))
+    return img.resize((nw, nh), Image.LANCZOS)
+
+
+def _process_uploaded_image(
+    data: bytes, filename: str, imaging: dict[str, Any]
+) -> tuple[bytes, str | None, bytes]:
+    """Optionally compress an image and always emit a WebP thumbnail.
+
+    Returns ``(main_bytes, thumb_filename, thumb_bytes)``. Non-images and GIFs
+    are passed through untouched with no thumbnail. Compression keeps the source
+    format and preserves alpha; thumbnails are always WebP.
+    """
+    suffix = Path(filename).suffix.lower()
+    if suffix not in IMAGE_SUFFIXES:
+        return data, None, b""
+    from PIL import Image, ImageOps
+
+    try:
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        fmt = (img.format or "").upper()
+        if fmt == "GIF":
+            return data, None, b""
+        img = ImageOps.exif_transpose(img)
+    except Exception:  # noqa: BLE001 - malformed image -> keep original bytes
+        return data, None, b""
+
+    original = bool(imaging.get("image_upload_original", False))
+    max_px = max(1, int(imaging.get("image_max_pixels", 2000000) or 2000000))
+    thumb_px = max(1, int(imaging.get("thumbnail_max_pixels", 500000) or 500000))
+
+    main_bytes = data
+    if not original and img.width * img.height > max_px:
+        img = _fit_image_pixels(img, max_px)
+        try:
+            buf = io.BytesIO()
+            out_fmt = fmt if fmt in {"PNG", "JPEG", "WEBP"} else "PNG"
+            save_img = img
+            if out_fmt == "JPEG" and save_img.mode not in ("RGB", "L"):
+                save_img = save_img.convert("RGB")
+            save_img.save(buf, format=out_fmt)
+            main_bytes = buf.getvalue()
+        except Exception:  # noqa: BLE001 - fall back to original bytes
+            main_bytes = data
+
+    thumb_img = _fit_image_pixels(img, thumb_px)
+    try:
+        thumb_buf = io.BytesIO()
+        out = thumb_img.convert("RGBA") if thumb_img.mode in ("P", "RGBA") else thumb_img
+        out.save(thumb_buf, format="WEBP", quality=82)
+        thumb_name = Path(filename).stem + "_thumb.webp"
+        return main_bytes, thumb_name, thumb_buf.getvalue()
+    except Exception:  # noqa: BLE001
+        return main_bytes, None, b""
+
+
+def _uploads_total_bytes() -> int:
+    """Total size of all cached uploads (main + thumbnails)."""
+    total = 0
+    uploads_dir = (DATA_DIR / "uploads").resolve()
+    if not uploads_dir.is_dir():
+        return 0
+    for path in uploads_dir.rglob("*"):
+        if path.is_file():
+            try:
+                total += path.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
 def _config_has_providers(path: Path) -> bool:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -449,6 +538,13 @@ def default_config() -> dict[str, Any]:
             "http_request",
         ],
         "command_timeout": 120,
+        # 图片缓存：image_upload_original=True 按原尺寸存；False 则超过 image_max_pixels
+        # 时用 Lanczos 压缩。缩略图始终从保存后的主图按 thumbnail_max_pixels 生成 WebP（_thumb.webp）。
+        "imaging": {
+            "image_upload_original": False,
+            "image_max_pixels": 2000000,
+            "thumbnail_max_pixels": 500000,
+        },
         "providers": [],
         # MCP 服务默认不注册；只有用户显式配置并授权时才可连接。
         "mcp_servers": [],
@@ -859,6 +955,7 @@ class ConfigStore:
             "access_token",
             "workspace_dir",
             "data_dir",
+            "imaging",
             "vision",
             "search",
         }
@@ -906,7 +1003,7 @@ class ConfigStore:
                         self.data[key] = raw
                     elif key == "context_size":
                         self.data[key] = self._positive_context_size(values[key], "context_size")
-                    elif key in ("vision", "search"):
+                    elif key in ("vision", "search", "imaging"):
                         incoming = values[key]
                         if not isinstance(incoming, dict):
                             raise ValueError(f"{key} 必须是对象")
@@ -914,6 +1011,13 @@ class ConfigStore:
                         merged = dict(self.data.get(key, {}))
                         for sub_key, sub_value in incoming.items():
                             merged[str(sub_key)] = sub_value
+                        if key == "imaging":
+                            merged["image_upload_original"] = bool(merged.get("image_upload_original", False))
+                            for field in ("image_max_pixels", "thumbnail_max_pixels"):
+                                try:
+                                    merged[field] = max(1, int(merged.get(field) or 0))
+                                except (TypeError, ValueError):
+                                    raise ValueError(f"{field} 必须是正整数") from None
                         self.data[key] = merged
                     else:
                         self.data[key] = values[key]
@@ -2256,6 +2360,7 @@ class NaibaChatApp:
             "comfy_mcp": self.inspect_official_comfy_mcp(),
             "agents": self.config.public_agents(),
             "default_agent_id": self.config.default_agent_id(),
+            "image_cache_bytes": _uploads_total_bytes(),
             **access,
             "lan_restart_required": str(self.config.data.get("host", "0.0.0.0")) != self.listener_host,
             "update": self.updater.status(),
@@ -2711,6 +2816,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "default_model_key": APP.config.default_model_key(),
                         "resolved_workspace_dir": str(APP.config.resolve_workspace_dir()),
                         "resolved_data_dir": str(APP.config.resolve_data_dir()),
+                        "image_cache_bytes": _uploads_total_bytes(),
                         "restart_required": (
                             ("data_dir" in body and APP.config.resolve_data_dir() != DATA_DIR.resolve())
                             or ("host" in body and str(APP.config.data.get("host")) != APP.listener_host)
@@ -3125,8 +3231,20 @@ class RequestHandler(BaseHTTPRequestHandler):
         target_dir = (DATA_DIR / "uploads").resolve()
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"naiba_chat_{int(time.time())}_{secrets.token_hex(3)}_{safe_name}"
-        target.write_bytes(data)
-        self._json({"name": target.name, "path": str(target), "size": len(data)})
+        imaging = dict(APP.config.data.get("imaging") or {}) if getattr(APP, "config", None) else {}
+        main_bytes, thumb_name, thumb_bytes = _process_uploaded_image(data, target.name, imaging)
+        target.write_bytes(main_bytes)
+        thumb_path = ""
+        if thumb_name and thumb_bytes:
+            thumb_file = target_dir / thumb_name
+            thumb_file.write_bytes(thumb_bytes)
+            thumb_path = str(thumb_file)
+        self._json({
+            "name": target.name,
+            "path": str(target),
+            "size": len(main_bytes),
+            "thumb_path": thumb_path,
+        })
 
     def _install_dir(self, body: dict[str, Any]) -> None:
         raw = str(body.get("dir") or "").strip()

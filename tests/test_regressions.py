@@ -2701,5 +2701,50 @@ class ToolProtocolAgentLoopTests(unittest.TestCase):
         self.assertIn("run_failed", [event.get("type") for event in events])
 
 
+class ImageCacheTests(unittest.TestCase):
+    def _imaging(self, **overrides):
+        return {
+            "image_upload_original": False,
+            "image_max_pixels": 2000000,
+            "thumbnail_max_pixels": 500000,
+            **overrides,
+        }
+
+    def _png(self, size, color=(10, 20, 30)):
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", size, color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_oversized_image_is_compressed_keeping_format(self) -> None:
+        main, thumb_name, thumb_bytes = server._process_uploaded_image(
+            self._png((3000, 2000)), "photo.png", self._imaging()
+        )
+        from PIL import Image
+        img = Image.open(io.BytesIO(main))
+        self.assertEqual("PNG", img.format)
+        self.assertLessEqual(img.width * img.height, 2000000)
+        self.assertTrue(thumb_name.endswith("_thumb.webp"))
+        self.assertEqual("WEBP", Image.open(io.BytesIO(thumb_bytes)).format)
+
+    def test_original_true_passthrough(self) -> None:
+        data = self._png((3000, 2000))
+        main, _thumb, thumb_bytes = server._process_uploaded_image(
+            data, "photo.png", self._imaging(image_upload_original=True)
+        )
+        self.assertEqual(data, main)
+        self.assertTrue(thumb_bytes)  # 缩略图仍生成
+
+    def test_gif_and_non_image_passthrough_without_thumb(self) -> None:
+        from PIL import Image
+        gif = io.BytesIO()
+        Image.new("RGB", (100, 100)).save(gif, format="GIF")
+        self.assertEqual((gif.getvalue(), None, b""), server._process_uploaded_image(gif.getvalue(), "x.gif", self._imaging()))
+        self.assertEqual((b"hello", None, b""), server._process_uploaded_image(b"hello", "x.bin", self._imaging()))
+
+    def test_thumbnail_path_derivation(self) -> None:
+        self.assertEqual("photo_thumb.webp", server._thumb_webp_path(Path("/a/photo.jpg")).name)
+
+
 if __name__ == "__main__":
     unittest.main()

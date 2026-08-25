@@ -962,5 +962,20 @@ class ChoiceButtonBehaviorTests(unittest.TestCase):
         self.assertNotIn("sendMessage(answer);", source)
 
 
+class ImageDisplayContractTests(unittest.TestCase):
+    def test_thumbnails_lightbox_drag_and_settings_are_wired(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        html = Path("public/index.html").read_text(encoding="utf-8")
+        self.assertIn("function attachmentThumbPath(", source)
+        self.assertIn("function openImageLightbox(", source)
+        self.assertIn("data-large-url", source)
+        self.assertIn("attachmentThumbUrl(file)", source)
+        self.assertIn("setData('text/uri-list', url)", source)
+        self.assertIn("renderImageCompressRow()", source)
+        self.assertIn("image_max_pixels", source)
+        self.assertIn('id="imageLightbox"', html)
+        self.assertIn('id="imageUploadOriginal"', html)
+
+
 if __name__ == "__main__":
     unittest.main()

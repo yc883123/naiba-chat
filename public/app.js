@@ -390,6 +390,57 @@ function fileUrl(source) {
   return `/api/file?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(value)}`;
 }
 
+function attachmentThumbPath(attachment) {
+  if (attachment.thumb_path) return attachment.thumb_path;
+  const p = String(attachment.path || attachment.source || '');
+  if (!p || /^https?:\/\//i.test(p)) return '';
+  const dot = p.lastIndexOf('.');
+  return (dot > 0 ? p.slice(0, dot) : p) + '_thumb.webp';
+}
+
+function attachmentThumbUrl(attachment) {
+  const thumb = attachmentThumbPath(attachment);
+  const source = attachment.path || attachment.source || '';
+  return thumb ? fileUrl(thumb) : fileUrl(source);
+}
+
+function openImageLightbox(largeUrl) {
+  const img = $('#imageLightboxImg');
+  if (!img || !largeUrl) return;
+  img.src = largeUrl;
+  const box = $('#imageLightbox');
+  if (box) box.hidden = false;
+}
+
+function closeImageLightbox() {
+  const box = $('#imageLightbox');
+  if (box) box.hidden = true;
+  const img = $('#imageLightboxImg');
+  if (img) img.removeAttribute('src');
+}
+
+// 点击缩略图 → 弹大图；拖拽历史缩略图 → 以"大图 URL"拖动；缩略图 404 → 回退原图。
+document.addEventListener('click', (event) => {
+  const target = event.target.closest?.('[data-large-url]');
+  if (target) openImageLightbox(target.getAttribute('data-large-url'));
+});
+document.addEventListener('dragstart', (event) => {
+  const target = event.target.closest?.('[data-large-url]');
+  if (!target) return;
+  const url = target.getAttribute('data-large-url');
+  if (!url) return;
+  try { event.dataTransfer.effectAllowed = 'copy'; } catch (_) { /* ignore */ }
+  try { event.dataTransfer.setData('text/uri-list', url); } catch (_) { /* ignore */ }
+  try { event.dataTransfer.setData('text/plain', url); } catch (_) { /* ignore */ }
+});
+document.addEventListener('error', (event) => {
+  const img = event.target;
+  if (!(img && String(img.tagName).toUpperCase() === 'IMG' && img.classList.contains('thumbnail') && !img.dataset.fallback)) return;
+  img.dataset.fallback = '1';
+  const large = img.getAttribute('data-large-url');
+  if (large && img.getAttribute('src') !== large) img.src = large;
+}, true);
+
 function mediaMarkup(attachments = []) {
   if (!attachments.length) return '';
   const items = attachments.map((attachment) => {
@@ -399,7 +450,8 @@ function mediaMarkup(attachments = []) {
     const safeUrl = escapeHtml(url);
     const name = escapeHtml(attachment.name || '生成文件');
     if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
-      return `<a class="media-image-link" href="${safeUrl}" target="_blank" rel="noreferrer"><img draggable="true" src="${safeUrl}" alt="${name}" loading="lazy" onerror="this.remove(); this.parentElement.classList.add('media-failed')"><span>打开 ${name}</span></a>`;
+      const thumbUrl = attachmentThumbUrl(attachment);
+      return `<img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${escapeHtml(safeUrl)}">`;
     }
     if (/\.(mp4|webm|mov|m4v|ogv)(?:\s|$)/.test(lower)) return `<video src="${safeUrl}" controls playsinline preload="metadata"></video>`;
     if (/\.(wav|mp3|m4a|ogg|flac)(?:\s|$)/.test(lower)) return `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
@@ -788,10 +840,11 @@ function uploadedFileMarkup(files = []) {
   if (!files.length) return '';
   const html = files.map((file) => {
     const source = file.source || file.path || '';
-    const isImage = /\.(png|jpe?g|gif|webp)$/i.test(source);
+    const isImage = /\.(png|jpe?g|webp|gif)$/i.test(source);
     if (isImage) {
-      const src = fileUrl(source);
-      return `<figure class="attachment attachment-image"><a href="${src}" target="_blank" rel="noreferrer"><img draggable="true" src="${src}" alt="${escapeHtml(file.name || 'image')}" loading="lazy"></a><figcaption>${escapeHtml(file.name || '')}</figcaption></figure>`;
+      const thumbUrl = attachmentThumbUrl(file);
+      const largeUrl = fileUrl(source);
+      return `<figure class="attachment attachment-image"><img class="thumbnail" src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(file.name || 'image')}" loading="lazy" draggable="true" data-large-url="${escapeHtml(largeUrl)}"><figcaption>${escapeHtml(file.name || '')}</figcaption></figure>`;
     }
     return `<span class="file-chip">${escapeHtml(file.name)}</span>`;
   }).join('');
@@ -2205,7 +2258,28 @@ function populateRuntimeSettings() {
   $('#commandTimeout').value = settings.command_timeout;
   $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
   $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  const imaging = settings.imaging || {};
+  $('#imageUploadOriginal').checked = Boolean(imaging.image_upload_original);
+  $('#imageMaxPixels').value = Number(imaging.image_max_pixels || 2000000);
+  $('#thumbnailMaxPixels').value = Number(imaging.thumbnail_max_pixels || 500000);
+  renderImageCompressRow();
+  $('#imageCacheSize').textContent = formatBytes(Number(state.bootstrap.image_cache_bytes || 0));
   renderWorkspaceControl();
+}
+
+function renderImageCompressRow() {
+  const row = $('#imageCompressRow');
+  if (row) row.hidden = Boolean($('#imageUploadOriginal')?.checked);
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let n = value;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
 function renderWorkspaceControl() {
@@ -2578,11 +2652,20 @@ async function saveRuntimeSettings() {
   const payload = {
     command_timeout: Number($('#commandTimeout').value),
     workspace_dir: $('#workspaceDir').value.trim(),
+    imaging: {
+      image_upload_original: Boolean($('#imageUploadOriginal').checked),
+      image_max_pixels: Number($('#imageMaxPixels').value),
+      thumbnail_max_pixels: Number($('#thumbnailMaxPixels').value),
+    },
   };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
   state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
   $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  if (result.image_cache_bytes !== undefined) {
+    state.bootstrap.image_cache_bytes = result.image_cache_bytes;
+    $('#imageCacheSize').textContent = formatBytes(Number(result.image_cache_bytes || 0));
+  }
   renderWorkspaceControl();
   toast('运行参数已保存');
 }
@@ -2802,8 +2885,14 @@ function readAsDataUrl(file) {
 }
 
 function renderPendingFiles() {
-  $('#pendingFiles').innerHTML = state.pendingFiles.map((file, index) => `
-    <span class="file-chip">${file.uploading ? '上传中 · ' : ''}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除">×</button></span>`).join('');
+  $('#pendingFiles').innerHTML = state.pendingFiles.map((file, index) => {
+    const isImage = /\.(png|jpe?g|webp|gif)$/i.test(file.name || '');
+    const thumbUrl = attachmentThumbUrl(file);
+    const image = isImage
+      ? `<img class="thumbnail" src="${escapeHtml(thumbUrl)}" alt="" draggable="false" data-large-url="${escapeHtml(fileUrl(file.path))}">`
+      : '';
+    return `<span class="file-chip">${file.uploading ? '上传中 · ' : ''}${image}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除">×</button></span>`;
+  }).join('');
 }
 
 function detachRunSubscription() {
@@ -2995,7 +3084,7 @@ async function sendChatMessage(textOverride = '') {
   }
   hideChoiceButtons();
   const conversationId = state.conversationId;
-  const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
+  const attachments = state.pendingFiles.map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
   state.pendingFiles = [];
   renderPendingFiles();
   input.value = '';
@@ -3053,7 +3142,7 @@ async function sendRunInterjection(text) {
     toast('请等待文件上传完成');
     return;
   }
-  const attachments = state.pendingFiles.map(({ name, path, size }) => ({ name, path, size }));
+  const attachments = state.pendingFiles.map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
   state.pendingFiles = [];
   renderPendingFiles();
   input.value = '';
@@ -3855,6 +3944,8 @@ function bindEvents() {
     });
   }
   $('#messages').addEventListener('dragstart', (event) => {
+    // 缩略图（带 data-large-url）由全局 dragstart 统一以"大图 URL"拖动，这里跳过避免重复设置。
+    if (event.target.closest?.('[data-large-url]')) return;
     const image = event.target.closest?.('.attachment-image img, .media-image-link img');
     if (!image || !event.dataTransfer) return;
     const source = image.closest('a')?.href || image.src;
@@ -4071,6 +4162,9 @@ function bindEvents() {
   $('#cancelAgent').addEventListener('click', hideAgentForm);
   $('#saveAgentForm').addEventListener('click', saveAgentForm);
   $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
+  $('#imageUploadOriginal')?.addEventListener('change', renderImageCompressRow);
+  $('#imageLightboxClose')?.addEventListener('click', closeImageLightbox);
+  $('#imageLightbox')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) closeImageLightbox(); });
   $('#saveToken').addEventListener('click', saveAccessToken);
   $('#checkUpdate').addEventListener('click', checkUpdate);
   $('#installUpdate').addEventListener('click', installUpdate);
