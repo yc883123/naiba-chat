@@ -681,6 +681,36 @@ class ToolExecutor:
                 break
         return "\n".join(rows) or "目录为空"
 
+    @staticmethod
+    def _expand_glob_braces(pattern: str) -> list[str]:
+        """展开 glob 模式里的 {a,b,c} 花括号组（pathlib.glob 不支持花括号）。
+
+        例如 "**/*.{png,jpg}" -> ["**/*.png", "**/*.jpg"]。仅做展开，不校验路径。
+        """
+        import re
+
+        results = [pattern]
+        changed = True
+        while changed:
+            changed = False
+            nxt: list[str] = []
+            for pat in results:
+                m = re.search(r"\{([^{}]*)\}", pat)
+                if not m:
+                    nxt.append(pat)
+                    continue
+                changed = True
+                for option in m.group(1).split(","):
+                    nxt.append(pat[: m.start()] + option + pat[m.end():])
+            results = nxt
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for pat in results:
+            if pat not in seen:
+                seen.add(pat)
+                ordered.append(pat)
+        return ordered
+
     def _tool_search_files(self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
         root = self._resolve_read_path(args.get("path"), active_skills, default_workspace=True)
         query = str(args.get("query") or "")
@@ -689,17 +719,20 @@ class ToolExecutor:
         if not query:
             raise ValueError("query 不能为空")
         matches = []
-        for path in root.rglob(pattern):
-            if not path.is_file() or path.stat().st_size > 5 * 1024 * 1024:
-                continue
-            try:
-                for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-                    if query.lower() in line.lower():
-                        matches.append(f"{path}:{line_number}: {line.strip()[:500]}")
-                        if len(matches) >= limit:
-                            return "\n".join(matches)
-            except OSError:
-                continue
+        for pat in self._expand_glob_braces(pattern):
+            if len(matches) >= limit:
+                break
+            for path in root.rglob(pat):
+                if not path.is_file() or path.stat().st_size > 5 * 1024 * 1024:
+                    continue
+                try:
+                    for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+                        if query.lower() in line.lower():
+                            matches.append(f"{path}:{line_number}: {line.strip()[:500]}")
+                            if len(matches) >= limit:
+                                return "\n".join(matches)
+                except OSError:
+                    continue
         return "\n".join(matches) or "未找到匹配内容"
 
     def _tool_glob_files(self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
@@ -707,11 +740,14 @@ class ToolExecutor:
         pattern = str(args.get("pattern") or "**/*")
         limit = min(max(int(args.get("limit", 200)), 1), 2000)
         rows: list[str] = []
-        for item in root.glob(pattern):
-            if item.is_file():
-                rows.append(str(item))
-                if len(rows) >= limit:
-                    break
+        for pat in self._expand_glob_braces(pattern):
+            if len(rows) >= limit:
+                break
+            for item in root.glob(pat):
+                if item.is_file():
+                    rows.append(str(item))
+                    if len(rows) >= limit:
+                        break
         return "\n".join(rows) or "未找到匹配文件"
 
     def _tool_edit_file(self, args: dict[str, Any]) -> str:

@@ -1039,5 +1039,16 @@ class ConversationRunManagerMethodPresenceTests(unittest.TestCase):
         self.assertEqual(["glob_files"], [r["tool"] for r in saved["metadata"]["tool_runs"]])
 
 
+class GlobBraceExpansionTests(unittest.TestCase):
+    def test_expand_glob_braces(self) -> None:
+        from skill_runtime import ToolExecutor
+        self.assertEqual(ToolExecutor._expand_glob_braces("**/*.{png,jpg}"), ["**/*.png", "**/*.jpg"])
+        self.assertEqual(
+            ToolExecutor._expand_glob_braces("*.{png,jpg,jpeg}"),
+            ["*.png", "*.jpg", "*.jpeg"],
+        )
+        self.assertEqual(ToolExecutor._expand_glob_braces("plain.txt"), ["plain.txt"])
+
+
 if __name__ == "__main__":
     unittest.main()
