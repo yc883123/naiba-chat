@@ -96,12 +96,16 @@ class RunToolScopeTest(TestCase):
             "web_search", self._manager()._resolve_allowed_tools("craft", agent, True)
         )
 
-    def test_multimodal_model_hides_all_vision_tools_at_snapshot_boundary(self):
+    def test_multimodal_model_hides_redundant_vision_tools_at_snapshot_boundary(self):
         manager = self._manager()
         manager.app.config.profile = lambda _key: {"model": "qwen-vl", "supports_images": True}
         manager.app.vision = types.SimpleNamespace(brain_supports_images=lambda _profile: True)
         allowed = manager._resolve_allowed_tools("craft", {"tool_scope": []}, True, "local:vl")
-        self.assertFalse(any(tool.startswith("vision_") for tool in allowed))
+        # 多模态大脑本身就是读图模型：不暴露重复的按需 vision_* 工具，但保留
+        # vision_read_folder（它专门把文件夹里的多张图作为 image content 注入给多模态大脑）。
+        self.assertFalse(
+            any(tool.startswith("vision_") and tool != "vision_read_folder" for tool in allowed)
+        )
 
 
 class VisionToolsTest(TestCase):

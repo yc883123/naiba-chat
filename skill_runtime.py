@@ -1891,7 +1891,6 @@ class SkillAgent:
         return summary
 
     @classmethod
-    @classmethod
     def _context_budget(
         cls,
         profile: dict[str, Any],
@@ -2183,6 +2182,22 @@ class SkillAgent:
         if any(token in compact for token in ("产物", "成品", "交付", "验证", "校验", "输出文件", "artifact", "deliver", "output")):
             visible.update(name for name in ("artifact_report",) if name in allowed)
 
+        # 图片读取意图：真正要求“读图/看图/列文件夹”时才暴露读取类工具。仅笼统提到
+        # “图片”的普通描述性闲聊必须保持精简（见
+        # test_progressive_tool_visibility_keeps_plain_chat_compact）。
+        image_intent = actionable or any(token in compact for token in (
+            "看图", "读图", "识图", "查看图片", "读取图片", "文件夹", "目录",
+            "read images", "folder of images", "image folder",
+        ))
+        if image_intent and any(keyword in compact for keyword in (
+            "图片", "图", "读图", "识图", "看图", "图像", "image", "picture",
+            "photo", "visual", "read images", "folder of images",
+        )):
+            visible.update(name for name in (
+                "vision_read_folder", "vision_describe", "read_file",
+                "list_directory", "glob_files", "search_files",
+            ) if name in allowed)
+
         groups = (
             (("文件", "目录", "源码", "代码", "读取", "查找", "搜索文件", "path", "file", "folder"),
              {"read_file", "list_directory", "search_files", "glob_files"}),
@@ -2196,8 +2211,6 @@ class SkillAgent:
              {"run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write"}),
             (("ocr", "文字识别", "裁剪", "坐标", "检测", "取色", "像素", "ground", "crop"),
              {"vision_ground", "vision_detect", "vision_crop", "vision_ocr", "vision_colors", "vision_pixel_diff"}),
-            (("图片", "图", "读图", "识图", "看图", "图像", "image", "picture", "photo", "visual", "read images", "folder of images"),
-             {"vision_read_folder", "vision_describe", "read_file", "list_directory", "glob_files", "search_files"}),
             (("comfyui", "8188", "system_stats", "生成图片", "生成图", "生图"),
              {"http_request", "read_file", "write_file", "run_command", "run_in_background",
               "job_output", "job_status", "job_wait", "comfyui_prepare_workflow", "comfyui_batch"}),

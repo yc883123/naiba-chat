@@ -518,25 +518,34 @@ function toolMarkup(runs = []) {
 
 function activityMarkup(activity = []) {
   if (!Array.isArray(activity) || !activity.length) return '';
+  // 找出最后一段 reasoning（正式回复的思考），保持展开；其余工具思考折叠。
+  let lastReasoningIndex = -1;
+  activity.forEach((item, index) => {
+    if (item && item.type === 'reasoning') lastReasoningIndex = index;
+  });
   let html = '';
-  for (const item of activity) {
+  activity.forEach((item, index) => {
     try {
-      if (item.type === 'reasoning') html += reasoningMarkup([item.text]);
+      if (item.type === 'reasoning') html += reasoningMarkup([item.text], index === lastReasoningIndex);
       else if (item.type === 'tool' && item.run) html += toolRunMarkup(item.run);
     } catch (_) { /* 单个条目异常不影响整体 */ }
-  }
+  });
   return html;
 }
 
-function reasoningMarkup(reasoning) {
+function reasoningMarkup(reasoning, finalOpen = false) {
   const list = Array.isArray(reasoning) ? reasoning.filter(Boolean) : (reasoning ? [reasoning] : []);
   if (!list.length) return '';
-  // 每次工具调用/思考段单独一行（可折叠），而不是整体合并成一个文本框。
-  return list.map((text) => {
+  // 每次工具调用/思考段单独一行（可折叠）；正式回复的最后一段思考保持展开，不折叠。
+  return list.map((text, index) => {
     const clean = String(text || '').trim();
     const preview = clean.replace(/\s+/g, ' ').slice(0, 80);
     const summary = preview ? `思考：${preview}${clean.length > preview.length ? '…' : ''}` : '思考';
-    return `<details class="reasoning-block tool-reasoning"><summary>${escapeHtml(summary)}</summary><div class="reasoning-content">${markdown(clean)}</div></details>`;
+    const isFinal = finalOpen && index === list.length - 1;
+    const body = `<summary>${escapeHtml(summary)}</summary><div class="reasoning-content">${markdown(clean)}</div></details>`;
+    return isFinal
+      ? `<details class="reasoning-block" open>${body}`
+      : `<details class="reasoning-block tool-reasoning">${body}`;
   }).join('');
 }
 
@@ -745,7 +754,7 @@ function messageElement(message, temporary = false) {
   } else {
     const abortedBadge = metadata.aborted ? '<span class="aborted-badge">已中止</span>' : '';
     const activityHtml = metadata.activity?.length ? activityMarkup(metadata.activity) : '';
-    const reasoningToolHtml = activityHtml || (reasoningMarkup(metadata.reasoning) + toolMarkup(metadata.tool_runs));
+    const reasoningToolHtml = activityHtml || (reasoningMarkup(metadata.reasoning, true) + toolMarkup(metadata.tool_runs));
     row.innerHTML = `
       <div class="message-avatar">AI</div>
       <div class="message-body">

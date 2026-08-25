@@ -234,14 +234,30 @@ class PlanManagerTests(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory()
         self.app = StubApp(self._tmp.name)
         self.conversation = self.app.storage.create_conversation(interaction_mode="plan")
+        self._manager = None
 
     def tearDown(self) -> None:
         del self.app
         gc.collect()
+        self._join_plan_threads()
         self._tmp.cleanup()
 
     def make_manager(self, runner=None) -> PlanManager:
-        return PlanManager(self.app, step_runner=runner)
+        self._manager = PlanManager(self.app, step_runner=runner)
+        return self._manager
+
+    def _join_plan_threads(self) -> None:
+        # ``PlanManager.execute`` runs the plan on a background daemon thread.
+        # Join any still-running thread so its sqlite connections are closed
+        # before the temp dir is removed; otherwise Windows (WinError 32) refuses
+        # to delete the locked chat.db.
+        manager = getattr(self, "_manager", None)
+        threads = getattr(manager, "_threads", None) if manager else None
+        if not isinstance(threads, dict):
+            return
+        for thread in list(threads.values()):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=5)
 
     def test_ensure_active_plan_reuses_prepare_and_revises_ready(self) -> None:
         manager = self.make_manager()
