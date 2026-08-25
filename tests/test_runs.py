@@ -12,7 +12,7 @@ from unittest.mock import patch
 import model_runtime
 from async_tasks import ConversationRunManager
 from model_runtime import ModelRuntime
-from skill_runtime import SkillAgent, normalize_skill_policy
+from skill_runtime import DEFAULT_CONTEXT_WINDOW, SkillAgent, normalize_skill_policy
 from storage import ChatStorage
 from subagent import job_tool_handler_factory, subagent_handler_factory
 
@@ -835,6 +835,80 @@ class RunFrontendTests(unittest.TestCase):
         self.assertIn("/api/tasks/clear", source)
         self.assertIn("clearTerminalTasks", html)
         self.assertIn("clearConversationMessages", html)
+
+
+class SkillInjectionByteConsistencyTests(unittest.TestCase):
+    def test_all_skill_injection_paths_share_one_header(self) -> None:
+        # A skill introduced mid-run must be injected with the SAME byte layout
+        # the build-time path uses; otherwise DeepSeek's token-prefix cache is
+        # re-broken when that skill is later baked into the build-time system.
+        source = Path("skill_runtime.py").read_text(encoding="utf-8")
+
+        # A single shared header constant is defined and used by both paths.
+        self.assertIn('SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参考资料时，使用 read_file 读取：\\n"', source)
+        self.assertNotIn("刚激活的可信 Skill", source)
+
+        # Build-time: one SKILL_PROMPT_HEADER, then skill blocks joined by "\n\n".
+        self.assertIn('system += "\\n\\n" + SKILL_PROMPT_HEADER + "\\n\\n".join(skill_prompts)', source)
+
+        # Runtime: same "\n\n" join, and the header is only (re)added when the
+        # system message did not already carry a skill section.
+        self.assertIn('messages[0]["content"] += "\\n\\n" + "\\n\\n".join(new_skill_prompts)', source)
+        self.assertIn("if not skill_section_started:", source)
+        self.assertIn('messages[0]["content"] += "\\n\\n" + SKILL_PROMPT_HEADER', source)
+
+    def test_skill_section_started_tracks_initial_skill_set(self) -> None:
+        source = Path("skill_runtime.py").read_text(encoding="utf-8")
+        self.assertIn("skill_section_started = bool(skill_prompts)", source)
+
+
+class ContextWindowGuardTests(unittest.TestCase):
+    def test_unknown_window_falls_back_to_default_ceiling(self) -> None:
+        profile = {"context_window": 0, "model": "m"}
+        limit, budget = SkillAgent._context_budget(profile, {}, "系统提示")
+        self.assertEqual(DEFAULT_CONTEXT_WINDOW, limit)
+        self.assertGreater(budget, 0)
+
+    def test_explicit_window_is_preferred(self) -> None:
+        limit, _budget = SkillAgent._context_budget({"context_window": 32768}, {}, "hi")
+        self.assertEqual(32768, limit)
+
+    def test_history_that_exceeds_budget_is_reported_as_not_fitting(self) -> None:
+        profile = {"context_window": 4096, "model": "m"}
+        # ~60k ASCII chars => ~15k estimated tokens, well over the ~3k budget.
+        history = [{"role": "user", "content": "x" * 60000}]
+        fits, limit, used, budget = SkillAgent._context_fits(history, profile, {}, "hi")
+        self.assertFalse(fits)
+        self.assertEqual(4096, limit)
+        self.assertGreater(used, budget)
+
+    def test_run_blocks_with_notice_instead_of_truncating(self) -> None:
+        catalog = SimpleNamespace(scan=lambda: [])
+        mcp = SimpleNamespace(connections={}, acquire=lambda: None, release=lambda: None)
+        executor = SimpleNamespace(mcp_registry=mcp, mcp_tool_guide=lambda: "")
+        calls = []
+
+        def complete(_profile, _messages, _options, _event):
+            calls.append(1)
+            return "done"
+
+        agent = SkillAgent(catalog, executor, complete)
+        history = [{"role": "user", "content": "x" * 60000}]
+        events = []
+        content, _runs, _reasoning, _usage = agent.run(
+            "继续", history, {"context_window": 4096, "model": "m"}, {"stream": False},
+            {"mode": "auto", "skill_ids": []}, [], "", [],
+            lambda event: events.append(event), lambda *_args: None, run_context={},
+        )
+        self.assertIn("上下文已达到窗口上限", content)
+        self.assertEqual([], calls)  # model must not be called
+        self.assertTrue(any(e.get("type") == "context_full" for e in events))
+
+    def test_frontend_locks_composer_at_ceiling(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        self.assertIn("function updateContextComposerLock(busy = false)", source)
+        self.assertIn("state.contextAtCeiling", source)
+        self.assertIn("updateContextComposerLock(Boolean(state.chatBusy))", source)
 
 
 if __name__ == "__main__":

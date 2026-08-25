@@ -545,6 +545,35 @@ class ImageAttachmentTests(unittest.TestCase):
             ModelRuntime._online_usage("openai_chat", result),
         )
 
+    def test_extracts_deepseek_cache_usage_from_native_fields(self) -> None:
+        # DeepSeek reports the disk-cache prefix hit as prompt_cache_hit_tokens
+        # and prompt_tokens = hit + miss. _online_usage must surface the hit as
+        # cached_tokens so cache_hit_rate is computed correctly downstream.
+        result = {
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 80,
+                "total_tokens": 1080,
+                "prompt_cache_hit_tokens": 800,
+                "prompt_cache_miss_tokens": 200,
+            }
+        }
+
+        self.assertEqual(
+            {
+                "input_tokens": 1000,
+                "output_tokens": 80,
+                "total_tokens": 1080,
+                "cached_tokens": 800,
+            },
+            ModelRuntime._online_usage("openai_chat", result),
+        )
+        summary = SkillAgent._summarize_usage(
+            [ModelRuntime._online_usage("openai_chat", result)]
+        )
+        self.assertEqual(80.0, summary["cache_hit_rate"])
+
+
     def test_summarizes_cache_usage_across_agent_steps(self) -> None:
         summary = SkillAgent._summarize_usage(
             [

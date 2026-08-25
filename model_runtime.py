@@ -1909,7 +1909,9 @@ class ModelRuntime:
         )
         total_tokens = number("total_tokens", "totalTokens", "totalTokenCount") or input_tokens + output_tokens
         cached_tokens = number(
-            "cached_tokens", "cache_read_input_tokens", "cachedContentTokenCount"
+            "cached_tokens", "cache_read_input_tokens", "cachedContentTokenCount",
+            # DeepSeek reports the context-cache prefix hit via its own field.
+            "prompt_cache_hit_tokens",
         )
         if request_format == "claude":
             # Anthropic separately reports uncached, cache-created and cache-read input tokens.

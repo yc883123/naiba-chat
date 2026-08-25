@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
-from skill_runtime import SkillAgent, TaskCancelled, normalize_skill_policy
+from skill_runtime import DEFAULT_CONTEXT_WINDOW, SkillAgent, TaskCancelled, normalize_skill_policy
 from vision_runtime import IMAGE_SUFFIXES, VISION_TOOL_NAMES, VisionBudget
 
 
@@ -851,7 +851,11 @@ class ConversationRunManager:
                 )
                 chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
             if usage:
-                usage["context_limit"] = max(0, int(profile.get("context_window") or 0))
+                # Surface the effective window (provider value or the conservative
+                # DEFAULT_CONTEXT_WINDOW fallback) so the UI can show the real ring
+                # percentage and disable sending at the ceiling.
+                set_window = max(0, int(profile.get("context_window") or 0))
+                usage["context_limit"] = set_window or DEFAULT_CONTEXT_WINDOW
                 usage["context_limit_source"] = str(
                     profile.get("context_window_source") or "unknown"
                 )

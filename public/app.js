@@ -445,8 +445,9 @@ function usageMarkup(usage) {
   }
   const rate = input ? Number(usage.cache_hit_rate ?? (cached / input * 100)).toFixed(1) : '0.0';
   const requests = Number(usage.requests || 1);
+  const miss = Math.max(0, input - cached);
   const tokenLine = (input || output)
-    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存 ${cached.toLocaleString()}/${input.toLocaleString()}（${rate}%）</div>`
+    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存命中率 ${rate}%（命中 ${cached.toLocaleString()} / 未命中 ${miss.toLocaleString()}）</div>`
     : '';
   const laneLine = (visualMs || chatMs || visionCacheHit)
     ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : (visualMs ? `视觉 ${(visualMs / 1000).toFixed(1)}s` : '')}${(visionCacheHit || visualMs) && chatMs ? ' → ' : ''}${chatMs ? `聊天 ${(chatMs / 1000).toFixed(1)}s` : ''} · 共 ${requestCount || requests} 次请求</div>`
@@ -483,6 +484,8 @@ function renderContextUsage() {
     button.title = '上下文用量：暂无数据';
     summary.textContent = '暂无模型用量数据';
     turn.textContent = '完成一次回复后显示本轮消耗';
+    state.contextAtCeiling = false;
+    updateContextComposerLock();
     return;
   }
   const input = Number(usage.input_tokens || 0);
@@ -507,6 +510,29 @@ function renderContextUsage() {
   button.title = `上下文用量：${contextText}`;
   summary.textContent = `上下文 ${contextText}`;
   turn.textContent = `最近一轮：输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 总计 ${total.toLocaleString()} tokens`;
+  const atCeiling = limit > 0 && percent >= 100;
+  if (atCeiling !== state.contextAtCeiling) {
+    state.contextAtCeiling = atCeiling;
+    if (atCeiling) toast('上下文已达到上限，请新建对话后继续。');
+  }
+  updateContextComposerLock(Boolean(state.chatBusy));
+}
+
+function updateContextComposerLock(busy = false) {
+  const atCeiling = Boolean(state.contextAtCeiling);
+  const input = $('#messageInput');
+  const sendBtn = $('#sendButton');
+  // Always lock the input at the ceiling so the user cannot draft a new turn.
+  if (input) {
+    input.disabled = atCeiling;
+    input.placeholder = atCeiling ? '上下文已满，请新建对话后继续' : '';
+  }
+  // During an in-progress run the send button doubles as the stop control, so
+  // keep it clickable; otherwise lock it at the ceiling too.
+  if (sendBtn) {
+    sendBtn.disabled = atCeiling && !busy;
+    sendBtn.title = atCeiling ? '上下文已满，请新建对话后继续' : '发送';
+  }
 }
 
 // Legacy provider context_size: migrated to context_window and kept only for
@@ -3403,6 +3429,10 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
     $('#runtimeStatus').textContent = '执行失败';
+  } else if (event.type === 'context_full') {
+    // 上下文已达上限：后端已阻止本次请求，立即锁定输入并提示新建对话。
+    state.contextAtCeiling = true;
+    updateContextComposerLock(Boolean(state.chatBusy));
   } else if (event.type === 'done') {
     clearVisionProgress();
     collapseReasoning();
@@ -3588,6 +3618,7 @@ async function rejectTool(confirmId, runId = state.chatRunId) {
 }
 
 function setBusy(busy) {
+  state.chatBusy = busy;
   const sendBtn = $('#sendButton');
   sendBtn.disabled = false;
   sendBtn.classList.toggle('is-stop', busy);
@@ -3596,6 +3627,7 @@ function setBusy(busy) {
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
   sendBtn.setAttribute('aria-label', busy ? '停止当前任务' : '发送');
   $('#messageInput').disabled = false;
+  updateContextComposerLock(busy);
   updateLightweightModeControl();
   updateUnloadModelButton();
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
