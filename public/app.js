@@ -516,11 +516,13 @@ function toolMarkup(runs = []) {
 function reasoningMarkup(reasoning) {
   const list = Array.isArray(reasoning) ? reasoning.filter(Boolean) : (reasoning ? [reasoning] : []);
   if (!list.length) return '';
-  const text = list.join('\n\n---\n\n');
-  return `<details class="reasoning-block" open>
-    <summary>思考过程（${list.length} 段）</summary>
-    <div class="reasoning-content">${markdown(text)}</div>
-  </details>`;
+  // 每次工具调用/思考段单独一行（可折叠），而不是整体合并成一个文本框。
+  return list.map((text) => {
+    const clean = String(text || '').trim();
+    const preview = clean.replace(/\s+/g, ' ').slice(0, 80);
+    const summary = preview ? `思考：${preview}${clean.length > preview.length ? '…' : ''}` : '思考';
+    return `<details class="reasoning-block tool-reasoning"><summary>${escapeHtml(summary)}</summary><div class="reasoning-content">${markdown(clean)}</div></details>`;
+  }).join('');
 }
 
 function usageMarkup(usage) {
