@@ -434,6 +434,22 @@ document.addEventListener('dragstart', (event) => {
   try { event.dataTransfer.effectAllowed = 'copy'; } catch (_) { /* ignore */ }
   try { event.dataTransfer.setData('text/uri-list', url); } catch (_) { /* ignore */ }
   try { event.dataTransfer.setData('text/plain', url); } catch (_) { /* ignore */ }
+  // 解析大图 URL 里的真实文件路径：拖到输入框可复用该图片。
+  let absoluteUrl = url;
+  try {
+    const parsed = new URL(url, location.href);
+    absoluteUrl = parsed.href;
+    const filePath = decodeURIComponent(parsed.searchParams.get('path') || '');
+    if (filePath) event.dataTransfer.setData('application/x-naiba-file-path', filePath);
+  } catch (_) { /* ignore */ }
+  // 若已预取到该图字节，作为真实文件加入拖拽（拖到桌面另存、拖进输入框都生效）。
+  try {
+    const cached = draggedFileCache.get(absoluteUrl);
+    if (cached && event.dataTransfer.items?.add) {
+      event.dataTransfer.items.add(cached);
+      event.dataTransfer.setData('DownloadURL', `${cached.type || 'application/octet-stream'}:${cached.name}:${absoluteUrl}`);
+    }
+  } catch (_) { /* ignore */ }
 });
 document.addEventListener('error', (event) => {
   const img = event.target;
@@ -3920,7 +3936,10 @@ function bindEvents() {
   const composerWrap = document.querySelector('.composer-wrap');
   if (composerWrap) {
     composerWrap.addEventListener('dragover', (event) => {
-      if (!event.dataTransfer?.types?.includes('Files')) return;
+      const types = event.dataTransfer?.types || [];
+      const hasFiles = types.includes('Files');
+      const hasPath = types.includes('application/x-naiba-file-path');
+      if (!hasFiles && !hasPath) return;
       event.preventDefault();
       composerWrap.classList.add('dragover');
     });
