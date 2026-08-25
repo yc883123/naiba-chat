@@ -855,8 +855,14 @@ class ToolExecutor:
         return self.mcp_registry.tool_guide()
 
 
-def _extract_step_images(step_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """从 ``vision_read_folder`` 工具结果提取图片 image parts，供多模态模型直接看图。"""
+def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -> list[dict[str, Any]]:
+    """从 ``vision_read_folder`` 工具结果提取图片 image parts，供多模态模型直接看图。
+
+    仅当 ``inject``（大脑支持图片）时生成 image parts；文本型大脑只缓存、不注入，
+    避免把纯文本模型看不到的图片塞进消息。
+    """
+    if not inject:
+        return []
     try:
         from server import encode_image_for_model
     except Exception:  # noqa: BLE001 - 循环导入时回退为空
@@ -1571,7 +1577,7 @@ class SkillAgent:
                     }
                 )
             # vision_read_folder：把读取的图片作为 image content 注入，供多模态模型直接看图。
-            step_images = _extract_step_images(step_runs)
+            step_images = _extract_step_images(step_runs, bool(profile.get("supports_images")))
             if step_images:
                 messages.append({
                     "role": "user",
@@ -2136,6 +2142,8 @@ class SkillAgent:
              {"run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write"}),
             (("ocr", "文字识别", "裁剪", "坐标", "检测", "取色", "像素", "ground", "crop"),
              {"vision_ground", "vision_detect", "vision_crop", "vision_ocr", "vision_colors", "vision_pixel_diff"}),
+            (("图片", "图", "读图", "识图", "看图", "图像", "image", "picture", "photo", "visual", "read images", "folder of images"),
+             {"vision_read_folder"}),
             (("comfyui", "8188", "system_stats", "生成图片", "生成图", "生图"),
              {"http_request", "read_file", "write_file", "run_command", "run_in_background",
               "job_output", "job_status", "job_wait", "comfyui_prepare_workflow", "comfyui_batch"}),

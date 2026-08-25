@@ -977,5 +977,20 @@ class ImageDisplayContractTests(unittest.TestCase):
         self.assertIn('id="imageUploadOriginal"', html)
 
 
+class VisionReadFolderRevealTests(unittest.TestCase):
+    def test_revealed_only_on_image_intent(self) -> None:
+        allowed = {
+            "read_file", "write_file", "edit_file", "list_directory", "search_files", "glob_files",
+            "run_command", "pwsh", "run_in_background", "job_output", "job_status", "job_wait",
+            "job_kill", "subagent", "web_search", "vision_describe", "vision_read_folder",
+            "capability_inventory", "activate_skill", "install_skill",
+        }
+        schemas = [{"name": name, "parameters": {"type": "object", "properties": {}}} for name in allowed]
+        visible = SkillAgent._visible_tool_names("请读取 D:/data 文件夹下的图片", allowed, schemas, [])
+        self.assertIn("vision_read_folder", visible)
+        other = SkillAgent._visible_tool_names("把这个脚本改一下", allowed, schemas, [])
+        self.assertNotIn("vision_read_folder", other)
+
+
 if __name__ == "__main__":
     unittest.main()
