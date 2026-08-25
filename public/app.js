@@ -459,6 +459,30 @@ document.addEventListener('error', (event) => {
   if (large && img.getAttribute('src') !== large) img.src = large;
 }, true);
 
+// 点击缩略图上的「发送到输入框」按钮：把该图加入待发送附件。
+// 不依赖 HTML5 拖拽，因此在内嵌 webview 窗口里同样可用。
+document.addEventListener('click', (event) => {
+  const reuse = event.target.closest?.('[data-reuse-source]');
+  if (!reuse) return;
+  event.stopPropagation();
+  let source = reuse.getAttribute('data-reuse-source') || '';
+  const name = reuse.getAttribute('data-reuse-name') || 'image';
+  const thumb = reuse.getAttribute('data-reuse-thumb') || '';
+  if (!source) return;
+  // 若是 /api/file URL，解码出真实文件路径；否则直接使用绝对路径。
+  try {
+    const parsed = new URL(source, location.href);
+    if (parsed.pathname === '/api/file') source = decodeURIComponent(parsed.searchParams.get('path') || source);
+  } catch (_) { /* keep source */ }
+  if (state.pendingFiles.some((file) => file.path === source)) return;
+  const chip = { name: String(source).split(/[\\/]/).pop() || name, path: source, size: 0 };
+  if (thumb) chip.thumb_path = thumb;
+  state.pendingFiles.push(chip);
+  renderPendingFiles();
+  const ta = $('#composerTextarea') || document.querySelector('.composer textarea, .composer input');
+  if (ta) ta.focus();
+});
+
 function mediaMarkup(attachments = []) {
   if (!attachments.length) return '';
   const items = attachments.map((attachment) => {
@@ -469,7 +493,9 @@ function mediaMarkup(attachments = []) {
     const name = escapeHtml(attachment.name || '生成文件');
     if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
       const thumbUrl = attachmentThumbUrl(attachment);
-      return `<img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${safeUrl}">`;
+      const reusePath = attachment.source || attachment.path || '';
+      const reuseThumb = attachment.thumb_path || '';
+      return `<span class="media-item"><img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${safeUrl}"><button class="thumb-reuse" type="button" title="发送到输入框（复用此图）" aria-label="发送到输入框" data-reuse-source="${escapeHtml(reusePath)}" data-reuse-name="${name}" data-reuse-thumb="${escapeHtml(reuseThumb)}">↩</button></span>`;
     }
     if (/\.(mp4|webm|mov|m4v|ogv)(?:\s|$)/.test(lower)) return `<video src="${safeUrl}" controls playsinline preload="metadata"></video>`;
     if (/\.(wav|mp3|m4a|ogg|flac)(?:\s|$)/.test(lower)) return `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
