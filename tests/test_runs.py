@@ -1050,5 +1050,31 @@ class GlobBraceExpansionTests(unittest.TestCase):
         self.assertEqual(ToolExecutor._expand_glob_braces("plain.txt"), ["plain.txt"])
 
 
+class ActivityTimelineTests(unittest.TestCase):
+    def test_interleaves_reasoning_and_tools_in_order(self) -> None:
+        from async_tasks import _build_activity_timeline
+        events = [
+            {"type": "reasoning_start"},
+            {"type": "reasoning_delta", "content": "用户要求分析图片"},
+            {"type": "reasoning_end"},
+            {"type": "tool_requested", "tool": "vision_read_folder"},
+            {"type": "tool_result", "tool": "vision_read_folder", "success": True, "result": "ok", "arguments": {"folder": "C:/x"}},
+            {"type": "reasoning_start"},
+            {"type": "reasoning_delta", "content": "Let me analyze the images"},
+            {"type": "reasoning_end"},
+        ]
+        reasonings = ["用户要求分析两张图片的内容，我需要用 vision_read_folder 读取这两张图片。", "Let me analyze the two images."]
+        runs = [{"tool": "vision_read_folder", "success": True, "result": "ok", "arguments": {"folder": "C:/x"}}]
+        activity = _build_activity_timeline(events, reasonings, runs)
+        order = [item["type"] for item in activity]
+        self.assertEqual(["reasoning", "tool", "reasoning"], order)
+        self.assertEqual("vision_read_folder", activity[1]["run"]["tool"])
+        self.assertEqual("用户要求分析两张图片的内容，我需要用 vision_read_folder 读取这两张图片。", activity[0]["text"])
+
+    def test_empty_activity_on_no_events(self) -> None:
+        from async_tasks import _build_activity_timeline
+        self.assertEqual([], _build_activity_timeline([], [], []))
+
+
 if __name__ == "__main__":
     unittest.main()

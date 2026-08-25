@@ -27,6 +27,54 @@ SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READO
 SYSTEM_TOOLS_READONLY = ("capability_inventory", "activate_skill") + VISION_READONLY_TOOLS + ("web_search",)
 
 
+def _safe_activity(
+    events: list[dict[str, Any]], reasonings: list[str], runs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """用 try/except 包裹时间线构建，任何异常都不阻断消息保存/发送。"""
+    try:
+        return _build_activity_timeline(events, reasonings, runs)
+    except Exception:
+        return []
+
+
+def _build_activity_timeline(
+    events: list[dict[str, Any]], reasonings: list[str], runs: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """按运行事件的时间序，把思考段与工具调用交错产出，供前端按时间显示思维链/工具链。
+
+    内容复用传入的 reasonings 与 runs（避免重复/不一致），仅用 events 的先后顺序决定
+    交错。计数不齐时把剩余段落追加到末尾兜底。本函数为模块级，绝不放进任何类体。
+    """
+    activity: list[dict[str, Any]] = []
+    ri = 0
+    ti = 0
+    in_reasoning = False
+    for ev in events:
+        kind = str(ev.get("type") or "")
+        if kind == "reasoning_start":
+            in_reasoning = True
+        elif kind == "reasoning_end":
+            if in_reasoning and ri < len(reasonings):
+                activity.append({"type": "reasoning", "text": reasonings[ri]})
+                ri += 1
+            in_reasoning = False
+        elif kind == "reasoning":
+            if ri < len(reasonings):
+                activity.append({"type": "reasoning", "text": reasonings[ri]})
+                ri += 1
+        elif kind == "tool_result":
+            if ti < len(runs):
+                activity.append({"type": "tool", "run": runs[ti]})
+                ti += 1
+    while ri < len(reasonings):
+        activity.append({"type": "reasoning", "text": reasonings[ri]})
+        ri += 1
+    while ti < len(runs):
+        activity.append({"type": "tool", "run": runs[ti]})
+        ti += 1
+    return activity
+
+
 def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Extract normalized, deduplicated citations from successful search calls."""
     sources: list[dict[str, str]] = []
@@ -954,6 +1002,7 @@ class ConversationRunManager:
                 "tool_runs": runs,
                 "allowed_tools": allowed_tools,
                 "reasoning": reasonings,
+                "activity": _safe_activity(self.app.storage.list_run_events(run_id), reasonings, runs),
                 "usage": usage,
                 "performance": performance,
                 "attachments": extract_attachments(runs),

@@ -504,13 +504,28 @@ function mediaMarkup(attachments = []) {
   return `<div class="media-grid">${items}</div>`;
 }
 
+function toolRunMarkup(run = {}) {
+  return `<details class="tool-run">
+    <summary>${run.success ? '已执行' : '执行失败'} · ${escapeHtml(run.tool)}${run.reason ? ` · ${escapeHtml(run.reason)}` : ''}</summary>
+    <pre>${escapeHtml(JSON.stringify(run.arguments || {}, null, 2))}\n\n${escapeHtml(run.result || '')}</pre>
+  </details>`;
+}
+
 function toolMarkup(runs = []) {
   if (!runs.length) return '';
-  return `<div class="tool-stack">${runs.map((run) => `
-    <details class="tool-run">
-      <summary>${run.success ? '已执行' : '执行失败'} · ${escapeHtml(run.tool)}${run.reason ? ` · ${escapeHtml(run.reason)}` : ''}</summary>
-      <pre>${escapeHtml(JSON.stringify(run.arguments || {}, null, 2))}\n\n${escapeHtml(run.result || '')}</pre>
-    </details>`).join('')}</div>`;
+  return `<div class="tool-stack">${runs.map((run) => toolRunMarkup(run)).join('')}</div>`;
+}
+
+function activityMarkup(activity = []) {
+  if (!Array.isArray(activity) || !activity.length) return '';
+  let html = '';
+  for (const item of activity) {
+    try {
+      if (item.type === 'reasoning') html += reasoningMarkup([item.text]);
+      else if (item.type === 'tool' && item.run) html += toolRunMarkup(item.run);
+    } catch (_) { /* 单个条目异常不影响整体 */ }
+  }
+  return html;
 }
 
 function reasoningMarkup(reasoning) {
@@ -729,12 +744,13 @@ function messageElement(message, temporary = false) {
     row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
     const abortedBadge = metadata.aborted ? '<span class="aborted-badge">已中止</span>' : '';
+    const activityHtml = metadata.activity?.length ? activityMarkup(metadata.activity) : '';
+    const reasoningToolHtml = activityHtml || (reasoningMarkup(metadata.reasoning) + toolMarkup(metadata.tool_runs));
     row.innerHTML = `
       <div class="message-avatar">AI</div>
       <div class="message-body">
         ${skillMarkup(metadata.skills)}
-        ${reasoningMarkup(metadata.reasoning)}
-        ${toolMarkup(metadata.tool_runs)}
+        ${reasoningToolHtml}
         ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
         <div class="answer-content" data-raw="">${temporary ? '' : abortedBadge + markdown(message.content)}</div>
         ${temporary ? '' : sourcesMarkup(metadata.sources)}
