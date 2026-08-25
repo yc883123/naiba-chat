@@ -23,7 +23,7 @@ VISION_READONLY_TOOLS = (
     "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
 )
 VISION_WRITING_TOOLS = ("vision_crop", "vision_pixel_diff")
-SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("web_search", "comfyui_prepare_workflow", "comfyui_batch")
+SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("vision_read_folder", "web_search", "comfyui_prepare_workflow", "comfyui_batch")
 SYSTEM_TOOLS_READONLY = ("capability_inventory", "activate_skill") + VISION_READONLY_TOOLS + ("web_search",)
 
 
@@ -203,7 +203,12 @@ class ConversationRunManager:
                     else bool(self.app.vision.brain_supports_images(profile))
                 )
                 if supports_images:
-                    allowed_tools = [tool for tool in allowed_tools if not tool.startswith("vision_")]
+                    # 多模态大脑用 vision_read_folder 从文件夹读取任意图片并注入
+                    # image content；其余按需看图的 vision_* 工具保留给纯文本大脑。
+                    allowed_tools = [
+                        tool for tool in allowed_tools
+                        if not tool.startswith("vision_") or tool == "vision_read_folder"
+                    ]
             except Exception:
                 # Capability detection must never remove tools on an unknown
                 # or temporarily unavailable model profile.

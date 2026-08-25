@@ -2143,7 +2143,7 @@ class SkillAgent:
             (("ocr", "文字识别", "裁剪", "坐标", "检测", "取色", "像素", "ground", "crop"),
              {"vision_ground", "vision_detect", "vision_crop", "vision_ocr", "vision_colors", "vision_pixel_diff"}),
             (("图片", "图", "读图", "识图", "看图", "图像", "image", "picture", "photo", "visual", "read images", "folder of images"),
-             {"vision_read_folder"}),
+             {"vision_read_folder", "vision_describe", "read_file", "list_directory", "glob_files", "search_files"}),
             (("comfyui", "8188", "system_stats", "生成图片", "生成图", "生图"),
              {"http_request", "read_file", "write_file", "run_command", "run_in_background",
               "job_output", "job_status", "job_wait", "comfyui_prepare_workflow", "comfyui_batch"}),
