@@ -270,8 +270,8 @@ def _detect_choice_groups(text: str) -> list[dict[str, Any]]:
 
     circled_numbers = {char: index for index, char in enumerate("①②③④⑤⑥⑦⑧", start=1)}
     choice_cue = re.compile(
-        r"请(?:先|再)?选择|再选(?:一下|一个|个)?|供你选择|可选|选项|方案|哪个|选哪个|"
-        r"pick|choose|select|options?",
+        r"请(?:先|再)?选择|请(?:你|您)?选|再选(?:一下|一个|个)?|供(?:你|您)?选择|可供选择|"
+        r"选哪个|选一个|pick one|choose one|select one|which one|which of|choose|select|pick",
         re.IGNORECASE,
     )
 
@@ -395,21 +395,24 @@ def _detect_choice_groups(text: str) -> list[dict[str, Any]]:
             if markers != expected:
                 continue
         has_cue = bool(choice_cue.search(prompt))
-        if kind == "bullet" and not has_cue:
-            continue
         candidates.append(
             {
+                "kind": kind,
                 "prompt": prompt if has_cue else "",
                 "choices": [value for _, value in items][:8],
                 "has_cue": has_cue,
             }
         )
 
-    prompted = [candidate for candidate in candidates if candidate["has_cue"]]
-    selected = prompted or candidates[:1]
+    # 收紧：整段回复里完全没有"请选择"等意图、也没有"选项X/方案X"这种命名选项，
+    # 就不弹按钮（单个无 cue 的编号/字母列表不再误判成选项）。
+    if not any(candidate["has_cue"] or candidate["kind"] == "named" for candidate in candidates):
+        return []
+    # 一旦判定是"请选择"场景，就保留全部组（含 cue 未命中的后续问题），
+    # 避免漏掉第二个问题导致"点第一题就发"。
     return [
         {"prompt": candidate["prompt"], "choices": candidate["choices"]}
-        for candidate in selected
+        for candidate in candidates
     ]
 
 

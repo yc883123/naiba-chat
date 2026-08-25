@@ -953,5 +953,14 @@ class ReasoningStreamingUiTests(unittest.TestCase):
         self.assertIn("state.streamingReasoningBlock = null", source)
 
 
+class ChoiceButtonBehaviorTests(unittest.TestCase):
+    def test_choice_fill_composer_instead_of_auto_send(self) -> None:
+        source = Path("public/app.js").read_text(encoding="utf-8")
+        self.assertIn("function fillComposer(text)", source)
+        self.assertIn("fillComposer(answer);", source)
+        # 选完不再自动发送，把内容放进输入框由用户确认（避免"多问题点第一题就发"）。
+        self.assertNotIn("sendMessage(answer);", source)
+
+
 if __name__ == "__main__":
     unittest.main()

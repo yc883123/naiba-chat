@@ -3593,7 +3593,7 @@ function showChoiceButtons(choices, choiceGroups = []) {
           .map((answerGroup, index) => formatAnswer(answerGroup, selected[index], index))
           .join('\n');
         hideChoiceButtons();
-        sendMessage(answer);
+        fillComposer(answer);
       });
       options.appendChild(btn);
     });
@@ -3607,6 +3607,15 @@ function showChoiceButtons(choices, choiceGroups = []) {
 function hideChoiceButtons() {
   const existing = $('#choiceButtons');
   if (existing) existing.remove();
+}
+
+function fillComposer(text) {
+  // 把按钮拼好的内容放进输入框由用户确认，不自动发送。
+  const input = $('#messageInput');
+  if (!input) return;
+  input.value = String(text || '');
+  resizeTextarea();
+  input.focus();
 }
 
 async function approveTool(confirmId, runId = state.chatRunId) {

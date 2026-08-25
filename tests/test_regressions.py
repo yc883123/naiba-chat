@@ -195,6 +195,41 @@ prompt D
         self.assertEqual("抱歉漏了！请先选择视频时长：", _detect_choice_groups(duration)[0]["prompt"])
         self.assertEqual("好的，5秒。再选一下风格：", _detect_choice_groups(style)[0]["prompt"])
 
+    def test_plain_numbered_list_without_cue_does_not_trigger(self) -> None:
+        # 收紧：没有任何"请选择"意图时，普通编号列表不弹按钮。
+        text = """实施步骤：
+1. 读取文件
+2. 修改内容
+3. 保存"""
+        self.assertEqual([], _detect_choice_groups(text))
+
+    def test_multiple_questions_keep_all_groups_even_when_second_lacks_cue(self) -> None:
+        # 修复：第一题带 cue、第二题无 cue，也必须保留两组，避免"点第一题就发"。
+        text = """请选择视频时长：
+1. 10秒
+2. 30秒
+
+第二项：
+1. 方案A
+2. 方案B"""
+        groups = _detect_choice_groups(text)
+        self.assertEqual(
+            [
+                {"prompt": "请选择视频时长：", "choices": ["10秒", "30秒"]},
+                {"prompt": "请选择视频时长：", "choices": ["方案A", "方案B"]},
+            ],
+            groups,
+        )
+
+    def test_named_options_without_cue_phrase_still_detected(self) -> None:
+        # "选项X/方案X"本身就是选择，即使没有"请选择"字样也应识别。
+        text = """选项A：轻盈
+选项B：厚重
+选项C：均衡"""
+        groups = _detect_choice_groups(text)
+        self.assertEqual(1, len(groups))
+        self.assertEqual(["轻盈", "厚重", "均衡"], groups[0]["choices"])
+
 
 class OnlineResponseTests(unittest.TestCase):
     def test_extracts_openai_stream_deltas(self) -> None:
