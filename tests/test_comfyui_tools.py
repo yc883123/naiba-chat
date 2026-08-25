@@ -118,6 +118,26 @@ class ComfyUIToolTests(unittest.TestCase):
         self.assertEqual("C:/data/uploads/naiba_chat_123_ComfyUI_00001_thumb.webp", attachments[0]["thumb_path"])
         self.assertEqual("ComfyUI_00001.png", attachments[0]["name"])
 
+    def test_extract_attachments_dedupes_same_image_preferring_thumb(self):
+        # 同一张图既被工具路径(复制到 generated，无缩略图)又被 vision_read_folder
+        # (缓存到 uploads，带缩略图)记录时，按原始名去重并保留带缩略图的版本。
+        path_result = "C:/data/generated/abc_ComfyUI_00001.png"
+        folder_result = json.dumps({
+            "note": "读取完成",
+            "images": [{
+                "name": "ComfyUI_00001.png",
+                "path": "C:/data/uploads/naiba_chat_123_ComfyUI_00001.png",
+                "thumb_path": "C:/data/uploads/naiba_chat_123_ComfyUI_00001_thumb.webp",
+            }],
+        })
+        attachments = server.extract_attachments([
+            {"tool": "glob_files", "result": path_result},
+            {"tool": "vision_read_folder", "result": folder_result},
+        ])
+        self.assertEqual(1, len(attachments))
+        self.assertEqual("C:/data/uploads/naiba_chat_123_ComfyUI_00001.png", attachments[0]["source"])
+        self.assertEqual("C:/data/uploads/naiba_chat_123_ComfyUI_00001_thumb.webp", attachments[0]["thumb_path"])
+
 
 if __name__ == "__main__":
     unittest.main()

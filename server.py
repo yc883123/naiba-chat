@@ -1837,7 +1837,19 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
         if thumb_path:
             attachment["thumb_path"] = thumb_path
         unique.append(attachment)
-    return unique[:20]
+    # 同一张图可能同时被工具路径(glob/pwsh/…复制到 generated，无缩略图)与
+    # vision_read_folder(缓存到 uploads，带缩略图)各记录一份。按原始文件名去重，
+    # 优先保留带 thumb_path 的版本，避免出现"同图双份、其中一份缩略图破图"。
+    by_key: dict[str, dict[str, str]] = {}
+    order: list[str] = []
+    for attachment in unique:
+        key = str(attachment.get("name") or "").strip().lower() or str(attachment.get("source") or "").lower()
+        if key not in by_key:
+            by_key[key] = attachment
+            order.append(key)
+        elif attachment.get("thumb_path") and not by_key[key].get("thumb_path"):
+            by_key[key] = attachment
+    return [by_key[key] for key in order][:20]
 
 
 def _infer_supports_images(provider: dict[str, Any]) -> bool:

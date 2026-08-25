@@ -453,7 +453,7 @@ function mediaMarkup(attachments = []) {
     const name = escapeHtml(attachment.name || '生成文件');
     if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
       const thumbUrl = attachmentThumbUrl(attachment);
-      return `<img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${escapeHtml(safeUrl)}">`;
+      return `<img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${safeUrl}">`;
     }
     if (/\.(mp4|webm|mov|m4v|ogv)(?:\s|$)/.test(lower)) return `<video src="${safeUrl}" controls playsinline preload="metadata"></video>`;
     if (/\.(wav|mp3|m4a|ogg|flac)(?:\s|$)/.test(lower)) return `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
