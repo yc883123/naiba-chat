@@ -278,12 +278,12 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="glob_files",
-            description="按 glob 模式快速列出文件；只读、适合先定位脚本和配置。",
+            description="按 glob 模式列出文件（只读）。path 填根目录的绝对路径（留空用工作区根），pattern 填文件名模式，例如 *.png 或 **/*.py。",
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": _string("搜索根目录", ""),
-                    "pattern": _string("glob 模式，例如 **/*.py", "**/*"),
+                    "path": _string("搜索根目录（请填绝对路径，留空用工作区根）", ""),
+                    "pattern": _string("glob 文件名模式，例如 *.png 或 **/*.py", "**/*"),
                     "limit": {"type": "integer", "default": 200},
                 },
                 "required": [],
@@ -491,12 +491,12 @@ def build_vision_tool_specs() -> list[ToolSpec]:
     specs.append(
         ToolSpec(
             name="vision_read_folder",
-            description="从文件夹或路径列表读取图片并缓存（一次可读多张）。图片会存入宿主并附带缩略图，供多模态模型直接看图。",
+            description="从文件夹或路径列表读取图片并缓存（一次可读多张）。paths/folder 请填绝对路径（可用工作区绝对路径拼出），支持文件夹目录路径或图片路径。图片会存入宿主并附带缩略图，供多模态模型直接看图。",
             parameters={
                 "type": "object",
                 "properties": {
-                    "paths": {"type": "array", "items": {"type": "string"}, "description": "图片路径或文件夹路径列表"},
-                    "folder": _string("待扫描的文件夹路径（paths 的简写）"),
+                    "paths": {"type": "array", "items": {"type": "string"}, "description": "图片或文件夹的绝对路径列表"},
+                    "folder": _string("待扫描文件夹的绝对路径（paths 的简写）"),
                     "max_images": {"type": "integer", "description": "最多读取张数", "default": 8},
                 },
                 "required": [],
