@@ -486,6 +486,27 @@ def build_vision_tool_specs() -> list[ToolSpec]:
                 permission="confirm",
             )
         )
+    # 多模态大脑专用：从文件夹/路径读取任意张图片，缓存到宿主 uploads 目录并生成缩略图，
+    # 供多模态模型作为 image content 直观读取。与按需看图的 vision_* 工具不同，它不依赖视觉后端。
+    specs.append(
+        ToolSpec(
+            name="vision_read_folder",
+            description="从文件夹或路径列表读取图片并缓存（一次可读多张）。图片会存入宿主并附带缩略图，供多模态模型直接看图。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "paths": {"type": "array", "items": {"type": "string"}, "description": "图片路径或文件夹路径列表"},
+                    "folder": _string("待扫描的文件夹路径（paths 的简写）"),
+                    "max_images": {"type": "integer", "description": "最多读取张数", "default": 8},
+                },
+                "required": [],
+            },
+            side_effect=False,
+            retryable=False,
+            timeout=120,
+            permission="auto",
+        )
+    )
     return specs
 
 

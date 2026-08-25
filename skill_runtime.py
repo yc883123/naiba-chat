@@ -855,6 +855,31 @@ class ToolExecutor:
         return self.mcp_registry.tool_guide()
 
 
+def _extract_step_images(step_runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """从 ``vision_read_folder`` 工具结果提取图片 image parts，供多模态模型直接看图。"""
+    try:
+        from server import encode_image_for_model
+    except Exception:  # noqa: BLE001 - 循环导入时回退为空
+        return []
+    parts: list[dict[str, Any]] = []
+    for run in step_runs or []:
+        if not isinstance(run, dict) or str(run.get("tool") or "") != "vision_read_folder":
+            continue
+        try:
+            payload = json.loads(str(run.get("result") or ""))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        images = payload.get("images") if isinstance(payload, dict) else None
+        if not isinstance(images, list):
+            continue
+        for img in images:
+            path = str((img or {}).get("path") or "")
+            part = encode_image_for_model(path) if path else None
+            if part:
+                parts.append(part)
+    return parts[:4]
+
+
 class SkillAgent:
     TOOL_GUIDE = """
 可用工具（需要操作时一次只调用一个）：
@@ -1545,6 +1570,16 @@ class SkillAgent:
                         ),
                     }
                 )
+            # vision_read_folder：把读取的图片作为 image content 注入，供多模态模型直接看图。
+            step_images = _extract_step_images(step_runs)
+            if step_images:
+                messages.append({
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "以上是工具刚读取的图片，请据此继续（点击即可查看大图）。"},
+                        *step_images,
+                    ],
+                })
             event({"type": "step_finished", "step": step})
 
     @staticmethod

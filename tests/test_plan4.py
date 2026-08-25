@@ -116,6 +116,11 @@ class VisionToolsTest(TestCase):
         self.assertFalse(reg.side_effect("vision_describe"))
         self.assertTrue(reg.side_effect("vision_crop"))
 
+    def test_vision_read_folder_registered(self):
+        reg = build_tool_registry()
+        self.assertIn("vision_read_folder", reg.names())
+        self.assertFalse(reg.side_effect("vision_read_folder"))
+
 
 class WebSearchToolTest(TestCase):
     def test_search_tool_registered(self):

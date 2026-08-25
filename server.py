@@ -606,7 +606,7 @@ _BUILT_IN_SCOPE_FULL = (
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
     "capability_inventory", "activate_skill", "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
-    "vision_colors", "vision_pixel_diff", "web_search",
+    "vision_colors", "vision_pixel_diff", "vision_read_folder", "web_search",
 )
 _BUILT_IN_SCOPE_CODE = (
     "read_file", "write_file", "list_directory", "search_files", "run_command",
@@ -614,7 +614,7 @@ _BUILT_IN_SCOPE_CODE = (
     "job_wait", "job_kill", "subagent",
     "capability_inventory", "activate_skill", "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
-    "vision_colors", "vision_pixel_diff", "web_search",
+    "vision_colors", "vision_pixel_diff", "vision_read_folder", "web_search",
 )
 _BUILT_IN_SCOPE_MINIMAL = (
     "read_file", "list_directory", "search_files", "write_file", "run_command",
@@ -1752,20 +1752,27 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
         # makes previews durable and keeps arbitrary output paths outside the
         # file-serving allowlist.
         if is_local_comfy or is_local_file:
-            try:
-                generated_dir = (DATA_DIR / "generated").resolve()
-                generated_dir.mkdir(parents=True, exist_ok=True)
-                digest = hashlib.sha256(item.encode("utf-8", errors="replace")).hexdigest()[:16]
-                destination = generated_dir / f"{digest}_{name}"
-                if not destination.is_file() or destination.stat().st_size <= 0:
-                    if is_local_comfy:
-                        with urllib.request.urlopen(item, timeout=120) as response, destination.open("wb") as handle:
-                            shutil.copyfileobj(response, handle, length=1024 * 1024)
-                    else:
-                        shutil.copy2(local_path.resolve(), destination)
-                source = str(destination)
-            except (OSError, urllib.error.URLError, ValueError):
+            uploads_dir = (DATA_DIR / "uploads").resolve()
+            already_cached = is_local_file and path_within(local_path.resolve(), uploads_dir)
+            if already_cached:
+                # 已在宿主 uploads 缓存目录（且带缩略图）：保留 uploads 路径即可服务与展示，
+                # 不用再重复拷贝到 generated。
                 source = item
+            else:
+                try:
+                    generated_dir = (DATA_DIR / "generated").resolve()
+                    generated_dir.mkdir(parents=True, exist_ok=True)
+                    digest = hashlib.sha256(item.encode("utf-8", errors="replace")).hexdigest()[:16]
+                    destination = generated_dir / f"{digest}_{name}"
+                    if not destination.is_file() or destination.stat().st_size <= 0:
+                        if is_local_comfy:
+                            with urllib.request.urlopen(item, timeout=120) as response, destination.open("wb") as handle:
+                                shutil.copyfileobj(response, handle, length=1024 * 1024)
+                        else:
+                            shutil.copy2(local_path.resolve(), destination)
+                    source = str(destination)
+                except (OSError, urllib.error.URLError, ValueError):
+                    source = item
         if source in seen:
             continue
         seen.add(source)

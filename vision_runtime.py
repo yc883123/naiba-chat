@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import logging
+import re
 import threading
 import time
 import urllib.error
@@ -934,7 +935,97 @@ class VisionRouter:
             "vision_ocr": self._tool_ocr,
             "vision_colors": self._tool_colors,
             "vision_pixel_diff": self._tool_pixel_diff,
+            "vision_read_folder": self._tool_read_folder,
         }
+
+    def _tool_read_folder(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
+        """一次性从文件夹/路径读取多张图片，缓存到宿主 uploads 并生成缩略图。
+
+        返回 JSON：{note, images:[{name,path,thumb_path,width,height}]}。供多模态模型
+        作为 image content 直观读取（由 agent loop 负责把主图注入下一条消息）。
+        """
+        try:
+            from server import _uploads_total_bytes, _thumb_webp_path  # noqa: F401  (lazy import)
+            # 安全起见复用 server 的缓存逻辑，避免循环导入。
+            paths: list[str] = []
+            for raw in args.get("paths") or []:
+                value = str(raw or "").strip()
+                if value:
+                    paths.append(value)
+            folder = str(args.get("folder") or "").strip()
+            if folder:
+                paths.append(folder)
+            try:
+                max_images = max(1, int(args.get("max_images") or 8))
+            except (TypeError, ValueError):
+                max_images = 8
+            return self._cache_folder_images(paths, max_images)
+        except Exception as exc:  # noqa: BLE001
+            return False, f"vision_read_folder 失败:{exc}"
+
+    def _cache_folder_images(self, paths: list[str], max_images: int, skip_uploads: bool = True) -> tuple[bool, str]:
+        """扫描路径/文件夹里的图片，经 _process_uploaded_image 缓存到 uploads，返回带缩略图的列表。"""
+        from server import _process_uploaded_image
+
+        candidates: list[Path] = []
+        seen: set[str] = set()
+        for raw in paths:
+            if not raw:
+                continue
+            p = Path(str(raw)).expanduser()
+            if p.is_dir():
+                for file in sorted(p.iterdir()):
+                    if file.is_file() and file.suffix.lower() in IMAGE_SUFFIXES:
+                        key = str(file.resolve()).lower()
+                        if key not in seen:
+                            seen.add(key)
+                            candidates.append(file)
+            elif p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES:
+                key = str(p.resolve()).lower()
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(p)
+        candidates = candidates[:max_images]
+        if not candidates:
+            return False, "vision_read_folder: 未找到图片文件"
+
+        target_dir = (Path(self.app.config.resolve_data_dir()) / "uploads").resolve() \
+            if getattr(self.app, "config", None) else (Path.cwd() / "uploads").resolve()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            imaging = dict(self.app.config.data.get("imaging") or {})
+        except (AttributeError, TypeError, ValueError):
+            imaging = {}
+
+        import secrets as _secrets
+        import time as _time
+        images: list[dict[str, Any]] = []
+        for file in candidates:
+            try:
+                data = file.read_bytes()
+                fname = f"naiba_chat_{int(_time.time())}_{_secrets.token_hex(3)}_{re.sub(r'[^A-Za-z0-9._\\-\\u4e00-\\u9fff]', '_', file.name)}"
+                main_bytes, thumb_name, thumb_bytes = _process_uploaded_image(data, fname, imaging)
+                main_path = target_dir / fname
+                main_path.write_bytes(main_bytes)
+                thumb_path = ""
+                if thumb_name and thumb_bytes:
+                    tf = target_dir / thumb_name
+                    tf.write_bytes(thumb_bytes)
+                    thumb_path = str(tf)
+                with io.BytesIO(main_bytes) as _b:
+                    try:
+                        from PIL import Image as _Image
+                        _img = _Image.open(_b)
+                        width, height = _img.size
+                    except Exception:  # noqa: BLE001
+                        width, height = 0, 0
+                images.append({"name": file.name, "path": str(main_path), "thumb_path": thumb_path, "width": width, "height": height})
+            except OSError:
+                continue
+        if not images:
+            return False, "vision_read_folder: 图片读取/缓存失败"
+        note = f"已缓存并读取 {len(images)} 张图片；点击缩略图查看大图，主图与缩略图均已存入宿主。"
+        return True, json.dumps({"note": note, "images": images}, ensure_ascii=False)
 
     def _resolve_paths(self, args: dict[str, Any]) -> list[str]:
         paths: list[str] = []

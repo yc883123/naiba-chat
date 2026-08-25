@@ -736,7 +736,12 @@ class ConversationRunManager:
                     if tool not in {"activate_skill", "install_skill", "run_skill_script"}
                 ]
             if brain_supports_images:
-                allowed_tools = [tool for tool in allowed_tools if not tool.startswith("vision_")]
+                # 多模态大脑隐藏按需看图的 vision_* 工具，但保留 vision_read_folder
+                # 供其从文件夹读取任意图片并注入 image content。
+                allowed_tools = [
+                    tool for tool in allowed_tools
+                    if not tool.startswith("vision_") or tool == "vision_read_folder"
+                ]
             elif image_pending and vision_auto_route_applied:
                 # The automatic vision pass already produced the evidence for
                 # this turn. Keep only explicit follow-up operations; generic
