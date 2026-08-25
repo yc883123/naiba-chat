@@ -734,6 +734,8 @@ class ConversationRunManager:
             options = dict(snapshot.get("generation_options") or self._generation_options(self.app.config, model_key))
             options["stream"] = bool(snapshot.get("stream_enabled", True))
             options["reasoning_enabled"] = reasoning_effort != "off"
+            # 让模型 HTTP 调用可被取消信号中断，避免取消后运行线程卡在 API 请求上。
+            options["cancel_event"] = cancel_event
             allowed_tools = [str(item) for item in snapshot.get("allowed_tools") or []]
             if "skills" in disabled_features:
                 allowed_tools = [
@@ -1000,10 +1002,15 @@ class ConversationRunManager:
                     self.app.plans.cancel(plan_id)
                 except (LookupError, ValueError):
                     pass
+            # 把已累积的中止内容持久化为一条"已中止"assistant 消息，避免取消后输出丢失。
+            aborted_message = self._persist_aborted_message(run_id, conversation_id, skills)
             self.app.storage.update_background_task(
                 run_id, status="cancelled", detail={"message": "任务已取消"}, finished=True
             )
-            self.emit(run_id, {"type": "cancelled", "message": "任务已取消"})
+            cancelled_payload: dict[str, Any] = {"type": "cancelled", "message": "任务已取消"}
+            if aborted_message:
+                cancelled_payload["aborted_message"] = aborted_message
+            self.emit(run_id, cancelled_payload)
         except Exception as exc:
             sink.flush()
             traceback.print_exc()
@@ -1120,13 +1127,100 @@ class ConversationRunManager:
                 event = self._events.get(run_id)
             if event:
                 event.set()
-            return self.app.storage.update_background_task(
+            updated = self.app.storage.update_background_task(
                 run_id,
                 status="cancelling",
                 cancel_requested=True,
                 detail={"message": "正在取消任务"},
             )
+            # 看门狗：即便模型调用未被及时中断，也强制推进到终态，避免前端/任务轮询一直卡在运行态。
+            self._schedule_forced_cancel(run_id)
+            return updated
         return run
+
+    def _schedule_forced_cancel(self, run_id: str) -> None:
+        def watchdog() -> None:
+            try:
+                time.sleep(3.0)
+                current = self.get(run_id)
+                if current and current.get("status") == "cancelling":
+                    self.app.storage.update_background_task(
+                        run_id,
+                        status="cancelled",
+                        detail={"message": "任务已取消"},
+                        finished=True,
+                    )
+                    self.emit(run_id, {"type": "cancelled", "message": "任务已取消"})
+            except Exception:
+                pass
+
+        threading.Thread(target=watchdog, daemon=True).start()
+
+    def _persist_aborted_message(
+        self,
+        run_id: str,
+        conversation_id: str,
+        skills: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """取消时把本次已累积(reasoning/部分回复/工具)重建为一条\"已中止\"assistant 消息并入库。
+
+        这样中止内容不会丢：刷新/重渲染/后续上下文都能看到它（D1：作为普通 assistant 消息计入历史）。
+        """
+        try:
+            events = self.app.storage.list_run_events(run_id)
+        except Exception:
+            return None
+        reasoning: list[str] = []
+        reasoning_parts: list[str] = []
+        content_parts: list[str] = []
+        tool_runs: list[dict[str, Any]] = []
+        in_reasoning = False
+        for ev in events:
+            kind = str(ev.get("type") or "")
+            if kind == "reasoning_start":
+                reasoning_parts = []
+                in_reasoning = True
+            elif kind == "reasoning_delta":
+                if ev.get("content"):
+                    reasoning_parts.append(str(ev.get("content")))
+            elif kind == "reasoning_end":
+                text = "".join(reasoning_parts).strip()
+                if text:
+                    reasoning.append(text)
+                reasoning_parts = []
+                in_reasoning = False
+            elif kind == "reasoning":
+                text = str(ev.get("content") or "").strip()
+                if text:
+                    reasoning.append(text)
+            elif kind == "delta":
+                if ev.get("content"):
+                    content_parts.append(str(ev.get("content")))
+            elif kind == "tool_result":
+                run = {
+                    k: v for k, v in ev.items()
+                    if k not in ("run_id", "sequence", "created_at", "type")
+                }
+                if run.get("tool"):
+                    tool_runs.append(run)
+        if in_reasoning and reasoning_parts:
+            text = "".join(reasoning_parts).strip()
+            if text:
+                reasoning.append(text)
+        content = "".join(content_parts).strip()
+        if not content:
+            content = "（已中止）"
+        metadata: dict[str, Any] = {
+            "aborted": True,
+            "reasoning": reasoning,
+            "tool_runs": tool_runs,
+            "run_id": run_id,
+            "skills": skills,
+        }
+        try:
+            return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
+        except Exception:
+            return None
 
     def interject(self, body: dict[str, Any]) -> dict[str, Any]:
         conversation_id = str(body.get("conversation_id") or "").strip()

@@ -728,6 +728,7 @@ function messageElement(message, temporary = false) {
     const actions = message.id ? `<div class="message-actions"><button data-edit-message title="编辑并从此处重新开始">编辑</button>${metadata.interjection && !metadata.interjection_consumed ? '<button data-delete-message title="删除这条消息">删除</button>' : ''}</div>` : '';
     row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
+    const abortedBadge = metadata.aborted ? '<span class="aborted-badge">已中止</span>' : '';
     row.innerHTML = `
       <div class="message-avatar">AI</div>
       <div class="message-body">
@@ -735,7 +736,7 @@ function messageElement(message, temporary = false) {
         ${reasoningMarkup(metadata.reasoning)}
         ${toolMarkup(metadata.tool_runs)}
         ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
-        <div class="answer-content" data-raw="">${temporary ? '' : markdown(message.content)}</div>
+        <div class="answer-content" data-raw="">${temporary ? '' : abortedBadge + markdown(message.content)}</div>
         ${temporary ? '' : sourcesMarkup(metadata.sources)}
         ${mediaMarkup(metadata.attachments)}
         ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance })}
@@ -3579,9 +3580,19 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     showChoiceButtons(event.choices, event.choice_groups);
   } else if (event.type === 'cancelled') {
     clearVisionProgress();
-    // 取消时保留已展示的工具调用思考，不要折叠/隐藏，避免"思考消失了"。
     setActivity('');
-    answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
+    if (event.aborted_message) {
+      // 取消时后端已把累积内容持久化为"已中止"assistant 消息，直接用其渲染，保留已展示的思考与工具。
+      try {
+        const cancelledRow = messageElement(event.aborted_message);
+        row.replaceWith(cancelledRow);
+        updateContextUsage(null, event.aborted_message);
+      } catch (error) {
+        console.error('[naiba] cancelled 事件渲染崩溃:', error, 'message=', event.aborted_message);
+      }
+    } else {
+      answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
+    }
   } else if (event.type === 'run_failed') {
     clearVisionProgress();
     setActivity('');

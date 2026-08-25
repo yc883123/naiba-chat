@@ -1281,7 +1281,15 @@ class SkillAgent:
             event({"type": "step_started", "step": step})
             event({"type": "status", "message": f"正在思考（第 {step} 轮）"})
             event({"type": "model_request", "step": step})
-            raw = self.model_complete(profile, messages, options, event)
+            try:
+                raw = self.model_complete(profile, messages, options, event)
+            except RuntimeError as exc:
+                # 模型 HTTP 调用被取消信号中断时抛 RuntimeError("任务已取消")，
+                # 统一转成 TaskCancelled，使其走"取消"而非"失败"路径。
+                if cancel_event and (cancel_event.is_set() or str(exc) == "任务已取消"):
+                    event({"type": "run_cancelled", "reason": "用户取消"})
+                    raise TaskCancelled("任务已取消")
+                raise
             if cancel_event and cancel_event.is_set():
                 event({"type": "run_cancelled", "reason": "用户取消"})
                 raise TaskCancelled("任务已取消")

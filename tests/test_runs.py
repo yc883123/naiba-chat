@@ -992,5 +992,52 @@ class VisionReadFolderRevealTests(unittest.TestCase):
         self.assertNotIn("vision_read_folder", other)
 
 
+class ConversationRunManagerMethodPresenceTests(unittest.TestCase):
+    def test_critical_methods_exist_on_class(self) -> None:
+        # 防止类的结构被意外破坏（曾经因在类体内误插模块级函数导致 submit/list/shutdown 变成嵌套死代码）。
+        from async_tasks import ConversationRunManager
+        for method in ("submit", "list", "shutdown", "cancel", "interject", "get", "emit", "_run_chat"):
+            self.assertTrue(
+                hasattr(ConversationRunManager, method),
+                f"ConversationRunManager missing method: {method}",
+            )
+
+    def test_persist_aborted_message_reconstructs_content(self) -> None:
+        from async_tasks import ConversationRunManager
+
+        events = [
+            {"type": "reasoning_start", "run_id": "r", "sequence": 1},
+            {"type": "reasoning_delta", "content": "Let me look", "sequence": 2},
+            {"type": "reasoning_end", "sequence": 3},
+            {"type": "delta", "content": "The ", "sequence": 4},
+            {"type": "delta", "content": "image is ", "sequence": 5},
+            {"type": "delta", "content": "a bird.", "sequence": 6},
+            {"type": "tool_started", "tool": "glob_files", "sequence": 7},
+            {"type": "tool_result", "tool": "glob_files", "success": True, "result": "a.png", "arguments": {"pattern": "*.png"}, "sequence": 8},
+            # 中止时最后一段思考未闭合
+            {"type": "reasoning_start", "sequence": 9},
+            {"type": "reasoning_delta", "content": "Need more", "sequence": 10},
+        ]
+        saved = {}
+        class FakeStorage:
+            def list_run_events(self, run_id, after=0, limit=500):
+                return events
+            def add_message(self, conversation_id, role, content, metadata=None):
+                saved["content"] = content
+                saved["metadata"] = metadata or {}
+                return {"id": "m1", "content": content, "metadata": metadata or {}}
+        class FakeApp:
+            storage = FakeStorage()
+        manager = ConversationRunManager.__new__(ConversationRunManager)
+        manager.app = FakeApp()
+        out = manager._persist_aborted_message("r", "conv", [{"id": "skill1"}])
+        self.assertIsNotNone(out)
+        self.assertEqual("The image is a bird.", saved["content"])
+        self.assertTrue(saved["metadata"]["aborted"])
+        # 第一段思考 + 未闭合的第二段思考都应被保留
+        self.assertEqual(["Let me look", "Need more"], saved["metadata"]["reasoning"])
+        self.assertEqual(["glob_files"], [r["tool"] for r in saved["metadata"]["tool_runs"]])
+
+
 if __name__ == "__main__":
     unittest.main()
