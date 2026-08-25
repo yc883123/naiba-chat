@@ -406,10 +406,12 @@ function attachmentThumbUrl(attachment) {
 
 function openImageLightbox(largeUrl) {
   const img = $('#imageLightboxImg');
-  if (!img || !largeUrl) return;
-  img.src = largeUrl;
   const box = $('#imageLightbox');
-  if (box) box.hidden = false;
+  if (!img || !box || !largeUrl) return;
+  if (!/^(\/api\/file|https?:\/\/)/i.test(largeUrl)) return;
+  img.onerror = () => closeImageLightbox();
+  img.src = largeUrl;
+  box.hidden = false;
 }
 
 function closeImageLightbox() {
@@ -871,6 +873,7 @@ function scheduleStreamingMarkdown(element, raw) {
 function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
+  closeImageLightbox();
   // 诊断日志：定位"消息消失"是数据为空还是渲染崩溃
   console.log('[naiba] renderMessages 调用, 消息数=', messages.length,
     'conversationId=', state.conversationId,
