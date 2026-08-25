@@ -372,14 +372,20 @@
           <h3>运行设置</h3>
           <div class="field-grid">
             <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"><small class="hint">仅工具与命令执行有效；不控制在线或本地模型的响应超时。</small></label>
-            <label class="field-wide">图片上传与缓存
-              <label class="checkbox-row"><input id="imageUploadOriginal" type="checkbox"><span>以原图片尺寸上传 / 缓存</span><small class="hint">开启：保存原图；关闭：超过下方上限时用 Lanczos 压缩。</small></label>
-              <span id="imageCompressRow">
-                <label class="field-narrow">上传最大像素数<input id="imageMaxPixels" type="number" min="1000" step="1000" value="2000000"><small class="hint">超过将压缩尺寸（保留原格式）。</small></label>
-              </span>
-              <label class="field-narrow">缩略图显示尺寸（像素）<input id="thumbnailMaxPixels" type="number" min="1000" step="1000" value="500000"><small class="hint">缩略图始终以 WebP 生成并保存在原图旁。</small></label>
+            <div class="field-wide imaging-settings">
+              <label class="checkbox-field">
+                <input id="imageUploadOriginal" type="checkbox">
+                <span class="checkbox-text">
+                  <b>以原图片尺寸上传 / 缓存</b>
+                  <small class="hint">开启：保存原图；关闭：超过下方上限时用 Lanczos 压缩。</small>
+                </span>
+              </label>
+              <div class="imaging-grid">
+                <span id="imageCompressRow"><label class="field-narrow">上传最大像素数<input id="imageMaxPixels" type="number" min="1000" step="1000" value="2000000"><small class="hint">超过将压缩尺寸（保留原格式）。</small></label></span>
+                <label class="field-narrow">缩略图显示尺寸（像素）<input id="thumbnailMaxPixels" type="number" min="1000" step="1000" value="500000"><small class="hint">缩略图始终以 WebP 生成并保存在原图旁。</small></label>
+              </div>
               <small class="hint">当前缓存图片总大小：<code id="imageCacheSize">-</code></small>
-            </label>
+            </div>
           </div>
           <p class="hint">模型温度、上下文窗口和最大输出 Tokens 请在“API 供应商”中按供应商单独设置。</p>
           <h3 class="subheading">工作区</h3>

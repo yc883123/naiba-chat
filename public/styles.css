@@ -483,6 +483,23 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .field-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
 .field-grid .field-wide { grid-column: 1 / -1; }
 .field-grid .toggle-row { grid-column: 1 / -1; border-bottom: 0; min-height: 0; padding: 4px 0; }
+/* 图片上传与缓存：复选框与文字同行对齐，两个数值输入并排 */
+.imaging-settings { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.imaging-settings .hint:last-child { margin: 0; color: var(--muted); }
+.checkbox-field { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; color: var(--text); }
+.checkbox-field input[type="checkbox"] { width: 17px; height: 17px; margin: 1px 0 0; padding: 0; border: 0; flex: none; accent-color: var(--green); }
+.checkbox-field .checkbox-text { display: grid; gap: 2px; min-width: 0; }
+.checkbox-field b { color: var(--text); font-size: 13px; font-weight: 600; }
+.checkbox-field .hint { margin: 0; color: var(--muted); }
+.imaging-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 14px; }
+.imaging-grid > span, .imaging-grid > label { min-width: 0; }
+.imaging-grid label { display: grid; gap: 6px; }
+.imaging-grid label input, .imaging-grid label select { margin-top: 0; }
+.imaging-grid label .hint { margin: 0; color: var(--muted); line-height: 1.4; }
+#imageCompressRow[hidden] { display: none; }
+@media (max-width: 520px) {
+  .imaging-grid { grid-template-columns: 1fr; }
+}
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .connection-address { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); font-family: Consolas, monospace; font-size: 13px; }
 .update-status { display: grid; gap: 1px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--line); }
