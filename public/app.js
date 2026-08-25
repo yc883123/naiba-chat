@@ -3532,12 +3532,11 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     showChoiceButtons(event.choices, event.choice_groups);
   } else if (event.type === 'cancelled') {
     clearVisionProgress();
-    collapseReasoning();
+    // 取消时保留已展示的工具调用思考，不要折叠/隐藏，避免"思考消失了"。
     setActivity('');
     answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
   } else if (event.type === 'run_failed') {
     clearVisionProgress();
-    collapseReasoning();
     setActivity('');
     // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
