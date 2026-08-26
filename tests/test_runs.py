@@ -1076,5 +1076,83 @@ class ActivityTimelineTests(unittest.TestCase):
         self.assertEqual([], _build_activity_timeline([], [], []))
 
 
+class ToolDeclarationStabilityTests(unittest.TestCase):
+    def test_system_and_declared_tools_are_byte_stable_across_intents(self) -> None:
+        # 同一会话内，不同意图的消息必须产生逐字节相同的系统提示与声明工具集，
+        # 否则前缀缓存会因渐进式披露而失效。
+        allowed = {
+            "read_file", "write_file", "glob_files", "list_directory",
+            "run_command", "vision_read_folder", "capability_inventory", "activate_skill",
+        }
+        schemas = [
+            {"name": n, "description": n, "parameters": {"type": "object", "properties": {}}}
+            for n in allowed
+        ]
+        registry = SimpleNamespace(
+            schemas=lambda: schemas,
+            execute=lambda tool, arguments, active, context: (True, "ok"),
+            retryable=lambda tool: False,
+        )
+        mcp = SimpleNamespace(connections={}, acquire=lambda: None, release=lambda: None)
+        executor = SimpleNamespace(mcp_registry=mcp, mcp_tool_guide=lambda: "", workspace="")
+        catalog = SimpleNamespace(scan=lambda: [])
+        captured = []
+
+        def complete(_profile, messages, options, _event):
+            captured.append((messages, options))
+            return "done"
+
+        agent = SkillAgent(catalog, executor, complete)
+        for message in ("读取文件并修改脚本", "用一句话描述图片"):
+            agent.run(
+                message, [], {}, {}, {"mode": "auto", "skill_ids": []}, [], "",
+                sorted(allowed),
+                lambda _event: None, lambda *_args: None,
+                tool_registry=registry, run_context={"routing_message": message},
+            )
+
+        # 系统提示（messages[0]）与声明的 tools 数组都稳定，不受消息意图影响。
+        self.assertEqual(captured[0][0][0]["content"], captured[1][0][0]["content"])
+        self.assertEqual(captured[0][1].get("tools"), captured[1][1].get("tools"))
+        # 声明的工具覆盖全部授权集（而不是按意图收窄后的子集）。
+        self.assertEqual(
+            {item["name"] for item in captured[0][1]["tools"]}, allowed
+        )
+
+
+class VisionReadFolderRedactionTests(unittest.TestCase):
+    def test_model_visible_runs_redacts_host_paths(self) -> None:
+        from skill_runtime import _model_visible_runs
+        step_runs = [
+            {
+                "tool": "vision_read_folder",
+                "arguments": {"folder": "C:/folder", "max_images": 2},
+                "result": json.dumps({
+                    "note": "已缓存并读取 2 张图片，点击缩略图查看大图",
+                    "images": [
+                        {"name": "a.png", "path": "C:/data/uploads/a.png",
+                         "thumb_path": "C:/data/uploads/a_thumb.webp", "width": 100, "height": 200},
+                        {"name": "b.png", "path": "C:/data/uploads/b.png",
+                         "thumb_path": "C:/data/uploads/b_thumb.webp", "width": 300, "height": 400},
+                    ],
+                }, ensure_ascii=False),
+                "success": True, "reason": "",
+            },
+            {"tool": "read_file", "arguments": {"path": "C:/x.txt"}, "result": "file content", "success": True, "reason": ""},
+        ]
+        visible = json.loads(_model_visible_runs(step_runs))
+
+        # vision_read_folder：模型只看到 note + 图片名，绝不含宿主存储路径/缩略图/尺寸。
+        vr = visible[0]
+        vr_result = json.loads(vr["result"])
+        self.assertEqual("已缓存并读取 2 张图片，点击缩略图查看大图", vr_result["note"])
+        self.assertEqual(["a.png", "b.png"], vr_result["images"])
+        self.assertNotIn("path", vr_result)
+        self.assertNotIn("thumb_path", vr_result)
+        self.assertNotIn("width", vr_result)
+        # 其它工具结果原样保留。
+        self.assertEqual("file content", visible[1]["result"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -923,9 +923,26 @@ function uploadedFileMarkup(files = []) {
   return `<div class="media-grid">${html}</div>`;
 }
 
-function scrollToBottom() {
+let stickToBottom = true;
+
+function isNearBottom(threshold = 80) {
   const messages = $('#messages');
-  messages.scrollTop = messages.scrollHeight;
+  if (!messages) return true;
+  return (messages.scrollHeight - messages.scrollTop - messages.clientHeight) < threshold;
+}
+
+// 默认滚动：只在用户仍停留在底部（跟随）时才自动滚到最新内容；
+// 用户滚轮上滑阅读历史时，后续任何 delta/工具事件都不再把页面强行拉回底部。
+function scrollToBottom() {
+  if (!stickToBottom) return;
+  const messages = $('#messages');
+  if (messages) messages.scrollTop = messages.scrollHeight;
+}
+
+// 强制滚到底部：用于确实需要展示最新内容的地方（渲染后一次性定位）。
+function forceScrollToBottom() {
+  const messages = $('#messages');
+  if (messages) messages.scrollTop = messages.scrollHeight;
 }
 
 function scheduleStreamingMarkdown(element, raw) {
@@ -3174,6 +3191,8 @@ async function sendChatMessage(textOverride = '') {
     await sendRunInterjection(text);
     return;
   }
+  // 用户新发起一轮：恢复跟随，让新答复从底部开始流式显示。
+  stickToBottom = true;
   hideChoiceButtons();
   const conversationId = state.conversationId;
   const attachments = state.pendingFiles.map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
@@ -4047,6 +4066,10 @@ function bindEvents() {
       }
     });
   }
+  // 记录用户是否停留在底部：流式输出时只有跟随底部才自动滚动，上滑阅读则不抢滚动。
+  $('#messages').addEventListener('scroll', () => {
+    stickToBottom = isNearBottom();
+  }, { passive: true });
   $('#messages').addEventListener('dragstart', (event) => {
     // 缩略图（带 data-large-url）由全局 dragstart 统一以"大图 URL"拖动，这里跳过避免重复设置。
     if (event.target.closest?.('[data-large-url]')) return;

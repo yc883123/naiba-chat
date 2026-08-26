@@ -110,18 +110,27 @@ def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
 def _merge_usage_summary(
     summary: dict[str, Any], latest: dict[str, Any]
 ) -> dict[str, Any]:
-    """Append one provider response to an existing per-run usage summary."""
+    """展示口径采用最新一次 provider 响应的 per-request 用量，而非累计求和。
+
+    累计求和会把长 agent 轮次里多次调用的新增内容算进 input，导致缓存命中率被
+    稀释、跨轮不可比。``requests`` 仍累计，便于展示本轮一共调用了几次模型。
+    """
     if not latest:
         return dict(summary or {})
     if not summary:
         return SkillAgent._summarize_usage([latest])
     merged = dict(summary)
-    for key in ("input_tokens", "output_tokens", "total_tokens", "cached_tokens"):
-        merged[key] = max(0, int(summary.get(key) or 0)) + max(0, int(latest.get(key) or 0))
+    merged["input_tokens"] = max(0, int(latest.get("input_tokens") or 0))
+    merged["output_tokens"] = max(0, int(latest.get("output_tokens") or 0))
+    merged["total_tokens"] = (
+        max(0, int(latest.get("total_tokens") or 0))
+        or merged["input_tokens"] + merged["output_tokens"]
+    )
+    merged["cached_tokens"] = max(0, int(latest.get("cached_tokens") or 0))
     merged["requests"] = max(0, int(summary.get("requests") or 0)) + 1
-    merged["last_input_tokens"] = max(0, int(latest.get("input_tokens") or 0))
-    merged["last_output_tokens"] = max(0, int(latest.get("output_tokens") or 0))
-    merged["context_tokens"] = merged["last_input_tokens"] + merged["last_output_tokens"]
+    merged["last_input_tokens"] = merged["input_tokens"]
+    merged["last_output_tokens"] = merged["output_tokens"]
+    merged["context_tokens"] = merged["input_tokens"] + merged["output_tokens"]
     merged["cache_hit_rate"] = (
         round(merged["cached_tokens"] / merged["input_tokens"] * 100, 1)
         if merged["input_tokens"] else 0.0
@@ -1017,6 +1026,7 @@ class ConversationRunManager:
                 "plan_id": plan_id,
                 "plan_status": plan_status,
                 "skill_policy": dict(snapshot.get("skill_policy") or {"mode": "auto", "skill_ids": []}),
+                "trace": (run_context or {}).get("trace_messages") or [],
                 **({"error": sink.failure_message} if sink.failure_message else {}),
             }
             saved = self.app.storage.add_message(conversation_id, "assistant", response, metadata)
