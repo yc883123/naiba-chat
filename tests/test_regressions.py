@@ -5,6 +5,7 @@ import gc
 import io
 import json
 import sqlite3
+import zipfile
 import server
 import vision_runtime
 from datetime import timedelta
@@ -32,7 +33,7 @@ from server import (
     network_access_status,
     write_status,
 )
-from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor, delete_skill
+from skill_runtime import SkillAgent, SkillCatalog, TaskCancelled, ToolExecutor, _zip_has_skill_md, delete_skill
 from storage import ChatStorage
 from updater import UpdateManager
 
@@ -1987,6 +1988,77 @@ class SkillIdentityTests(unittest.TestCase):
             self.assertTrue(result["hidden"])
             self.assertTrue(skill_file.exists())
             self.assertEqual([], SkillCatalog([Path(root)], hidden_ids=[skill["id"]]).scan())
+
+    def test_unhide_skill_removes_from_config_and_survives_reload(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "config.json"
+            config = ConfigStore(path)
+            config.hide_skill("abc123")
+            self.assertIn("abc123", config.get_hidden_skill_ids())
+            config.unhide_skill("abc123")
+            self.assertNotIn("abc123", config.get_hidden_skill_ids())
+            # 持久化：重载后依然取消隐藏
+            reloaded = ConfigStore(path)
+            self.assertNotIn("abc123", reloaded.get_hidden_skill_ids())
+
+    def test_hidden_skill_becomes_visible_after_catalog_discard(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            skill_dir = Path(root) / "demo"
+            skill_dir.mkdir()
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: test\n---\n", encoding="utf-8"
+            )
+            catalog = SkillCatalog([Path(root)])
+            skill = catalog.scan()[0]
+            # 隐藏后不可见
+            catalog.hidden_ids.add(skill["id"])
+            self.assertEqual([], catalog.scan())
+            # 取消隐藏（discard hidden_ids）后恢复可见
+            catalog.hidden_ids.discard(skill["id"])
+            self.assertIn(skill["id"], {item["id"] for item in catalog.scan()})
+
+    def test_reinstall_unhides_hidden_skill(self) -> None:
+        # 模拟“隐藏后重新导入”应自动取消隐藏（_finish_install 的核心逻辑）
+        with tempfile.TemporaryDirectory() as root:
+            config_path = Path(root) / "config.json"
+            config = ConfigStore(config_path)
+            skills_dir = Path(root) / "skills"
+            skill_dir = skills_dir / "demo"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: test\n---\n", encoding="utf-8"
+            )
+            catalog = SkillCatalog([skills_dir], hidden_ids=config.get_hidden_skill_ids())
+            skill_id = catalog.scan()[0]["id"]
+            # 隐藏
+            config.hide_skill(skill_id)
+            catalog.hidden_ids.add(skill_id)
+            self.assertEqual([], catalog.scan())
+            # 重新导入：不带隐藏过滤的扫描能识别到该 id
+            installed_ids = {item["id"] for item in SkillCatalog([skills_dir]).scan()}
+            self.assertIn(skill_id, installed_ids)
+            # 自动取消隐藏命中的 id
+            hidden = set(config.get_hidden_skill_ids())
+            for sid in installed_ids & hidden:
+                config.unhide_skill(sid)
+                catalog.hidden_ids.discard(sid)
+            self.assertIn(skill_id, {item["id"] for item in catalog.scan()})
+            reloaded = ConfigStore(config_path)
+            self.assertNotIn(skill_id, reloaded.get_hidden_skill_ids())
+
+    def test_zip_without_skill_md_is_rejected(self) -> None:
+        def _archive(entries: dict[str, str]):
+            bio = io.BytesIO()
+            with zipfile.ZipFile(bio, "w") as zf:
+                for name, text in entries.items():
+                    zf.writestr(name, text)
+            bio.seek(0)
+            return zipfile.ZipFile(bio)
+
+        with _archive({"README.md": "no skill definition"}) as bad:
+            self.assertFalse(_zip_has_skill_md(bad))
+        with _archive({"my-skill/SKILL.md": "---\nname: s\ndescription: d\n---\n", "my-skill/scripts/a.py": "# nested"}) as good:
+            self.assertTrue(_zip_has_skill_md(good))
 
 
 class SkillCacheTests(unittest.TestCase):

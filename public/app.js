@@ -4374,7 +4374,9 @@ async function skillImportFolderFiles(fileList) {
     const result = await api('/api/skills/install_folder', { method: 'POST', body: { files: payload } });
     if (result.configured) state.skillDirs = result.configured;
     renderInstalledSkills(result.skills || []);
-    setSkillImportStatus(`已安装 ${result.files} 个文件到 ${result.dir}`, 'ok');
+    renderHiddenSkills(result.hidden_skills || []);
+    const unhiddenTag = (result.unhidden && result.unhidden.length) ? ` · 已安装并取消隐藏` : '';
+    setSkillImportStatus(`已安装 ${result.files} 个文件到 ${result.dir}${unhiddenTag}`, 'ok');
   } catch (error) {
     setSkillImportStatus(`安装失败：${error.message}`, 'error');
   }
@@ -4387,7 +4389,9 @@ async function skillImportZipFile(file) {
     const result = await api('/api/skills/install', { method: 'POST', body: { name: file.name, data } });
     if (result.configured) state.skillDirs = result.configured;
     renderInstalledSkills(result.skills || []);
-    setSkillImportStatus(`已安装到 ${result.dir}`, 'ok');
+    renderHiddenSkills(result.hidden_skills || []);
+    const unhiddenTag = (result.unhidden && result.unhidden.length) ? ' · 已安装并取消隐藏' : '';
+    setSkillImportStatus(`已安装到 ${result.dir}${unhiddenTag}`, 'ok');
   } catch (error) {
     setSkillImportStatus(`安装失败：${error.message}`, 'error');
   }
@@ -4405,7 +4409,9 @@ async function skillImportMdFile(file) {
     const result = await api('/api/skills/install_folder', { method: 'POST', body: { files: [{ path: 'SKILL.md', data }] } });
     if (result.configured) state.skillDirs = result.configured;
     renderInstalledSkills(result.skills || []);
-    setSkillImportStatus(`已作为 Skill 安装到 ${result.dir}`, 'ok');
+    renderHiddenSkills(result.hidden_skills || []);
+    const unhiddenTag = (result.unhidden && result.unhidden.length) ? ' · 已安装并取消隐藏' : '';
+    setSkillImportStatus(`已作为 Skill 安装到 ${result.dir}${unhiddenTag}`, 'ok');
   } catch (error) {
     setSkillImportStatus(`安装失败：${error.message}`, 'error');
   }
@@ -4435,6 +4441,7 @@ async function loadInstalledSkills(showToast) {
     const data = await api('/api/skills/scan', { method: 'POST', body: {} });
     if (data.configured) state.skillDirs = data.configured;
     renderInstalledSkills(data.skills || []);
+    renderHiddenSkills(data.hidden_skills || []);
     if (showToast) toast('已重新扫描 Skill');
   } catch (error) {
     toast(`扫描失败：${error.message}`);
@@ -4507,9 +4514,57 @@ async function deleteInstalledSkill(skill) {
     if (result.agents) state.bootstrap.agents = result.agents;
     renderInstalledSkills(result.skills || lastInstalledSkills.filter((s) => s.id !== skill.id));
     renderSkills($('#skillSearch')?.value || '');
+    renderHiddenSkills(result.hidden_skills || []);
     toast(result.hidden ? '已删除 Skill（原文件保留并隐藏）' : `已删除，回收位置：${result.recycled_to || '未知'}`);
   } catch (error) {
     toast(`删除失败：${error.message}`);
+  }
+}
+
+function renderHiddenSkills(hiddenSkills) {
+  const list = $('#hiddenSkillList');
+  if (!list) return;
+  const items = Array.isArray(hiddenSkills) ? hiddenSkills : [];
+  const count = $('#hiddenSkillCount');
+  if (count) count.textContent = String(items.length);
+  list.innerHTML = '';
+  if (!items.length) {
+    list.innerHTML = '<small class="hint">无已隐藏的 Skill</small>';
+    return;
+  }
+  items.forEach((skill) => {
+    const item = document.createElement('div');
+    item.className = 'skill-item connection-item';
+    const info = document.createElement('div');
+    const b = document.createElement('b');
+    b.textContent = skill.name;
+    const small = document.createElement('small');
+    small.textContent = skill.description || skill.path;
+    small.className = 'desc';
+    info.append(b, small);
+    item.append(info);
+    const unhide = document.createElement('button');
+    unhide.className = 'skill-delete';
+    unhide.type = 'button';
+    unhide.title = '取消隐藏，恢复为可用的 Skill';
+    unhide.textContent = '取消隐藏';
+    unhide.addEventListener('click', () => unhideSkill(skill.id));
+    item.append(unhide);
+    list.append(item);
+  });
+}
+
+async function unhideSkill(skillId) {
+  if (!skillId) return;
+  try {
+    const result = await api('/api/skills/unhide', { method: 'POST', body: { skill_id: skillId } });
+    if (state.bootstrap && result.skills) state.bootstrap.skills = result.skills;
+    renderInstalledSkills(result.skills || []);
+    renderHiddenSkills(result.hidden_skills || []);
+    renderSkills($('#skillSearch')?.value || '');
+    toast('已取消隐藏该 Skill');
+  } catch (error) {
+    toast(`取消隐藏失败：${error.message}`);
   }
 }
 

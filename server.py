@@ -54,6 +54,7 @@ from skill_runtime import (
     SkillCatalog,
     TaskCancelled,
     ToolExecutor,
+    _zip_has_skill_md,
     delete_skill,
     remove_skill_references,
 )
@@ -904,6 +905,16 @@ class ConfigStore:
             hidden = self.data.setdefault("hidden_skill_ids", [])
             if skill_id not in hidden:
                 hidden.append(skill_id)
+                self.save()
+            return list(hidden)
+
+    def unhide_skill(self, skill_id: str) -> list[str]:
+        """从 hidden_skill_ids 移除该 id 并持久化；与 hide_skill 对称。"""
+        skill_id = str(skill_id or "").strip()
+        with self.lock:
+            hidden = self.data.setdefault("hidden_skill_ids", [])
+            if skill_id in hidden:
+                hidden.remove(skill_id)
                 self.save()
             return list(hidden)
 
@@ -3147,9 +3158,15 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/skills/install_folder":
             self._install_folder(body)
         elif path == "/api/skills/scan":
-            self._json({"skills": APP.catalog.scan(), "configured": APP.config.get_skills_dirs()})
+            self._json({
+                "skills": APP.catalog.scan(),
+                "configured": APP.config.get_skills_dirs(),
+                "hidden_skills": self._hidden_skill_entries(),
+            })
         elif path == "/api/skills/delete":
             self._delete_skill(body)
+        elif path == "/api/skills/unhide":
+            self._unhide_skill(body)
         elif path == "/api/migration/backup":
             self._json(APP.migration_backup())
         elif path == "/api/migration/run":
@@ -3536,10 +3553,20 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _finish_install(self, dest_raw: str, dest: Path, extra: dict[str, Any] | None = None) -> None:
         APP.config.add_skills_dir(dest_raw)
         APP.catalog.add_directory(dest_raw)
+        # “导入即启用”：若本次安装目录里的 Skill 命中过 hidden_skill_ids（此前被隐藏/删除），
+        # 自动取消隐藏，避免 scan() 静默过滤导致 UI 导入成功却不显示。
+        installed_ids = {str(item.get("id") or "") for item in SkillCatalog([dest]).scan()}
+        hidden_ids = set(APP.config.get_hidden_skill_ids())
+        unhidden: list[str] = [sid for sid in installed_ids if sid in hidden_ids]
+        for sid in unhidden:
+            APP.config.unhide_skill(sid)
+            APP.catalog.hidden_ids.discard(sid)
         payload: dict[str, Any] = {
             "dir": str(dest),
             "configured": APP.config.get_skills_dirs(),
             "skills": APP.catalog.scan(),
+            "hidden_skills": self._hidden_skill_entries(),
+            "unhidden": unhidden,
         }
         if extra:
             payload.update(extra)
@@ -3571,6 +3598,12 @@ class RequestHandler(BaseHTTPRequestHandler):
                 bad = archive.testzip()
                 if bad is not None:
                     self._json({"error": f"压缩包损坏：{bad}"}, HTTPStatus.BAD_REQUEST)
+                    return
+                if not _zip_has_skill_md(archive):
+                    self._json(
+                        {"error": "压缩包必须包含 SKILL.md（位于压缩包顶层或其下一级目录）"},
+                        HTTPStatus.BAD_REQUEST,
+                    )
                     return
                 members = archive.infolist()
                 if len(members) > 5000:
@@ -3646,6 +3679,34 @@ class RequestHandler(BaseHTTPRequestHandler):
             target.write_bytes(data)
         self._finish_install(dest_raw, dest, {"files": len(pending)})
 
+    def _hidden_skill_entries(self) -> list[dict[str, Any]]:
+        """返回当前被隐藏（命中 hidden_skill_ids，但不带隐藏过滤扫描得到）的 Skill 条目。"""
+        hidden_ids = set(APP.config.get_hidden_skill_ids())
+        if not hidden_ids:
+            return []
+        try:
+            all_skills = SkillCatalog(list(APP.catalog.directories)).scan()
+        except Exception:  # noqa: BLE001 - 隐藏列表只是展示信息，不应让扫描失败
+            return []
+        return [
+            {**item, "hidden": True}
+            for item in all_skills
+            if str(item.get("id") or "") in hidden_ids
+        ]
+
+    def _unhide_skill(self, body: dict[str, Any]) -> None:
+        skill_id = str(body.get("skill_id") or "").strip()
+        if not skill_id:
+            self._json({"error": "skill_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            return
+        APP.config.unhide_skill(skill_id)
+        APP.catalog.hidden_ids.discard(skill_id)
+        self._json({
+            "ok": True,
+            "skills": APP.catalog.scan(),
+            "hidden_skills": self._hidden_skill_entries(),
+        })
+
     def _delete_skill(self, body: dict[str, Any]) -> None:
         skill_id = str(body.get("skill_id") or "").strip()
         if not skill_id:
@@ -3700,6 +3761,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "cleaned_agent_refs": result.get("cleaned_agent_refs", []),
                 "skills": APP.catalog.scan(),
                 "agents": APP.config.public_agents(),
+                "hidden_skills": self._hidden_skill_entries(),
             }
         )
 
