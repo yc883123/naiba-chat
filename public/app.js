@@ -892,6 +892,7 @@ async function confirmEditMessage(row, newText) {
       method: 'POST',
       body: { conversation_id: state.conversationId, message_id: messageId },
     });
+    toast('已从该消息重开，编辑点之前的上下文将复用缓存');
     // 恢复原消息的附件，供重发使用
     state.pendingFiles = (result.attachments || []).map((f) => ({ name: f.name, path: f.path, size: f.size }));
     renderPendingFiles();

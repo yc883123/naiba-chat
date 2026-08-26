@@ -658,26 +658,35 @@ class ChatStorage:
         return cursor.rowcount
 
     def truncate_from_message(self, conversation_id: str, message_id: str) -> int:
-        """删除某条消息及其之后（同一会话内 created_at 不早于它的）所有消息。
+        """删除某条消息及其之后（同一会话内按 (created_at, rowid) 排序不早于它的）所有消息。
 
         返回删除的消息条数。用于"编辑历史消息后从该处重新开始"。
+
+        使用 SQLite 隐式 rowid 做复合排序定位编辑点：同毫秒时间戳的多条消息
+        也保证只删编辑点及之后，前缀消息（含 metadata.trace / reasoning）字节级不变，
+        从而使编辑重发时能命中 OpenAI/DeepSeek 等提供商的自动前缀缓存。
         """
         with self._connect() as db:
             target = db.execute(
-                "SELECT created_at FROM messages WHERE id = ? AND conversation_id = ?",
+                "SELECT created_at, rowid FROM messages WHERE id = ? AND conversation_id = ?",
                 (message_id, conversation_id),
             ).fetchone()
             if not target:
                 return 0
             created_at = target[0]
-            # 先删关联的 tool_runs（按被删消息的 created_at 区间）
+            rowid = target[1]
+            # 先删关联的 tool_runs：工具结果必然晚于对应用户消息，保持 created_at 区间删除
+            # （tool_runs 无 message 外键，同毫秒边界误删风险可忽略）。
             db.execute(
                 "DELETE FROM tool_runs WHERE conversation_id = ? AND created_at >= ?",
                 (conversation_id, created_at),
             )
+            # 精确删除编辑点及其之后的消息：按 (created_at, rowid) 复合条件，
+            # 前缀消息一律保留。
             cursor = db.execute(
-                "DELETE FROM messages WHERE conversation_id = ? AND created_at >= ?",
-                (conversation_id, created_at),
+                "DELETE FROM messages WHERE conversation_id = ? "
+                "AND (created_at > ? OR (created_at = ? AND rowid >= ?))",
+                (conversation_id, created_at, created_at, rowid),
             )
             db.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",

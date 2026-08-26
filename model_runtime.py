@@ -924,10 +924,19 @@ class ModelRuntime:
             if temperature is not None:
                 payload["temperature"] = temperature
             if system:
-                payload["system"] = system
+                # Anthropic 的前缀缓存必须显式标记 cache_control 才生效；
+                # system 改为 content block 数组并打上缓存断点。
+                payload["system"] = [{
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }]
             if native_tools:
                 payload["tools"] = native_tools
                 payload["tool_choice"] = {"type": "auto"}
+            # 在最后一条非 tool_result 的 user 消息末尾追加缓存断点，
+            # 让编辑重开时编辑点之前的前缀命中 Anthropic prompt cache。
+            ModelRuntime._claude_apply_cache_control(payload["messages"])
             if api_key:
                 headers["x-api-key"] = api_key
             headers["anthropic-version"] = "2023-06-01"
@@ -2100,6 +2109,36 @@ class ModelRuntime:
             for index, call in enumerate(calls)
         }
         return ModelRuntime._build_action_from_native_tool_calls(native)
+
+    @staticmethod
+    def _claude_apply_cache_control(messages: list[dict[str, Any]]) -> None:
+        """在最后一条"非 tool_result 的 user 消息"末尾追加 cache_control，启用前缀缓存。
+
+        Anthropic 的 prompt caching 必须显式标记 ``cache_control: {"type": "ephemeral"}``
+        才生效。约束：
+        - 只能标记在 user 角色消息上（assistant 之后内容会打断缓存）；
+        - 绝不能标记在含 tool_result 的 user 消息上（否则 API 400）。
+        """
+        for message in reversed(messages):
+            if str(message.get("role") or "") != "user":
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                if not content:
+                    continue
+                message["content"] = [{"type": "text", "text": content}]
+                content = message["content"]
+            if not isinstance(content, list) or not content:
+                continue
+            if any(
+                isinstance(block, dict) and block.get("type") == "tool_result"
+                for block in content
+            ):
+                continue
+            last_block = content[-1]
+            if isinstance(last_block, dict):
+                last_block["cache_control"] = {"type": "ephemeral"}
+            return
 
     @staticmethod
     def _reasoning_action(reasoning: str) -> str:

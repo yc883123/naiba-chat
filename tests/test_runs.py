@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -116,6 +117,121 @@ class RunStorageTests(unittest.TestCase):
             self.assertEqual("保留的标题", cleared["title"])
             self.assertTrue(cleared["title_customized"])
             self.assertEqual("local:llama", cleared["model_key"])
+            del storage
+            gc.collect()
+
+    def _add_message_at(
+        self,
+        storage: ChatStorage,
+        conversation_id: str,
+        role: str,
+        content: str,
+        created_at: int,
+        metadata: dict[str, object] | None = None,
+    ) -> str:
+        """直接插入带指定 created_at 的消息，用于构造同毫秒边界场景。"""
+        message_id = uuid.uuid4().hex
+        with storage._connect() as db:
+            db.execute(
+                "INSERT INTO messages(id, conversation_id, role, content, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (message_id, conversation_id, role, content,
+                 json.dumps(metadata or {}, ensure_ascii=False), created_at),
+            )
+        return message_id
+
+    def test_truncate_keeps_prefix_messages_verbatim(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            trace = [
+                {"role": "assistant", "content": "", "reasoning_content": "思考中",
+                 "tool_calls": [{"id": "call_1", "name": "read_file",
+                                 "arguments": {"path": "D:/s.md"}}]},
+                {"role": "tool", "tool_call_id": "call_1", "name": "read_file",
+                 "content": "结果"},
+            ]
+            m1 = self._add_message_at(storage, conversation["id"], "user", "hello", 1000)
+            m2 = self._add_message_at(storage, conversation["id"], "assistant", "answer1",
+                                      2000, {"trace": trace})
+            m3 = self._add_message_at(storage, conversation["id"], "user", "next", 3000)
+            m4 = self._add_message_at(storage, conversation["id"], "assistant", "answer2", 4000)
+
+            removed = storage.truncate_from_message(conversation["id"], m3)
+            self.assertEqual(2, removed)
+            remaining = storage.get_conversation(conversation["id"])["messages"]
+            self.assertEqual([m1, m2], [item["id"] for item in remaining])
+            # 前缀消息字节级保留（含 trace metadata），编辑重发才能命中前缀缓存
+            self.assertEqual(trace, remaining[1]["metadata"]["trace"])
+            self.assertEqual("answer1", remaining[1]["content"])
+            del storage
+            gc.collect()
+
+    def test_truncate_same_millisecond_boundary_keeps_earlier_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            m1 = self._add_message_at(storage, conversation["id"], "user", "first", 1000)
+            m2 = self._add_message_at(storage, conversation["id"], "assistant", "reply", 1000)
+            m3 = self._add_message_at(storage, conversation["id"], "user", "second", 1000)
+            m4 = self._add_message_at(storage, conversation["id"], "assistant", "reply2", 2000)
+
+            # 编辑同毫秒里的一条消息：只删它及之后，前缀 m1 必须保留
+            removed = storage.truncate_from_message(conversation["id"], m2)
+            self.assertEqual(3, removed)
+            remaining = storage.get_conversation(conversation["id"])["messages"]
+            self.assertEqual([m1], [item["id"] for item in remaining])
+            del storage
+            gc.collect()
+
+    def test_truncate_first_message_removes_everything(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            m1 = self._add_message_at(storage, conversation["id"], "user", "one", 1000)
+            self._add_message_at(storage, conversation["id"], "assistant", "two", 2000)
+            self.assertEqual(2, storage.truncate_from_message(conversation["id"], m1))
+            self.assertEqual([], storage.get_conversation(conversation["id"])["messages"])
+            del storage
+            gc.collect()
+
+    def test_truncate_last_message_removes_only_itself(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            m1 = self._add_message_at(storage, conversation["id"], "user", "one", 1000)
+            m2 = self._add_message_at(storage, conversation["id"], "assistant", "two", 2000)
+            m3 = self._add_message_at(storage, conversation["id"], "user", "three", 3000)
+            self.assertEqual(1, storage.truncate_from_message(conversation["id"], m3))
+            remaining = storage.get_conversation(conversation["id"])["messages"]
+            self.assertEqual([m1, m2], [item["id"] for item in remaining])
+            del storage
+            gc.collect()
+
+    def test_truncate_removes_tool_runs_at_or_after_edit_point(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            self._add_message_at(storage, conversation["id"], "user", "do it", 1000)
+            storage.log_tool_run(conversation["id"], "read_file", {"path": "x"}, "out", True)
+            m2 = self._add_message_at(storage, conversation["id"], "user", "again", 2000)
+            storage.truncate_from_message(conversation["id"], m2)
+            with storage._connect() as db:
+                rows = db.execute(
+                    "SELECT COUNT(*) FROM tool_runs WHERE conversation_id = ?",
+                    (conversation["id"],),
+                ).fetchone()
+            self.assertEqual(0, rows[0])
+            del storage
+            gc.collect()
+
+    def test_truncate_unknown_message_returns_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            storage = self.make_storage(root)
+            conversation = storage.create_conversation()
+            self._add_message_at(storage, conversation["id"], "user", "one", 1000)
+            self.assertEqual(0, storage.truncate_from_message(conversation["id"], "missing"))
+            self.assertEqual(1, len(storage.get_conversation(conversation["id"])["messages"]))
             del storage
             gc.collect()
 
