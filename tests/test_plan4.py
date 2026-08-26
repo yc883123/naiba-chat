@@ -84,9 +84,11 @@ class RunToolScopeTest(TestCase):
         self.assertNotIn("web_search", allowed)
         self.assertNotIn("call_mcp", allowed)
 
-    def test_search_requires_run_switch_and_available_provider(self):
+    def test_search_available_only_requires_endpoint(self):
         agent = next(a for a in server.built_in_agents() if a["id"] == "dsh-standard")
-        self.assertNotIn(
+        # web_search 不再由发送区开关（web_search_enabled）控制，只由端点可用性决定。
+        # 端点可用 → 始终声明（无论开关）；端点不可用 → 不声明。
+        self.assertIn(
             "web_search", self._manager()._resolve_allowed_tools("craft", agent, False)
         )
         self.assertNotIn(

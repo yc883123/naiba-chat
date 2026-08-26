@@ -915,16 +915,13 @@ class VisionSettingsFrontendTest(TestCase):
         self.assertIn("state.bootstrap.skills = lastInstalledSkills", block)
         self.assertIn("renderSkills(", block)
 
-    def test_web_search_button_is_immediately_left_of_send(self):
+    def test_web_search_button_is_removed(self):
         index_html = (Path(__file__).parents[1] / "public" / "index.html").read_text(
             encoding="utf-8"
         )
-        search_position = index_html.index('id="webSearchButton"')
-        send_position = index_html.index('id="sendButton"')
-        self.assertLess(search_position, send_position)
-        between = index_html[search_position:send_position]
-        self.assertNotIn("<textarea", between)
-        self.assertNotIn("</form>", between)
+        # web_search 不再由发送区按钮控制（只靠设置固化），按钮已移除。
+        self.assertNotIn('id="webSearchButton"', index_html)
+        self.assertIn('id="sendButton"', index_html)
 
 
 if __name__ == "__main__":

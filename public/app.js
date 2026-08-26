@@ -1728,7 +1728,6 @@ async function createConversation() {
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
-  updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
@@ -1761,7 +1760,6 @@ async function openConversation(id) {
   renderPermissionModeSwitch();
   // 联网搜索开关由对话数据库字段恢复，不依赖当前浏览器。
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
-  updateWebSearchButton();
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
@@ -1796,7 +1794,6 @@ async function syncCurrentConversation() {
     renderMessages(conversation.messages || []);
     renderPermissionModeSwitch();
     state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
-    updateWebSearchButton();
     state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
     updateDeepReasoningButton();
     state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
@@ -3439,37 +3436,6 @@ async function toggleDeepReasoning() {
   }
 }
 
-function updateWebSearchButton() {
-  const btn = $('#webSearchButton');
-  if (!btn) return;
-  const disabled = Boolean(state.chatRunId || state.abortController);
-  btn.disabled = disabled;
-  btn.classList.toggle('active', state.webSearchEnabled);
-  btn.setAttribute('aria-pressed', String(state.webSearchEnabled));
-  btn.title = state.webSearchEnabled ? '联网搜索：开启' : '联网搜索：关闭';
-}
-
-async function toggleWebSearch() {
-  if (!state.conversationId) await createConversation();
-  if (state.chatRunId || state.abortController) return;
-  const previous = state.webSearchEnabled;
-  state.webSearchEnabled = !previous;
-  updateWebSearchButton();
-  try {
-    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
-      method: 'POST',
-      body: { web_search_enabled: state.webSearchEnabled },
-    });
-    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
-    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    toast(state.webSearchEnabled ? '联网搜索已开启（本对话）' : '联网搜索已关闭（本对话）');
-  } catch (error) {
-    state.webSearchEnabled = previous;
-    updateWebSearchButton();
-    toast(`联网搜索设置保存失败：${error.message}`);
-  }
-}
-
 function updateLightweightModeControl() {
   const toggle = $('#lightweightModeToggle');
   const attach = $('#attachButton');
@@ -3479,7 +3445,6 @@ function updateLightweightModeControl() {
   }
   if (attach) attach.disabled = false;
   updateDeepReasoningButton();
-  updateWebSearchButton();
 }
 
 async function toggleLightweightMode() {
@@ -4150,7 +4115,6 @@ function bindEvents() {
     const path = decodeURIComponent(new URL(source, location.href).searchParams.get('path') || '');
     if (path) event.dataTransfer.setData('application/x-naiba-file-path', path);
   });
-  $('#webSearchButton').addEventListener('click', toggleWebSearch);
   $('#deepReasoningButton').addEventListener('click', toggleDeepReasoning);
   $('#reasoningMenu')?.addEventListener('click', async (event) => {
     const effort = event.target.closest?.('[data-reasoning-effort]')?.dataset.reasoningEffort;

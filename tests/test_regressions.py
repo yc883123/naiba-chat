@@ -1510,13 +1510,12 @@ class ConversationInteractionHistoryTests(unittest.TestCase):
 
 
 class TokenUsageUITests(unittest.TestCase):
-    def test_context_ring_is_between_search_and_send_controls(self) -> None:
+    def test_context_ring_is_before_send_controls(self) -> None:
         markup = Path("public/index.html").read_text(encoding="utf-8")
-        search = markup.index('id="webSearchButton"')
         context = markup.index('id="contextUsageButton"')
         send = markup.index('id="sendButton"')
-
-        self.assertLess(search, context)
+        # web_search 按钮已移除（改由设置固化）；上下文环仍在发送区之前。
+        self.assertNotIn('id="webSearchButton"', markup)
         self.assertLess(context, send)
 
     def test_usage_ring_uses_persisted_context_and_turn_totals(self) -> None:
