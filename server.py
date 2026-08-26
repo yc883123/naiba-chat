@@ -1850,22 +1850,34 @@ def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dic
                 raw_reasoning = str(raw_reasoning)
             if str(raw_reasoning or "").strip():
                 message["reasoning_content"] = str(raw_reasoning)
-        # 方案 B：assistant 消息若带完整“本轮消息轨迹”，就**原样重放**（含工具调用、工具结果、推理），
-        # 让下一轮历史与上一轮实际发送给模型的上下文逐字节一致，DeepSeek 前缀缓存才能迁移。
-        # 旧会话没有 trace 时，回退到内容读取类结果的 <untrusted_tool_result> 注入。
+        # trace 权威化：本轮 trace 已包含最终答复（含工具调用/结果/推理），重放端只重放
+        # trace，不再另行拼接 message，从而消除“答复重复 → 前缀错位”的隐患。对旧格式
+        # （trace 不含答复）做兜底：仅当 trace 末条不是本次答复（assistant 文本消息）时，
+        # 才追加 message，保证存量会话不丢答复、也不重复。
         if item.get("role") == "assistant":
             trace = (item.get("metadata") or {}).get("trace") or []
             if trace:
+                last_replayed: dict[str, Any] | None = None
                 for m in trace:
                     tmsg = _copy_model_trace_message(m)
                     if tmsg is None:
                         continue
                     history.append(tmsg)
+                    last_replayed = tmsg
+                already_has_answer = bool(
+                    last_replayed is not None
+                    and last_replayed.get("role") == "assistant"
+                    and not last_replayed.get("tool_calls")
+                )
+                if not already_has_answer:
+                    history.append(message)
             else:
                 tool_block = _content_read_tool_outputs((item.get("metadata") or {}).get("tool_runs"))
                 if tool_block:
                     history.append({"role": "user", "content": tool_block})
-        history.append(message)
+                history.append(message)
+        else:
+            history.append(message)
     return history
 
 

@@ -127,6 +127,8 @@ def _merge_usage_summary(
         or merged["input_tokens"] + merged["output_tokens"]
     )
     merged["cached_tokens"] = max(0, int(latest.get("cached_tokens") or 0))
+    # 真正被重新计算（缓存未命中）的输入 token，用来避免只看命中率百分比被稀释。
+    merged["uncached_tokens"] = max(0, merged["input_tokens"] - merged["cached_tokens"])
     merged["requests"] = max(0, int(summary.get("requests") or 0)) + 1
     merged["last_input_tokens"] = merged["input_tokens"]
     merged["last_output_tokens"] = merged["output_tokens"]

@@ -964,27 +964,29 @@ class RunFrontendTests(unittest.TestCase):
 
 class SkillInjectionByteConsistencyTests(unittest.TestCase):
     def test_all_skill_injection_paths_share_one_header(self) -> None:
-        # A skill introduced mid-run must be injected with the SAME byte layout
-        # the build-time path uses; otherwise DeepSeek's token-prefix cache is
-        # re-broken when that skill is later baked into the build-time system.
+        # 前端（冻结政策）技能在 system 里共享同一个 SKILL_PROMPT_HEADER + "\n\n" 连接；
+        # 轮中动态激活的技能不再前插 system，而是作为 [技能指令] 尾部系统级指令追加，
+        # 以保证 system 前端字节稳定、前缀缓存不被破坏。
         source = Path("skill_runtime.py").read_text(encoding="utf-8")
 
-        # A single shared header constant is defined and used by both paths.
+        # 单一共享 header 常量仍被前端路径使用。
         self.assertIn('SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参考资料时，使用 read_file 读取：\\n"', source)
         self.assertNotIn("刚激活的可信 Skill", source)
 
-        # Build-time: one SKILL_PROMPT_HEADER, then skill blocks joined by "\n\n".
+        # Build-time（前端冻结技能）：一个 SKILL_PROMPT_HEADER，然后 "\n\n" 连接各块。
         self.assertIn('system += "\\n\\n" + SKILL_PROMPT_HEADER + "\\n\\n".join(skill_prompts)', source)
 
-        # Runtime: same "\n\n" join, and the header is only (re)added when the
-        # system message did not already carry a skill section.
-        self.assertIn('messages[0]["content"] += "\\n\\n" + "\\n\\n".join(new_skill_prompts)', source)
-        self.assertIn("if not skill_section_started:", source)
-        self.assertIn('messages[0]["content"] += "\\n\\n" + SKILL_PROMPT_HEADER', source)
+        # 轮中动态技能：走 [技能指令] 尾部系统级指令，绝不改写 messages[0]（不破坏缓存前缀）。
+        self.assertIn('"[技能指令] 以下为新增技能说明，视为系统级要求', source)
+        self.assertNotIn('messages[0]["content"] += "\\n\\n" + "\\n\\n".join(new_skill_prompts)', source)
+        self.assertNotIn("skill_section_started", source)
 
-    def test_skill_section_started_tracks_initial_skill_set(self) -> None:
+    def test_front_and_tail_skill_split_is_byte_stable(self) -> None:
+        # 会话冻结：前端技能来自政策（frozen_skill_ids），动态技能走尾部，保证字节稳定。
         source = Path("skill_runtime.py").read_text(encoding="utf-8")
-        self.assertIn("skill_section_started = bool(skill_prompts)", source)
+        self.assertIn("frozen_skill_ids = set(_frozen_ids)", source)
+        self.assertIn("front_skills = [s for s in active if str(s.get(\"id\") or \"\") in frozen_skill_ids]", source)
+        self.assertIn("tail_skills = [s for s in active if str(s.get(\"id\") or \"\") not in frozen_skill_ids]", source)
 
 
 class ContextWindowGuardTests(unittest.TestCase):

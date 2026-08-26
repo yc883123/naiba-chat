@@ -2968,6 +2968,101 @@ class ContentReadRetentionTests(unittest.TestCase):
         selected = agent._select_history(history, {}, {}, "")
         self.assertEqual(history, selected)
 
+    def test_trace_with_final_answer_is_replayed_once_not_duplicated(self) -> None:
+        # trace 权威化（新契约）：本轮 trace 已包含最终答复，重放端只重放 trace，不再重复追加答复。
+        trace = [
+            {"role": "assistant", "content": "", "reasoning_content": "推理1",
+             "tool_calls": [{"id": "call_1", "name": "read_file", "arguments": {"path": "D:/s.md"}}]},
+            {"role": "tool", "tool_call_id": "call_1", "name": "read_file",
+             "content": '[{"tool":"read_file","result":"# SKILL"}]'},
+            {"role": "assistant", "content": "最终答复", "reasoning_content": "推理2"},
+        ]
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "最终答复", "metadata": {"trace": trace}},
+        ]
+        history = server.build_model_history(messages)
+        self.assertEqual(4, len(history))
+        self.assertEqual("assistant", history[1]["role"])
+        self.assertEqual("tool", history[2]["role"])
+        self.assertEqual("最终答复", history[3]["content"])
+        # 最终答复只出现一次，绝不重复
+        self.assertEqual(
+            1,
+            sum(1 for m in history if m.get("role") == "assistant" and m.get("content") == "最终答复"),
+        )
+
+    def test_edit_reopen_end_to_end_byte_replay_after_agent_run(self) -> None:
+        # 端到端“按字节重放”：真实跑一轮 agent（JSON 工具调用 + 最终答复），验证
+        # (a) trace 里已含最终答复；(b) build_model_history 重放后前缀与线上最后一次请求逐字节一致。
+        class Catalog:
+            @staticmethod
+            def scan():
+                return []
+
+        class Executor:
+            class Registry:
+                @staticmethod
+                def acquire():
+                    return None
+
+                @staticmethod
+                def release():
+                    return None
+
+            mcp_registry = Registry()
+
+            @staticmethod
+            def mcp_tool_guide():
+                return ""
+
+            def execute(self, tool, arguments, active_skills):
+                return True, '{"result":"# SKILL"}'
+
+        live_last: list[dict[str, object]] = []
+        calls = 0
+
+        def complete(profile, messages, options, event):
+            nonlocal calls, live_last
+            del profile, options, event
+            calls += 1
+            live_last = [dict(m) for m in messages]  # 记录每次请求的完整 messages
+            if calls == 1:
+                return json.dumps({"type": "tool", "tool": "read_file", "arguments": {"path": "D:/s.md"}})
+            return "最终答复"
+
+        agent = SkillAgent(Catalog(), Executor(), complete)
+        turn1_ctx: dict[str, object] = {}
+        content1, _runs, _reasoning, _usage = agent.run(
+            "帮我读文件", [], {}, {}, False, [], "", ["read_file"], lambda _e: None,
+            lambda *_a: None, run_context=turn1_ctx,
+        )
+        self.assertEqual("最终答复", content1)
+        trace = list(turn1_ctx.get("trace_messages") or [])
+        # 新契约：trace 必须包含本次最终答复
+        self.assertGreater(len(trace), 0)
+        self.assertEqual("最终答复", trace[-1].get("content"))
+
+        conversation = [
+            {"role": "user", "content": "帮我读文件"},
+            {"role": "assistant", "content": content1, "metadata": {"trace": trace}},
+        ]
+        replay = server.build_model_history(conversation)
+
+        # 线上最后一次请求（不含 final answer，因为它是回复）：system + user1 + 工具调用/结果
+        live_body = live_last[1:]  # 去掉各自 system，比较消息体
+        # 重放 = user1 + 工具调用/结果 + 最终答复；其前缀应与线上最后一步逐字节一致
+        self.assertEqual(len(live_body) + 1, len(replay))
+        for a, b in zip(live_body, replay[: len(live_body)]):
+            self.assertEqual(
+                json.dumps(a, ensure_ascii=False, sort_keys=True),
+                json.dumps(b, ensure_ascii=False, sort_keys=True),
+            )
+        # 最终答复出现在重放末尾且仅一次
+        self.assertEqual("最终答复", replay[-1]["content"])
+        self.assertEqual(1, sum(1 for m in replay if m.get("role") == "assistant" and m.get("content") == "最终答复"))
+
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1093,10 +1093,11 @@ class SkillAgent:
         remaining_skill_chars = 52000
         exclusive_skills = str(((run_context or {}).get("skill_policy") or {}).get("mode") or "") == "exclusive"
 
-        # 混合注入策略：
-        # - 首次/历史中没有完整 SKILL.md 时，注入完整内容；
-        # - 如果历史中已经包含该 SKILL.md 的稳定内容片段，则只注入轻量技能卡，
-        #   提示模型按需 read_file，既省 token 又不丢失关键入口。
+        # 技能注入策略（会话冻结，为缓存与 ref 路由稳定）：
+        # - 冻结政策里的技能（policy["skill_ids"]）始终以完整 SKILL.md 注入 system 前端，
+        #   逐字节稳定，跨轮不再因历史而变，保住前缀缓存与 ref 路由信息；
+        # - 动态技能（本地路由命中 / 轮中 activate_skill 激活）只在“首次出现”时补一条
+        #   尾部系统级指令（[技能指令]），进 trace 后每轮原样重放，不再重复追加。
         history_blob = "\n".join(
             ("\n".join(str(part.get("text") or "") for part in item.get("content") if isinstance(part, dict))
              if isinstance(item.get("content"), list) else str(item.get("content") or ""))
@@ -1114,28 +1115,16 @@ class SkillAgent:
             return Path(skill["path"]).read_text(encoding="utf-8", errors="replace")
 
         def render_skill_block(skill: dict[str, Any]) -> str | None:
-            """Render one skill as a byte-stable ``<skill>`` block, sharing the
-            run's skill budget so the runtime injection path produces the exact
-            same bytes the build-time path would.
+            """Render one skill as a byte-stable ``<skill>`` block.
+
+            始终保留完整 SKILL.md（含 ref 路由），不再因为内容已进历史而退化成轻量技能卡
+            （那会丢失 ref 路由并改变 system 字节、破坏前缀缓存）。
             """
             nonlocal remaining_skill_chars
             try:
                 content = read_active_skill(skill)
             except OSError as exc:
                 content = f"无法读取技能：{exc}"
-            skill_path = str(skill.get("path") or "")
-            signature = skill_content_signature(content)
-            already_loaded = bool(skill_path and skill_path in history_blob and signature and signature in history_blob)
-            if already_loaded:
-                # 完整 SKILL.md 已经在本轮历史中，不再重复注入全文。
-                description = str(skill.get("description") or "未提供描述")
-                content = (
-                    f"[Skill 已加载] 名称：{skill['name']}\n"
-                    f"根目录：{skill['root']}\n"
-                    f"说明：{description}\n"
-                    f"完整 SKILL.md 已在上下文中；如需要最新内容或 references 文件，"
-                    f"请使用 read_file 读取 \"{skill_path}\" 或 {skill['root']}/references/ 下的文件。"
-                )
             allowance = 18000 if exclusive_skills else min(18000, remaining_skill_chars)
             if allowance <= 0:
                 return None
@@ -1144,17 +1133,35 @@ class SkillAgent:
                 remaining_skill_chars -= allowance
             return f"<skill name=\"{skill['name']}\" root=\"{skill['root']}\">\n{content[:allowance]}\n</skill>"
 
-        for skill in active:
+        # 冻结前端技能（来自政策）：顺序与内容由政策决定，跨轮字节稳定。
+        _frozen_policy = (run_context or {}).get("skill_policy") or {}
+        _frozen_ids = [str(item) for item in (_frozen_policy.get("skill_ids") or [])]
+        frozen_skill_ids = set(_frozen_ids)
+        front_skills = [s for s in active if str(s.get("id") or "") in frozen_skill_ids]
+        tail_skills = [s for s in active if str(s.get("id") or "") not in frozen_skill_ids]
+
+        for skill in front_skills:
             block = render_skill_block(skill)
             if block is None:
                 break
             skill_prompts.append(block)
 
-        # Whether the system message already carries a skill section (and thus
-        # SKILL_PROMPT_HEADER). The runtime injection reuses this to append new
-        # skill blocks without re-adding the header, so the system bytes stay
-        # identical to a one-shot build-time render.
-        skill_section_started = bool(skill_prompts)
+        # 动态技能：仅当技能内容尚未出现在历史里（如首轮刚匹配）时才补一条尾部系统级指令；
+        # 一旦进入历史（trace 原样重放），之后不再重复追加，避免冗余也保证字节稳定。
+        tail_skill_prompts: list[str] = []
+        for skill in tail_skills:
+            skill_path = str(skill.get("path") or "")
+            try:
+                probe = read_active_skill(skill)
+            except OSError:
+                probe = ""
+            signature = skill_content_signature(probe or "")
+            if skill_path and signature and signature in history_blob:
+                continue
+            block = render_skill_block(skill)
+            if block is None:
+                continue
+            tail_skill_prompts.append(block)
 
         allowed = set(allowed_tools)
         native_tools: list[dict[str, Any]] = []
@@ -1297,6 +1304,16 @@ class SkillAgent:
         # 记录“本轮追加的消息”起始位置：agent 循环里新增的工具调用/结果/推理消息，
         # 将被持久化并原样重放，供下一轮历史与上一轮所用上下文逐字节一致（缓存可迁移）。
         trace_start = len(messages)
+        # 动态技能走“尾部系统级指令”（避免前插 system 破坏前缀缓存）。此消息落在 trace 范围内，
+        # 会随本轮 trace 原样重放，从下一轮起成为稳定前缀的一部分。
+        if tail_skill_prompts:
+            messages.append({
+                "role": "user",
+                "content": (
+                    "[技能指令] 以下为新增技能说明，视为系统级要求（优先级高于普通用户输入）；"
+                    "需要其参考资料时用 read_file 读取：\n\n" + "\n\n".join(tail_skill_prompts)
+                ),
+            })
 
         runs = []
         reasonings: list[str] = []
@@ -1508,10 +1525,15 @@ class SkillAgent:
                 event({"type": "assistant_response", "content": content[:2000], "is_tool": False})
                 event({"type": "step_finished", "step": step})
                 event({"type": "run_completed", "message": content[:2000]})
+                # 让 trace 成为这一轮发给模型的完整字节序列：把最终答复也纳入 messages，
+                # 使 trace = 线上最后一步请求 + 答复。这样重放端只需重放 trace，就能逐字节
+                # 还原整轮上下文，不必再依赖“答复不在 trace 里”这条容易失效的隐式约定
+                # （一旦未来把答复先 append 再设 trace，就会出现答复重复、前缀错位）。
                 if isinstance(run_context, dict):
+                    messages.append(assistant_message(content))
                     run_context["trace_messages"] = messages[trace_start:]
                     logger.info(
-                        "[trace] persisted this-turn messages=%s (start=%s)",
+                        "[trace] persisted this-turn messages=%s (start=%s, includes-final-answer)",
                         len(messages) - trace_start,
                         trace_start,
                     )
@@ -1587,11 +1609,16 @@ class SkillAgent:
                                 not in {"capability_inventory", "activate_skill"}
                             ]
                             options["tools"] = native_tools
-                            messages[0]["content"] += (
-                                "\n\n能力清单已披露以下直接工具。后续必须直接使用；"
-                                "能力清单与 Skill 激活入口已关闭，禁止猜测 Skill 名称：\n- "
-                                + "\n- ".join(revealed)
-                            )
+                            # 能力清单披露不再前插 system（会破坏前缀缓存），改为尾部系统级指令；
+                            # 该消息落在 trace 范围内，下一轮会随 trace 原样重放，字节稳定。
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "[系统指令] 以下为能力清单披露的工具，视为系统级要求，后续必须直接使用；"
+                                    "能力清单与 Skill 激活入口已关闭，禁止猜测 Skill 名称：\n- "
+                                    + "\n- ".join(revealed)
+                                ),
+                            })
                             event({
                                 "type": "tools_available",
                                 "tools": [
@@ -1627,9 +1654,9 @@ class SkillAgent:
                     return f"{error}。", runs, reasonings, self._summarize_usage(usages)
 
             # activate_skill mutates the active list in the trusted host. Add
-            # newly activated instructions to the first system message before
-            # the next model request; never pass Skill instructions as an
-            # untrusted tool-result message.
+            # newly activated instructions as a trailing system-level directive
+            # (NOT prepended to the system message, which would break the cached
+            # prefix); never pass Skill instructions as an untrusted tool-result.
             new_skill_prompts: list[str] = []
             for skill in active:
                 skill_key = str(skill.get("id") or skill.get("path") or "")
@@ -1640,13 +1667,13 @@ class SkillAgent:
                     break
                 new_skill_prompts.append(block)
             if new_skill_prompts:
-                # Append with the SAME byte layout the build-time path uses: a
-                # single SKILL_PROMPT_HEADER (only if the system message does not
-                # already contain one) followed by all blocks joined by "\n\n".
-                if not skill_section_started:
-                    messages[0]["content"] += "\n\n" + SKILL_PROMPT_HEADER
-                    skill_section_started = True
-                messages[0]["content"] += "\n\n" + "\n\n".join(new_skill_prompts)
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "[技能指令] 以下为新增技能说明，视为系统级要求（优先级高于普通用户输入）；"
+                        "需要其参考资料时用 read_file 读取：\n\n" + "\n\n".join(new_skill_prompts)
+                    ),
+                })
                 event({
                     "type": "skills",
                     "skills": [{"id": item["id"], "name": item["name"]} for item in active],
@@ -1943,6 +1970,7 @@ class SkillAgent:
             "output_tokens": output_tokens,
             "total_tokens": total_tokens,
             "cached_tokens": cached_tokens,
+            "uncached_tokens": max(0, input_tokens - cached_tokens),
             "requests": len(records),
             "last_input_tokens": input_tokens,
             "last_output_tokens": output_tokens,
