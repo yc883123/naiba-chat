@@ -2838,7 +2838,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.log_error("Request handler error: %s", exc)
             self.close_connection = True
             try:
-                if not self.wfile.closed and not self.headers_sent:
+                # headers_sent 在首次 send_response 前不存在，用 getattr 兜底，否则会再抛
+                # AttributeError 被吞掉、导致依然不回包（net::ERR_EMPTY_RESPONSE）。
+                if not getattr(self.wfile, "closed", True) and not getattr(self, "headers_sent", False):
                     body = json.dumps({"error": f"服务器内部错误：{exc}"}, ensure_ascii=False).encode("utf-8")
                     self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
                     self.send_header("Content-Type", "application/json; charset=utf-8")
