@@ -1618,26 +1618,71 @@ function applyConversationModel(conversation) {
 }
 
 function renderAgents() {
+  const select = $('#agentSelect');
+  if (!select) return;
+  const agents = state.bootstrap?.agents || [];
+  select.innerHTML = '';
+  agents.forEach((agent) => {
+    const option = document.createElement('option');
+    option.value = agent.id;
+    option.textContent = agent.name;
+    select.append(option);
+  });
+  if (!select.options.length) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = '暂无 Agent';
+    select.append(option);
+  }
   applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
 }
 
-// 会话 Agent 只读展示：会话内不可切换（工具集已固化，切换会破坏缓存），需新开对话。
+// 会话 Agent：首轮前可下拉选择；首轮固化工具集后只读展示（切换会破坏缓存，需新开对话）。
 function applyConversationAgent(conversation) {
-  const holder = $('#agentSelect');
-  if (!holder) return;
+  const select = $('#agentSelect');
+  if (!select) return;
   const agents = state.bootstrap?.agents || [];
   const agentId = String(conversation?.agent_id || '');
   let agent = agents.find((a) => String(a.id) === agentId);
-  if (!agent) {
+  const locked = Boolean(conversation?.enabled_tool_ids && conversation.enabled_tool_ids.length);
+  if (agent && [...select.options].some((o) => o.value === agent.id)) {
+    select.value = agent.id;
+  } else {
     const fallback = String(state.bootstrap?.default_agent_id || '');
+    if ([...select.options].some((o) => o.value === fallback)) {
+      select.value = fallback;
+    } else if (select.options.length) {
+      select.selectedIndex = 0;
+    }
     agent = agents.find((a) => String(a.id) === fallback) || agents[0] || null;
   }
-  const locked = Boolean(conversation?.enabled_tool_ids && conversation.enabled_tool_ids.length);
-  holder.textContent = agent?.name || (locked ? 'Agent 已锁定' : '暂无 Agent');
-  holder.title = locked
+  select.disabled = locked;
+  select.title = locked
     ? `当前会话已绑定 Agent「${agent?.name || ''}」并固化工具集，会话内不可切换。如需切换，请让 AI 总结当前对话，复制总结后新开对话。`
-    : `当前 Agent：${agent?.name || '未指定'}。会话内不可切换 Agent，需要时请新开对话。`;
+    : '选择该会话使用的 Agent（发送首条消息后固化，之后不可切换）。';
   renderSkills($('#skillSearch')?.value || '');
+}
+
+async function saveAgentSelection() {
+  const value = $('#agentSelect').value;
+  if (!state.conversationId) {
+    toast('请先打开或新建一个对话');
+    return;
+  }
+  try {
+    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
+      method: 'POST',
+      body: { agent_id: value },
+    });
+    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    renderConversations();
+    renderSkills($('#skillSearch')?.value || '');
+    toast('Agent 已切换');
+  } catch (error) {
+    toast(`切换失败：${error.message}`);
+    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
+  }
 }
 
 async function loadConversations() {
@@ -1671,7 +1716,9 @@ async function createConversation() {
       permission_mode: 'auto',
       web_search_enabled: false,
       deep_reasoning_enabled: false,
-      agent_id: state.bootstrap?.default_agent_id || '',
+      // 新建会话默认沿用上一个会话使用的 Agent；无上一个会话时回退默认 Agent。
+      agent_id: (state.conversations.find((c) => String(c.id) === state.conversationId)?.agent_id)
+        || state.bootstrap?.default_agent_id || '',
     },
   });
   state.conversationId = conversation.id;
@@ -3988,6 +4035,7 @@ function bindEvents() {
   });
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#unloadModel').addEventListener('click', unloadCurrentModel);
+  $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
   $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());
   $('#clearTerminalTasks').addEventListener('click', clearTerminalTasks);
