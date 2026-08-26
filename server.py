@@ -768,6 +768,79 @@ def built_in_agent_ids() -> set[str]:
     return {agent["id"] for agent in built_in_agents()}
 
 
+# ---- 工具目录（Agent 编辑页的可选工具集）----
+# 按职责分组；每个工具的 model_target 标注它是给文本模型（走视觉车道）还是给多模态
+# 视觉模型（vision_read_folder 直接看图）用的；default_selected 决定新建 Agent 的默认勾选。
+_ALIAS_MAIN = {
+    "read": "read_file", "write": "write_file", "edit": "edit_file",
+    "glob": "glob_files", "grep": "search_files",
+}
+_TOOL_GROUP = {
+    "read_file": "文件读取/搜索", "list_directory": "文件读取/搜索", "search_files": "文件读取/搜索",
+    "glob_files": "文件读取/搜索",
+    "write_file": "文件写入/编辑", "edit_file": "文件写入/编辑",
+    "run_command": "命令执行", "pwsh": "命令执行",
+    "run_skill_script": "Skill 脚本",
+    "http_request": "网络", "web_search": "网络",
+    "register_mcp": "MCP", "call_mcp": "MCP",
+    "run_in_background": "后台/Job/子任务", "job_output": "后台/Job/子任务", "job_status": "后台/Job/子任务",
+    "job_wait": "后台/Job/子任务", "job_kill": "后台/Job/子任务", "subagent": "后台/Job/子任务",
+    "todo_write": "后台/Job/子任务", "artifact_report": "后台/Job/子任务",
+    "comfyui_prepare_workflow": "ComfyUI", "comfyui_batch": "ComfyUI",
+    "capability_inventory": "能力/Skill 管理", "activate_skill": "能力/Skill 管理", "install_skill": "能力/Skill 管理",
+    "vision_describe": "视觉（文本模型）", "vision_ground": "视觉（文本模型）", "vision_detect": "视觉（文本模型）",
+    "vision_ocr": "视觉（文本模型）", "vision_colors": "视觉（文本模型）",
+    "vision_crop": "视觉（文本模型）", "vision_pixel_diff": "视觉（文本模型）",
+    "vision_read_folder": "视觉（视觉模型）",
+}
+_MODEL_TARGET = {
+    "vision_read_folder": "vision",
+    "vision_describe": "text", "vision_ground": "text", "vision_detect": "text",
+    "vision_ocr": "text", "vision_colors": "text", "vision_crop": "text", "vision_pixel_diff": "text",
+}
+# 新建 Agent 的默认勾选：常用基础工具 + 让视觉模型看图的 vision_read_folder；MCP/ComfyUI/后台Job/
+# 能力Skill 网关默认不选，用户可自行开启并明确其成本。
+_DEFAULT_SELECTED_TOOLS = frozenset({
+    "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
+    "run_command", "pwsh", "run_skill_script", "http_request", "web_search", "vision_read_folder",
+})
+
+
+def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """从 tool_registry schemas 构建 Agent 编辑页的工具目录（不显示 5 个别名）。"""
+    known = {str(spec.get("name") or ""): spec for spec in schemas if isinstance(spec, dict)}
+    entries: list[dict[str, Any]] = []
+    for name in known:
+        if name in _ALIAS_MAIN:
+            continue  # 别名与主工具等价，不单独显示
+        description = str(known[name].get("description") or "")
+        # 只取描述第一行作为短说明
+        first_line = description.splitlines()[0] if description else ""
+        entries.append({
+            "name": name,
+            "description": first_line[:120],
+            "group": _TOOL_GROUP.get(name, "其他"),
+            "model_target": _MODEL_TARGET.get(name, "any"),
+            "default_selected": name in _DEFAULT_SELECTED_TOOLS,
+            "alias_of": _ALIAS_MAIN.get(name),
+        })
+    # 端到端顺序：把前端呈现顺序稳定化，避免逐轮随机
+    order = (
+        "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
+        "run_command", "pwsh", "run_skill_script", "http_request", "web_search",
+        "register_mcp", "call_mcp",
+        "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+        "todo_write", "artifact_report",
+        "comfyui_prepare_workflow", "comfyui_batch",
+        "capability_inventory", "activate_skill", "install_skill",
+        "vision_read_folder", "vision_describe", "vision_ground", "vision_detect", "vision_ocr",
+        "vision_colors", "vision_crop", "vision_pixel_diff",
+    )
+    index = {name: i for i, name in enumerate(order)}
+    entries.sort(key=lambda item: (index.get(item["name"], 999), item["name"]))
+    return entries
+
+
 # 在线请求协议集合；llama.cpp 提供 OpenAI 兼容接口，但服务进程仍在本机。
 ONLINE_REQUEST_FORMATS = {"openai_chat", "codex_responses", "gemini", "claude"}
 LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp"}
@@ -2789,6 +2862,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(job or {"error": "Job 不存在"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
         elif path == "/api/tools":
             self._json({"tools": APP.tool_registry.schemas()})
+        elif path == "/api/tool_catalog":
+            self._json({"tools": tool_catalog_entries(APP.tool_registry.schemas())})
         elif path == "/api/mcp":
             self._json({"servers": APP.mcp.states()})
         elif path.startswith("/api/jobs/"):
@@ -2949,7 +3024,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             if agent_id is not None and not APP.config.get_agent(str(agent_id)):
                 self._json({"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST)
                 return
-            model_key = body.get("model_key")
+            # 会话已固化启用工具集（会话启动时写死）后，不允许会话内切换 Agent，否则工具集
+            # 会随之变化、破坏前缀缓存。需要切换 Agent 时请新开对话。
+            if agent_id is not None:
+                conv_row = APP.storage.get_conversation(conversation_id)
+                current_agent_id = str((conv_row or {}).get("agent_id") or "")
+                if agent_id != current_agent_id and (conv_row or {}).get("enabled_tool_ids"):
+                    self._json(
+                        {"error": "该会话已固化启用工具集，暂不支持会话内切换 Agent；请新开对话后再切换"},
+                        HTTPStatus.CONFLICT,
+                    )
+                    return
             if model_key is not None and not isinstance(model_key, str):
                 self._json({"error": "model_key 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return

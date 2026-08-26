@@ -800,6 +800,58 @@ class NativeToolAndMcpTests(unittest.TestCase):
         self.assertNotIn("mcp__demo__read", plan)
         self.assertNotIn("mcp__demo__write", plan)
 
+    def test_resolve_allowed_tools_uses_session_hard_limit(self) -> None:
+        registry = SimpleNamespace(
+            names=lambda: ["read_file"], readonly_mcp_tools=lambda: [],
+        )
+        app = SimpleNamespace(
+            config=SimpleNamespace(data={"agent_tools": []}),
+            tool_registry=registry,
+            web_search=SimpleNamespace(is_available=lambda: False),
+        )
+        manager = ConversationRunManager(app)
+        agent = {"tool_scope": ["read_file", "write_file", "http_request"]}
+        # 传入会话固化的硬限制：allowed 恰为该集合，不再叠加 system_tools（后台/视觉等不应出现）
+        allowed = manager._resolve_allowed_tools(
+            "craft", agent, False, "", ["write_file", "read_file", "http_request"]
+        )
+        self.assertNotIn("run_in_background", allowed)
+        self.assertNotIn("vision_describe", allowed)
+        self.assertNotIn("edit_file", allowed)
+        self.assertTrue(all(t in {"write_file", "read_file", "http_request"} for t in allowed))
+
+    def test_bake_session_tool_ids(self) -> None:
+        storage = SimpleNamespace(
+            message_count=lambda cid: 0,
+            set_enabled_tool_ids=lambda cid, ids: None,
+        )
+        registry = SimpleNamespace(schemas=lambda: [
+            {"name": "read_file", "description": "r"},
+            {"name": "write_file", "description": "w"},
+            {"name": "vision_read_folder", "description": "v"},
+        ])
+        app = SimpleNamespace(
+            storage=storage,
+            tool_registry=registry,
+            config=SimpleNamespace(data={"agent_tools": []}),
+            web_search=SimpleNamespace(is_available=lambda: False),
+        )
+        manager = ConversationRunManager(app)
+        agent = {"tool_scope": ["read_file", "vision_read_folder"]}
+        # 新会话（无历史消息）→ 固化当前 Agent 工具集
+        baked = manager._bake_session_tool_ids({"id": "c1", "enabled_tool_ids": []}, agent)
+        self.assertEqual(["read_file", "vision_read_folder"], baked)
+        # 旧会话（已有消息）→ 全激活（迁移兼容）
+        storage.message_count = lambda cid: 3
+        baked2 = manager._bake_session_tool_ids({"id": "c2", "enabled_tool_ids": []}, agent)
+        self.assertIn("write_file", baked2)
+        self.assertIn("read_file", baked2)
+        # 已固化 → 直接返回，不重算
+        baked3 = manager._bake_session_tool_ids(
+            {"id": "c3", "enabled_tool_ids": ["run_command"]}, agent
+        )
+        self.assertEqual(["run_command"], baked3)
+
     def test_agent_continues_with_native_tool_result_context(self) -> None:
         calls = []
 

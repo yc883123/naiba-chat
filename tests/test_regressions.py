@@ -1594,7 +1594,7 @@ class ConversationSearchPersistenceTests(unittest.TestCase):
             )
             self.assertEqual(1, updated["web_search_enabled"])
             self.assertEqual(1, updated["deep_reasoning_enabled"])
-            self.assertEqual(8, storage.get_user_version())
+            self.assertEqual(9, storage.get_user_version())
 
     def test_lightweight_mode_persists_independent_tools_and_skills_switches(self) -> None:
         with tempfile.TemporaryDirectory() as root:
@@ -2103,6 +2103,27 @@ class SkillIdentityTests(unittest.TestCase):
             self.assertFalse(_zip_has_skill_md(bad))
         with _archive({"my-skill/SKILL.md": "---\nname: s\ndescription: d\n---\n", "my-skill/scripts/a.py": "# nested"}) as good:
             self.assertTrue(_zip_has_skill_md(good))
+
+    def test_tool_catalog_entries_grouped_and_no_aliases(self) -> None:
+        schemas = [
+            {"name": "read_file", "description": "读取文本"},
+            {"name": "read", "description": "Harness 别名"},
+            {"name": "write", "description": "Harness 别名"},
+            {"name": "vision_read_folder", "description": "从文件夹读图"},
+            {"name": "run_in_background", "description": "后台"},
+            {"name": "comfyui_batch", "description": "comfy"},
+        ]
+        entries = server.tool_catalog_entries(schemas)
+        names = [entry["name"] for entry in entries]
+        self.assertNotIn("read", names)   # 别名不单独显示
+        self.assertNotIn("write", names)
+        by = {entry["name"]: entry for entry in entries}
+        self.assertEqual("文件读取/搜索", by["read_file"]["group"])
+        self.assertEqual("vision", by["vision_read_folder"]["model_target"])
+        self.assertTrue(by["read_file"]["default_selected"])
+        self.assertTrue(by["vision_read_folder"]["default_selected"])
+        self.assertFalse(by["run_in_background"]["default_selected"])
+        self.assertFalse(by["comfyui_batch"]["default_selected"])
 
 
 class SkillCacheTests(unittest.TestCase):

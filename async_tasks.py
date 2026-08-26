@@ -232,20 +232,28 @@ class ConversationRunManager:
         agent: dict[str, Any],
         web_search_enabled: bool,
         model_key: str = "",
+        enabled_tool_ids: list[str] | None = None,
     ) -> list[str]:
-        """Freeze one run's tools after applying mode, Agent scope, and availability."""
-        base_tools = resolve_mode_tools(
-            mode,
-            [str(item) for item in self.app.config.data.get("agent_tools", [])],
-            self.app.tool_registry.readonly_mcp_tools(),
-        )
-        system_tools = SYSTEM_TOOLS_READONLY if normalize_interaction_mode(mode) == "plan" else SYSTEM_TOOLS_CRAFT
-        allowed_tools = list(dict.fromkeys([*base_tools, *system_tools]))
-        # MCP tools are never added implicitly from registry discovery. They
-        # are available only when a user explicitly places the tool in scope.
-        scope = set(agent.get("tool_scope") or [])
-        if scope:
-            allowed_tools = [tool for tool in allowed_tools if tool in scope]
+        """Freeze one run's tools after applying mode, Agent scope, and availability.
+
+        若传入 ``enabled_tool_ids``（会话启动时固化的启用工具集），则以它作为硬限制，
+        不再叠加 base+system 并集（未固化/无快照时退回旧逻辑，保证迁移/旧会话兼容）。
+        """
+        if enabled_tool_ids:
+            allowed_tools = list(dict.fromkeys(str(item) for item in enabled_tool_ids if item))
+        else:
+            base_tools = resolve_mode_tools(
+                mode,
+                [str(item) for item in self.app.config.data.get("agent_tools", [])],
+                self.app.tool_registry.readonly_mcp_tools(),
+            )
+            system_tools = SYSTEM_TOOLS_READONLY if normalize_interaction_mode(mode) == "plan" else SYSTEM_TOOLS_CRAFT
+            allowed_tools = list(dict.fromkeys([*base_tools, *system_tools]))
+            # MCP tools are never added implicitly from registry discovery. They
+            # are available only when a user explicitly places the tool in scope.
+            scope = set(agent.get("tool_scope") or [])
+            if scope:
+                allowed_tools = [tool for tool in allowed_tools if tool in scope]
         if "web_search" in allowed_tools and not (
             web_search_enabled and self.app.web_search.is_available()
         ):
@@ -273,6 +281,36 @@ class ConversationRunManager:
                 # or temporarily unavailable model profile.
                 pass
         return allowed_tools
+
+    def _all_tool_names(self) -> list[str]:
+        """全部可用的工具 id（含别名），用于旧会话/未配置 agent 的“全激活”固化。"""
+        schemas = (
+            self.app.tool_registry.schemas()
+            if callable(getattr(self.app.tool_registry, "schemas", None))
+            else []
+        )
+        return [str(spec.get("name") or "") for spec in schemas if isinstance(spec, dict) and spec.get("name")]
+
+    def _bake_session_tool_ids(
+        self, conversation: dict[str, Any], agent: dict[str, Any]
+    ) -> list[str]:
+        """固化某会话的启用工具集（会话启动时写死，之后不可改）。
+
+        - 已固化 → 直接返回；
+        - 旧会话（已有消息、未固化）→ 全部激活（迁移兼容，保持既有行为）；
+        - 新会话 → 按当前 Agent 的 tool_scope（空则回退为全量）。
+        """
+        existing = conversation.get("enabled_tool_ids") or []
+        if existing:
+            return [str(item) for item in existing]
+        if self.app.storage.message_count(str(conversation.get("id") or "")) > 0:
+            baked = self._all_tool_names()
+        else:
+            scope = [str(item) for item in (agent.get("tool_scope") or []) if str(item).strip()]
+            baked = scope or self._all_tool_names()
+        baked = list(dict.fromkeys(str(item) for item in baked if item))
+        self.app.storage.set_enabled_tool_ids(str(conversation.get("id") or ""), baked)
+        return baked
 
     def _condition(self, run_id: str) -> threading.Condition:
         with self._lock:
@@ -417,9 +455,15 @@ class ConversationRunManager:
                 )
             except Exception:
                 chat_supports_images = False
-            allowed_tools = [] if "tools" in disabled_features else self._resolve_allowed_tools(
-                mode, agent, web_search_enabled, model_key
-            )
+            if "tools" in disabled_features:
+                allowed_tools = []
+            else:
+                # 会话启动时固化启用工具集（Agent 工具集/旧会话全选），之后不可改，
+                # 作为本轮 allowed_tools 的硬限制，替代 base+system 并集。
+                enabled_tool_ids = self._bake_session_tool_ids(conversation, agent)
+                allowed_tools = self._resolve_allowed_tools(
+                    mode, agent, web_search_enabled, model_key, enabled_tool_ids
+                )
             if "skills" in disabled_features:
                 skill_policy = {"mode": "exclusive", "skill_ids": []}
             else:

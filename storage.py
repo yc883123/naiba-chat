@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -176,6 +176,20 @@ def _migrate_to_v8(db: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_to_v9(db: sqlite3.Connection) -> None:
+    """Persist per-session baked tool set (enabled_tool_ids) on conversations.
+
+    会话启动时按当前 Agent 的工具集固化一次，之后不可改，用于实现“每 Agent 硬限制 +
+    缓存稳定”。旧值默认空串，表示“未固化”。
+    """
+    try:
+        db.execute("SELECT enabled_tool_ids FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN enabled_tool_ids TEXT NOT NULL DEFAULT ''"
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -186,6 +200,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     6: _migrate_to_v6,
     7: _migrate_to_v7,
     8: lambda db: _migrate_to_v8(db),
+    9: _migrate_to_v9,
 }
 
 
@@ -225,6 +240,7 @@ class ChatStorage:
                     stream_enabled INTEGER NOT NULL DEFAULT 1,
                     workspace_dir TEXT NOT NULL DEFAULT '',
                     reasoning_effort TEXT NOT NULL DEFAULT 'off',
+                    enabled_tool_ids TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
@@ -477,13 +493,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -491,7 +507,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -599,6 +615,26 @@ class ChatStorage:
             if cursor.rowcount == 0:
                 return None
         return self.get_conversation(conversation_id, include_messages=False)
+
+    def set_enabled_tool_ids(self, conversation_id: str, tool_ids: list[str] | tuple[str, ...] | set[str]) -> None:
+        """固化某会话的启用工具集（会话启动时写入，之后不可改）。"""
+        with self._connect() as db:
+            db.execute(
+                "UPDATE conversations SET enabled_tool_ids = ?, updated_at = ? WHERE id = ?",
+                (
+                    json.dumps(list(dict.fromkeys(str(item) for item in tool_ids)), ensure_ascii=False),
+                    int(time.time() * 1000),
+                    conversation_id,
+                ),
+            )
+
+    def message_count(self, conversation_id: str) -> int:
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ?",
+                (conversation_id,),
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def add_message(
         self,
@@ -1414,6 +1450,12 @@ class ChatStorage:
             ]
         except (json.JSONDecodeError, TypeError):
             result["lightweight_disabled_features"] = []
+        try:
+            result["enabled_tool_ids"] = json.loads(
+                result.get("enabled_tool_ids") or "[]"
+            )
+        except (json.JSONDecodeError, TypeError):
+            result["enabled_tool_ids"] = []
         return result
 
     @staticmethod
