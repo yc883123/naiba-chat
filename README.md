@@ -1,10 +1,10 @@
-# Naiba Chat 1.3 Beta
+# Naiba Chat 1.4 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.3 Beta 的重点不是增加某一种固定工作流，而是让模型根据用户意图直接调用所需能力，持续执行到完成，并把过程状态和最终产物稳定地交还给用户。
+1.4 Beta 的重点不是增加某一种固定工作流，而是让模型根据用户意图直接调用所需能力，持续执行到完成，并把过程状态和最终产物稳定地交还给用户。
 
-## 1.3 Beta 主要能力
+## 1.4 Beta 主要能力
 
 - **意图直接触发工具**：工具不再依赖先启动某个 Skill。Skill 只提供领域说明和流程建议，不是能力开关。
 - **通用 Agent 自动化**：支持多步工具调用、后台 Job、状态查询、计划执行、子任务和失败后的有界恢复。
@@ -21,7 +21,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.3-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.4-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -99,13 +99,13 @@ http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.3-beta-windows-x64.zip`
+- `naiba-chat-1.4-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.3 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.4 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -117,7 +117,7 @@ http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.3-beta"
+$env:NAIBA_BUILD_VERSION = "1.4-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
