@@ -260,7 +260,7 @@ class PermissionModeFrontendTests(unittest.TestCase):
         self.assertIn('id="permissionModeSwitch"', composer)
         self.assertNotIn("permissionModeSwitch", agent)
         self.assertNotIn('name="permissionMode"', html)
-        self.assertIn("保存工具范围", agent)
+        self.assertIn("Agent 管理", agent)
 
     def test_plan_mode_control_is_removed(self) -> None:
         html = Path("public/index.html").read_text(encoding="utf-8")

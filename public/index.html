@@ -43,7 +43,7 @@
         </label>
         <label class="model-control agent-control">
           <span>Agent</span>
-          <select id="agentSelect" aria-label="当前 Agent"></select>
+          <span id="agentSelect" class="agent-display" aria-label="当前 Agent" title=""></span>
         </label>
         <div class="topbar-actions">
           <button class="control-button unload-model-button" id="unloadModel" type="button" hidden title="卸载当前本地模型">
@@ -351,6 +351,10 @@
                 <div class="agent-skills-head"><span><b>固定 Skill</b><small>该 Agent 启用时自动加载</small></span></div>
                 <div class="skill-list" id="agentSkillList"></div>
               </div>
+              <div class="agent-skills">
+                <div class="agent-skills-head"><span><b>工具集</b><small>该 Agent 启用的工具（会话启动时固化，不可中途更改）</small></span></div>
+                <div class="agent-tool-scope" id="agentToolScope"></div>
+              </div>
               <p class="form-error" id="agentError"></p>
               <div class="form-actions">
                 <button type="button" class="control-button" id="cancelAgent">取消</button>
@@ -358,15 +362,6 @@
               </div>
             </form>
           </div>
-          <h3 class="subheading">工具范围</h3>
-          <div class="permission-grid">
-            <label><input type="checkbox" value="read_file,list_directory,search_files" data-agent-tool><span><b>读取文件</b><small>读取和搜索本机文件</small></span></label>
-            <label><input type="checkbox" value="write_file" data-agent-tool><span><b>写入文件</b><small>创建和修改本机文件</small></span></label>
-            <label><input type="checkbox" value="run_command" data-agent-tool><span><b>运行命令</b><small>执行 PowerShell 命令</small></span></label>
-            <label><input type="checkbox" value="http_request" data-agent-tool><span><b>网络请求</b><small>访问 HTTP 与 HTTPS 地址</small></span></label>
-            <label><input type="checkbox" value="run_skill_script" data-agent-tool><span><b>Skill 脚本</b><small>执行已启用 Skill 的脚本</small></span></label>
-          </div>
-          <div class="form-actions"><button class="primary-button" id="saveAgent" type="button">保存工具范围</button></div>
         </section>
         <section data-settings-panel="runtime" hidden>
           <h3>运行设置</h3>

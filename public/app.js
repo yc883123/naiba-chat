@@ -33,6 +33,9 @@ const state = {
   syncInFlight: false,
   conversationSnapshot: '',
   agentFormSkillIds: [],
+  agentFormToolScope: [],
+  agentFormIsNew: false,
+  toolCatalog: null,
   tasks: [],
   taskTimer: null,
   visionTimer: null,
@@ -1076,7 +1079,6 @@ async function initialize() {
   // 恢复模式 Tab 状态
   $$('.mode-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.mode === state.mode));
   populateRuntimeSettings();
-  populateAgentSettings();
   populateVisionSettings();
   populateSearchSettings();
   renderSkills();
@@ -1616,64 +1618,26 @@ function applyConversationModel(conversation) {
 }
 
 function renderAgents() {
-  const select = $('#agentSelect');
-  if (!select) return;
-  const agents = state.bootstrap?.agents || [];
-  select.innerHTML = '';
-  agents.forEach((agent) => {
-    const option = document.createElement('option');
-    option.value = agent.id;
-    option.textContent = agent.name;
-    select.append(option);
-  });
-  if (!select.options.length) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = '暂无 Agent';
-    select.append(option);
-  }
   applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
 }
 
-// 根据对话已保存的 agent_id 恢复 Agent 选择；未绑定或已删除时回退到默认 Agent
+// 会话 Agent 只读展示：会话内不可切换（工具集已固化，切换会破坏缓存），需新开对话。
 function applyConversationAgent(conversation) {
-  const select = $('#agentSelect');
-  if (!select) return;
+  const holder = $('#agentSelect');
+  if (!holder) return;
   const agents = state.bootstrap?.agents || [];
   const agentId = String(conversation?.agent_id || '');
-  if (agentId && agents.some((agent) => agent.id === agentId) && [...select.options].some((o) => o.value === agentId)) {
-    select.value = agentId;
-  } else {
+  let agent = agents.find((a) => String(a.id) === agentId);
+  if (!agent) {
     const fallback = String(state.bootstrap?.default_agent_id || '');
-    if ([...select.options].some((o) => o.value === fallback)) {
-      select.value = fallback;
-    } else if (select.options.length) {
-      select.selectedIndex = 0;
-    }
+    agent = agents.find((a) => String(a.id) === fallback) || agents[0] || null;
   }
+  const locked = Boolean(conversation?.enabled_tool_ids && conversation.enabled_tool_ids.length);
+  holder.textContent = agent?.name || (locked ? 'Agent 已锁定' : '暂无 Agent');
+  holder.title = locked
+    ? `当前会话已绑定 Agent「${agent?.name || ''}」并固化工具集，会话内不可切换。如需切换，请让 AI 总结当前对话，复制总结后新开对话。`
+    : `当前 Agent：${agent?.name || '未指定'}。会话内不可切换 Agent，需要时请新开对话。`;
   renderSkills($('#skillSearch')?.value || '');
-}
-
-async function saveAgentSelection() {
-  const value = $('#agentSelect').value;
-  if (!state.conversationId) {
-    toast('请先打开或新建一个对话');
-    return;
-  }
-  try {
-    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
-      method: 'POST',
-      body: { agent_id: value },
-    });
-    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
-    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    renderConversations();
-    renderSkills($('#skillSearch')?.value || '');
-    toast('Agent 已切换');
-  } catch (error) {
-    toast(`切换失败：${error.message}`);
-    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
-  }
 }
 
 async function loadConversations() {
@@ -1707,7 +1671,7 @@ async function createConversation() {
       permission_mode: 'auto',
       web_search_enabled: false,
       deep_reasoning_enabled: false,
-      agent_id: $('#agentSelect')?.value || state.bootstrap?.default_agent_id || '',
+      agent_id: state.bootstrap?.default_agent_id || '',
     },
   });
   state.conversationId = conversation.id;
@@ -2648,23 +2612,6 @@ async function testSearchConnection() {
   }
 }
 
-function populateAgentSettings() {
-  const settings = state.bootstrap.settings;
-  const enabled = new Set(settings.agent_tools || []);
-  $$('[data-agent-tool]').forEach((input) => {
-    input.checked = input.value.split(',').every((tool) => enabled.has(tool));
-  });
-}
-
-async function saveAgentSettings() {
-  const payload = {
-    agent_tools: $$('[data-agent-tool]:checked').flatMap((input) => input.value.split(',')),
-  };
-  const result = await api('/api/settings', { method: 'POST', body: payload });
-  Object.assign(state.bootstrap.settings, result.settings);
-  toast('工具范围已保存');
-}
-
 // ---- Agent 管理 ----
 
 async function refreshAgentsFromServer() {
@@ -2710,11 +2657,76 @@ function showAgentForm(agent = null) {
   $('#agentName').value = agent?.name || '';
   $('#agentSystemPromptEdit').value = agent?.system_prompt || '';
   state.agentFormSkillIds = agent?.skill_ids ? [...agent.skill_ids] : [];
+  state.agentFormIsNew = !agent;
+  state.agentFormToolScope = agent?.tool_scope ? [...agent.tool_scope] : [];
   renderAgentSkillPicker();
+  renderAgentToolPicker();
   $('#agentError').textContent = '';
   $('#addAgent').hidden = true;
   $('#agentForm').hidden = false;
   $('#agentName').focus();
+}
+
+async function renderAgentToolPicker() {
+  const list = $('#agentToolScope');
+  if (!list) return;
+  if (!state.toolCatalog) {
+    try {
+      const data = await api('/api/tool_catalog', { method: 'GET' });
+      state.toolCatalog = data.tools || [];
+    } catch (error) {
+      state.toolCatalog = [];
+    }
+  }
+  const catalog = state.toolCatalog || [];
+  // 仍未选择时：新 Agent 用后端默认选中集；旧 Agent（无 tool_scope=不限制）默认全选。
+  if (!state.agentFormToolScope.length) {
+    state.agentFormToolScope = state.agentFormIsNew
+      ? catalog.filter((t) => t.default_selected).map((t) => t.name)
+      : catalog.map((t) => t.name);
+  }
+  list.innerHTML = '';
+  const groups = {};
+  for (const tool of catalog) {
+    (groups[tool.group] = groups[tool.group] || []).push(tool);
+  }
+  for (const [group, tools] of Object.entries(groups)) {
+    const groupEl = document.createElement('div');
+    groupEl.className = 'agent-tool-group';
+    const head = document.createElement('div');
+    head.className = 'agent-tool-group-head';
+    head.textContent = group;
+    groupEl.append(head);
+    const grid = document.createElement('div');
+    grid.className = 'permission-grid';
+    for (const tool of tools) {
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = tool.name;
+      cb.checked = state.agentFormToolScope.includes(tool.name);
+      if (tool.model_target === 'vision') {
+        cb.title = '针对支持看图的视觉模型（多模态大脑）：直接读取图片。';
+      } else if (tool.model_target === 'text') {
+        cb.title = '针对文本模型：通过视觉车道解读图片。';
+      }
+      cb.addEventListener('change', (e) => {
+        state.agentFormToolScope = e.target.checked
+          ? [...new Set([...state.agentFormToolScope, tool.name])]
+          : state.agentFormToolScope.filter((n) => n !== tool.name);
+      });
+      const span = document.createElement('span');
+      const b = document.createElement('b');
+      b.textContent = tool.name;
+      const small = document.createElement('small');
+      small.textContent = tool.description || '';
+      span.append(b, small);
+      label.append(cb, span);
+      grid.append(label);
+    }
+    groupEl.append(grid);
+    list.append(groupEl);
+  }
 }
 
 function hideAgentForm() {
@@ -2729,6 +2741,7 @@ async function saveAgentForm() {
     name: $('#agentName').value.trim(),
     system_prompt: $('#agentSystemPromptEdit').value,
     skill_ids: state.agentFormSkillIds,
+    tool_scope: state.agentFormToolScope,
   };
   try {
     await api('/api/agents', { method: 'POST', body: payload });
@@ -3975,7 +3988,6 @@ function bindEvents() {
   });
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#unloadModel').addEventListener('click', unloadCurrentModel);
-  $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
   $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());
   $('#clearTerminalTasks').addEventListener('click', clearTerminalTasks);
@@ -4269,7 +4281,6 @@ function bindEvents() {
     populateVisionSettings();
     toast('供应商已删除');
   });
-  $('#saveAgent').addEventListener('click', saveAgentSettings);
   $('#addAgent').addEventListener('click', () => showAgentForm(null));
   $('#agentList').addEventListener('click', (event) => {
     const editButton = event.target.closest('[data-agent-edit]');

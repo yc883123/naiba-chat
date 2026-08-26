@@ -1633,11 +1633,19 @@ class ConfigStore:
         if not isinstance(raw_skills, list):
             raise ValueError("skill_ids 必须是数组")
         skill_ids = list(dict.fromkeys(str(item) for item in raw_skills if str(item).strip()))
+        raw_scope = values.get("tool_scope")
+        if raw_scope is not None and not isinstance(raw_scope, list):
+            raise ValueError("tool_scope 必须是数组")
+        tool_scope = (
+            list(dict.fromkeys(str(item) for item in raw_scope if str(item).strip()))
+            if isinstance(raw_scope, list) else []
+        )
         payload = {
             "id": agent_id,
             "name": name[:80],
             "system_prompt": system_prompt,
             "skill_ids": skill_ids,
+            "tool_scope": tool_scope,
         }
         with self.lock:
             agents = self.data.setdefault("agents", [])
