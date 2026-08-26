@@ -10,7 +10,7 @@
                           "编辑重开：点击已发送的用户消息可编辑后重发，自动从该消息处截断，编辑点之前的上下文（含 metadata.trace/reasoning）字节级保留，复用 API 前缀缓存。",
                           "前缀缓存优化：OpenAI/DeepSeek 自动 prompt caching 命中（前缀字节一致即生效）；Claude 显式 cache_control 断点标记 system 与最后非 tool_result 的 user 消息。",
                           "截断精确化：truncate_from_message 从按时间区间删除改为按 (created_at, rowid) 复合排序定位，同毫秒边界不再误删前缀消息。",
-                          "前端提示：编辑重发成功后显示 toast 提示"已从该消息重开，编辑点之前的上下文将复用缓存"。",
+                          "前端提示：编辑重发成功后显示 toast 提示「已从该消息重开，编辑点之前的上下文将复用缓存」。",
                           "测试：新增 6 个 truncate 边界测试 + 2 个回归测试，完整测试套件 432 个全部通过。"
                       ]
 }
