@@ -3199,6 +3199,26 @@ class ContentReadRetentionTests(unittest.TestCase):
         self.assertEqual(1, sum(1 for m in replay if m.get("role") == "assistant" and m.get("content") == "最终答复"))
 
 
+class ApiHandlerHygieneTests(unittest.TestCase):
+    def test_settings_handler_assigns_all_used_vars(self) -> None:
+        # 回归：/api/conversations/{id}/settings 曾在 update_conversation_settings 调用中引用
+        # 未赋值的 model_key，运行时抛 UnboundLocalError（连接被关闭→ERR_EMPTY_RESPONSE）。
+        # 这里做源码守卫：确保 update_conversation_settings 用到的每个键都在块内先 body.get 赋值。
+        source = Path("server.py").read_text(encoding="utf-8")
+        start = source.index('elif path.startswith("/api/conversations/") and path.endswith("/settings"):')
+        end = source.index('elif path == "/api/agents":', start)
+        block = source[start:end]
+        for var in (
+            "model_key", "interaction_mode", "permission_mode", "web_search_enabled",
+            "deep_reasoning_enabled", "reasoning_effort", "workspace_dir",
+            "lightweight_mode", "lightweight_disabled_features",
+        ):
+            self.assertIn(
+                f'            {var} = body.get("{var}")',
+                block,
+                f"settings handler 缺少对 {var} = body.get(...) 的赋值",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

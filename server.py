@@ -3062,6 +3062,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             stream_enabled = body.get("stream_enabled")
             provider_id = body.get("provider_id")
             agent_id = body.get("agent_id")
+            model_key = body.get("model_key")
             if title is not None and not isinstance(title, str):
                 self._json({"error": "title 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
