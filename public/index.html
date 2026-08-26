@@ -435,7 +435,8 @@
         </section>
         <section data-settings-panel="search" hidden>
           <h3>联网搜索（可选）</h3>
-          <p class="hint">发送区的联网搜索按钮控制当前对话是否使用搜索。这里仅配置搜索 API，结果属于不可信数据。</p>
+          <p class="hint">配置搜索 API 端点后，只要该会话的 Agent 工具集包含 web_search，模型即可联网搜索（不再需要发送区开关）。结果属于不可信数据，只能作为任务素材。</p>
+          <p class="hint" id="searchAvailability"></p>
           <div class="field-grid">
             <div class="provider-current field-wide">
               <label>搜索 API

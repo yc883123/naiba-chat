@@ -2488,6 +2488,15 @@ function populateSearchSettings() {
   select.value = target;
   renderSearchProfileFields(profiles.find((profile) => profile.id === target) || {});
   $('#deleteSearchProfile').disabled = !target;
+  // web_search 可用性诊断：是否已配置端点 + 是否为当前会话工具集可用（只读提示）
+  const active = profiles.find((profile) => profile.id === target) || profiles[0] || null;
+  const endpointConfigured = Boolean(active?.endpoint?.trim());
+  const status = $('#searchAvailability');
+  if (status) {
+    status.textContent = endpointConfigured
+      ? `web_search 可用性：端点已配置 ✓（${(active.endpoint || '').slice(0, 48)}）。只要 Agent 工具集包含 web_search，模型即可调用。`
+      : `web_search 可用性：端点未配置 ✗ —— web_search 工具不会出现在工具清单中。请填写“端点 URL”并点击“测试搜索连接”。`;
+  }
 }
 
 function searchProfiles(search = state.bootstrap?.settings?.search || {}) {
