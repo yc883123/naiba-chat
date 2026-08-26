@@ -1654,7 +1654,10 @@ class SkillAgent:
 
             native_calls = [
                 {
-                    "id": f"call_{step}_{index}",
+                    # 每一个工具调用都用全局唯一 id。工具调用 id 会随 trace 原样重放到后续轮次；
+                    # 若按轮内 step/index 生成（call_1_0），下一轮 step 又从 1 开始，会与重放历史里的
+                    # call_1_0 撞车，导致 OpenAI/DeepSeek 报 "Duplicate 'call_id'"。uuid 后缀保证跨轮唯一。
+                    "id": f"call_{step}_{index}_{uuid.uuid4().hex[:8]}",
                     "name": str(call.get("tool") or ""),
                     "arguments": call.get("arguments") if isinstance(call.get("arguments"), dict) else {},
                 }
