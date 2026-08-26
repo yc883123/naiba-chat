@@ -2046,6 +2046,50 @@ class SkillIdentityTests(unittest.TestCase):
             reloaded = ConfigStore(config_path)
             self.assertNotIn(skill_id, reloaded.get_hidden_skill_ids())
 
+    def test_finish_install_auto_unhides_hidden_skill_via_handler(self) -> None:
+        # 端到端：走真实 RequestHandler._finish_install 逻辑，隐藏后重新导入应自动取消隐藏。
+        with tempfile.TemporaryDirectory() as root:
+            config_path = Path(root) / "config.json"
+            skills_dir = Path(root) / "skills"
+            skill_dir = skills_dir / "demo"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: demo\ndescription: test\n---\n", encoding="utf-8"
+            )
+            config = ConfigStore(config_path)
+            catalog = SkillCatalog([skills_dir], hidden_ids=config.get_hidden_skill_ids())
+            skill_id = SkillCatalog([skills_dir]).scan()[0]["id"]
+            # 先隐藏
+            config.hide_skill(skill_id)
+            catalog.hidden_ids.add(skill_id)
+            self.assertEqual([], catalog.scan())
+
+            captured: dict[str, object] = {}
+            old_app = getattr(server, "APP", None)
+            server.APP = types.SimpleNamespace(config=config, catalog=catalog)
+
+            def _hidden_entries():
+                cat = SkillCatalog(list(server.APP.catalog.directories))
+                hidden_ids = set(server.APP.config.get_hidden_skill_ids())
+                return [item for item in cat.scan() if item["id"] in hidden_ids]
+
+            try:
+                handler = types.SimpleNamespace(
+                    _json=lambda value, **kw: captured.update(payload=value),
+                    _hidden_skill_entries=_hidden_entries,
+                )
+                server.RequestHandler._finish_install(
+                    handler, str(skills_dir), skills_dir
+                )
+            finally:
+                server.APP = old_app
+
+            payload = captured.get("payload") or {}
+            self.assertEqual([skill_id], payload.get("unhidden"))
+            self.assertNotIn(skill_id, config.get_hidden_skill_ids())
+            # catalog（带隐藏过滤）中该 skill 恢复可见
+            self.assertIn(skill_id, [item["id"] for item in catalog.scan()])
+
     def test_zip_without_skill_md_is_rejected(self) -> None:
         def _archive(entries: dict[str, str]):
             bio = io.BytesIO()
