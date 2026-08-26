@@ -1383,12 +1383,12 @@ class SkillAgent:
             if usage:
                 usages.append(usage)
                 logger.info(
-                    "[per-request] step=%s in=%s cached=%s out=%s trace=%s",
+                    "[per-request] step=%s in=%s cached=%s out=%s appended=%s",
                     step,
                     usage.get("input_tokens"),
                     usage.get("cached_tokens"),
                     usage.get("output_tokens"),
-                    len(run_context.get("trace_messages") or []) if isinstance(run_context, dict) else 0,
+                    len(messages) - trace_start,
                 )
             if reasoning:
                 reasonings.append(reasoning)
@@ -1510,6 +1510,11 @@ class SkillAgent:
                 event({"type": "run_completed", "message": content[:2000]})
                 if isinstance(run_context, dict):
                     run_context["trace_messages"] = messages[trace_start:]
+                    logger.info(
+                        "[trace] persisted this-turn messages=%s (start=%s)",
+                        len(messages) - trace_start,
+                        trace_start,
+                    )
                 return content, runs, reasonings, self._summarize_usage(usages)
 
             calls = action.get("calls") if action.get("type") == "tools" else [action]
