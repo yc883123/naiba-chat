@@ -2800,6 +2800,55 @@ APP: NaibaChatApp
 class RequestHandler(BaseHTTPRequestHandler):
     server_version = "naiba-chat/1.0"
 
+    def handle_one_request(self) -> None:
+        """处理单个请求；任何未捕获异常都返回 500 JSON，而不是静默断连。
+
+        默认 ``BaseHTTPRequestHandler.handle_one_request`` 在异常时只关闭连接、不写回包，
+        浏览器会看到 ``net::ERR_EMPTY_RESPONSE``，难以定位。这里在异常时回一个 500 JSON。
+        """
+        try:
+            self.raw_requestline = self.rfile.readline(65537)
+            if len(self.raw_requestline) > 65536:
+                self.requestline = ""
+                self.request_version = ""
+                self.command = ""
+                self.send_error(HTTPStatus.REQUEST_URI_TOO_LONG)
+                return
+            if not self.raw_requestline:
+                self.close_connection = True
+                return
+            if not self.parse_request():
+                return
+            mname = "do_" + self.command
+            if not hasattr(self, mname):
+                self.send_error(HTTPStatus.NOT_IMPLEMENTED, "Unsupported method '%s'" % self.command)
+                return
+            method = getattr(self, mname)
+            method()
+            self.wfile.flush()
+        except TimeoutError:
+            self.log_error("Request timed out")
+            self.close_connection = True
+            return
+        except socket.timeout:
+            self.log_error("Request timed out")
+            self.close_connection = True
+            return
+        except Exception as exc:  # noqa: BLE001
+            self.log_error("Request handler error: %s", exc)
+            self.close_connection = True
+            try:
+                if not self.wfile.closed and not self.headers_sent:
+                    body = json.dumps({"error": f"服务器内部错误：{exc}"}, ensure_ascii=False).encode("utf-8")
+                    self.send_response(HTTPStatus.INTERNAL_SERVER_ERROR)
+                    self.send_header("Content-Type", "application/json; charset=utf-8")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    self.wfile.flush()
+            except Exception:  # noqa: BLE001
+                pass
+
     def log_message(self, format_string: str, *args: Any) -> None:
         print(f"[{self.log_date_time_string()}] {self.client_address[0]} {format_string % args}")
 
@@ -3035,7 +3084,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             # 会话已固化启用工具集（会话启动时写死）后，不允许会话内切换 Agent，否则工具集
             # 会随之变化、破坏前缀缓存。需要切换 Agent 时请新开对话。
             if agent_id is not None:
-                conv_row = APP.storage.get_conversation(conversation_id)
+                try:
+                    conv_row = APP.storage.get_conversation(conversation_id)
+                except Exception:  # noqa: BLE001 - 读取失败不应中断整个请求
+                    conv_row = None
                 current_agent_id = str((conv_row or {}).get("agent_id") or "")
                 if agent_id != current_agent_id and (conv_row or {}).get("enabled_tool_ids"):
                     self._json(
