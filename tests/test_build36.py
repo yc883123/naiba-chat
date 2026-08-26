@@ -113,9 +113,21 @@ class LMStudioProtocolTests(unittest.TestCase):
         self.assertEqual(ModelRuntime._reasoning_params("openai_chat", "auto"), {})
         self.assertEqual(ModelRuntime._reasoning_params("openai_chat", "off"), {})
         self.assertEqual(
-            ModelRuntime._reasoning_params("codex_responses", "high"),
-            {"reasoning": {"effort": "high"}},
+            ModelRuntime._reasoning_params("codex_responses", "off"),
+            {},
         )
+        # OpenAI Codex（非 DeepSeek）Responses：低/中/高三档。
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "low"), {"reasoning": {"effort": "low"}})
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "medium"), {"reasoning": {"effort": "medium"}})
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "high"), {"reasoning": {"effort": "high"}})
+        # DeepSeek Responses API：应用四档 off/low/medium/high 映射为 none/low/high/max
+        #（最高档 high→max 才真正能触发 max；off→none 才是真正关闭思考）。
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "off", deepseek=True), {"reasoning": {"effort": "none"}})
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "low", deepseek=True), {"reasoning": {"effort": "low"}})
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "medium", deepseek=True), {"reasoning": {"effort": "high"}})
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "high", deepseek=True), {"reasoning": {"effort": "max"}})
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "auto", deepseek=True), {})
+        self.assertEqual(ModelRuntime._reasoning_params("codex_responses", "unknown", deepseek=True), {})
         # gemini / claude 首期不发送字段
         self.assertEqual(ModelRuntime._reasoning_params("gemini", "high"), {})
         self.assertEqual(ModelRuntime._reasoning_params("claude", "high"), {})

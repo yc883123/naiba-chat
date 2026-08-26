@@ -873,7 +873,10 @@ class ModelRuntime:
                 payload["tools"] = native_tools
                 payload["tool_choice"] = "auto"
                 payload["parallel_tool_calls"] = True
-            reasoning_params = ModelRuntime._reasoning_params(request_format, reasoning_effort)
+            reasoning_params = ModelRuntime._reasoning_params(
+                request_format, reasoning_effort,
+                deepseek=ModelRuntime._is_deepseek_profile(profile),
+            )
             if reasoning_params:
                 payload.update(reasoning_params)
             if api_key:
@@ -1437,7 +1440,7 @@ class ModelRuntime:
         return system_prompt, input_parts
 
     @staticmethod
-    def _reasoning_params(request_format: str, effort: str) -> dict[str, Any]:
+    def _reasoning_params(request_format: str, effort: str, deepseek: bool = False) -> dict[str, Any]:
         """把思维强度映射为各供应商协议字段；``auto`` 不发送任何参数。"""
         effort = (effort or "auto").strip().lower()
         if effort not in {"off", "low", "medium", "high"}:
@@ -1454,6 +1457,12 @@ class ModelRuntime:
                 return {}
             return {"reasoning_effort": effort}
         if request_format == "codex_responses":
+            if deepseek:
+                # DeepSeek Responses API 的 effort 取值：none/low/high/max。
+                # 应用四档 off/low/medium/high 据此映射（最高档 high→max，off→none 真正关思考）。
+                mapping = {"off": "none", "low": "low", "medium": "high", "high": "max"}
+                return {"reasoning": {"effort": mapping[effort]}}
+            # OpenAI Codex Responses：低/中/高三档。
             if effort == "off":
                 return {}
             return {"reasoning": {"effort": effort}}
