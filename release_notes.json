@@ -1,10 +1,11 @@
 [
-  "Naiba Chat 1.4 Beta：在 1.3.1 Beta 基础上重构“每个 Agent 自定义工具集”并把工具集固化到会话，显著提升会话前缀缓存稳定性；同时修复 Skill 导入隐藏、联网搜索与 DeepSeek 思考强度映射等问题。",
-  "每 Agent 工具集：设置 → Agent 编辑页新增“工具集”编辑器（按分类勾选全部 39 个可用工具，默认常用 + vision_read_folder，MCP/ComfyUI/后台Job/能力Skill网关默认不选）；会话启动时固化为该会话的启用工具集，作为硬限制，会话内不可切换 Agent（切换请新开对话）。",
+  "Naiba Chat 1.4.1 Beta：版本迭代更新，持续优化稳定性与用户体验。",
+  "Naiba Chat 1.4 Beta：在 1.3.1 Beta 基础上重构「每个 Agent 自定义工具集」并把工具集固化到会话，显著提升会话前缀缓存稳定性；同时修复 Skill 导入隐藏、联网搜索与 DeepSeek 思考强度映射等问题。",
+  "每 Agent 工具集：设置 → Agent 编辑页新增「工具集」编辑器（按分类勾选全部 39 个可用工具，默认常用 + vision_read_folder，MCP/ComfyUI/后台Job/能力Skill网关默认不选）；会话启动时固化为该会话的启用工具集，作为硬限制，会话内不可切换 Agent（切换请新开对话）。",
   "缓存稳定性：system 前端技能改为会话冻结（完整 SKILL.md，不再退化成轻量卡），动态/轮中技能走尾部 [技能指令]；capability_inventory 能力披露改尾部指令；trace 权威化（最终答复纳入 trace、重放端只消费 trace、旧格式内容级去重）；重放最终答复使用该步真实 reasoning，不再把多步推理错误拼接。",
-  "联网搜索：移除发送区开关，改为“搜索端点已配置 + 该会话 Agent 工具集包含 web_search”即声明给模型；设置页新增可用性状态提示，一眼看清缺端点还是缺工具集。",
-  "Skill 修复：重新导入曾被隐藏/删除的同名 Skill 会自动取消隐藏（导入即启用）；zip 导入校验是否含 SKILL.md，无效压缩包返回明确错误；新增“已隐藏 Skill”管理与一键取消隐藏入口。",
-  "DeepSeek 思考强度：按 Responses API 四档映射（off→none、low→low、medium→high、high→max），选“高”可真正触发 max、选“关闭”真正关闭思考。",
+  "联网搜索：移除发送区开关，改为「搜索端点已配置 + 该会话 Agent 工具集包含 web_search」即声明给模型；设置页新增可用性状态提示，一眼看清缺端点还是缺工具集。",
+  "Skill 修复：重新导入曾被隐藏/删除的同名 Skill 会自动取消隐藏（导入即启用）；zip 导入校验是否含 SKILL.md，无效压缩包返回明确错误；新增「已隐藏 Skill」管理与一键取消隐藏入口。",
+  "DeepSeek 思考强度：按 Responses API 四档映射（off→none、low→low、medium→high、high→max），选「高」可真正触发 max、选「关闭」真正关闭思考。",
   "健壮性：请求处理异常统一返回 500 JSON（不再偶发 net::ERR_EMPTY_RESPONSE 断连难排查）；修复会话设置 handler 中 model_key 未赋值导致的崩溃。",
   "测试：完整测试套件 443 个全部通过。"
 ]
