@@ -50,6 +50,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .new-chat:hover { background: #303530; }
 .new-chat span { font-size: 20px; margin-right: 8px; vertical-align: -1px; }
 .conversation-list { flex: 1; overflow: auto; padding: 4px 8px 12px; }
+.conversation-group { margin-bottom: 2px; }
+.conversation-group-header { display: flex; align-items: center; gap: 5px; padding: 5px 10px; color: #aab1aa; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; user-select: none; cursor: default; }
+.conversation-group-icon { font-size: 10px; transition: transform .15s; }
+.conversation-group-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.conversation-group-count { margin-left: auto; background: #3b403b; color: #9fa79f; font-size: 10px; padding: 1px 5px; border-radius: 8px; }
+.conversation-group-items { padding-left: 4px; }
 .conversation-item { display: flex; align-items: center; gap: 6px; min-height: 40px; padding-left: 10px; border-radius: var(--radius); color: #d7dcd6; }
 .conversation-item:hover, .conversation-item.active { background: #343934; color: white; }
 .conversation-item .delete-conversation { opacity: 0; border: 0; background: none; color: #aab1aa; width: 42px; height: 30px; font-size: 11px; flex: none; }
@@ -61,6 +67,37 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .address-button b { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 500; }
 .address-button:disabled { cursor: default; opacity: .72; }
 .status-mark { width: 8px; height: 8px; border-radius: 50%; background: #3ecf8e; flex: none; }
+
+.sidebar-top { display: flex; align-items: center; gap: 8px; padding: 10px 12px 2px; }
+.sidebar-top .new-chat { flex: 1; margin: 0; }
+.workspace-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 14px 6px; }
+.workspace-title { color: #9fa79f; font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
+.workspace-header-actions { display: flex; gap: 2px; }
+.workspace-header-actions .icon-button { width: 28px; height: 28px; font-size: 15px; color: #9fa79f; }
+.workspace-header-actions .icon-button:hover { color: #d7dcd6; background: #303530; }
+.workspace-header-actions .icon-button svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.workspace-search-input { margin: 0 14px 6px; height: 32px; border: 1px solid #3a3f3a; border-radius: var(--radius); background: #1c201c; color: var(--sidebar-text); padding: 0 10px; font-size: 13px; }
+.workspace-search-input[hidden] { display: none; }
+.workspace-group { margin: 2px 8px; }
+.workspace-group-header { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: var(--radius); cursor: pointer; user-select: none; color: #c7cdc7; }
+.workspace-group-header:hover { background: #2c312c; }
+.workspace-caret { font-size: 10px; color: #8b928b; transition: transform .15s; flex: none; }
+.workspace-group.expanded .workspace-caret { transform: rotate(90deg); }
+.workspace-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
+.workspace-count { background: #3b403b; color: #9fa79f; font-size: 10px; padding: 1px 6px; border-radius: 8px; flex: none; }
+.workspace-delete { flex: none; width: 20px; height: 20px; display: none; place-items: center; padding: 0; border: 0; border-radius: 4px; background: none; color: #7d867d; font-size: 13px; line-height: 1; cursor: pointer; }
+.workspace-group-header:hover .workspace-delete { display: inline-grid; }
+.workspace-delete:hover { background: #3b403b; color: #e0b3b3; }
+.workspace-group-body { display: none; margin-top: 2px; }
+.workspace-group.expanded .workspace-group-body { display: block; }
+.workspace-new-chat { width: 100%; text-align: left; border: 0; background: none; color: #9fa79f; font-size: 12px; padding: 6px 10px 6px 22px; border-radius: var(--radius); cursor: pointer; }
+.workspace-new-chat:hover { background: #2c312c; color: #d7dcd6; }
+.workspace-empty { color: #7d867d; font-size: 12px; padding: 16px; text-align: center; }
+.conversation-time { color: #7d867d; font-size: 11px; flex: none; }
+#serverStateFooter { display: flex; gap: 7px; align-items: center; padding: 0 4px 8px; font-size: 12px; color: #abb3aa; }
+.composer-workspace { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); padding: 2px 4px 2px 6px; }
+.composer-workspace-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; color: var(--green); }
+#composerWorkspaceSelect { border: 0; outline: 0; background: var(--surface); color: var(--green); font-size: 11px; font-weight: 600; padding: 2px 18px 2px 4px; border-radius: 4px; max-width: 150px; }
 
 .icon-button { width: 36px; height: 36px; border: 0; border-radius: var(--radius); background: transparent; color: inherit; display: inline-grid; place-items: center; font-size: 19px; flex: none; }
 .icon-button:hover { background: rgba(127, 127, 127, .13); }

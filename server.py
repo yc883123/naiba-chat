@@ -607,6 +607,7 @@ def default_config() -> dict[str, Any]:
         "hidden_skill_ids": [],
         "workspace_dir": "workspace",
         "data_dir": "data",
+        "workspaces": [],
         "provider_id": "",
         # Deprecated compatibility fields. They are retained for old config
         # files but are never used to build model requests.
@@ -1128,6 +1129,7 @@ class ConfigStore:
             "imaging",
             "vision",
             "search",
+            "workspaces",
         }
         with self.lock:
             for key in allowed:
@@ -2690,6 +2692,7 @@ class NaibaChatApp:
             "comfy_mcp": self.inspect_official_comfy_mcp(),
             "agents": self.config.public_agents(),
             "default_agent_id": self.config.default_agent_id(),
+            "workspaces": self.config.data.get("workspaces", []),
             "image_cache_bytes": _uploads_total_bytes(),
             **access,
             "lan_restart_required": str(self.config.data.get("host", "0.0.0.0")) != self.listener_host,
@@ -2935,6 +2938,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed.query)
             mode = query.get("mode", [None])[0]
             self._json({"conversations": APP.storage.list_conversations(mode=mode)})
+        elif path == "/api/workspaces":
+            self._json({"workspaces": APP.config.data.get("workspaces", [])})
         elif path.startswith("/api/conversations/"):
             conversation_id = path.rsplit("/", 1)[-1]
             conversation = APP.storage.get_conversation(conversation_id)
@@ -3020,6 +3025,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             deep_reasoning_enabled = body.get("deep_reasoning_enabled", False)
             reasoning_effort = body.get("reasoning_effort")
             workspace_dir = body.get("workspace_dir")
+            workspace_group = body.get("workspace_group")
             # Only Plan is user-selectable; all other values mean ordinary mode.
             if permission_mode not in ("confirm", "auto", "full"):
                 self._json({"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST)
@@ -3035,6 +3041,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if workspace_dir is not None and not isinstance(workspace_dir, str):
                 self._json({"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
+            if workspace_group is not None and not isinstance(workspace_group, str):
+                self._json({"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
             if workspace_dir is not None and str(workspace_dir).strip():
                 try:
@@ -3052,6 +3061,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     deep_reasoning_enabled=deep_reasoning_enabled,
                     reasoning_effort=str(reasoning_effort or ("medium" if deep_reasoning_enabled else "auto")),
                     workspace_dir=str(workspace_dir or ""),
+                    workspace_group=str(workspace_group or ""),
                 ),
                 HTTPStatus.CREATED,
             )
@@ -3123,6 +3133,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             deep_reasoning_enabled = body.get("deep_reasoning_enabled")
             reasoning_effort = body.get("reasoning_effort")
             workspace_dir = body.get("workspace_dir")
+            workspace_group = body.get("workspace_group")
             if deep_reasoning_enabled is not None and not isinstance(deep_reasoning_enabled, bool):
                 self._json({"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST)
                 return
@@ -3131,6 +3142,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             if workspace_dir is not None and not isinstance(workspace_dir, str):
                 self._json({"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST)
+                return
+            if workspace_group is not None and not isinstance(workspace_group, str):
+                self._json({"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
             lightweight_mode = body.get("lightweight_mode")
             if lightweight_mode is not None and not isinstance(lightweight_mode, bool):
@@ -3157,10 +3171,65 @@ class RequestHandler(BaseHTTPRequestHandler):
                 deep_reasoning_enabled=deep_reasoning_enabled,
                 reasoning_effort=reasoning_effort,
                 workspace_dir=workspace_dir,
+                workspace_group=workspace_group,
                 lightweight_mode=lightweight_mode,
                 lightweight_disabled_features=lightweight_disabled_features,
             )
             self._json(updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND)
+        elif path == "/api/workspaces":
+            name = str(body.get("name") or "").strip()
+            raw_dir = str(body.get("dir") or "").strip()
+            if not name:
+                self._json({"error": "工作区名称不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            if not raw_dir:
+                self._json({"error": "工作区目录不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                resolved_dir = APP.config.resolve_workspace_dir(raw_dir)
+                APP.config.ensure_workspace_writable(resolved_dir)
+            except (OSError, ValueError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            workspaces = list(APP.config.data.get("workspaces", []))
+            if any(str(ws.get("name") or "").strip() == name for ws in workspaces):
+                self._json({"error": "工作区名称已存在"}, HTTPStatus.BAD_REQUEST)
+                return
+            workspaces.append({"name": name, "dir": raw_dir})
+            try:
+                APP.config.update_settings({"workspaces": workspaces})
+            except (ValueError, TypeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"workspaces": APP.config.data.get("workspaces", [])}, HTTPStatus.OK)
+        elif path == "/api/workspaces/delete":
+            name = str(body.get("name") or "").strip()
+            raw_dir = str(body.get("dir") or "").strip()
+            workspaces = list(APP.config.data.get("workspaces", []))
+            new_list = [
+                ws for ws in workspaces
+                if not (
+                    str(ws.get("name") or "").strip() == name
+                    or (raw_dir and str(ws.get("dir") or "").strip() == raw_dir)
+                )
+            ]
+            removed_names = [
+                str(ws.get("name") or "").strip()
+                for ws in workspaces
+                if ws not in new_list
+            ]
+            if not removed_names:
+                # 注册表中没有匹配项：若调用方仍给了名称，允许归档该名称下的对话（处理遗留分组）。
+                if not name:
+                    self._json({"error": "工作区不存在"}, HTTPStatus.NOT_FOUND)
+                    return
+                removed_names = [name]
+            APP.config.update_settings({"workspaces": new_list})
+            # 已删除工作区下的对话归档到「未分组」，避免残留分组。
+            for ws_name in removed_names:
+                if ws_name:
+                    APP.storage.clear_workspace_group(ws_name)
+            self._json({"workspaces": APP.config.data.get("workspaces", [])}, HTTPStatus.OK)
         elif path == "/api/agents":
             try:
                 self._json(APP.config.upsert_agent(body))

@@ -163,6 +163,7 @@ def _migrate_to_v8(db: sqlite3.Connection) -> None:
     """Persist per-conversation workspace and reasoning intensity."""
     for column, definition in (
         ("workspace_dir", "TEXT NOT NULL DEFAULT ''"),
+        ("workspace_group", "TEXT NOT NULL DEFAULT ''"),
         ("reasoning_effort", "TEXT NOT NULL DEFAULT 'off'"),
     ):
         try:
@@ -451,6 +452,7 @@ class ChatStorage:
         deep_reasoning_enabled: bool = False,
         lightweight_mode: bool = False,
         workspace_dir: str = "",
+        workspace_group: str = "",
         reasoning_effort: str = "auto",
     ) -> dict[str, Any]:
         now = int(time.time() * 1000)
@@ -463,8 +465,8 @@ class ChatStorage:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
@@ -478,7 +480,9 @@ class ChatStorage:
                     "",
                     1,
                     str(workspace_dir or ""),
+                    str(workspace_group or ""),
                     str(reasoning_effort or ("medium" if deep_reasoning_enabled else "auto")),
+                    "",
                     provider_id or "",
                     resolved_model_key,
                     agent_id or "",
@@ -493,13 +497,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -507,7 +511,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -539,6 +543,7 @@ class ChatStorage:
         lightweight_mode: bool | None = None,
         lightweight_disabled_features: list[str] | None = None,
         workspace_dir: str | None = None,
+        workspace_group: str | None = None,
         reasoning_effort: str | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
@@ -603,6 +608,8 @@ class ChatStorage:
             )
         if workspace_dir is not None:
             values["workspace_dir"] = str(workspace_dir or "").strip()
+        if workspace_group is not None:
+            values["workspace_group"] = str(workspace_group or "").strip()
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
@@ -627,6 +634,15 @@ class ChatStorage:
                     conversation_id,
                 ),
             )
+
+    def clear_workspace_group(self, workspace_group: str) -> int:
+        """删除工作区时把其下对话归档到「未分组」（workspace_group 置空），返回受影响行数。"""
+        with self._connect() as db:
+            cursor = db.execute(
+                "UPDATE conversations SET workspace_group = '' WHERE workspace_group = ?",
+                (str(workspace_group or "").strip(),),
+            )
+            return cursor.rowcount
 
     def message_count(self, conversation_id: str) -> int:
         with self._connect() as db:

@@ -47,6 +47,10 @@ const state = {
   lightweightDisabledFeatures: ['tools', 'skills'],
   contextUsage: null,
   providerModelCapabilities: {},
+  workspaces: [],
+  workspaceSort: 'updated',
+  workspaceSearch: '',
+  expandedGroups: new Set(),
 };
 const draggedFileCache = new Map();
 
@@ -1071,6 +1075,7 @@ async function initialize() {
   }
   $('#serverDot').className = 'connected';
   $('#serverLabel').textContent = '服务已连接';
+  state.workspaces = Array.isArray(state.bootstrap?.workspaces) ? state.bootstrap.workspaces : [];
   renderNetworkAccess();
   $('#skillPolicyMode').value = state.skillMode;
   populateModels();
@@ -1676,7 +1681,7 @@ async function saveAgentSelection() {
     });
     const index = state.conversations.findIndex((item) => item.id === state.conversationId);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    renderConversations();
+    renderSidebar();
     renderSkills($('#skillSearch')?.value || '');
     toast('Agent 已切换');
   } catch (error) {
@@ -1688,25 +1693,212 @@ async function saveAgentSelection() {
 async function loadConversations() {
   const result = await api('/api/conversations');
   state.conversations = result.conversations;
-  renderConversations();
+  renderSidebar();
   if (!state.conversationId && state.conversations.length) {
     await openConversation(state.conversations[0].id);
   } else if (!state.conversations.length) {
     renderMessages([]);
     renderPermissionModeSwitch();
   }
+  renderComposerWorkspace();
 }
 
-function renderConversations() {
-  $('#conversationList').innerHTML = state.conversations.map((conversation) => `
-    <div class="conversation-item ${conversation.id === state.conversationId ? 'active' : ''}" data-conversation-id="${conversation.id}">
-      <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(conversation.title)} 的设置">⚙</button>
-      <button class="conversation-open" title="${escapeHtml(conversation.title)}">${escapeHtml(conversation.title)}</button>
-      <button class="delete-conversation" title="删除对话" aria-label="删除对话">删除</button>
-    </div>`).join('');
+function formatRelativeTime(ts) {
+  if (!ts) return '';
+  const d = new Date(String(ts).replace(' ', 'T'));
+  if (isNaN(d.getTime())) return '';
+  const diff = Date.now() - d.getTime();
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return '刚刚';
+  if (min < 60) return `${min}分钟`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}小时`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}天`;
+  const week = Math.floor(day / 7);
+  if (week < 5) return `${week}周`;
+  const month = Math.floor(day / 30);
+  if (month < 12) return `${month}月`;
+  return `${Math.floor(day / 365)}年`;
 }
 
-async function createConversation() {
+function currentConversationWorkspaceGroup() {
+  const c = state.conversations.find((x) => x.id === state.conversationId);
+  return c ? (c.workspace_group || '').trim() : '';
+}
+
+function renderSidebar() {
+  const tree = $('#sidebarWorkspaceTree');
+  if (!tree) return;
+  const search = (state.workspaceSearch || '').trim().toLowerCase();
+  const activeWs = currentConversationWorkspaceGroup();
+  if (!state.expandedGroups.has('__init')) {
+    state.expandedGroups = new Set(['__init', '', activeWs]);
+  }
+  const groups = new Map();
+  for (const c of state.conversations) {
+    const key = (c.workspace_group || '').trim();
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  }
+  const registered = state.workspaces || [];
+  const orderedNames = [];
+  const seen = new Set();
+  for (const ws of registered) {
+    if (!seen.has(ws.name)) { seen.add(ws.name); orderedNames.push(ws.name); }
+  }
+  for (const key of groups.keys()) {
+    if (key && !seen.has(key)) { seen.add(key); orderedNames.push(key); }
+  }
+  orderedNames.push('');
+
+  const sortConv = (list) => {
+    const arr = [...list];
+    if (state.workspaceSort === 'name') arr.sort((a, b) => String(a.title).localeCompare(String(b.title), 'zh'));
+    else arr.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+    return arr;
+  };
+
+  const html = orderedNames.map((wsName) => {
+    const isUngrouped = wsName === '';
+    const label = isUngrouped ? '未分组' : wsName;
+    const dir = registered.find((w) => w.name === wsName)?.dir || '';
+    let list = sortConv(groups.get(wsName) || []);
+    if (search) {
+      const filtered = list.filter((c) => String(c.title || '').toLowerCase().includes(search) || label.toLowerCase().includes(search));
+      if (filtered.length === 0) return '';
+      list = filtered;
+    }
+    const expanded = state.expandedGroups.has(wsName);
+    const convHtml = list.map((c) => `
+      <div class="conversation-item ${c.id === state.conversationId ? 'active' : ''}" data-conversation-id="${c.id}">
+        <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(c.title)} 的设置">⚙</button>
+        <button class="conversation-open" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</button>
+        <span class="conversation-time">${escapeHtml(formatRelativeTime(c.updated_at))}</span>
+        <button class="delete-conversation" title="删除对话" aria-label="删除对话">删除</button>
+      </div>`).join('');
+    return `
+      <div class="workspace-group ${expanded ? 'expanded' : ''}" data-workspace-name="${escapeHtml(wsName)}" data-workspace-dir="${escapeHtml(dir)}">
+        <div class="workspace-group-header" data-action="toggle-group">
+          <span class="workspace-caret">▸</span>
+          <span class="workspace-group-name">${escapeHtml(label)}</span>
+          <span class="workspace-count">${list.length}</span>
+          ${isUngrouped ? '' : `<button class="workspace-delete" data-action="delete-workspace" data-workspace-name="${escapeHtml(wsName)}" title="删除工作区" aria-label="删除工作区">×</button>`}
+        </div>
+        <div class="workspace-group-body">
+          <button class="workspace-new-chat" data-action="new-in-group" data-workspace-group="${escapeHtml(wsName)}" data-workspace-dir="${escapeHtml(dir)}">＋ 新会话</button>
+          ${convHtml}
+        </div>
+      </div>`;
+  }).join('');
+
+  tree.innerHTML = html || '<div class="workspace-empty">暂无对话</div>';
+}
+
+function renderComposerWorkspace() {
+  const select = $('#composerWorkspaceSelect');
+  if (!select) return;
+  const current = state.conversations.find((c) => c.id === state.conversationId);
+  const currentGroup = current ? (current.workspace_group || '').trim() : '';
+  const options = ['', ...(state.workspaces || []).map((w) => w.name)];
+  select.innerHTML = options.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name || '未分组')}</option>`).join('');
+  select.value = currentGroup;
+}
+
+async function onComposerWorkspaceChange(event) {
+  const id = state.conversationId;
+  if (!id) return;
+  const group = event.target.value || '';
+  try {
+    const updated = await api(`/api/conversations/${id}/settings`, { method: 'POST', body: { workspace_group: group } });
+    const index = state.conversations.findIndex((c) => c.id === id);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    renderSidebar();
+    renderComposerWorkspace();
+    toast(group ? `已切换到工作区「${group}」` : '已移至未分组');
+  } catch (error) {
+    toast(`切换工作区失败：${error.message}`);
+    renderComposerWorkspace();
+  }
+}
+
+async function onSidebarTreeClick(event) {
+  const actionEl = event.target.closest('[data-action]');
+  if (actionEl) {
+    const action = actionEl.dataset.action;
+    const groupEl = actionEl.closest('.workspace-group');
+    if (action === 'toggle-group') {
+      const name = groupEl?.dataset.workspaceName || '';
+      if (state.expandedGroups.has(name)) state.expandedGroups.delete(name);
+      else state.expandedGroups.add(name);
+      renderSidebar();
+    } else if (action === 'new-in-group') {
+      createConversation(actionEl.dataset.workspaceGroup || '', actionEl.dataset.workspaceDir || '');
+    } else if (action === 'delete-workspace') {
+      deleteWorkspace(actionEl.dataset.workspaceName || '');
+    }
+    return;
+  }
+  const item = event.target.closest('.conversation-item');
+  if (!item) return;
+  if (event.target.closest('.conversation-settings')) openConversationSettings(item.dataset.conversationId);
+  else if (event.target.closest('.delete-conversation')) deleteConversation(item.dataset.conversationId);
+  else if (event.target.closest('.conversation-open')) openConversation(item.dataset.conversationId);
+}
+
+async function pick_workspace_directory(initial = '') {
+  try {
+    return await api('/api/workspace/pick', { method: 'POST', body: { initial } });
+  } catch (error) {
+    toast(`目录选择失败：${error.message}`);
+    return { cancelled: true };
+  }
+}
+
+async function createWorkspace() {
+  const result = await pick_workspace_directory();
+  if (!result || result.cancelled || !result.path) return;
+  const dir = result.resolved || result.path;
+  const suggestedName = String(dir.split(/[\\/]/).filter(Boolean).pop() || '新工作区');
+  const name = (window.prompt('工作区名称：', suggestedName) || '').trim();
+  if (!name) return;
+  try {
+    const data = await api('/api/workspaces', { method: 'POST', body: { name, dir } });
+    state.workspaces = data.workspaces || [];
+    state.expandedGroups.add(name);
+    toast(`已创建工作区「${name}」`);
+    // 新建工作区后立即在该工作区内创建一个新对话并打开，选择框同步显示该工作区。
+    try {
+      await createConversation(name, dir);
+    } catch (error) {
+      toast(`工作区已创建，但新建对话失败：${error.message}`);
+    }
+  } catch (error) {
+    toast(`创建工作区失败：${error.message}`);
+  }
+}
+
+async function deleteWorkspace(name) {
+  if (!name) return;
+  const count = state.conversations.filter((c) => (c.workspace_group || '').trim() === name).length;
+  const hint = count ? `其下 ${count} 个对话将归档到「未分组」。` : '';
+  if (!confirm(`确定删除工作区「${name}」？${hint}`)) return;
+  try {
+    const data = await api('/api/workspaces/delete', { method: 'POST', body: { name } });
+    state.workspaces = data.workspaces || [];
+    state.conversations.forEach((c) => {
+      if ((c.workspace_group || '').trim() === name) c.workspace_group = '';
+    });
+    state.expandedGroups.delete(name);
+    renderSidebar();
+    renderComposerWorkspace();
+    toast(`已删除工作区「${name}」`);
+  } catch (error) {
+    toast(`删除工作区失败：${error.message}`);
+  }
+}
+
+async function createConversation(workspaceGroup = '', workspaceDir = '') {
   detachRunSubscription();
   hideChoiceButtons();
   const conversation = await api('/api/conversations', {
@@ -1719,12 +1911,19 @@ async function createConversation() {
       // 新建会话默认沿用上一个会话使用的 Agent；无上一个会话时回退默认 Agent。
       agent_id: (state.conversations.find((c) => String(c.id) === state.conversationId)?.agent_id)
         || state.bootstrap?.default_agent_id || '',
+      // 新建对话继承当前全局工作区目录；若在某工作区内新建则覆盖为该工作区目录并绑定分组。
+      workspace_dir: workspaceDir || state.bootstrap?.settings?.workspace_dir || '',
+      workspace_group: workspaceGroup || '',
     },
   });
   state.conversationId = conversation.id;
-  state.workspaceDir = conversation.workspace_dir || '';
+  if (conversation.workspace_dir) {
+    state.workspaceDir = conversation.workspace_dir;
+  }
   state.conversations.unshift(conversation);
-  renderConversations();
+  state.expandedGroups.add(currentConversationWorkspaceGroup());
+  renderComposerWorkspace();
+  renderSidebar();
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
   state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
@@ -1748,12 +1947,16 @@ async function openConversation(id) {
   }
   const conversation = await api(`/api/conversations/${id}`);
   state.conversationId = id;
-  state.workspaceDir = conversation.workspace_dir || '';
+  if (conversation.workspace_dir) {
+    state.workspaceDir = conversation.workspace_dir;
+  }
+  state.expandedGroups.add(currentConversationWorkspaceGroup());
+  renderComposerWorkspace();
   const index = state.conversations.findIndex((item) => item.id === id);
   if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...conversation };
   state.conversationSnapshot = conversationSnapshot(conversation);
   console.log('[naiba] openConversation', id.slice(0, 8), '服务器返回消息数=', (conversation.messages || []).length);
-  renderConversations();
+  renderSidebar();
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
   renderMessages(conversation.messages || []);
@@ -1790,7 +1993,7 @@ async function syncCurrentConversation() {
     const index = state.conversations.findIndex((item) => item.id === id);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...conversation };
     state.conversationSnapshot = snapshot;
-    renderConversations();
+    renderSidebar();
     renderMessages(conversation.messages || []);
     renderPermissionModeSwitch();
     state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
@@ -1890,7 +2093,7 @@ async function saveConversationSettings(event) {
     const index = state.conversations.findIndex((item) => item.id === id);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
     $('#conversationSettingsDialog').close();
-    renderConversations();
+    renderSidebar();
     if (id === state.conversationId) {
       state.lightweightDisabledFeatures = updated.lightweight_disabled_features || ['tools', 'skills'];
       updateLightweightModeControl();
@@ -1942,7 +2145,7 @@ async function deleteConversation(id) {
   if (state.conversationId === id) {
     state.conversationId = '';
   }
-  renderConversations();
+  renderSidebar();
   if (state.conversations.length) await openConversation(state.conversations[0].id);
   else {
     renderMessages([]);
@@ -2354,15 +2557,15 @@ async function toggleProviderKey() {
 
 function populateRuntimeSettings() {
   const settings = state.bootstrap.settings;
-  $('#commandTimeout').value = settings.command_timeout;
-  $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
-  $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  if ($('#commandTimeout')) $('#commandTimeout').value = settings.command_timeout;
+  if ($('#workspaceDir')) $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
+  if ($('#resolvedWorkspaceDir')) $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
   const imaging = settings.imaging || {};
-  $('#imageUploadOriginal').checked = Boolean(imaging.image_upload_original);
-  $('#imageMaxPixels').value = Number(imaging.image_max_pixels || 2000000);
-  $('#thumbnailMaxPixels').value = Number(imaging.thumbnail_max_pixels || 500000);
+  if ($('#imageUploadOriginal')) $('#imageUploadOriginal').checked = Boolean(imaging.image_upload_original);
+  if ($('#imageMaxPixels')) $('#imageMaxPixels').value = Number(imaging.image_max_pixels || 2000000);
+  if ($('#thumbnailMaxPixels')) $('#thumbnailMaxPixels').value = Number(imaging.thumbnail_max_pixels || 500000);
   renderImageCompressRow();
-  $('#imageCacheSize').textContent = formatBytes(Number(state.bootstrap.image_cache_bytes || 0));
+  if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(Number(state.bootstrap.image_cache_bytes || 0));
   renderWorkspaceControl();
 }
 
@@ -2826,21 +3029,21 @@ async function deleteAgent(agentId) {
 
 async function saveRuntimeSettings() {
   const payload = {
-    command_timeout: Number($('#commandTimeout').value),
-    workspace_dir: $('#workspaceDir').value.trim(),
+    command_timeout: Number($('#commandTimeout')?.value || 120),
+    workspace_dir: $('#workspaceDir')?.value.trim() || '',
     imaging: {
-      image_upload_original: Boolean($('#imageUploadOriginal').checked),
-      image_max_pixels: Number($('#imageMaxPixels').value),
-      thumbnail_max_pixels: Number($('#thumbnailMaxPixels').value),
+      image_upload_original: Boolean($('#imageUploadOriginal')?.checked),
+      image_max_pixels: Number($('#imageMaxPixels')?.value || 2000000),
+      thumbnail_max_pixels: Number($('#thumbnailMaxPixels')?.value || 500000),
     },
   };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
   state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
-  $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  if ($('#resolvedWorkspaceDir')) $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
   if (result.image_cache_bytes !== undefined) {
     state.bootstrap.image_cache_bytes = result.image_cache_bytes;
-    $('#imageCacheSize').textContent = formatBytes(Number(result.image_cache_bytes || 0));
+    if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(Number(result.image_cache_bytes || 0));
   }
   renderWorkspaceControl();
   toast('运行参数已保存');
@@ -2853,9 +3056,9 @@ async function saveWorkspaceSettings() {
     Object.assign(state.bootstrap.settings, result.settings);
     state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
     state.workspaceBrowsePath = state.bootstrap.resolved_workspace_dir;
-    $('#workspaceDir').value = value;
+    if ($('#workspaceDir')) $('#workspaceDir').value = value;
     renderWorkspaceControl();
-    $('#workspaceDialog').close();
+    if ($('#workspaceDialog')) $('#workspaceDialog').close();
     toast('工作区已保存');
   } catch (error) {
     toast(`工作区保存失败：${error.message}`);
@@ -2869,7 +3072,9 @@ async function pickWorkspace(targetId = 'workspaceDialogInput') {
     if (result.cancelled) return;
     const input = $('#' + targetId);
     if (input) input.value = result.path || '';
-    if (targetId === 'workspaceDir') $('#resolvedWorkspaceDir').textContent = result.resolved || '-';
+    if (targetId === 'workspaceDir' && $('#resolvedWorkspaceDir')) {
+      $('#resolvedWorkspaceDir').textContent = result.resolved || '-';
+    }
   } catch (error) { toast(`目录选择失败：${error.message}`); }
 }
 
@@ -3999,14 +4204,7 @@ function bindEvents() {
       $('#authError').textContent = error.message;
     }
   });
-  $('#newChatButton').addEventListener('click', createConversation);
-  $('#conversationList').addEventListener('click', (event) => {
-    const item = event.target.closest('.conversation-item');
-    if (!item) return;
-    if (event.target.closest('.delete-conversation')) deleteConversation(item.dataset.conversationId);
-    else if (event.target.closest('.conversation-settings')) openConversationSettings(item.dataset.conversationId);
-    else openConversation(item.dataset.conversationId);
-  });
+  $('#newChatButton').addEventListener('click', () => createConversation());
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#unloadModel').addEventListener('click', unloadCurrentModel);
   $('#agentSelect').addEventListener('change', saveAgentSelection);
@@ -4242,12 +4440,25 @@ function bindEvents() {
   $('#openSidebar').addEventListener('click', openSidebar);
   $('#closeSidebar').addEventListener('click', closeSidebar);
   $('#sidebarBackdrop').addEventListener('click', closeSidebar);
-  $('#openWorkspace').addEventListener('click', () => {
-    renderWorkspaceControl();
-    $('#workspaceDialog').showModal();
-    $('#workspaceDialogInput').focus();
-    loadWorkspaceTree(state.workspaceBrowsePath || state.bootstrap?.resolved_workspace_dir || '');
+  $('#sidebarWorkspaceTree').addEventListener('click', onSidebarTreeClick);
+  $('#addWorkspace').addEventListener('click', createWorkspace);
+  $('#workspaceSort').addEventListener('click', () => {
+    state.workspaceSort = state.workspaceSort === 'updated' ? 'name' : 'updated';
+    renderSidebar();
+    toast(state.workspaceSort === 'name' ? '已按名称排序' : '已按时间排序');
   });
+  $('#workspaceSearch').addEventListener('click', () => {
+    const input = $('#workspaceSearchInput');
+    if (!input) return;
+    input.hidden = !input.hidden;
+    if (!input.hidden) input.focus();
+    else { input.value = ''; state.workspaceSearch = ''; renderSidebar(); }
+  });
+  $('#workspaceSearchInput').addEventListener('input', (event) => {
+    state.workspaceSearch = event.target.value;
+    renderSidebar();
+  });
+  $('#composerWorkspaceSelect').addEventListener('change', onComposerWorkspaceChange);
   $('#saveWorkspace').addEventListener('click', saveWorkspaceSettings);
   $('#browseWorkspace')?.addEventListener('click', () => pickWorkspace('workspaceDialogInput'));
   $('#browseWorkspaceSettings')?.addEventListener('click', () => pickWorkspace('workspaceDir'));
