@@ -493,34 +493,21 @@
           <h3>数据与迁移</h3>
           <label class="field-wide data-dir-field">数据库与上传数据目录
             <input id="dataDir" type="text" placeholder="例如 D:\\NaibaChatData">
-            <small class="hint">默认位于 %LOCALAPPDATA%\\NaibaChat\\data。修改后需要重启 NaibaChat，现有数据不会自动搬迁。</small>
+            <small class="hint">点击「应用并迁移」后，数据库、上传文件与 Skills 目录会一并复制到目标位置，并完成数据库结构迁移。迁移后需完全退出并重启 NaibaChat 生效。</small>
           </label>
           <div class="form-actions">
-            <button class="primary-button" id="saveDataDir" type="button">保存数据目录</button>
-            <button class="control-button" id="moveDataDir" type="button">复制现有数据并切换</button>
+            <button class="primary-button" id="applyDataDir" type="button">应用并迁移</button>
+            <button class="control-button" id="backupData" type="button">备份数据</button>
           </div>
           <div class="update-status">
             <div><span>数据库版本</span><b id="migrationDbVersion">-</b></div>
             <div><span>数据目录</span><b id="migrationDataDir">-</b></div>
+            <div><span>当前 Skills 目录</span><b id="migrationSkillsDir">-</b></div>
             <div><span>健康状态</span><b id="migrationHealthy">-</b></div>
             <div><span>已应用迁移</span><b id="migrationApplied">-</b></div>
             <div><span>备份位置</span><b id="migrationBackup">-</b></div>
           </div>
-          <div class="form-actions">
-            <button class="control-button" id="backupData" type="button">备份数据</button>
-            <button class="primary-button" id="runMigration" type="button" title="只应用 SQLite 结构迁移，不改变数据目录">应用数据库结构迁移</button>
-          </div>
           <p class="hint" id="migrationMessage"></p>
-          <details class="advanced-settings">
-            <summary>手动合并旧数据</summary>
-            <label class="field-wide">旧数据目录
-              <input id="mergeSource" type="text" placeholder="旧版本数据目录路径">
-            </label>
-            <div class="form-actions">
-              <button class="control-button" id="mergeData" type="button">合并</button>
-            </div>
-            <p class="hint" id="mergeMessage"></p>
-          </details>
         </section>
         <section data-settings-panel="updates" hidden>
           <h3>软件更新</h3>

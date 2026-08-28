@@ -1038,6 +1038,39 @@ class ConfigStore:
             path = APP_DIR / path
         return path.resolve()
 
+    def resolve_managed_skills_dir(self, raw: str | None = None) -> Path:
+        """持久化 Skills 目录（单一事实来源）：跟随数据目录，位于其同级 skills 文件夹。
+
+        默认落在 ``resolve_data_dir().parent / "skills"``，使 Skills 随数据目录离开
+        C 盘 APP_DIR，不再写死为 ``APP_DIR/skills``。
+        """
+        return (self.resolve_data_dir(raw).parent / "skills").resolve()
+
+    def skills_dirs_resolved(self) -> list[Path]:
+        """返回解析后的 Skills 扫描目录，旧 ``APP_DIR/skills`` 重定向到托管目录。
+
+        托管目录（managed）始终排在最前作为唯一持久化入口；随后是用户自定义目录。
+        过滤去重，跳过解析失败或不安全的项。
+        """
+        managed = self.resolve_managed_skills_dir()
+        legacy_managed = (APP_DIR / "skills").resolve()
+        result: list[Path] = [managed]
+        for raw in self.data.get("skills_dirs", []):
+            try:
+                resolved = self._resolve_dir(str(raw))
+            except (OSError, ValueError):
+                continue
+            if resolved == legacy_managed:
+                resolved = managed
+            if resolved in result:
+                continue
+            try:
+                validate_skills_dir(resolved)
+            except ValueError:
+                continue
+            result.append(resolved)
+        return result
+
     def validate_data_dir(self, resolved: Path) -> None:
         resolved = resolved.resolve()
         if resolved.parent == resolved:
@@ -2209,7 +2242,8 @@ class NaibaChatApp:
         # without this copy, replacing the executable can make a Skill that
         # existed in the previous build disappear from the user's catalog.
         bundled_skills = (RESOURCE_DIR / "skills").resolve()
-        managed_skills = (APP_DIR / "skills").resolve()
+        # 托管 Skills 目录跟随数据目录（DATA_DIR.parent/skills），不再固定于 C 盘 APP_DIR。
+        managed_skills = self.config.resolve_managed_skills_dir()
         if bundled_skills.is_dir() and bundled_skills != managed_skills:
             try:
                 _sync_bundled_skills(bundled_skills, managed_skills)
@@ -2221,9 +2255,14 @@ class NaibaChatApp:
             skills_dirs.append(str(bundled_skills))
         if managed_skills.is_dir() and managed_skills != bundled_skills:
             skills_dirs.append(str(managed_skills))
+        # 旧配置默认 `skills_dirs: ["skills"]` 解析为 APP_DIR/skills；重定向到新托管目录，
+        # 保证旧配置/旧 Skill 不丢且不再写回 C 盘。
+        legacy_managed = (APP_DIR / "skills").resolve()
         for raw in self.config.data.get("skills_dirs", []):
             try:
                 resolved = self.config._resolve_dir(str(raw))
+                if resolved == legacy_managed:
+                    resolved = managed_skills
                 validate_skills_dir(resolved)
                 if str(resolved) not in skills_dirs:
                     skills_dirs.append(str(resolved))
@@ -2664,12 +2703,21 @@ class NaibaChatApp:
 
     def list_skill_dirs(self) -> dict[str, Any]:
         configured = self.config.get_skills_dirs()
+        managed = self.config.resolve_managed_skills_dir()
+        legacy_managed = (APP_DIR / "skills").resolve()
         resolved = []
         for raw in configured:
             path = Path(raw).expanduser()
             if not path.is_absolute():
                 path = (APP_DIR / path).resolve()
+            path = path.resolve()
+            # 旧默认 `skills` 解析为 APP_DIR/skills，重定向到新的托管目录。
+            if path == legacy_managed:
+                path = managed
             resolved.append(str(path))
+        # 托管目录始终作为唯一持久化入口，即便未显式配置也纳入返回。
+        if str(managed) not in resolved:
+            resolved.insert(0, str(managed))
         return {"configured": configured, "resolved": resolved}
 
     # ---- 数据与迁移（PLAN7 §数据与迁移） ----
@@ -2686,6 +2734,7 @@ class NaibaChatApp:
             "integrity_details": integrity.get("details", []),
             "applied_versions": [version],
             "backup_location": str(DATA_DIR / "backups"),
+            "resolved_skills_dirs": [str(path) for path in self.config.skills_dirs_resolved()],
         }
 
     def migration_backup(self) -> dict[str, Any]:
@@ -2718,21 +2767,61 @@ class NaibaChatApp:
         existing_db = target / "chat.db"
         if existing_db.exists() and _database_has_conversations(existing_db):
             return {"ok": False, "error": f"目标目录已有对话数据：{target}"}
+        # Skill 托管目录跟随数据目录：源为当前实际运行数据目录（storage.data_dir）
+        # 同级的 skills（或旧版 C 盘 APP_DIR/skills），目标为目标 data_dir 同级 skills。
+        old_managed = (source.parent / "skills").resolve()
+        new_managed = (target.parent / "skills").resolve()
+        legacy_managed = (APP_DIR / "skills").resolve()
         try:
             with self.storage._connect() as db:
                 db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            # 结构迁移：先确保当前库为最新 schema，复制后新目录即携带最新结构。
+            self.storage.apply_pending_migrations()
             target.mkdir(parents=True, exist_ok=True)
             for item in source.iterdir():
                 if item.name in {"server.lock", "backups"}:
                     continue
-                _merge_data_tree(item, target / item.name)
+                if item.is_dir():
+                    _merge_data_tree(item, target / item.name)
+                elif not (target / item.name).exists():
+                    shutil.copy2(item, target / item.name)
+            # 搬迁托管 Skills 目录（旧 managed 或旧 APP_DIR/skills → 新 managed）。
+            old_managed_sources = []
+            if old_managed.is_dir():
+                old_managed_sources.append(old_managed)
+            if legacy_managed.is_dir() and legacy_managed != old_managed:
+                old_managed_sources.append(legacy_managed)
+            if old_managed_sources and new_managed != old_managed:
+                new_managed.mkdir(parents=True, exist_ok=True)
+                for old_src in old_managed_sources:
+                    if old_src.is_dir():
+                        _merge_data_tree(old_src, new_managed)
+            # 改写 skills_dirs：把指向旧 managed / 旧 APP_DIR/skills 的项改写为新绝对路径。
+            old_refs = {str(old_managed), str(legacy_managed)}
+            with self.config.lock:
+                dirs = self.config.data.setdefault("skills_dirs", [])
+                rewritten = []
+                for item in list(dirs):
+                    resolved = str(self.config._resolve_dir(str(item)))
+                    if resolved in old_refs:
+                        if str(new_managed) not in rewritten:
+                            rewritten.append(str(new_managed))
+                    else:
+                        rewritten.append(item)
+                self.config.data["skills_dirs"] = rewritten
+                # 若新托管目录不在 skills_dirs 中，追加以保证重启后被扫描/可安装。
+                if str(new_managed) not in rewritten:
+                    rewritten.append(str(new_managed))
+                    self.config.data["skills_dirs"] = rewritten
+                self.config.save()
             self.config.update_settings({"data_dir": str(target)})
         except (OSError, sqlite3.Error, ValueError) as exc:
             return {"ok": False, "error": f"迁移数据失败：{exc}"}
         return {
             "ok": True,
-            "message": "数据已复制到新目录，请重启后生效",
+            "message": "数据与 Skills 已复制到新目录，请重启后生效",
             "target_data_dir": str(target),
+            "target_skills_dir": str(new_managed),
             "restart_required": True,
             **self.migration_health(),
         }
@@ -3708,9 +3797,19 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._json({"configured": configured, "skills": APP.catalog.scan()})
 
     def _resolve_skill_dest(self, body: dict[str, Any]) -> tuple[str, Path] | None:
-        """解析 Skill 安装目标目录：必须是已配置的扫描目录（未配置时为默认 skills）。"""
+        """解析 Skill 安装目标目录：未指定时默认安装到托管 Skills 目录。
+
+        托管 Skills 目录跟随数据目录（DATA_DIR.parent/skills）；旧 ``APP_DIR/skills``
+        重定向到托管目录，保证旧配置不丢且新的默认落点离开 C 盘。
+        """
         configured = APP.config.get_skills_dirs()
-        dest_raw = str(body.get("dir") or "").strip() or (configured[0] if configured else "skills")
+        managed = APP.config.resolve_managed_skills_dir()
+        if str(body.get("dir") or "").strip():
+            dest_raw = str(body.get("dir") or "").strip()
+        elif configured and configured[0] != "skills":
+            dest_raw = configured[0]
+        else:
+            dest_raw = str(managed)
         dest = APP.config._resolve_dir(dest_raw)
         try:
             validate_skills_dir(dest)
@@ -3719,6 +3818,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             return None
         allowed = {APP.config._resolve_dir(item) for item in configured}
         allowed.add(APP.config._resolve_dir("skills"))
+        allowed.add(managed)
+        allowed.add((APP_DIR / "skills").resolve())
         if dest not in allowed:
             self._json(
                 {"error": "只能安装到已添加的 Skill 扫描目录，请先在上方添加该目录"},
