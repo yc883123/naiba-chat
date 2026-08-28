@@ -24,6 +24,23 @@ const state = {
   runConversationId: '',
   runSequence: 0,
   runEvents: {},
+  // Run 过程看护/重连状态
+  runGeneration: 0,        // 每次重建流自增，旧代回调一律丢弃，防竞态覆盖
+  runAttempt: 0,           // 本次连接生命周期内的重连次数（指数退避用）
+  runReconnectAt: 0,       // 重连冷却截止时间戳；0 表示无需冷却
+  runLastActivityAt: 0,    // 事件流最近一次活跃时间戳（含 heartbeat，用于看门狗判死）
+  runContentActivityAt: 0, // 最近一次真实内容事件时间戳（不含 heartbeat，用于“等待中”计时）
+  runWatchdogTimer: null,  // 看门狗定时器句柄
+  runWaitTimer: null,      // “无进展等待”轻量计时器句柄（每 1s）
+  runWaitShown: false,     // 当前是否正在显示“等待中 · 已等待 X 秒”
+  runWaitPrevText: '',     // 显示等待前的 #runtimeStatus 原文，用于恢复
+  runProbeMisses: 0,       // 看门狗连续判定空闲计数
+  runRecovering: false,    // 防止 看门狗/轮询 双触发重连的互斥锁
+  connectionState: 'connected', // 'connected' | 'reconnecting'（去重角标依据）
+  checkRunEligible: false, // 是否处于"等待轮询兜底恢复"的状态
+  elapsedTimer: null,      // “已等待 X 秒”计时器句柄
+  elapsedBase: '',
+  elapsedSince: 0,
   taskSubmitting: false,
   conversationSettingsId: '',
   providerEditing: false,
@@ -1122,8 +1139,53 @@ async function loadTasks() {
         if (task.conversation_id === state.conversationId) syncCurrentConversation();
       }
     }
+    await maybeRecoverRunFromPoll();
   } catch (error) {
     console.debug('[naiba] 任务同步失败:', error.message);
+  }
+}
+
+// 轮询兜底恢复流：仅在处于"等待恢复/重连冷却已过"且前端无活动流时，
+// 探测后端是否仍有当前对话的活跃 Run，若有则 resumeRun 拉回流。
+// 只会在 runReconnectAt（>0 表示要恢复）且冷却已过时查询，避免每个轮询周期都打 /api/runs。
+async function maybeRecoverRunFromPoll() {
+  if (state.abortController) return; // 已有活动流，无需兜底
+  if (state.runRecovering) return;
+  if (!state.checkRunEligible) return; // 未进入"等恢复"状态就不查询
+  if (!state.conversationId) return;
+  if (state.runReconnectAt && Date.now() < state.runReconnectAt) return; // 冷却中
+  state.runRecovering = true;
+  const conversationId = state.conversationId;
+  try {
+    const result = await api(`/api/runs?conversation_id=${encodeURIComponent(conversationId)}&active_only=1`);
+    if (state.conversationId !== conversationId || state.abortController) return;
+    const run = (result.runs || [])[0];
+    if (run && run.id) {
+      console.warn('[naiba] 轮询兜底：检测到活跃 Run，恢复流 run=', run.id);
+      state.checkRunEligible = false;
+      await resumeRun(run);
+    }
+    // 后端已无活跃 Run：说明任务其实已完成，静默回到就绪，避免无限查询。
+    else {
+      state.checkRunEligible = false;
+      setConnectionState('connected');
+      if (state.chatRunId) {
+        state.chatRunId = '';
+        state.runConversationId = '';
+        state.runSequence = 0;
+        stopRunWatchdog();
+        clearElapsedStatus();
+        setBusy(false);
+      }
+    }
+  } catch (error) {
+    // 服务仍不可达：保持等待，冷却窗口由 enterReconnectCoolDown 控制
+    console.debug('[naiba] 轮询兜底恢复流失败:', error.message);
+    if (!state.runReconnectAt) {
+      state.runReconnectAt = Date.now() + RUN_RECONNECT_COOLDOWN;
+    }
+  } finally {
+    state.runRecovering = false;
   }
 }
 
@@ -3319,11 +3381,207 @@ function renderPendingFiles() {
 function detachRunSubscription() {
   state.abortController?.abort();
   clearVisionProgress();
+  stopRunWatchdog();
+  clearElapsedStatus();
+  state.runWaitShown = false;
+  state.runWaitPrevText = '';
+  state.runGeneration += 1;
   state.abortController = null;
   state.chatRunId = '';
   state.runConversationId = '';
   state.runSequence = 0;
+  state.runAttempt = 0;
+  state.runReconnectAt = 0;
+  state.runProbeMisses = 0;
+  setConnectionState('connected');
   setBusy(false);
+}
+
+// ---- Run 事件流看门狗 / 断线自动重连 / 轮询兜底 / 等待计时 ----
+const RUN_WATCHDOG_INTERVAL = 5000;          // 看门狗扫描周期
+const RUN_WATCHDOG_IDLE = 45000;             // 超 45s 无数据 → 判定为“可能是死流”（>3 次 heartbeat）
+const RUN_WATCHDOG_PROBE_MAX = 2;            // 连续判定空闲超过该次数才真正探针动作
+const RUN_RECONNECT_BASE = 500;              // 退避基准 ms
+const RUN_RECONNECT_MAX = 10000;             // 退避上限 ms
+const RUN_RECONNECT_ATTEMPTS = 3;            // 自动重连上限，超限交还轮询兜底
+const RUN_RECONNECT_COOLDOWN = 15000;        // “服死”后的保守重连冷却 ms，防风暴
+const RUN_STREAM_OPEN_TIMEOUT = 15000;       // 建流（流式 fetch 打开）超时护栏 ms
+const RUN_WAIT_STATUS_IDLE = 6000;           // 无任何新进展字节超过此阈值 → 显示“等待中 · 已等待 X 秒”
+
+function backoffDelay(attempt) {
+  const cap = Math.min(RUN_RECONNECT_MAX, RUN_RECONNECT_BASE * 2 ** Math.max(0, attempt - 1));
+  return Math.min(cap, cap / 2 + Math.random() * (cap / 2));
+}
+
+// 校验当前仍处于“给定代际的连接所对应的活动流”。
+function isRunGenerationActive(generation, controller = null) {
+  if (state.runGeneration !== generation) return false;
+  if (controller && state.abortController !== controller) return false;
+  return true;
+}
+
+// 带超时的 fetch，避免建流永久挂起（carrier 不 fire onOpen 也不 return）。
+async function fetchRunEvents(runId, controller) {
+  let timeoutId = null;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = window.setTimeout(
+      () => reject(new Error('建立事件流超时')),
+      RUN_STREAM_OPEN_TIMEOUT,
+    );
+  });
+  try {
+    const response = await Promise.race([
+      fetch(`/api/runs/${encodeURIComponent(runId)}/events?after=${state.runSequence}`, {
+        headers: { Authorization: `Bearer ${state.token}` },
+        signal: controller.signal,
+      }),
+      timeout,
+    ]);
+    return response;
+  } finally {
+    if (timeoutId) window.clearTimeout(timeoutId);
+  }
+}
+
+// 连接状态去重设置（角标依据）。
+function setConnectionState(next) {
+  if (state.connectionState === next) return;
+  state.connectionState = next;
+}
+
+// 显示 “{base} · 已等待 X 秒” 到 #runtimeStatus，每秒刷新；先清除旧计时。
+function showElapsedStatus(base) {
+  clearElapsedStatus();
+  const since = Date.now();
+  state.elapsedBase = String(base || '');
+  state.elapsedSince = since;
+  const update = () => {
+    const seconds = Math.max(0, Math.floor((Date.now() - since) / 1000));
+    const el = $('#runtimeStatus');
+    if (el && state.elapsedBase) el.textContent = `${state.elapsedBase} · 已等待 ${seconds} 秒`;
+  };
+  update();
+  state.elapsedTimer = window.setInterval(update, 1000);
+}
+
+function clearElapsedStatus() {
+  if (state.elapsedTimer) window.clearInterval(state.elapsedTimer);
+  state.elapsedTimer = null;
+  state.elapsedBase = '';
+}
+
+function stopRunWatchdog() {
+  if (state.runWatchdogTimer) window.clearInterval(state.runWatchdogTimer);
+  state.runWatchdogTimer = null;
+  if (state.runWaitTimer) window.clearInterval(state.runWaitTimer);
+  state.runWaitTimer = null;
+  state.runProbeMisses = 0;
+}
+
+function startRunWatchdog() {
+  stopRunWatchdog();
+  state.runWatchdogTimer = window.setInterval(runWatchdogTick, RUN_WATCHDOG_INTERVAL);
+  // 轻量等待计时：每秒检查“长时间无新进展”，用于显示“等待中 · 已等待 X 秒”。
+  state.runWaitTimer = window.setInterval(runWaitTick, 1000);
+}
+
+// 无进展等待提示：run 活跃但长时间没有真实内容进展（delta/reasoning/tool/status）
+// 时显示“等待中 · 已等待 X 秒”，让用户明白“还在工作而非卡死”。
+// 用 runContentActivityAt（不含 heartbeat）作为依据，后台心跳不会重置计数；
+// 一有真实进展事件，runContentActivityAt 被刷新，本逻辑自动恢复展示前文本。
+function runWaitTick() {
+  if (!state.abortController || !state.runContentActivityAt) return;
+  if (state.connectionState === 'reconnecting') return;      // 重连中已单独提示
+  if (state.elapsedBase) return;                             // 已有思考/工具计时在展示，不重复
+  if (!state.chatRunId && !state.runConversationId) return;
+  const idle = Date.now() - state.runContentActivityAt;
+  const el = $('#runtimeStatus');
+  if (idle >= RUN_WAIT_STATUS_IDLE) {
+    if (!state.runWaitShown) {
+      state.runWaitShown = true;
+      state.runWaitPrevText = el ? el.textContent : '';
+    }
+    const waitSeconds = Math.max(1, Math.floor(idle / 1000));
+    if (el) el.textContent = `等待中 · 已等待 ${waitSeconds} 秒`;
+  } else if (state.runWaitShown) {
+    // 有进展了，还原此前展示（或回到就绪）。
+    state.runWaitShown = false;
+    if (el) el.textContent = state.runWaitPrevText || (state.chatRunId ? '正在处理' : '就绪');
+    state.runWaitPrevText = '';
+  }
+}
+
+// 看门狗：检测“流既不推数据也不报错”的死流，并用真实探针区分“流死/服死”。
+function runWatchdogTick() {
+  if (!state.abortController || !state.runLastActivityAt) return;
+  if (state.runRecovering) return;
+  // 冷却期内不行动，避免风暴
+  if (state.runReconnectAt && Date.now() < state.runReconnectAt) return;
+  if (!state.runConversationId && !state.conversationId) return;
+  const idle = Date.now() - state.runLastActivityAt;
+  if (idle < RUN_WATCHDOG_IDLE) {
+    state.runProbeMisses = 0;
+    setConnectionState('connected');
+    return;
+  }
+  state.runProbeMisses += 1;
+  if (state.runProbeMisses < RUN_WATCHDOG_PROBE_MAX) return;
+  state.runProbeMisses = 0;
+  void probeAndRecoverRun();
+}
+
+async function probeAndRecoverRun() {
+  const controller = state.abortController;
+  const conversationId = state.runConversationId || state.conversationId;
+  const runId = state.chatRunId;
+  const generation = state.runGeneration;
+  if (!controller || !runId || !conversationId) return;
+  if (!isRunGenerationActive(generation, controller)) return;
+  state.runRecovering = true;
+  try {
+    // 真实探针：loadTasks 能否成功 → 区分“流死 server 活”与“server 死”。
+    await api('/api/tasks');
+    if (!isRunGenerationActive(generation, controller)) return;
+    console.warn('[naiba] 看门狗：流空闲超限但服务存活，重启流续传 run=', runId);
+    if (state.conversationId !== conversationId) return;
+    void resumeRun({ id: runId, conversation_id: conversationId }, { fromWatchdog: true });
+  } catch (error) {
+    // server 死 → 进入带冷却的保守重连，等待轮询兜底
+    if (!isRunGenerationActive(generation, controller)) return;
+    console.warn('[naiba] 看门狗：检测到服务不可达，进入冷却重连');
+    enterReconnectCoolDown(true);
+  } finally {
+    state.runRecovering = false;
+  }
+}
+
+function enterReconnectCoolDown(showTimer = true) {
+  setConnectionState('reconnecting');
+  state.runReconnectAt = Date.now() + RUN_RECONNECT_COOLDOWN;
+  if (showTimer) showElapsedStatus('重连中…');
+}
+
+// 断线自动重连：非 AbortError 且流仍当前时，指数退避 + 抖动后重建流。
+function scheduleRunReconnect(run, controller, generation) {
+  if (!run?.id) return;
+  if (!isRunGenerationActive(generation, controller)) return;
+  state.runAttempt += 1;
+  if (state.runAttempt > RUN_RECONNECT_ATTEMPTS) {
+    // 超限：解绑当前（已死）控制器，交还轮询兜底，避免状态永远“活动中”却无法被兜底。
+    detachRunSubscription();
+    state.checkRunEligible = true;
+    enterReconnectCoolDown(true);
+    return;
+  }
+  setConnectionState('reconnecting');
+  state.checkRunEligible = true;
+  const delay = backoffDelay(state.runAttempt);
+  showElapsedStatus('重连中…');
+  window.setTimeout(() => {
+    if (!isRunGenerationActive(generation, controller)) return;
+    // resumeRun 内部会自增 runGeneration，建立新一代连接
+    void resumeRun(run, { fromReconnect: true, generation });
+  }, delay);
 }
 
 function clearVisionProgress() {
@@ -3390,45 +3648,78 @@ function createRunRow(run) {
   return row;
 }
 
-async function consumeRunStream(response, row, conversationId, runId, controller) {
+async function consumeRunStream(response, row, conversationId, runId, controller, generation = state.runGeneration) {
+  state.runLastActivityAt = Date.now();
+  state.runContentActivityAt = Date.now();
+  startRunWatchdog();
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      const event = JSON.parse(line);
-      if (event.type === 'heartbeat') continue;
-      const eventRunId = String(event.run_id || runId || state.chatRunId || '');
-      if (eventRunId) {
-        const cached = state.runEvents[eventRunId] || [];
-        cached.push(event);
-        state.runEvents[eventRunId] = cached.slice(-2000);
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      // 任何字节（含 heartbeat）都算活跃，防止心跳流被误判死流
+      state.runLastActivityAt = Date.now();
+      // 代际变了（旧流被 detach/重连取代）则立即中止本消费
+      if (!isRunGenerationActive(generation, controller)) break;
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        let event;
+        try {
+          event = JSON.parse(line);
+        } catch (_) {
+          continue; // 单行解析失败不致命，跳过
+        }
+        if (event.type === 'heartbeat') continue;
+        // 真实内容事件（非 heartbeat）→ 更新“内容进展”时间，供“等待中”计时使用。
+        state.runContentActivityAt = Date.now();
+        const eventRunId = String(event.run_id || runId || state.chatRunId || '');
+        if (eventRunId) {
+          const cached = state.runEvents[eventRunId] || [];
+          cached.push(event);
+          state.runEvents[eventRunId] = cached.slice(-2000);
+        }
+        state.runSequence = Math.max(state.runSequence, Number(event.sequence || 0));
+        handleChatEvent(event, row, conversationId, runId);
+        if (eventRunId && ['done', 'error', 'cancelled'].includes(event.type)) {
+          delete state.runEvents[eventRunId];
+        }
       }
-      state.runSequence = Math.max(state.runSequence, Number(event.sequence || 0));
-      handleChatEvent(event, row, conversationId, runId);
-      if (eventRunId && ['done', 'error', 'cancelled'].includes(event.type)) {
-        delete state.runEvents[eventRunId];
-      }
+      if (done) break;
     }
-    if (done) break;
-  }
-  if (buffer.trim()) {
-    const event = JSON.parse(buffer);
-    if (event.type !== 'heartbeat') handleChatEvent(event, row, conversationId, runId);
+    if (buffer.trim()) {
+      let event;
+      try {
+        event = JSON.parse(buffer);
+      } catch (_) {
+        event = null;
+      }
+      if (event && event.type !== 'heartbeat') handleChatEvent(event, row, conversationId, runId);
+    }
+  } finally {
+    // 消费循环正常结束（done/代际失效/被 abort）都停止看门狗；finishRunSubscription 还会再兜底清一次。
+    if (state.runWatchdogTimer && state.abortController === controller) stopRunWatchdog();
   }
 }
 
 async function finishRunSubscription(conversationId, controller) {
   if (state.abortController === controller) {
+    stopRunWatchdog();
+    clearElapsedStatus();
+    state.runWaitShown = false;
+    state.runWaitPrevText = '';
     state.abortController = null;
     state.chatRunId = '';
     state.runConversationId = '';
     state.runSequence = 0;
+    state.runAttempt = 0;
+    state.runReconnectAt = 0;
+    state.runProbeMisses = 0;
+    state.checkRunEligible = false;
+    setConnectionState('connected');
     setBusy(false);
   }
   await loadTasks();
@@ -3438,11 +3729,12 @@ async function finishRunSubscription(conversationId, controller) {
   }
 }
 
-async function resumeRun(run) {
+async function resumeRun(run, options = {}) {
   const conversationId = String(run?.conversation_id || '');
   const runId = String(run?.id || '');
   if (!runId || conversationId !== state.conversationId) return;
   detachRunSubscription();
+  const generation = ++state.runGeneration; // 确立新一代连接
   const row = createRunRow(run);
   const controller = new AbortController();
   state.abortController = controller;
@@ -3453,22 +3745,30 @@ async function resumeRun(run) {
   setBusy(true);
   cached.forEach((event) => handleChatEvent(event, row, conversationId, runId));
   void (async () => {
+    let reconnectScheduled = false;
     try {
-      const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/events?after=${state.runSequence}`, {
-        headers: { Authorization: `Bearer ${state.token}` },
-        signal: controller.signal,
-      });
+      const response = await fetchRunEvents(runId, controller);
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}));
         throw new Error(payload.error || `HTTP ${response.status}`);
       }
-      await consumeRunStream(response, row, conversationId, runId, controller);
+      setConnectionState('connected');
+      await consumeRunStream(response, row, conversationId, runId, controller, generation);
     } catch (error) {
       if (error.name !== 'AbortError' && state.conversationId === conversationId) {
         row.querySelector('.answer-content').innerHTML = `<p>恢复 Run 失败：${escapeHtml(error.message)}</p>`;
       }
+      if (error.name !== 'AbortError' && isRunGenerationActive(generation, controller)) {
+        // 断线自动重连（指数退避 + 抖动 + 超限交还轮询）。
+        // 已排程重连时，状态由 reconnect 计时器/轮询接管，不再 finishRunSubscription 清空。
+        reconnectScheduled = true;
+        scheduleRunReconnect({ id: runId, conversation_id: conversationId }, controller, generation);
+      }
     } finally {
-      if (state.abortController === controller) await finishRunSubscription(conversationId, controller);
+      // 正常结束或被用户 abort（代际失效）时统一收尾；重连接管时不重复清空。
+      if (!reconnectScheduled && state.abortController === controller) {
+        await finishRunSubscription(conversationId, controller);
+      }
     }
   })();
 }
@@ -3516,6 +3816,7 @@ async function sendChatMessage(textOverride = '') {
   $('#messages').append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
   const row = createRunRow({ id: '', kind: 'chat' });
   const controller = new AbortController();
+  const runGeneration = ++state.runGeneration; // 本段对话流的新一代
   state.abortController = controller;
   state.runConversationId = conversationId;
   setBusy(true);
@@ -3546,7 +3847,7 @@ async function sendChatMessage(textOverride = '') {
       }
       throw new Error(payload.error || `HTTP ${response.status}`);
     }
-    await consumeRunStream(response, row, conversationId, state.chatRunId, controller);
+    await consumeRunStream(response, row, conversationId, state.chatRunId, controller, runGeneration);
   } catch (error) {
     if (error.name !== 'AbortError' && state.conversationId === conversationId) {
       row.querySelector('.answer-content').innerHTML = `<p>请求失败：${escapeHtml(error.message)}</p>`;
@@ -3787,7 +4088,17 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       ? `视觉识别完成，正在交给主模型处理（${event.message}）`
       : event.message;
     setActivity(statusMessage);
-    $('#runtimeStatus').textContent = statusMessage;
+    // 思考等待计时：显示 “正在思考 … · 已等待 X 秒”，收到进展事件即清除
+    if (state.elapsedTimer) clearElapsedStatus();
+    state.elapsedBase = statusMessage || '正在思考';
+    state.elapsedSince = Date.now();
+    const tick = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - state.elapsedSince) / 1000));
+      const el = $('#runtimeStatus');
+      if (el) el.textContent = `${state.elapsedBase} · 已等待 ${seconds} 秒`;
+    };
+    tick();
+    state.elapsedTimer = window.setInterval(tick, 1000);
   } else if (event.type === 'response_retracted') {
     clearStreamingAnswer(answer);
     row.querySelectorAll('.reasoning-block').forEach((block) => block.remove());
@@ -3800,6 +4111,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     // Keep tool execution/result details available without dumping the full
     // capability list into every response.
   } else if (event.type === 'delta') {
+    clearElapsedStatus();
     setActivity('');
     const current = answer.dataset.raw || '';
     const next = current + String(event.content || '');
@@ -3811,6 +4123,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       scheduleStreamingMarkdown(answer, next);
     }
   } else if (event.type === 'reasoning_start') {
+    clearElapsedStatus();
     state.streamingReasoningBlock = null;
     row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
       block.dataset.active = 'false';
@@ -3850,6 +4163,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     content.innerHTML = markdown((content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content);
     content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
   } else if (event.type === 'tool_start') {
+    clearElapsedStatus();
     clearStreamingAnswer(answer);
     collapseToolReasoningBlock();
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
@@ -3889,6 +4203,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     const last = row.querySelector('.tool-run:last-child');
     if (last) last.textContent = `${event.success ? '已完成' : '失败'} · ${event.tool}`;
   } else if (event.type === 'tool_confirm') {
+    clearElapsedStatus();
     clearStreamingAnswer(answer);
     // 需要确认的工具调用
     const stack = row.querySelector('.tool-stack') || document.createElement('div');
@@ -3922,6 +4237,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     // AI回复包含可选项，显示选择按钮
     showChoiceButtons(event.choices, event.choice_groups);
   } else if (event.type === 'cancelled') {
+    clearElapsedStatus();
     clearVisionProgress();
     setActivity('');
     if (event.aborted_message) {
@@ -3937,6 +4253,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
     }
   } else if (event.type === 'run_failed') {
+    clearElapsedStatus();
     clearVisionProgress();
     setActivity('');
     // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
@@ -3947,6 +4264,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     state.contextAtCeiling = true;
     updateContextComposerLock(Boolean(state.chatBusy));
   } else if (event.type === 'done') {
+    clearElapsedStatus();
     clearVisionProgress();
     collapseReasoning();
     if (event.message) {
@@ -3978,6 +4296,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       })();
     }
   } else if (event.type === 'error') {
+    clearElapsedStatus();
     clearVisionProgress();
     collapseReasoning();
     answer.innerHTML = `<p>执行失败：${escapeHtml(event.message)}</p>`;
@@ -4166,6 +4485,14 @@ async function cancelCurrentRun() {
   }
 }
 
+// 显式刷新页面（内嵌 pywebview 无法 F5 时的退路，浏览器同样可用）。
+// URL 中的 token 与对话/工作区状态由后端持久化，reload 后可恢复。
+function reloadPage() {
+  if (state.runWatchdogTimer) stopRunWatchdog();
+  if (state.elapsedTimer) clearElapsedStatus();
+  window.location.reload();
+}
+
 function resizeTextarea() {
   const input = $('#messageInput');
   input.style.height = 'auto';
@@ -4250,6 +4577,8 @@ function bindEvents() {
   $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
   $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());
+  // 显式刷新按钮：适配 EXE 内嵌 pywebview 无法使用 F5 的场景，EXE 与浏览器通用。
+  $('#reloadPage')?.addEventListener('click', () => reloadPage());
   $('#clearTerminalTasks').addEventListener('click', clearTerminalTasks);
   $('#clearConversationMessages').addEventListener('click', clearConversationMessages);
   $('#activeTaskBar').addEventListener('click', (event) => {
