@@ -1,4 +1,0 @@
-interface:
-  display_name: "官方comfy-mcp"
-  short_description: "Official local ComfyUI MCP connector"
-  default_prompt: "Use $official-comfy-mcp to connect and operate my local ComfyUI through the official MCP server."
