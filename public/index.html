@@ -71,8 +71,8 @@
           <div class="empty-mark">S</div>
           <h1>开始新对话</h1>
           <div class="starter-grid">
-            <button data-prompt="列出当前可用的 Skills，并按用途分类。">整理可用 Skills</button>
-            <button data-prompt="调用 ComfyUI。请先启动 ComfyUI，然后通过 HTTP API 或 comfy CLI 检查环境并执行操作。">调用 ComfyUI（请先启动 ComfyUI）</button>
+            <button data-prompt="先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；若未启动，提示用户启动 ComfyUI。确认接口可用后，通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。">调用 ComfyUI（请先启动 ComfyUI）</button>
+            <button data-prompt="帮我设置本地 Comfy MCP 连接，按照 https://docs.comfy.org/agent-tools/mcp.md#local-comfy-mcp-connection 的设置指南操作">帮我设置本地 Comfy MCP 连接</button>
             <button data-prompt="查看 D:\\skill 目录最近修改的文件。">查看最近文件</button>
           </div>
         </div>
@@ -300,6 +300,7 @@
                 <option value="lm_studio">LM Studio /api/v1/chat</option>
                 <option value="ollama">Ollama /api/chat</option>
                 <option value="llama_cpp">llama.cpp /v1/chat/completions</option>
+                <option value="unsloth">Unsloth /v1/chat/completions</option>
               </select>
             </label>
             <p class="provider-format-guide" id="providerFormatGuide" hidden></p>
@@ -406,11 +407,17 @@
         </section>
         <section data-settings-panel="connections" hidden>
           <h3>MCP 服务</h3>
-          <div class="official-mcp-card" id="officialComfyMcpCard">
-            <div><b>官方 comfy-mcp（按需）</b><small id="officialComfyMcpStatus">普通聊天不会启动。对话明确使用官方 ComfyUI Skill 时，系统会自动检测、安装并注册。</small></div>
-            <div class="form-actions official-mcp-actions"><button class="control-button" id="inspectComfyMcp" type="button">检查状态</button><button class="primary-button" id="setupComfyMcp" type="button">安装并注册</button></div>
-          </div>
           <div id="mcpList" class="connection-list"></div>
+          <details class="mcp-add-form" id="mcpAddForm">
+            <summary>新增 MCP 服务器</summary>
+            <div class="mcp-add-fields">
+              <label>服务 ID<input id="mcpNewId" type="text" placeholder="如 comfy-mcp" autocomplete="off"></label>
+              <label>命令（command）<input id="mcpNewCommand" type="text" placeholder="可执行文件的绝对路径或命令名" autocomplete="off"></label>
+              <label>环境变量 COMFY_BIN（可选）<input id="mcpNewComfyBin" type="text" placeholder="comfy 可执行文件的绝对路径" autocomplete="off"></label>
+              <label class="mcp-env-row"><input id="mcpNewEnvJson" type="text" placeholder='更多环境变量 JSON，如 {"KEY":"value"}' autocomplete="off"></label>
+              <div class="form-actions"><button class="primary-button" id="saveMcpServer" type="button">保存并注册</button></div>
+            </div>
+          </details>
           <h3>手机访问</h3>
           <div class="connection-address" id="connectionAddress"></div>
           <p class="hint" id="connectionReason"></p>
@@ -551,7 +558,7 @@
     <div class="task-list" id="taskList"></div>
   </dialog>
 
-  <div class="toast" id="toast" role="status"></div>
+  <dialog class="toast" id="toast" role="status"></dialog>
   <div class="image-lightbox" id="imageLightbox" hidden aria-hidden="true">
     <button class="lightbox-close" id="imageLightboxClose" type="button" title="关闭" aria-label="关闭大图">×</button>
     <img id="imageLightboxImg" alt="大图预览" draggable="false">

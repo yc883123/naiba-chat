@@ -7,7 +7,6 @@ import time
 import traceback
 from contextlib import AsyncExitStack
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from datetime import timedelta
 from typing import Any, Callable
 
 
@@ -128,15 +127,26 @@ class MCPServerConnection:
             annotations: dict[str, Any] = {}
             ann = getattr(tool, "annotations", None)
             if ann is not None:
-                for hint in ("readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"):
+                # mcp SDK 新旧字段命名：旧版 camelCase，新版 snake_case。
+                hint_fields = {
+                    "readOnlyHint": "read_only_hint",
+                    "destructiveHint": "destructive_hint",
+                    "idempotentHint": "idempotent_hint",
+                    "openWorldHint": "open_world_hint",
+                }
+                for hint, snake in hint_fields.items():
                     value = getattr(ann, hint, None)
+                    if value is None:
+                        value = getattr(ann, snake, None)
                     if value is not None:
                         annotations[hint] = value
             new_tools.append(
                 {
                     "name": tool.name,
                     "description": tool.description or "",
-                    "input_schema": tool.inputSchema or {},
+                    "input_schema": getattr(tool, "input_schema", None)
+                    or getattr(tool, "inputSchema", None)
+                    or {},
                     "annotations": annotations,
                 }
             )
@@ -165,9 +175,15 @@ class MCPServerConnection:
                 if self.error and "已注销" in self.error:
                     return False, self.error
                 if self.error or not self._session or not self._loop:
-                    # 调用时发现断线：先执行一次有界重连，再返回明确的启动/调用错误。
+                    # 调用时发现断线：从未启动的先按需启动一次（lazy start），
+                    # 否则执行有界重连，再返回明确的启动/调用错误。
                     if self._thread is None and not self.error:
-                        return False, "MCP 服务尚未连接"
+                        try:
+                            self.start(timeout=max(15, min(self.call_timeout_seconds, 45)))
+                        except Exception as exc:
+                            return False, f"启动 MCP 服务失败：{exc}"
+                        if not self._session or not self._loop:
+                            return False, self.error or "MCP 服务启动后仍不可用"
                     if not self.reconnect_once():
                         return False, self.error or "MCP 服务重连失败"
                     if not self._session or not self._loop:
@@ -176,7 +192,8 @@ class MCPServerConnection:
                     self._session.call_tool(
                         tool_name,
                         arguments,
-                        read_timeout_seconds=timedelta(seconds=timeout),
+                        # mcp SDK 2.x 中 read_timeout_seconds 为 float 秒数；旧版为 timedelta。
+                        read_timeout_seconds=float(timeout),
                     ),
                     self._loop,
                 )
@@ -204,7 +221,10 @@ class MCPServerConnection:
                         blocks.append(item.model_dump_json())
                     except Exception:
                         blocks.append(str(item))
-                return not bool(result.isError), "\n".join(blocks)
+                is_error = getattr(result, "is_error", None)
+                if is_error is None:
+                    is_error = getattr(result, "isError", False)
+                return not bool(is_error), "\n".join(blocks)
             finally:
                 self.active_calls = 0
                 self.activity = "idle"
@@ -351,6 +371,25 @@ class MCPRegistry:
         if should_start:
             connection.start()
         return connection.state()
+
+    def remove(self, server_id: str) -> bool:
+        """Remove one server entirely: stop its connection, deregister tools, drop it."""
+        server_id = str(server_id or "").strip()
+        with self._lifecycle_lock:
+            with self._lock:
+                connection = self.connections.pop(server_id, None)
+        if connection is None:
+            return False
+        try:
+            connection.stop()
+        except Exception:
+            pass
+        if self.on_tools_deregistered:
+            try:
+                self.on_tools_deregistered(server_id)
+            except Exception:
+                pass
+        return True
 
     def start(self) -> None:
         with self._lifecycle_lock:

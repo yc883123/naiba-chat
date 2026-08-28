@@ -795,6 +795,8 @@ class ConversationRunManager:
                     request_format = str(vision_profile.get("request_format") or "").lower()
                     if request_format == "llama_cpp":
                         vision_backend_name = "本地视觉模型（llama.cpp）"
+                    elif request_format == "unsloth":
+                        vision_backend_name = "本地视觉模型（Unsloth）"
                     elif vision_profile.get("kind") == "local":
                         vision_backend_name = "本地视觉模型"
                     elif vision_profile.get("name"):

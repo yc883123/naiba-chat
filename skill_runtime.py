@@ -890,6 +890,28 @@ class ToolExecutor:
     def mcp_tool_guide(self) -> str:
         return self.mcp_registry.tool_guide()
 
+    def mcp_registered_note(self) -> str:
+        """返回已注册 MCP 服务的连接状态摘要，供系统提示注入。
+
+        目的：当会话激活 MCP 语境时，让模型明确知道哪些外部服务已经注册，
+        避免它反复走安装/注册/客户端配置流程。
+        """
+        try:
+            states = self.mcp_registry.states()
+        except Exception:
+            return ""
+        rows = []
+        for item in states:
+            server_id = str(item.get("id") or "")
+            tools = item.get("tools") or []
+            if item.get("connected"):
+                rows.append(f"- {server_id}：已连接（{len(tools)} 个工具）")
+            elif item.get("error"):
+                rows.append(f"- {server_id}：已注册但连接异常（{item.get('error')}）")
+            else:
+                rows.append(f"- {server_id}：已注册（{item.get('status')}）")
+        return "\n".join(rows)
+
 
 def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -> list[dict[str, Any]]:
     """从 ``vision_read_folder`` 工具结果提取图片 image parts，供多模态模型直接看图。
@@ -1238,8 +1260,20 @@ class SkillAgent:
         if agent_system_prompt.strip():
             system += "\n\n用户配置的 Agent 指令：\n" + agent_system_prompt.strip()
         mcp_guide = self.executor.mcp_tool_guide()
-        if mcp_guide and "call_mcp" in allowed and (run_context or {}).get("mcp_active"):
-            system += "\n\n以下是用户显式配置并授权的外部 MCP 工具说明。仅按已授权范围调用；Skill 本身不能注册服务或扩大权限：\n" + mcp_guide
+        if "call_mcp" in allowed and (run_context or {}).get("mcp_active"):
+            registered_note = self.executor.mcp_registered_note()
+            if registered_note:
+                system += (
+                    "\n\nMCP 服务注册状态：以下服务已注册在 NaibaChat（内置 MCP 客户端，"
+                    "直接调用 call_mcp 即可，无需重新安装、注册，"
+                    "也不要去配置 Claude Desktop / Cursor / Windsurf 等外部客户端）：\n"
+                    + registered_note
+                )
+            if mcp_guide:
+                system += (
+                    "\n\n以下是用户显式配置并授权的外部 MCP 工具说明。仅按已授权范围调用；"
+                    "Skill 本身不能注册服务或扩大权限：\n" + mcp_guide
+                )
         if skill_prompts:
             system += "\n\n" + SKILL_PROMPT_HEADER + "\n\n".join(skill_prompts)
 

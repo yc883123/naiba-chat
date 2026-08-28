@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -163,7 +163,6 @@ def _migrate_to_v8(db: sqlite3.Connection) -> None:
     """Persist per-conversation workspace and reasoning intensity."""
     for column, definition in (
         ("workspace_dir", "TEXT NOT NULL DEFAULT ''"),
-        ("workspace_group", "TEXT NOT NULL DEFAULT ''"),
         ("reasoning_effort", "TEXT NOT NULL DEFAULT 'off'"),
     ):
         try:
@@ -191,6 +190,20 @@ def _migrate_to_v9(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v10(db: sqlite3.Connection) -> None:
+    """Persist per-conversation workspace group for sidebar workspace folders.
+
+    workspace_group 曾在 1.4.2 被误加入 v8 迁移，导致旧库（v8 已执行过）
+    缺失该列而报 no such column。此处独立为 v10，确保所有存量库都能补列。
+    """
+    try:
+        db.execute("SELECT workspace_group FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN workspace_group TEXT NOT NULL DEFAULT ''"
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -202,6 +215,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     7: _migrate_to_v7,
     8: lambda db: _migrate_to_v8(db),
     9: _migrate_to_v9,
+    10: _migrate_to_v10,
 }
 
 

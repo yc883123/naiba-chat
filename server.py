@@ -844,9 +844,9 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 # 在线请求协议集合；llama.cpp 提供 OpenAI 兼容接口，但服务进程仍在本机。
 ONLINE_REQUEST_FORMATS = {"openai_chat", "codex_responses", "gemini", "claude"}
-LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp"}
+LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp", "unsloth"}
 VALID_MODEL_KINDS = {"online", "local"}
-VALID_LOCAL_BACKENDS = {"ollama", "lm_studio", "llama_cpp"}
+VALID_LOCAL_BACKENDS = {"ollama", "lm_studio", "llama_cpp", "unsloth"}
 
 
 def _infer_kind_for_request_format(request_format: str) -> str:
@@ -1230,6 +1230,18 @@ class ConfigStore:
             self.save()
         return payload
 
+    def delete_mcp_server(self, server_id: str) -> bool:
+        """Remove a registered MCP server from persistent config."""
+        server_id = str(server_id or "").strip()
+        with self.lock:
+            servers = self.data.get("mcp_servers", [])
+            before = len(servers)
+            self.data["mcp_servers"] = [item for item in servers if item.get("id") != server_id]
+            if len(self.data["mcp_servers"]) != before:
+                self.save()
+                return True
+            return False
+
     def upsert_provider(self, values: dict[str, Any]) -> dict[str, Any]:
         """兼容旧接口，同时尊重显式 online/local 类型。"""
         request_format = str(values.get("request_format") or "openai_chat").strip().lower()
@@ -1391,7 +1403,7 @@ class ConfigStore:
                 values.get("local_backend") or values.get("request_format") or ""
             ).strip().lower()
             if local_backend not in VALID_LOCAL_BACKENDS:
-                raise ValueError("本地后端必须是 ollama、LM Studio 或 llama.cpp")
+                raise ValueError("本地后端必须是 ollama、LM Studio、llama.cpp 或 Unsloth")
             request_format = local_backend
         else:
             request_format = str(values.get("request_format") or "openai_chat").strip().lower()
@@ -2230,7 +2242,6 @@ class NaibaChatApp:
             self.mcp,
             permission_mode=self.config.data.get("permission_mode", "confirm"),
             mcp_register=self.register_mcp_server,
-            mcp_setup=lambda: self.setup_official_comfy_mcp(install=True),
         )
         self.plans = PlanManager(self)
         self.runs = ConversationRunManager(self)
@@ -2510,69 +2521,13 @@ class NaibaChatApp:
         config = self.config.upsert_mcp_server(values)
         return {"saved": True, "server": self.mcp.upsert(config)}
 
-    def inspect_official_comfy_mcp(self) -> dict[str, Any]:
-        """Discover the first-party comfy-mcp toolchain without changing state."""
-        import importlib.util
-        comfy_mcp = shutil.which("comfy-mcp") or shutil.which("comfy-mcp.exe")
-        comfy = shutil.which("comfy") or shutil.which("comfy.exe")
-        try:
-            module_available = importlib.util.find_spec("comfy_mcp") is not None
-        except (ImportError, ValueError):
-            module_available = False
-        registered = next(
-            (item for item in self.config.data.get("mcp_servers", [])
-             if isinstance(item, dict) and item.get("id") == "comfy-mcp"),
-            None,
-        )
-        connection_state = None
-        if "comfy-mcp" in self.mcp.connections:
-            connection_state = self.mcp.connections["comfy-mcp"].state()
-        workspace = self.config.resolve_workspace_dir()
-        return {
-            "comfy_mcp": comfy_mcp or "",
-            "comfy": comfy or "",
-            "workspace": str(workspace),
-            "workspace_exists": workspace.is_dir(),
-            "module_available": module_available,
-            "registered": bool(registered),
-            "enabled": bool(registered and registered.get("enabled", True)),
-            "server": registered or {},
-            "connection": connection_state,
-        }
-
-    def setup_official_comfy_mcp(self, install: bool = False) -> dict[str, Any]:
-        """Optionally install and register Comfy's official stdio MCP server."""
-        info = self.inspect_official_comfy_mcp()
-        if install and not info["comfy_mcp"]:
-            import subprocess
-            command = [sys.executable, "-m", "pip", "install", "comfy-mcp", "comfy-cli>=1.14.0"]
-            proc = subprocess.run(command, capture_output=True, text=True, timeout=900)
-            if proc.returncode != 0:
-                detail = (proc.stderr or proc.stdout or "pip install failed").strip()
-                raise RuntimeError(detail[-2000:])
-            info = self.inspect_official_comfy_mcp()
-        executable = info.get("comfy_mcp")
-        if not executable:
-            raise ValueError("未找到 comfy-mcp。请先安装 comfy-mcp，或确认它位于当前 Python 环境的 PATH 中。")
-        env = {"COMFY_BIN": str(info["comfy"])} if info.get("comfy") else {}
-        result = self.register_mcp_server({
-            "id": "comfy-mcp", "command": str(executable), "args": [],
-            "env": env, "enabled": True,
-        })
-        # An explicit setup action must finish the stdio handshake now.  A
-        # mere registry entry is otherwise reported as ready while the first
-        # tool call still sees a stopped connection.
-        connection = self.mcp.connections.get("comfy-mcp")
-        if connection:
-            try:
-                connection.start(timeout=30)
-            except Exception as exc:
-                result["connection"] = connection.state()
-                result["connection"]["error"] = str(exc)
-            else:
-                result["connection"] = connection.state()
-        result["detection"] = self.inspect_official_comfy_mcp()
-        return result
+    def remove_mcp_server(self, server_id: str) -> dict[str, Any]:
+        """Persistently delete a registered MCP server and its live connection."""
+        if self.config.delete_mcp_server(server_id):
+            self.mcp.remove(server_id)
+        else:
+            self.mcp.remove(server_id)  # 配置里可能已缺，仍尝试清理运行态
+        return {"removed": True, "server_id": server_id}
 
     def pick_workspace_directory(self, initial: str = "") -> dict[str, Any]:
         """Open a Windows native folder picker; return an empty path if cancelled."""
@@ -2689,7 +2644,6 @@ class NaibaChatApp:
             "default_model_key": self.config.default_model_key(),
             "skills": self.catalog.scan(),
             "mcp_servers": self.mcp.states(),
-            "comfy_mcp": self.inspect_official_comfy_mcp(),
             "agents": self.config.public_agents(),
             "default_agent_id": self.config.default_agent_id(),
             "workspaces": self.config.data.get("workspaces", []),
@@ -3320,16 +3274,22 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json(result)
             except (OSError, ValueError, RuntimeError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-        elif path == "/api/mcp/comfy/inspect":
-            self._json(APP.inspect_official_comfy_mcp())
-        elif path == "/api/mcp/comfy/setup":
-            try:
-                self._json(APP.setup_official_comfy_mcp(bool(body.get("install"))))
-            except (OSError, ValueError, RuntimeError) as exc:
-                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/workspace/pick":
             try:
                 self._json(APP.pick_workspace_directory(str(body.get("initial") or "")))
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/mcp/register":
+            try:
+                self._json(APP.register_mcp_server(body))
+            except (OSError, ValueError, RuntimeError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/mcp/remove":
+            try:
+                server_id = str(body.get("server_id") or "").strip()
+                if not server_id:
+                    raise ValueError("server_id 不能为空")
+                self._json(APP.remove_mcp_server(server_id))
             except (OSError, ValueError, RuntimeError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/mcp/reconnect":

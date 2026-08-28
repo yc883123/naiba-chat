@@ -75,9 +75,20 @@ async function api(path, options = {}) {
 function toast(message) {
   const element = $('#toast');
   element.textContent = message;
+  if (typeof element.show === 'function' && !element.open) {
+    element.show();
+  }
+  element.classList.remove('show');
+  // 强制一次重排再显示，确保每次都能播放淡入动画
+  void element.offsetWidth;
   element.classList.add('show');
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => element.classList.remove('show'), 2200);
+  toast.timer = setTimeout(() => {
+    element.classList.remove('show');
+    if (typeof element.close === 'function' && element.open) {
+      element.close();
+    }
+  }, 2200);
 }
 
 async function copyText(text) {
@@ -1089,7 +1100,6 @@ async function initialize() {
   renderSkills();
   renderProviders();
   renderMcp();
-  renderOfficialComfyMcp();
   renderUpdateStatus(state.bootstrap.update || {});
   await loadConversations();
   await loadTasks();
@@ -2237,7 +2247,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   }
   $('#providerName').value = provider.name || '';
   $('#providerBaseUrl').value = provider.base_url || '';
-  const inferredKind = provider.kind || (['ollama', 'lm_studio', 'llama_cpp'].includes(provider.request_format) ? 'local' : 'online');
+  const inferredKind = provider.kind || (['ollama', 'lm_studio', 'llama_cpp', 'unsloth'].includes(provider.request_format) ? 'local' : 'online');
   $('#providerKind').value = inferredKind === 'local' ? '1' : '0';
   $('#providerContextWindow').value = provider.context_window || provider.context_size || '';
   $('#providerMaxOutputTokens').value = provider.max_output_tokens || '';
@@ -2264,7 +2274,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
 
 function syncProviderKindOptions(previousFormat = '') {
   const local = $('#providerKind').value === '1';
-  const allowed = local ? ['lm_studio', 'ollama', 'llama_cpp'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
+  const allowed = local ? ['lm_studio', 'ollama', 'llama_cpp', 'unsloth'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
   const format = $('#providerFormat');
   [...format.options].forEach((option) => { option.hidden = !allowed.includes(option.value); });
   if (!allowed.includes(format.value)) {
@@ -2274,7 +2284,7 @@ function syncProviderKindOptions(previousFormat = '') {
     format.value = local && previousFormat === 'openai_chat' ? 'llama_cpp' : allowed[0];
   }
   const hint = $('#providerKindHint');
-  if (hint) hint.textContent = local ? '本地 API 可使用 llama.cpp、Ollama 或 LM Studio 服务。' : '在线 API 使用远程模型服务。';
+  if (hint) hint.textContent = local ? '本地 API 可使用 llama.cpp、Unsloth、Ollama 或 LM Studio 服务。' : '在线 API 使用远程模型服务。';
 }
 
 function updateProviderFormatGuide() {
@@ -2284,6 +2294,7 @@ function updateProviderFormatGuide() {
     ollama: '先启动 Ollama。API URL 通常填写 http://127.0.0.1:11434/v1；API Key 可留空；模型名称可通过 ollama list 查看，然后点击“检查模型”。',
     lm_studio: '先在 LM Studio 的 Developer / Local Server 页面启动服务并加载模型。API URL 通常填写 http://127.0.0.1:1234/v1；API Key 可留空，然后点击“检查模型”。',
     llama_cpp: '先启动 llama.cpp server。API URL 通常填写 http://127.0.0.1:8080/v1；API Key 可留空，然后点击“检查模型”。',
+    unsloth: '先启动 Unsloth（桌面版或 unsloth studio）。API URL 通常填写 http://127.0.0.1:8000 或 http://127.0.0.1:8888；API Key 在 Unsloth Settings → API 创建（sk-unsloth-…）；上下文长度由启动参数 unsloth run -c <tokens> 决定。然后点击“检查模型”。',
   };
   guide.textContent = guides[format] || '';
   guide.hidden = !guides[format];
@@ -2421,7 +2432,7 @@ function providerFormValue() {
 async function loadProviderModels({ automatic = false } = {}) {
   if (!state.providerEditing) return;
   const values = providerFormValue();
-  const localFormat = ['lm_studio', 'ollama', 'llama_cpp'].includes(values.request_format);
+  const localFormat = ['lm_studio', 'ollama', 'llama_cpp', 'unsloth'].includes(values.request_format);
   if (!values.base_url || (!values.api_key && !values.id && !localFormat)) {
     if (!automatic) $('#providerError').textContent = '请先填写 API URL 和 API Key';
     return;
@@ -3078,38 +3089,6 @@ async function pickWorkspace(targetId = 'workspaceDialogInput') {
   } catch (error) { toast(`目录选择失败：${error.message}`); }
 }
 
-function renderOfficialComfyMcp(info = state.bootstrap?.comfy_mcp || {}) {
-  const status = $('#officialComfyMcpStatus');
-  if (!status) return;
-  const bits = [];
-  bits.push(info.comfy_mcp ? `comfy-mcp：${info.comfy_mcp}` : '未找到 comfy-mcp');
-  if (info.comfy) bits.push(`comfy：${info.comfy}`);
-  status.textContent = `${bits.join('；')}。${info.registered ? (info.enabled ? '已注册并启用' : '已注册但停用') : '尚未注册'}`;
-}
-
-async function inspectOfficialComfyMcp() {
-  const status = $('#officialComfyMcpStatus');
-  if (status) status.textContent = '正在检查 comfy-mcp 安装、注册和连接状态…';
-  try { const info = await api('/api/mcp/comfy/inspect'); state.bootstrap.comfy_mcp = info; renderOfficialComfyMcp(info); await loadMcpServers(); }
-  catch (error) { toast(`检测 comfy-mcp 失败：${error.message}`); }
-}
-
-async function setupOfficialComfyMcp() {
-  const button = $('#setupComfyMcp');
-  if (button) button.disabled = true;
-  const status = $('#officialComfyMcpStatus');
-  if (status) status.textContent = '正在安装并注册官方 comfy-mcp，请稍候…';
-  try {
-    const result = await api('/api/mcp/comfy/setup', { method: 'POST', body: { install: true } });
-    state.bootstrap.comfy_mcp = result.detection || {};
-    await loadMcpServers();
-    const refreshed = await api('/api/mcp/comfy/inspect');
-    state.bootstrap.comfy_mcp = refreshed;
-    renderOfficialComfyMcp(refreshed); renderMcp(); toast('官方 comfy-mcp 已安装并注册');
-  } catch (error) { if (status) status.textContent = `设置失败：${error.message}`; toast(`官方 comfy-mcp 设置失败：${error.message}`); }
-  finally { if (button) button.disabled = false; }
-}
-
 async function saveAccessToken() {
   const value = $('#accessTokenInput').value.trim();
   if (!value) {
@@ -3134,7 +3113,7 @@ function mcpServerState(server) {
   if (server.status === 'error' || server.error) return { text: '错误', color: '#e45e55' };
   if (server.activity === 'calling' || (server.active_calls && server.active_calls > 0)) return { text: '使用中', color: '#3ecf8e' };
   if (server.status === 'connecting' || server.status === 'reconnecting') return { text: '连接中', color: '#e0a13a' };
-  if (server.connected) return { text: '已就绪', color: '#7d867d' };
+  if (server.connected) return { text: '已就绪', color: '#3ecf8e' };
   return { text: '待机', color: '#7d867d' };
 }
 
@@ -3193,7 +3172,12 @@ function renderMcp() {
     reconnect.type = 'button';
     reconnect.textContent = '重连';
     reconnect.addEventListener('click', () => mcpAction(server.id, 'reconnect'));
-    actions.append(test, reconnect);
+    const remove = document.createElement('button');
+    remove.className = 'control-button mcp-remove';
+    remove.type = 'button';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => removeMcpServer(server.id));
+    actions.append(test, reconnect, remove);
     item.append(actions);
   });
 }
@@ -3204,9 +3188,60 @@ async function mcpAction(serverId, action) {
     const server = state.bootstrap.mcp_servers.find((item) => item.id === serverId);
     if (server) Object.assign(server, result);
     renderMcp();
-    toast(action === 'test' ? 'MCP 测试完成' : 'MCP 已重新连接');
+    if (action === 'test') {
+      const parts = ['MCP 测试完成'];
+      if (result.connected !== undefined) parts.push(result.connected ? '已就绪' : '未连接');
+      if (result.comfyui_reachable !== undefined) parts.push(result.comfyui_reachable ? 'ComfyUI 可达' : 'ComfyUI 不可达');
+      if (result.error) parts.push('错误：' + result.error);
+      toast(parts.join(' · '));
+    } else {
+      toast('MCP 已重新连接');
+    }
   } catch (error) {
     toast('MCP 操作失败：' + error.message);
+  }
+}
+
+async function removeMcpServer(serverId) {
+  if (!confirm(`确定删除 MCP 服务「${serverId}」？`)) return;
+  try {
+    await api('/api/mcp/remove', { method: 'POST', body: { server_id: serverId } });
+    state.bootstrap.mcp_servers = (state.bootstrap.mcp_servers || []).filter((item) => item.id !== serverId);
+    renderMcp();
+    toast(`MCP 服务「${serverId}」已删除`);
+  } catch (error) {
+    toast('删除 MCP 服务失败：' + error.message);
+  }
+}
+
+async function saveMcpServer() {
+  const id = $('#mcpNewId').value.trim();
+  const command = $('#mcpNewCommand').value.trim();
+  if (!id) { toast('请填写服务 ID'); return; }
+  if (!command) { toast('请填写命令（command）'); return; }
+  const env = {};
+  const comfyBin = $('#mcpNewComfyBin').value.trim();
+  if (comfyBin) env.COMFY_BIN = comfyBin;
+  const extraRaw = $('#mcpNewEnvJson').value.trim();
+  if (extraRaw) {
+    let extra;
+    try { extra = JSON.parse(extraRaw); }
+    catch (_e) { toast('环境变量 JSON 格式不正确'); return; }
+    if (!extra || typeof extra !== 'object' || Array.isArray(extra)) { toast('环境变量 JSON 必须是对象'); return; }
+    Object.assign(env, extra);
+  }
+  try {
+    await api('/api/mcp/register', { method: 'POST', body: { id, command, args: [], env, enabled: true } });
+    $('#mcpNewId').value = '';
+    $('#mcpNewCommand').value = '';
+    $('#mcpNewComfyBin').value = '';
+    $('#mcpNewEnvJson').value = '';
+    $('#mcpAddForm').open = false;
+    state.bootstrap.mcp_servers = await loadMcpServers();
+    renderMcp();
+    toast(`MCP 服务「${id}」已注册`);
+  } catch (error) {
+    toast('注册 MCP 服务失败：' + error.message);
   }
 }
 
@@ -3221,7 +3256,12 @@ async function pollMcpStatus() {
     for (const s of prev) byId[s.id] = s;
     for (const s of servers) {
       const cur = byId[s.id];
-      if (!cur) continue;
+      if (!cur) {
+        // 后端出现了本地快照中不存在的 MCP 服务（例如对话内 agent 刚注册的）。
+        // light 接口不含工具明细，升级为全量刷新以完整展示。
+        await loadMcpServers();
+        return;
+      }
       cur.status = s.status;
       cur.connected = s.connected;
       cur.active_calls = s.active_calls;
@@ -4229,8 +4269,7 @@ function bindEvents() {
     $('#settingsDialog').showModal();
     switchSettingsTab('connections');
   });
-  $('#inspectComfyMcp')?.addEventListener('click', inspectOfficialComfyMcp);
-  $('#setupComfyMcp')?.addEventListener('click', setupOfficialComfyMcp);
+  $('#saveMcpServer')?.addEventListener('click', saveMcpServer);
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
@@ -4926,6 +4965,7 @@ function switchSettingsTab(name) {
   $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
   if (name === 'agent') renderAgentManager();
   if (name === 'skills') loadInstalledSkills(false);
+  if (name === 'connections') loadMcpServers();
   if (name === 'datamigration') loadDataMigrationHealth();
   if (name === 'updates') api('/api/update').then((status) => {
     state.bootstrap.update = status;

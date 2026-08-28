@@ -29,7 +29,7 @@ LOCAL_MODEL_TIMEOUT_SECONDS = 1800
 PROVIDER_TEST_TIMEOUT_SECONDS = 30
 FAST_RETRY_NETWORK_ERRORS = {10053, 10054, 10061}
 # 本地推理后端对应的请求格式；与 server.LOCAL_REQUEST_FORMATS 保持一致。
-LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp"}
+LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp", "unsloth"}
 
 # Patterns used to keep agent tool-call protocols out of the user-facing
 # streaming answer. The classifier below decides, before forwarding any
@@ -605,10 +605,10 @@ class ModelRuntime:
         base_url = str(profile.get("base_url") or "").rstrip("/")
         api_key = str(profile.get("api_key") or "").strip()
         configured_format = str(profile.get("request_format") or "openai_chat").strip().lower()
-        # llama.cpp server exposes the OpenAI Chat API, but it is a local
-        # inference backend. Normalize only the wire protocol; retain the
-        # profile kind below so timeout/retry routing stays local.
-        request_format = "openai_chat" if configured_format == "llama_cpp" else configured_format
+        # llama.cpp and Unsloth servers expose the OpenAI Chat API, but they
+        # are local inference backends. Normalize only the wire protocol;
+        # retain the profile kind below so timeout/retry routing stays local.
+        request_format = "openai_chat" if configured_format in {"llama_cpp", "unsloth"} else configured_format
         if not base_url:
             raise ValueError("请先填写 API URL")
 
@@ -788,10 +788,10 @@ class ModelRuntime:
         if not base_url or not model:
             raise ValueError("在线模型需要 Base URL 和模型名称")
         configured_format = str(profile.get("request_format") or "openai_chat").strip().lower()
-        # llama.cpp server exposes the OpenAI Chat API, but it is a local
-        # inference backend. Normalize only the wire protocol; retain the
-        # profile kind below so timeout/retry routing stays local.
-        request_format = "openai_chat" if configured_format == "llama_cpp" else configured_format
+        # llama.cpp and Unsloth servers expose the OpenAI Chat API, but they
+        # are local inference backends. Normalize only the wire protocol;
+        # retain the profile kind below so timeout/retry routing stays local.
+        request_format = "openai_chat" if configured_format in {"llama_cpp", "unsloth"} else configured_format
         temperature_raw = options.get("temperature", profile.get("temperature"))
         temperature = None if temperature_raw in (None, "") else float(temperature_raw)
         max_tokens_raw = options.get("max_tokens", profile.get("max_output_tokens"))

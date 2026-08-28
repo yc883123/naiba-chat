@@ -1426,8 +1426,8 @@ class VisionRouter:
         is_llama_cpp = (
             str(profile.get("kind") or "").lower() == "local"
             and (
-                str(profile.get("local_backend") or "").lower() == "llama_cpp"
-                or str(profile.get("request_format") or "").lower() == "llama_cpp"
+                str(profile.get("local_backend") or "").lower() in {"llama_cpp", "unsloth"}
+                or str(profile.get("request_format") or "").lower() in {"llama_cpp", "unsloth"}
             )
         )
         if any(token in lowered for token in (

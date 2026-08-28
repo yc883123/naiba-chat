@@ -420,10 +420,18 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .settings-content { overflow: auto; padding: 20px; }
 .settings-content h3 { margin: 0 0 14px; font-size: 15px; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; }
-.connection-list { display: grid; gap: 8px; margin-bottom: 18px; }
+.connection-list { display: grid; gap: 8px; margin-bottom: 12px; }
 .connection-item { border: 1px solid var(--line); border-radius: var(--radius); padding: 11px; display: flex; justify-content: space-between; gap: 12px; align-items: center; }
 .connection-item b { display: block; font-size: 13px; }
 .connection-item small { color: var(--muted); overflow-wrap: anywhere; }
+.mcp-remove { color: #e45e55; }
+.mcp-add-form { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); margin-bottom: 18px; }
+.mcp-add-form summary { cursor: pointer; padding: 10px 12px; font-size: 13px; color: var(--green); font-weight: 600; }
+.mcp-add-fields { display: grid; gap: 10px; padding: 4px 12px 12px; }
+.mcp-add-fields label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); }
+.mcp-add-fields input { width: 100%; }
+.mcp-env-row { margin-top: -2px; }
+.mcp-add-fields .form-actions { margin-top: 6px; }
 .provider-form { display: grid; gap: 13px; }
 .provider-scope-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; padding: 4px; border-radius: var(--radius); background: var(--surface-2); }
 .provider-scope-tabs button { min-height: 38px; border: 0; border-radius: calc(var(--radius) - 2px); background: transparent; color: var(--muted); font-weight: 600; }
@@ -445,9 +453,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .workspace-dialog-body input { width: 100%; }
 .input-with-button { display:flex; gap:8px; align-items:center; }
 .input-with-button input { flex:1; min-width:0; }
-.official-mcp-card { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; flex-wrap:wrap; padding:12px; margin:10px 0 14px; border:1px solid var(--line); border-radius:var(--radius); background:var(--surface-2); }
-.official-mcp-card small { display:block; color:var(--muted); margin-top:4px; }
-.official-mcp-actions { margin:0; justify-content:flex-start; }
+
 #enableLanActions { position:static; display:flex; justify-content:flex-start; flex-wrap:wrap; margin:12px 0 16px; }
 .tool-stack { position:static; width:100%; }
 .vision-provider-current { margin-bottom: 0; }
@@ -550,7 +556,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .imaging-grid { grid-template-columns: 1fr; }
 }
 .form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
-.connection-address { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); font-family: Consolas, monospace; font-size: 13px; }
+.connection-address { padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); font-family: Consolas, monospace; font-size: 13px; margin-bottom: 10px; }
+#connectionReason { margin: 8px 0 14px; }
 .update-status { display: grid; gap: 1px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--line); }
 .update-status > div { min-height: 52px; padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: var(--surface); }
 .update-latest-value { min-width: 0; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px 12px; }
@@ -571,7 +578,26 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .update-status b { min-width: 0; overflow-wrap: anywhere; text-align: right; font-size: 13px; }
 .update-status p { margin: 0; padding: 12px; background: var(--surface); color: var(--muted); font-size: 13px; line-height: 1.5; }
 .update-actions { justify-content: flex-start; margin: 14px 0; }
-.toast { position: fixed; left: 50%; bottom: 24px; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; background: #252925; color: white; padding: 9px 13px; border-radius: var(--radius); transition: .2s; z-index: 100; font-size: 13px; }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translate(-50%, 20px);
+  opacity: 0;
+  pointer-events: none;
+  background: #252925;
+  color: white;
+  padding: 9px 13px;
+  border: 0;
+  margin: 0;
+  border-radius: var(--radius);
+  transition: .2s;
+  z-index: 100;
+  font-size: 13px;
+  max-width: min(70vw, 460px);
+  overflow-wrap: anywhere;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .35);
+}
 .toast.show { transform: translate(-50%, 0); opacity: 1; }
 .tasks-dialog { width: min(680px, calc(100vw - 28px)); }
 .task-list { max-height: min(70vh, 620px); overflow: auto; padding: 14px 18px 18px; }
