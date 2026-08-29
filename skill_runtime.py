@@ -1306,7 +1306,11 @@ class SkillAgent:
         if "comfyui_batch" in allowed or "comfyui_prepare_workflow" in allowed:
             system_parts.append(
                 "ComfyUI 产物由宿主 Job Worker 轮询 history、下载、校验并附加到最终消息；"
-                "提交后只使用 job_wait/job_status 等待宿主结果，禁止自行扫描输出目录、猜文件名、下载 /view 或读取生成产物。"
+                "提交后只使用 job_wait/job_status 等待宿主结果。宿主会自动把产物作为附件展示，"
+                "所以不要在“只是为了展示或确认产物”时自行扫描输出目录、猜文件名、下载 /view 或读取生成产物。"
+                "但若用户明确要求“把这张图保存/下载/复制到某个指定本地目录”，则必须实际执行以满足该要求："
+                "可用 pwsh 的 Copy-Item 从 ComfyUI 输出目录（或宿主已下载/附带的位置）复制到用户指定的目标目录，"
+                "或用 http_request 拉取 /view 对应文件后保存到指定路径；"
             )
         if "register_mcp" in allowed:
             system_parts.append(
