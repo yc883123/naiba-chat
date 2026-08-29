@@ -1139,6 +1139,20 @@ function getStreamingProseSegment(row, answer) {
   return seg;
 }
 
+// 首个工具出现时，把之前累计在底部（answer-content）的正文移到内联的正文块，
+// 让它紧跟在该工具之前，与思考块/后续工具按时间交错，而不是停在末尾。
+function moveBottomProseInline(row, answer) {
+  if (!answer) return;
+  const bottomRaw = answer.dataset.raw || '';
+  if (!bottomRaw.trim()) return;
+  const seg = getStreamingProseSegment(row, answer);
+  if (!seg) return;
+  seg.dataset.raw = bottomRaw;
+  seg.innerHTML = markdown(bottomRaw);
+  answer.dataset.raw = '';
+  answer.replaceChildren();
+}
+
 function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
@@ -4254,10 +4268,16 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       answer.dataset.raw = next;
       answer.textContent = next;
       scrollToBottom();
-    } else {
-      // 把中途回复的正文插进事件流里（与思考/工具块按时间交错），而不是统一累积到末尾。
+    } else if (row.dataset.sawTool === 'true') {
+      // 已出现工具：中途正文插入事件流（与思考/工具块按时间交错），不再全部堆到底部。
       const seg = getStreamingProseSegment(row, answer);
       if (seg) scheduleStreamingMarkdown(seg, (seg.dataset.raw || '') + content);
+    } else {
+      // 尚无工具：正文即整段回复，累积到底部（避免正文跑到思考前面的倒序）。
+      const current = answer.dataset.raw || '';
+      const next = current + content;
+      answer.dataset.raw = next;
+      scheduleStreamingMarkdown(answer, next);
     }
   } else if (event.type === 'reasoning_start') {
     clearElapsedStatus();
@@ -4301,9 +4321,11 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
   } else if (event.type === 'tool_start') {
     clearElapsedStatus();
-    // 不再清空 answer：模型在思考块与工具块之间输出的正式回复同样是最终内容的一部分
-    // （后端会把它并入 message.content），这里清空会导致它被“吞掉”；
-    // 保留它以在 .answer-content 里持续累积，与收尾全量渲染保持一致。
+    // 首个工具出现：把之前累计在底部的正文移到内联块（紧跟该工具前），并切换为“有工具”模式。
+    if (row.dataset.sawTool !== 'true') {
+      moveBottomProseInline(row, answer);
+      row.dataset.sawTool = 'true';
+    }
     collapseToolReasoningBlock();
     // 每次工具调用作为一个独立兄弟节点插到 answer 之前，与思考块按时间顺序交错摆放，
     // 而不是全部塞进同一个 .tool-stack（那样会把所有工具挤在一起，破坏与思考块的交错）。
@@ -4318,6 +4340,10 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     // 让新插入的工具块始终位于末尾（紧贴 answer），从而保持时间顺序。
     scrollToBottom();
   } else if (event.type === 'tool_start_legacy') {
+    if (row.dataset.sawTool !== 'true') {
+      moveBottomProseInline(row, answer);
+      row.dataset.sawTool = 'true';
+    }
     collapseToolReasoningBlock();
     answer.insertAdjacentHTML(
       'beforebegin',
@@ -4344,6 +4370,10 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     if (last) last.textContent = `${event.success ? '已完成' : '失败'} · ${event.tool}`;
   } else if (event.type === 'tool_confirm') {
     clearElapsedStatus();
+    if (row.dataset.sawTool !== 'true') {
+      moveBottomProseInline(row, answer);
+      row.dataset.sawTool = 'true';
+    }
     // 同样保留已输出的正式回复，避免在等待确认时被吞掉。
     const confirmId = event.confirm_id;
     const toolName = event.tool_name;

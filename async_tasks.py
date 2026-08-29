@@ -42,21 +42,23 @@ def _build_activity_timeline(
 ) -> list[dict[str, Any]]:
     """按运行事件的时间序，把思考段、正文与工具调用交错产出，供前端按时间显示思维链/工具链。
 
-    正文（delta 事件）会作为 ``{"type": "prose", "text": ...}`` 条目插入到它发生的
-    时间点上，因此收尾后的最终回复也能保持“思考→正文→工具→…”的交错，而不是把所有
-    正文统一放到末尾。内容复用传入的 reasonings 与 runs（避免重复/不一致），仅用 events
-    的先后顺序决定交错。计数不齐时把剩余段落追加到末尾兜底。本函数为模块级。
+    正文（delta 事件）只有当本轮确实调用了工具时才作为 ``{"type": "prose", "text": ...}``
+    条目插入到它发生的时间点（“中途回复的正文”随工具链交错展示）；若没有任何工具调用，
+    正文就是整段的最终回复，统一放到末尾 content 里，避免“正文跑到最前面、思考在最后”
+    的倒序观感。内容复用传入的 reasonings 与 runs（避免重复/不一致），仅用 events 的
+    先后顺序决定交错。计数不齐时把剩余段落追加到末尾兜底。本函数为模块级。
     """
     activity: list[dict[str, Any]] = []
+    has_tools = any(str(ev.get("type") or "") in {"tool_start", "tool_result"} for ev in events)
     ri = 0
     ti = 0
     in_reasoning = False
     prose: list[str] = []
 
     def flush_prose() -> None:
-        if prose:
+        if prose and has_tools:
             activity.append({"type": "prose", "text": "".join(prose)})
-            prose.clear()
+        prose.clear()
 
     def flush_reasoning() -> None:
         nonlocal ri
@@ -80,6 +82,10 @@ def _build_activity_timeline(
             if ri < len(reasonings):
                 activity.append({"type": "reasoning", "text": reasonings[ri]})
                 ri += 1
+        elif kind == "reasoning_delta":
+            # Streaming reasoning deltas are coalesced; the text is matched via
+            # reasonings at reasoning_end, so keep state without adding here.
+            pass
         elif kind == "tool_result":
             if ti < len(runs):
                 activity.append({"type": "tool", "run": runs[ti]})
@@ -92,6 +98,14 @@ def _build_activity_timeline(
     while ti < len(runs):
         activity.append({"type": "tool", "run": runs[ti]})
         ti += 1
+    # 某些模型把思考作为一整块在最后才给出（buffered）。此时按事件顺序它会排在正文之后，
+    # 造成“正文在前、思考在后”的倒序；而思考逻辑上发生在答复之前，应移到最前面。
+    # 仅在“末尾是 reasoning”时重排，不影响处于工具之间的中途思考。
+    trailing: list[dict[str, Any]] = []
+    while activity and activity[-1].get("type") == "reasoning":
+        trailing.insert(0, activity.pop())
+    if trailing:
+        activity[:0] = trailing
     return activity
 
 
