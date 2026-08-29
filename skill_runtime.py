@@ -656,7 +656,17 @@ class ToolExecutor:
     def _tool_read_file(self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
         path = self._resolve_read_path(args.get("path"), active_skills)
         max_chars = min(max(int(args.get("max_chars", 30000)), 100), 100000)
-        return path.read_text(encoding="utf-8", errors="replace")[:max_chars]
+        content = path.read_text(encoding="utf-8", errors="replace")
+        # start_line（1 起始）用于跳过文件前部，读取大文件时可从指定行开始，
+        # 避免一次性读入过多内容；缺省或非法时从头读取。
+        if args.get("start_line") is not None:
+            try:
+                skip = max(0, int(args.get("start_line")) - 1)
+            except (TypeError, ValueError):
+                skip = 0
+            if skip:
+                content = "".join(content.splitlines(keepends=True)[skip:])
+        return content[:max_chars]
 
     def _tool_write_file(self, args: dict[str, Any]) -> str:
         path = self._resolve_tool_path(args.get("path"))
@@ -716,6 +726,7 @@ class ToolExecutor:
         query = str(args.get("query") or "")
         pattern = str(args.get("pattern") or "*")
         limit = min(max(int(args.get("limit", 100)), 1), 500)
+        max_file_size = min(max(int(args.get("max_file_size", 5 * 1024 * 1024)), 1), 50 * 1024 * 1024)
         if not query:
             raise ValueError("query 不能为空")
         matches = []
@@ -723,7 +734,7 @@ class ToolExecutor:
             if len(matches) >= limit:
                 break
             for path in root.rglob(pat):
-                if not path.is_file() or path.stat().st_size > 5 * 1024 * 1024:
+                if not path.is_file() or path.stat().st_size > max_file_size:
                     continue
                 try:
                     for line_number, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
@@ -772,6 +783,7 @@ class ToolExecutor:
             raise ValueError("command 不能为空")
         cwd = self._resolve_tool_path(args.get("cwd"), default_workspace=True)
         timeout = min(max(int(args.get("timeout", self.command_timeout)), 1), 900)
+        max_output = min(max(int(args.get("max_output", 50000)), 0), 200000)
         completed = subprocess.run(
             [
                 "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
@@ -786,7 +798,7 @@ class ToolExecutor:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         output = (completed.stdout + ("\n" + completed.stderr if completed.stderr else "")).strip()
-        return f"exit_code={completed.returncode}\n{output[:50000]}"
+        return f"exit_code={completed.returncode}\n{output[:max_output]}"
 
     def _tool_pwsh(self, args: dict[str, Any]) -> str:
         return self._tool_run_command(args)
@@ -842,6 +854,7 @@ class ToolExecutor:
         method = str(args.get("method") or "GET").upper()
         headers = args.get("headers") or {}
         data = args.get("body")
+        max_bytes = min(max(int(args.get("max_bytes", 100000)), 1024), 2_000_000)
         encoded = None
         if data is not None:
             if isinstance(data, (dict, list)):
@@ -852,10 +865,10 @@ class ToolExecutor:
         request = urllib.request.Request(url, data=encoded, headers=headers, method=method)
         try:
             with urllib.request.urlopen(request, timeout=min(int(args.get("timeout", 60)), 180)) as response:
-                body = response.read(100000).decode("utf-8", errors="replace")
+                body = response.read(max_bytes).decode("utf-8", errors="replace")
                 return f"HTTP {response.status}\n{body}"
         except urllib.error.HTTPError as exc:
-            return f"HTTP {exc.code}\n{exc.read(100000).decode('utf-8', errors='replace')}"
+            return f"HTTP {exc.code}\n{exc.read(max_bytes).decode('utf-8', errors='replace')}"
 
     def _tool_call_mcp(
         self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None,
@@ -981,13 +994,13 @@ def _model_visible_runs(step_runs: list[dict[str, Any]]) -> str:
 class SkillAgent:
     TOOL_GUIDE = """
 可用工具（需要操作时一次只调用一个）：
-- read_file: {"path":"绝对路径","max_chars":30000}
+- read_file: {"path":"绝对路径","max_chars":30000,"start_line":1}（start_line>1 表示从第 start_line 行开始读取，跳过文件前部）
 - write_file: {"path":"绝对路径","content":"内容","append":false}
 - list_directory: {"path":"绝对路径","recursive":false,"limit":200}
-- search_files: {"path":"目录","query":"文本","pattern":"*.py","limit":100}
-- run_command: {"command":"PowerShell 命令","cwd":"工作目录","timeout":120}
+- search_files: {"path":"目录","query":"文本","pattern":"*.py","limit":100,"max_file_size":5242880}
+- run_command: {"command":"PowerShell 命令","cwd":"工作目录","timeout":120,"max_output":50000}
 - run_skill_script: {"skill":"技能名","script":"scripts/example.py","args":[],"timeout":120}
-- http_request: {"url":"https://...","method":"GET","headers":{},"body":null,"timeout":60}
+- http_request: {"url":"https://...","method":"GET","headers":{},"body":null,"timeout":60,"max_bytes":100000}
 - register_mcp: {"id":"服务ID","command":"程序路径","args":[],"env":{},"enabled":true}
 - call_mcp: {"server":"服务ID","tool":"工具名","arguments":{}}
 

@@ -685,32 +685,20 @@ def default_config() -> dict[str, Any]:
     }
 
 
-# 内置 Agent（PLAN4 §Agent 与权限）：不可覆盖/删除，可复制为用户自定义 Agent。
-# tool_scope 定义该 Agent 允许的最大工具集合；运行流中与对话权限（allowed_tools）取交集，
-# 权限切换不能扩大 preset 本身的工具集合。内置 Agent 使用当前对话选择的模型。
-_BUILT_IN_SCOPE_FULL = (
-    "read_file", "write_file", "list_directory", "search_files", "run_command",
-    "run_skill_script", "http_request",
+# 内置 Agent（PLAN4 §Agent 与权限）：默认“全开启”，用户可自定义其 tool_scope。
+# tool_scope 定义该 Agent 允许使用的工具集合；运行流中再与对话权限（allowed_tools）取交集。
+# 内置 Agent 使用当前对话选择的模型。
+# 全部可选工具：内置 Agent 的 tool_scope 默认“全开启”，用户可再按需裁剪。
+_BUILT_IN_SCOPE_ALL = (
+    "read_file", "list_directory", "search_files", "glob_files",
+    "write_file", "edit_file", "run_command", "pwsh", "run_skill_script",
+    "http_request", "web_search", "register_mcp", "call_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+    "todo_write", "artifact_report",
+    "comfyui_prepare_workflow", "comfyui_batch",
     "capability_inventory", "activate_skill", "install_skill",
-    "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
-    "vision_colors", "vision_pixel_diff", "vision_read_folder", "web_search",
-)
-_BUILT_IN_SCOPE_CODE = (
-    "read_file", "write_file", "list_directory", "search_files", "run_command",
-    "run_skill_script", "http_request", "run_in_background", "job_output", "job_status",
-    "job_wait", "job_kill", "subagent",
-    "capability_inventory", "activate_skill", "install_skill",
-    "vision_describe", "vision_ground", "vision_detect", "vision_crop", "vision_ocr",
-    "vision_colors", "vision_pixel_diff", "vision_read_folder", "web_search",
-)
-_BUILT_IN_SCOPE_MINIMAL = (
-    "read_file", "list_directory", "search_files", "write_file", "run_command",
-)
-_BUILT_IN_SCOPE_CORDIS = (
-    "read_file", "write_file", "list_directory", "search_files", "run_command",
-    "run_skill_script", "http_request", "subagent", "capability_inventory", "activate_skill", "install_skill",
-    "vision_describe", "vision_ground", "vision_ocr", "vision_colors", "web_search",
+    "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
+    "vision_crop", "vision_pixel_diff", "vision_read_folder",
 )
 
 
@@ -726,7 +714,7 @@ def built_in_agents() -> list[dict[str, Any]]:
                 "验证产物，失败时依据证据修正后重试；涉及文件改动先说明范围。"
             ),
             "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_FULL),
+            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
             "built_in": True,
         },
         {
@@ -737,18 +725,18 @@ def built_in_agents() -> list[dict[str, Any]]:
                 "优先用读取/编辑/搜索/命令工具完成任务；复杂任务可拆给子 Agent。"
             ),
             "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_CODE),
+            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
             "built_in": True,
         },
         {
             "id": "dsh-minimal",
             "name": "dsh-minimal（极简编码）",
             "system_prompt": (
-                "你是极简编码 Agent，只开放读取、列出目录、搜索、写入与必要的测试命令。"
-                "不要调用 MCP、视觉或联网搜索等扩展能力。"
+                "你是编码 Agent。默认拥有全部工具与扩展能力（联网搜索、视觉、子 Agent、MCP 入口；MCP 仅在用户显式配置并授权后可用）。"
+                "按需选择恰当工具完成任务，不必局限于某几类。"
             ),
             "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_MINIMAL),
+            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
             "built_in": True,
         },
         {
@@ -759,7 +747,7 @@ def built_in_agents() -> list[dict[str, Any]]:
                 "擅长阅读/编写技能目录与脚本，必要时用子 Agent 拆分复杂创作任务。"
             ),
             "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_CORDIS),
+            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
             "built_in": True,
         },
     ]
@@ -1637,8 +1625,16 @@ class ConfigStore:
     def public_agents(self) -> list[dict[str, Any]]:
         with self.lock:
             custom = [dict(agent) for agent in self.data.get("agents", [])]
-            # 内置 Agent 追加在用户自定义之后，标记 built_in 且不可覆盖。
-            built_in = [dict(agent) for agent in built_in_agents()]
+            # 内置 Agent 默认全开启，且允许用户自定义；若用户已编辑过某个内置 Agent，
+            # 其覆盖定义保存在 self.data['agents']（built_in=True），此时以覆盖版为准，
+            # 不再追加默认内置定义，避免同一个 Agent 出现两次。
+            overridden_ids = {
+                str(agent.get("id") or "") for agent in custom if agent.get("built_in")
+            }
+            built_in = [
+                dict(agent) for agent in built_in_agents()
+                if agent.get("id") not in overridden_ids
+            ]
             return custom + built_in
 
     def default_agent_id(self) -> str:
@@ -1669,9 +1665,9 @@ class ConfigStore:
         agent_id = str(values.get("id") or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", agent_id):
             raise ValueError("Agent ID 只能包含字母、数字、下划线或连字符")
-        # 内置 Agent 不可覆盖或删除（PLAN4 §Agent 与权限）。
-        if agent_id in built_in_agent_ids():
-            raise ValueError("内置 Agent 不可覆盖，请复制为用户自定义 Agent 后修改")
+        # 内置 Agent 默认“全开启”，且允许用户自定义（如裁剪 tool_scope）。
+        # 编辑仍保留 built_in 标记，使其不可删除；未内建的新 ID 视为自定义 Agent。
+        is_built_in = agent_id in built_in_agent_ids()
         name = str(values.get("name") or "").strip()
         if not name:
             raise ValueError("Agent 名称不能为空")
@@ -1694,6 +1690,8 @@ class ConfigStore:
             "skill_ids": skill_ids,
             "tool_scope": tool_scope,
         }
+        if is_built_in:
+            payload["built_in"] = True
         with self.lock:
             agents = self.data.setdefault("agents", [])
             index = next((i for i, item in enumerate(agents) if item.get("id") == agent_id), None)

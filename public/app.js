@@ -3076,13 +3076,13 @@ function renderAgentManager() {
   list.innerHTML = agents.map((agent) => `
     <div class="agent-item ${agent.id === defaultId ? 'default' : ''}">
       <div class="agent-item-info">
-        <b>${escapeHtml(agent.name)}${agent.id === defaultId ? '<em>默认</em>' : ''}</b>
+        <b>${escapeHtml(agent.name)}${agent.id === defaultId ? '<em>默认</em>' : ''}${agent.built_in ? '<em>内置</em>' : ''}</b>
         <small>${agent.skill_ids?.length ? `${agent.skill_ids.length} 个固定 Skill` : '无固定 Skill'}</small>
         ${agent.system_prompt ? `<p>${escapeHtml(agent.system_prompt)}</p>` : ''}
       </div>
       <div class="agent-item-actions">
         <button class="control-button" data-agent-edit="${escapeHtml(agent.id)}" type="button">编辑</button>
-        <button class="danger-button" data-agent-delete="${escapeHtml(agent.id)}" type="button">删除</button>
+        ${agent.built_in ? '' : `<button class="danger-button" data-agent-delete="${escapeHtml(agent.id)}" type="button">删除</button>`}
       </div>
     </div>`).join('') || '<p class="activity">尚未添加 Agent，点击下方按钮新增。</p>';
 }
@@ -4283,10 +4283,12 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
   } else if (event.type === 'tool_start') {
     clearElapsedStatus();
-    clearStreamingAnswer(answer);
+    // 不再清空 answer：模型在思考块与工具块之间输出的正式回复同样是最终内容的一部分
+    // （后端会把它并入 message.content），这里清空会导致它被“吞掉”；
+    // 保留它以在 .answer-content 里持续累积，与收尾全量渲染保持一致。
     collapseToolReasoningBlock();
-    const stack = row.querySelector('.tool-stack') || document.createElement('div');
-    stack.className = 'tool-stack';
+    // 每次工具调用作为一个独立兄弟节点插到 answer 之前，与思考块按时间顺序交错摆放，
+    // 而不是全部塞进同一个 .tool-stack（那样会把所有工具挤在一起，破坏与思考块的交错）。
     const details = document.createElement('details');
     details.className = 'tool-run';
     details.open = true;
@@ -4294,19 +4296,19 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       ? event.arguments
       : JSON.stringify(event.arguments || {}, null, 2);
     details.innerHTML = `<summary>Running · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</summary><pre>${escapeHtml(toolArguments)}</pre>`;
-    stack.appendChild(details);
-    if (!stack.parentNode) answer.parentNode.insertBefore(stack, answer);
+    answer.before(details);
+    // 让新插入的工具块始终位于末尾（紧贴 answer），从而保持时间顺序。
     scrollToBottom();
   } else if (event.type === 'tool_start_legacy') {
-    clearStreamingAnswer(answer);
     collapseToolReasoningBlock();
-    const stack = row.querySelector('.tool-stack') || document.createElement('div');
-    stack.className = 'tool-stack';
-    stack.insertAdjacentHTML('beforeend', `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`);
-    if (!stack.parentNode) answer.parentNode.insertBefore(stack, answer);
+    answer.insertAdjacentHTML(
+      'beforebegin',
+      `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`
+    );
     scrollToBottom();
   } else if (event.type === 'tool_result') {
-    const last = row.querySelector('.tool-run:last-child');
+    const toolRuns = row.querySelectorAll('.tool-run');
+    const last = toolRuns[toolRuns.length - 1];
     if (last) {
       const summary = last.querySelector('summary');
       if (summary) summary.textContent = `${event.success ? 'Completed' : 'Failed'} · ${event.tool}`;
@@ -4319,14 +4321,12 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       last.open = false;
     }
   } else if (event.type === 'tool_result_legacy') {
-    const last = row.querySelector('.tool-run:last-child');
+    const toolRuns = row.querySelectorAll('.tool-run');
+    const last = toolRuns[toolRuns.length - 1];
     if (last) last.textContent = `${event.success ? '已完成' : '失败'} · ${event.tool}`;
   } else if (event.type === 'tool_confirm') {
     clearElapsedStatus();
-    clearStreamingAnswer(answer);
-    // 需要确认的工具调用
-    const stack = row.querySelector('.tool-stack') || document.createElement('div');
-    stack.className = 'tool-stack';
+    // 同样保留已输出的正式回复，避免在等待确认时被吞掉。
     const confirmId = event.confirm_id;
     const toolName = event.tool_name;
     const toolDesc = event.tool_desc;
@@ -4349,8 +4349,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
           <button class="tool-confirm-btn tool-confirm-approve" onclick="approveTool('${escapeHtml(confirmId)}', '${escapeHtml(event.run_id || runId)}')">允许执行</button>
         </div>
       </div>`;
-    stack.insertAdjacentHTML('beforeend', confirmMarkup);
-    if (!stack.parentNode) answer.parentNode.insertBefore(stack, answer);
+    answer.insertAdjacentHTML('beforebegin', confirmMarkup);
     scrollToBottom();
   } else if (event.type === 'choice') {
     // AI回复包含可选项，显示选择按钮

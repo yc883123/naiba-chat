@@ -1401,11 +1401,19 @@ class ConversationRunManager:
 
     def owns_confirmation(self, run_id: str, confirm_id: str) -> bool:
         run = self.get(run_id)
-        return bool(
-            run
-            and run.get("status") == "waiting"
-            and str((run.get("detail") or {}).get("confirm_id") or "") == confirm_id
-        )
+        if not run or str(run.get("status") or "") in {"completed", "failed", "cancelled", "cancelling"}:
+            return False
+        with self._lock:
+            executor = self._executors.get(run_id)
+        if executor is None:
+            return False
+        # A run may hold SEVERAL pending confirmations at once (e.g. a parallel
+        # batch of out-of-workspace file reads). `run.detail.confirm_id` only
+        # tracks the LAST one emitted, so it cannot be the source of truth here —
+        # using it made clicking Confirm on any but the last request fail and hang
+        # the conversation. Ownership is correctly decided by whether this
+        # confirm_id is actually pending on the run's own executor.
+        return confirm_id in getattr(executor, "pending_confirmation", {})
 
     def executor_for_run(self, run_id: str, snapshot: dict[str, Any] | None = None) -> Any:
         """Return the isolated executor owned by one Run, creating it if needed."""

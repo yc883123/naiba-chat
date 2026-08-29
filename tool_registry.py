@@ -216,6 +216,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
                 "properties": {
                     "path": _string("文件绝对路径"),
                     "max_chars": {"type": "integer", "description": "最多读取字符数", "default": 30000},
+                    "start_line": {"type": "integer", "description": "从第几行开始读取（1 起始，用于跳过文件前部；读取大文件可配合 max_chars 使用），默认 1", "default": 1},
                 },
                 "required": ["path"],
             },
@@ -268,6 +269,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
                     "query": _string("文本关键字（必填）"),
                     "pattern": {"type": "string", "description": "文件名 glob", "default": "*"},
                     "limit": {"type": "integer", "default": 100},
+                    "max_file_size": {"type": "integer", "description": "搜索时单个文件大小上限（字节），超过跳过，默认 5MB", "default": 5242880},
                 },
                 "required": ["path", "query"],
             },
@@ -320,6 +322,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
                     "command": _string("PowerShell 命令"),
                     "cwd": _string("工作目录", ""),
                     "timeout": {"type": "integer", "default": 120},
+                    "max_output": {"type": "integer", "description": "最多返回的输出字符数", "default": 50000},
                 },
                 "required": ["command"],
             },
@@ -337,6 +340,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
                     "command": _string("PowerShell 命令"),
                     "cwd": _string("工作目录", ""),
                     "timeout": {"type": "integer", "default": 120},
+                    "max_output": {"type": "integer", "description": "最多返回的输出字符数", "default": 50000},
                 },
                 "required": ["command"],
             },
@@ -374,6 +378,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
                     "headers": {"type": "object", "default": {}},
                     "body": {"description": "请求体（字符串/对象）"},
                     "timeout": {"type": "integer", "default": 60},
+                    "max_bytes": {"type": "integer", "description": "最多读取响应字节数", "default": 100000},
                 },
                 "required": ["url"],
             },
@@ -691,7 +696,7 @@ def build_job_tool_specs() -> list[ToolSpec]:
 
 def build_harness_alias_specs() -> list[ToolSpec]:
     return [
-        ToolSpec(name="read", description="Harness 兼容别名：读取文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"max_chars":{"type":"integer","default":30000}},"required":["path"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
+        ToolSpec(name="read", description="Harness 兼容别名：读取文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"max_chars":{"type":"integer","default":30000},"start_line":{"type":"integer","description":"从第几行开始读取（1 起始），默认 1","default":1}},"required":["path"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
         ToolSpec(name="write", description="Harness 兼容别名：写入文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"content":{"type":"string"},"append":{"type":"boolean","default":False}},"required":["path","content"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
         ToolSpec(name="edit", description="Harness 兼容别名：精确编辑文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"old_text":{"type":"string"},"new_text":{"type":"string"},"all":{"type":"boolean","default":False}},"required":["path","old_text","new_text"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
         ToolSpec(name="glob", description="Harness 兼容别名：glob 文件。", parameters={"type":"object","properties":{"path":_string("根目录",""),"pattern":_string("glob 模式","**/*"),"limit":{"type":"integer","default":200}},"required":[]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
