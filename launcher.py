@@ -18,6 +18,61 @@ from http.server import ThreadingHTTPServer
 import server as srv
 
 
+class JsApi:
+    """pywebview js_api 桥：供前端调用 Python 完成桌面端能力。
+
+    WebView2 在非 debug 模式下关闭了默认右键菜单（AreDefaultContextMenusEnabled
+    仅随 debug 开启），所以前端自绘了菜单；而浏览器剪贴板 API 在 WebView2/局域网
+    HTTP 上并不总能拿到权限。这里提供一个写入 Windows CF_DIB 剪贴板的可靠通道：
+    前端把图片字节（base64）传进来，用 PIL 归一化成 DIB 后写入剪贴板，任何桌面程序
+    （画图/Word/微信等）都能直接粘贴。
+    """
+
+    def copy_image_to_clipboard(self, base64_data: str) -> dict:
+        import base64
+        import io
+        import time
+
+        try:
+            import win32clipboard
+            import win32con
+            from PIL import Image
+        except Exception as exc:  # pragma: no cover - env dependent
+            return {"ok": False, "error": f"缺少图片/剪贴板依赖：{exc}"}
+
+        try:
+            raw = base64.b64decode(base64_data or "")
+            image = Image.open(io.BytesIO(raw))
+            buf = io.BytesIO()
+            # 转成 24 位 BMP，去掉 14 字节 BITMAPFILEHEADER 后即 CF_DIB 数据。
+            image.convert("RGB").save(buf, "BMP")
+            dib = buf.getvalue()[14:]
+        except Exception as exc:
+            return {"ok": False, "error": f"图片解析失败：{exc}"}
+
+        # 剪贴板可能被其它程序占用，做几次短暂重试。
+        for _ in range(10):
+            try:
+                win32clipboard.OpenClipboard()
+                break
+            except Exception:
+                time.sleep(0.05)
+        else:
+            return {"ok": False, "error": "无法打开系统剪贴板（可能被其它程序占用）"}
+
+        try:
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32con.CF_DIB, dib)
+        except Exception as exc:
+            return {"ok": False, "error": f"写入剪贴板失败：{exc}"}
+        finally:
+            try:
+                win32clipboard.CloseClipboard()
+            except Exception:
+                pass
+        return {"ok": True}
+
+
 class Launcher:
     def __init__(self) -> None:
         self.httpd: ThreadingHTTPServer | None = None
@@ -155,6 +210,7 @@ class Launcher:
         self.window = webview.create_window(
             "naiba-chat",
             page_url,
+            js_api=JsApi(),
             width=1280,
             height=860,
             min_size=(900, 600),

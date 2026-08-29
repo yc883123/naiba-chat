@@ -32,6 +32,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .text-context-menu button:hover:not(:disabled),
 .text-context-menu button:focus-visible { background: var(--surface-2); outline: 2px solid var(--green); outline-offset: -2px; }
 .text-context-menu button[data-context-action="quote"] { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0 0 4px 4px; color: var(--green); font-weight: 600; }
+.image-context-menu { position: fixed; z-index: 2200; min-width: 150px; padding: 5px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); box-shadow: 0 12px 34px rgba(22,31,23,.2); }
+.image-context-menu[hidden] { display: none; }
+.image-context-menu button { display: block; width: 100%; min-height: 32px; padding: 5px 10px; border: 0; border-radius: 4px; background: transparent; color: var(--text); text-align: left; }
+.image-context-menu button:hover:not(:disabled),
+.image-context-menu button:focus-visible { background: var(--surface-2); outline: 2px solid var(--green); outline-offset: -2px; }
 
 .app-shell { display: grid; grid-template-columns: 272px minmax(0, 1fr); height: 100dvh; max-height: 100dvh; min-height: 0; overflow: hidden; }
 .sidebar { background: var(--sidebar); color: var(--sidebar-text); display: flex; flex-direction: column; min-width: 0; min-height: 0; z-index: 20; }

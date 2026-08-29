@@ -551,6 +551,9 @@
     <button class="lightbox-close" id="imageLightboxClose" type="button" title="关闭" aria-label="关闭大图">×</button>
     <img id="imageLightboxImg" alt="大图预览" draggable="false">
   </div>
+  <div class="image-context-menu" id="imageContextMenu" hidden role="menu" aria-label="图片操作">
+    <button type="button" role="menuitem" data-image-context-action="copy">复制图片</button>
+  </div>
   <script src="/app.js?v=__ASSET_VERSION__"></script>
   <script>
     window.addEventListener('error', function(e){

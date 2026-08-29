@@ -464,6 +464,117 @@ function closeImageLightbox() {
   if (img) img.removeAttribute('src');
 }
 
+// ---- 大图右键 → 复制图片到剪贴板 ----
+// pywebview（WebView2）默认关闭了浏览器右键菜单（AreDefaultContextMenusEnabled 仅 debug 开启），
+// 因此在 pywebview 窗口内自绘一个轻量菜单；真实浏览器保留其原生“复制图片”。
+function isPywebview() {
+  return Boolean(window.pywebview && window.pywebview.api);
+}
+
+function ensureImageContextMenu() {
+  const menu = $('#imageContextMenu');
+  if (menu) return menu;
+  const m = document.createElement('div');
+  m.className = 'image-context-menu';
+  m.id = 'imageContextMenu';
+  m.setAttribute('role', 'menu');
+  m.setAttribute('aria-label', '图片操作');
+  m.innerHTML = '<button type="button" role="menuitem" data-image-context-action="copy">复制图片</button>';
+  m.hidden = true;
+  document.body.append(m);
+  return m;
+}
+
+function hideImageContextMenu() {
+  const menu = $('#imageContextMenu');
+  if (menu) menu.hidden = true;
+}
+
+function showImageContextMenu(event) {
+  const menu = ensureImageContextMenu();
+  menu.hidden = false;
+  const width = menu.offsetWidth;
+  const height = menu.offsetHeight;
+  menu.style.left = `${Math.max(6, Math.min(event.clientX, window.innerWidth - width - 6))}px`;
+  menu.style.top = `${Math.max(6, Math.min(event.clientY, window.innerHeight - height - 6))}px`;
+  // 不自动聚焦按钮，避免图片失焦影响后续复制路径。
+}
+
+function bytesToBase64(bytes) {
+  let binary = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+// 取当前大图的字节。优先同源 fetch（/api/file 由其自身服务，必然可读）；
+// 跨源或 fetch 失败时回退 canvas 转 PNG（跨源且未开 CORS 的图会被污染并抛错）。
+async function imageBytesFrom(img) {
+  const url = img.currentSrc || img.src;
+  if (url) {
+    try {
+      const resp = await fetch(url);
+      if (resp.ok) {
+        const blob = await resp.blob();
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        if (blob.type && blob.type.startsWith('image/')) {
+          return { bytes, mime: blob.type };
+        }
+      }
+    } catch (_) { /* 跨源或网络错误，走 canvas 回退 */ }
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  if (!canvas.width || !canvas.height) throw new Error('图片尚未加载完成');
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const dataUrl = canvas.toDataURL('image/png');
+  const b64 = dataUrl.split(',')[1] || '';
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return { bytes, mime: 'image/png' };
+}
+
+async function copyLightboxImage() {
+  const img = $('#imageLightboxImg');
+  if (!img) throw new Error('未找到图片');
+  const { bytes, mime } = await imageBytesFrom(img);
+  // 1) 原生剪贴板 API：127.0.0.1 / localhost 是安全上下文，WebView2 通常可用。
+  if (navigator.clipboard?.write && window.ClipboardItem) {
+    try {
+      await navigator.clipboard.write([new ClipboardItem({ [mime]: new Blob([bytes], { type: mime }) })]);
+      return 'clipboard';
+    } catch (_) {
+      // WebView 可能未授予剪贴板权限，回退到 Python 桥。
+    }
+  }
+  // 2) pywebview 桥：把图片写入 Windows CF_DIB 剪贴板（桌面端最可靠）。
+  if (window.pywebview?.api?.copy_image_to_clipboard) {
+    const b64 = bytesToBase64(bytes);
+    const result = await window.pywebview.api.copy_image_to_clipboard(b64);
+    if (result && result.ok) return 'python';
+    throw new Error((result && result.error) || '复制到剪贴板失败');
+  }
+  throw new Error('当前环境不支持复制图片');
+}
+
+async function runImageContextAction(action) {
+  try {
+    if (action === 'copy') {
+      const via = await copyLightboxImage();
+      toast(via === 'python' ? '已复制图片到剪贴板' : '已复制图片');
+    }
+  } catch (error) {
+    toast(`复制失败：${error.message}`);
+  } finally {
+    hideImageContextMenu();
+  }
+}
+
 // 点击缩略图 → 弹大图；拖拽历史缩略图 → 以"大图 URL"拖动；缩略图 404 → 回退原图。
 document.addEventListener('click', (event) => {
   const target = event.target.closest?.('[data-large-url]');
@@ -4569,6 +4680,28 @@ function bindEvents() {
   window.addEventListener('blur', hideTextContextMenu);
   window.addEventListener('resize', hideTextContextMenu);
   window.addEventListener('scroll', hideTextContextMenu, true);
+  // 大图右键 → 复制图片剪贴板（仅 pywebview 窗口自绘菜单；真实浏览器保留原生“复制图片”菜单）。
+  document.addEventListener('contextmenu', (event) => {
+    if (!isPywebview()) return;
+    if (!event.target.closest?.('#imageLightboxImg')) return;
+    event.preventDefault();
+    showImageContextMenu(event);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (!event.target.closest?.('#imageContextMenu')) hideImageContextMenu();
+  });
+  const imageMenu = ensureImageContextMenu();
+  imageMenu.addEventListener('contextmenu', (event) => event.preventDefault());
+  imageMenu.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-image-context-action]');
+    if (button) runImageContextAction(button.dataset.imageContextAction);
+  });
+  imageMenu.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); hideImageContextMenu(); }
+  });
+  window.addEventListener('blur', hideImageContextMenu);
+  window.addEventListener('resize', hideImageContextMenu);
+  window.addEventListener('scroll', hideImageContextMenu, true);
   $('#authForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
