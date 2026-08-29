@@ -212,18 +212,23 @@ def _process_uploaded_image(
         return main_bytes, None, b""
 
 
+def _image_cache_dirs() -> list[Path]:
+    """返回宿主图片缓存的两个目录：用户上传/视觉缓存（uploads）与生成产物缓存（generated）。"""
+    return [(DATA_DIR / "uploads").resolve(), (DATA_DIR / "generated").resolve()]
+
+
 def _uploads_total_bytes() -> int:
-    """Total size of all cached uploads (main + thumbnails)."""
+    """Total size of all cached images (uploads + generated, main + thumbnails)."""
     total = 0
-    uploads_dir = (DATA_DIR / "uploads").resolve()
-    if not uploads_dir.is_dir():
-        return 0
-    for path in uploads_dir.rglob("*"):
-        if path.is_file():
-            try:
-                total += path.stat().st_size
-            except OSError:
-                continue
+    for cache_dir in _image_cache_dirs():
+        if not cache_dir.is_dir():
+            continue
+        for path in cache_dir.rglob("*"):
+            if path.is_file():
+                try:
+                    total += path.stat().st_size
+                except OSError:
+                    continue
     return total
 
 
@@ -231,24 +236,27 @@ IMAGE_CACHE_CLEAN_LIMIT = 128 * 1024 * 1024  # 128 MB
 
 
 def _clean_uploads_cache(limit: int = IMAGE_CACHE_CLEAN_LIMIT) -> dict[str, Any]:
-    """清理旧图片缓存：只保留最新的、总大小不超过 limit 的图片（主图+缩略图成组）。
+    """清理旧图片缓存（uploads + generated）：只保留最新的、总大小不超过 limit 的图片
+    （主图+缩略图成组，跨两个文件夹合并后统一按时间戳从新到旧）。
 
     返回 {removed: 删除文件数, freed: 释放字节数, size: 清理后剩余字节数}。
     """
-    uploads_dir = (DATA_DIR / "uploads").resolve()
-    if not uploads_dir.is_dir():
+    cache_dirs = [d for d in _image_cache_dirs() if d.is_dir()]
+    if not cache_dirs:
         return {"removed": 0, "freed": 0, "size": 0}
-    # 以"主图 + 其缩略图"成组：主图名 X.ext 与其缩略图 X_thumb.webp 归为一组（共享前缀 X）。
+    # 以"主图 + 其缩略图"成组（主图名 X.ext 与其缩略图 X_thumb.webp 归为一组）。
+    # 用 "目录名/前缀" 作为组键，避免不同目录下同名前缀被合并。
     groups: dict[str, list[Path]] = {}
-    for path in uploads_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        name = path.name
-        if name.endswith("_thumb.webp"):
-            key = name[: -len("_thumb.webp")]
-        else:
-            key = path.stem
-        groups.setdefault(key, []).append(path)
+    for cache_dir in cache_dirs:
+        for path in cache_dir.rglob("*"):
+            if not path.is_file():
+                continue
+            name = path.name
+            if name.endswith("_thumb.webp"):
+                key = name[: -len("_thumb.webp")]
+            else:
+                key = path.stem
+            groups.setdefault(f"{cache_dir.name}/{key}", []).append(path)
 
     def _group_mtime(paths: list[Path]) -> int:
         latest = 0
