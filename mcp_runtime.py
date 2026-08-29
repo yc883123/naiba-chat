@@ -431,6 +431,28 @@ class MCPRegistry:
         for connection in connections:
             connection.stop()
 
+    def retry_unconnected_until_stopped(self, interval: float = 30.0) -> None:
+        """Watchdog: keep re-starting MCP connections that failed to establish at
+        app startup (server was briefly down / still starting). Once a server comes
+        up, it connects and registers its tools, so a new session bakes them in.
+        Runs as a daemon and stops when ``stop()`` flips ``_persistent``."""
+        def _loop() -> None:
+            while self._persistent:
+                with self._lifecycle_lock:
+                    with self._lock:
+                        connections = list(self.connections.values())
+                for connection in connections:
+                    st = connection.state()
+                    if st.get("status") in {"error", "idle", "stopped"} and not connection._thread:
+                        try:
+                            connection.start(timeout=20)
+                        except MCPError:
+                            pass
+                        except Exception:
+                            pass
+                time.sleep(interval)
+        threading.Thread(target=_loop, name="naiba-mcp-retry", daemon=True).start()
+
     def acquire(self, server_ids: list[str] | None = None) -> None:
         with self._lifecycle_lock:
             with self._lock:

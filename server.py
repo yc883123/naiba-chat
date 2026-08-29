@@ -2336,6 +2336,9 @@ class NaibaChatApp:
         auto_update = os.environ.get("NAIBA_DISABLE_AUTO_UPDATE", "").strip().lower() not in {"1", "true", "yes"}
         self.updater = UpdateManager(APP_DIR, DATA_DIR, auto_update=auto_update)
         self.update_restart_callback = None
+        # 后台自动连接所有已启用 MCP 服务；对启动时未连上的做周期重试，
+        # 保证 MCP 工具在会话固化工具集之前就绪（否则新会话烘焙不到它们）。
+        self._start_mcp_background()
 
     def stop(self) -> None:
         self.runs.shutdown()
@@ -2620,11 +2623,18 @@ class NaibaChatApp:
         return {"root": str(root), "path": str(target), "parent": str(target.parent) if target != root else "", "entries": entries}
 
     def _start_mcp_background(self) -> None:
-        """应用启动后在后台连接所有已启用 MCP 服务，并保持到退出。"""
-        try:
-            self.mcp.start()
-        except Exception as exc:  # 单个服务启动失败不应中断其他服务
-            print(f"MCP 后台启动部分失败：{exc}")
+        """应用启动后在后台连接所有已启用 MCP 服务，并保持到退出。
+
+        在独立线程里做（不阻塞启动），并对启动时未连上的服务周期重试，
+        让"naiba-chat 先启动、MCP/ComfyUI 稍后才上线"的场景也能自动补连。
+        """
+        def _worker() -> None:
+            try:
+                self.mcp.start()  # 置 _persistent=True 并启动所有连接
+            except Exception as exc:  # 单个服务启动失败不应中断其他服务
+                print(f"MCP 后台启动部分失败：{exc}")
+            self.mcp.retry_unconnected_until_stopped()
+        threading.Thread(target=_worker, name="naiba-mcp-background", daemon=True).start()
 
     def test_mcp_server(self, server_id: str) -> dict[str, Any]:
         """返回指定 MCP 的 stdio 状态，并对 ComfyUI 额外探测 HTTP 可达性。"""

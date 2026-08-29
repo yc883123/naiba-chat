@@ -390,7 +390,11 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="register_mcp",
-            description="运行时注册一个 stdio MCP 服务。",
+            description=(
+                "运行时注册一个 stdio MCP 服务。注册后该服务将在后续会话启动时自动连接，"
+                "其工具才会进入新会话的可用工具集；当前会话的工具集已固化，"
+                "注册后需重开会话才能使用这些新工具，不要在本会话内立即调用。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
