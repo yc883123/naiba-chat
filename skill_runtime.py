@@ -1053,6 +1053,7 @@ class SkillAgent:
             run_context["skill_policy"] = dict(policy)
         routing_message = str((run_context or {}).get("routing_message") or user_message)
         active = [skill_map[skill_id] for skill_id in policy["skill_ids"]]
+        user_skill_ids = {item["id"] for item in active}
         usages: list[dict[str, int]] = []
         if policy["mode"] in {"auto", "pinned"}:
             if cancel_event and cancel_event.is_set():
@@ -1066,7 +1067,13 @@ class SkillAgent:
             routed = [item for item in routed if item["id"] not in existing]
             active.extend(routed[:max(0, 4 - len(active))])
         if active:
-            event({"type": "skills", "skills": [{"id": item["id"], "name": item["name"]} for item in active]})
+            # source 区分“用户显式启用/固化”与“自动匹配”，前端据此显示为
+            # “已启用 Skill”或“已自动匹配 Skill”，避免误导用户。
+            event({"type": "skills", "skills": [
+                {"id": item["id"], "name": item["name"],
+                 "source": "user" if item["id"] in user_skill_ids else "auto"}
+                for item in active
+            ]})
 
         # MCP is scoped to an agent run, but it must not depend on skill routing:
         # plan execution and a generic agent may call an explicitly configured
@@ -1723,7 +1730,11 @@ class SkillAgent:
                 })
                 event({
                     "type": "skills",
-                    "skills": [{"id": item["id"], "name": item["name"]} for item in active],
+                    "skills": [
+                        {"id": item["id"], "name": item["name"],
+                         "source": "user" if item["id"] in user_skill_ids else "auto"}
+                        for item in active
+                    ],
                 })
 
             native_calls = [

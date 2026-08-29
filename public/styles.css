@@ -209,6 +209,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .reasoning-block summary { cursor: pointer; color: #4361a8; font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }
 .reasoning-block.tool-reasoning { border-left-color: #b0b8c8; background: #fafbfd; }
+/* 流式过程中插入到事件流里的“中途正文”块：普通正文样式，与思考/工具块的时间顺序交错。 */
+.message-body > .stream-prose { margin: 8px 0; }
 .reasoning-block.tool-reasoning summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92%; }
 .aborted-badge { display: inline-block; margin: 0 6px 6px 0; padding: 2px 8px; border-radius: 4px; background: #f4f6fb; color: #8a6d3b; font-size: 11px; font-weight: 600; border: 1px solid #e0d3b0; }
 .edit-attachments { margin: 8px 0; }

@@ -859,8 +859,12 @@ function closeContextUsagePopover() {
 
 function skillMarkup(skills = []) {
   if (!Array.isArray(skills) || !skills.length) return '';
-  const names = skills.map((skill) => escapeHtml(skill?.name || skill)).filter(Boolean);
-  return names.length ? `<div class="skill-usage">已启用 Skill：${names.join('、')}</div>` : '';
+  const parts = [];
+  const user = skills.filter((s) => s?.source !== 'auto');
+  const auto = skills.filter((s) => s?.source === 'auto');
+  if (user.length) parts.push(`已启用 Skill：${user.map((s) => escapeHtml(s?.name || s)).join('、')}`);
+  if (auto.length) parts.push(`已自动匹配 Skill：${auto.map((s) => escapeHtml(s?.name || s)).join('、')}`);
+  return parts.length ? `<div class="skill-usage">${parts.join('<br>')}</div>` : '';
 }
 
 function sourcesMarkup(sources = []) {
@@ -1110,6 +1114,22 @@ function scheduleStreamingMarkdown(element, raw) {
     element.innerHTML = markdown(element.dataset.raw || '');
     scrollToBottom();
   }, 40);
+}
+
+// 把“中途正文”作为独立兄弟块插到 answer 之前，按时间顺序与思考块/工具块交错显示。
+// 只有当 answer 的前一个兄弟元素已经是流式正文块时才复用；一旦中间插入了工具/思考块，
+// 之后的新正文会生成新的独立块，从而保持“思考→正文→工具→思考→正文…”的顺序，
+// 而不是把所有正文统一累积到末尾的 answer-content。
+function getStreamingProseSegment(row, answer) {
+  if (!answer) return null;
+  const prev = answer.previousElementSibling;
+  if (prev && prev.classList && prev.classList.contains('stream-prose')) {
+    return prev;
+  }
+  const seg = document.createElement('div');
+  seg.className = 'stream-prose';
+  answer.before(seg);
+  return seg;
 }
 
 function renderMessages(messages) {
@@ -4221,10 +4241,16 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'response_retracted') {
     clearStreamingAnswer(answer);
     row.querySelectorAll('.reasoning-block').forEach((block) => block.remove());
+    row.querySelectorAll('.stream-prose').forEach((seg) => seg.remove());
     delete row.dataset.reasoningStreamed;
     setActivity(event.reason || '正在核验执行结果');
   } else if (event.type === 'skills') {
-    setActivity(`已启用 ${event.skills.map((skill) => skill.name).join('、')}`);
+    const user = (event.skills || []).filter((s) => s?.source !== 'auto');
+    const auto = (event.skills || []).filter((s) => s?.source === 'auto');
+    const parts = [];
+    if (user.length) parts.push(`已启用 ${user.map((s) => s?.name).join('、')}`);
+    if (auto.length) parts.push(`已自动匹配 ${auto.map((s) => s?.name).join('、')}`);
+    setActivity(parts.join('；'));
   } else if (event.type === 'tools_available') {
     // Tool schemas are runtime state, not user-facing message content.
     // Keep tool execution/result details available without dumping the full
@@ -4232,14 +4258,17 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   } else if (event.type === 'delta') {
     clearElapsedStatus();
     setActivity('');
-    const current = answer.dataset.raw || '';
-    const next = current + String(event.content || '');
+    const content = String(event.content || '');
     if (row.dataset.lightweightMode === 'true') {
+      const current = answer.dataset.raw || '';
+      const next = current + content;
       answer.dataset.raw = next;
       answer.textContent = next;
       scrollToBottom();
     } else {
-      scheduleStreamingMarkdown(answer, next);
+      // 把中途回复的正文插进事件流里（与思考/工具块按时间交错），而不是统一累积到末尾。
+      const seg = getStreamingProseSegment(row, answer);
+      if (seg) scheduleStreamingMarkdown(seg, (seg.dataset.raw || '') + content);
     }
   } else if (event.type === 'reasoning_start') {
     clearElapsedStatus();

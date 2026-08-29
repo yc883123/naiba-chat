@@ -687,7 +687,11 @@ class ConversationRunManager:
             nonlocal skills
             if payload.get("type") == "skills" and isinstance(payload.get("skills"), list):
                 skills = [
-                    {"id": str(item.get("id") or ""), "name": str(item.get("name") or "")}
+                    {
+                        "id": str(item.get("id") or ""),
+                        "name": str(item.get("name") or ""),
+                        "source": str(item.get("source") or "auto"),
+                    }
                     for item in payload["skills"]
                     if isinstance(item, dict)
                 ]

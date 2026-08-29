@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from html.parser import HTMLParser
+import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1336,9 +1337,12 @@ class ModelRuntime:
                         time.sleep(delay)
                     continue
                 raise RuntimeError(f"{target_detail}返回 HTTP {exc.code}: {detail}") from exc
-            except (urllib.error.URLError, OSError) as exc:
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
                 reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
                 error_code = _network_error_code(exc)
+                # 响应读取中途被切断（IncompleteRead / RemoteDisconnected 等 HTTPException）
+                # 属于瞬时传输故障：与连接失败一样可重试，而不是让整个 run 直接报错。
+                is_http_exception = isinstance(exc, http.client.HTTPException)
                 # A connection-level refusal/reset for an ONLINE provider often
                 # follows a stale system proxy (proxy/TUN toggled mid-session, or
                 # the proxy process restarted). urllib caches the proxy in its
@@ -1357,7 +1361,11 @@ class ModelRuntime:
                         status({"type": "status", "message": "检测到代理/TUN 连接异常，正在尝试直连重试"})
                     continue
                 retryable_test_error = connection_test and error_code in FAST_RETRY_NETWORK_ERRORS
-                if not is_local and attempt + 1 < attempts and (not connection_test or retryable_test_error):
+                if (
+                    not is_local
+                    and attempt + 1 < attempts
+                    and (not connection_test or retryable_test_error or is_http_exception)
+                ):
                     delay = (0.5 if connection_test else 1.5) * (attempt + 1)
                     if cancel_event and cancel_event.wait(delay):
                         raise RuntimeError("任务已取消")
@@ -1370,6 +1378,8 @@ class ModelRuntime:
                     hint = "；目标端口拒绝连接，请检查 API URL、代理/TUN 或服务是否已启动"
                 elif error_code in {10053, 10054}:
                     hint = "；连接被中止，请检查代理/TUN、防火墙或服务状态"
+                elif is_http_exception:
+                    hint = "；响应读取不完整（连接中断），请检查网络/代理后重试"
                 raise RuntimeError(f"无法连接{target_detail}：{reason}{hint}") from exc
 
             finally:
