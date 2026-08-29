@@ -794,7 +794,7 @@ class ConversationRunManager:
             event({"type": "status", "message": "任务开始执行"})
             if cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
-            from server import _detect_choice_groups, build_model_history, extract_attachments
+            from server import _detect_choice_groups, build_model_history, extract_attachments, _image_intent
 
             message = str(run.get("message") or "")
             uploads = snapshot.get("attachments") or []
@@ -1144,7 +1144,9 @@ class ConversationRunManager:
                 "activity": _safe_activity(self._all_run_events(run_id), reasonings, runs),
                 "usage": usage,
                 "performance": performance,
-                "attachments": extract_attachments(runs),
+                # 只有用户明确要求看/列出/查找图片时，才把枚举类工具(glob/list/search)返回的图片
+                # 作为附件显示；否则枚举结果只是路径，避免一堆不相干的图片出现在消息末尾。
+                "attachments": extract_attachments(runs, allow_enumerated_media=_image_intent(message)),
                 "sources": search_sources[:20],
                 "choices": choice_groups[0]["choices"] if choice_groups else [],
                 "choice_groups": choice_groups,

@@ -2053,12 +2053,37 @@ def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dic
     return history
 
 
-def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
+_IMAGE_MEDIA_TERM_RE = re.compile(
+    r"(图片|图像|照片|缩略图|位图|图标|png|jpe?g|webp|gif|image|picture|photo|imag|(?<![地纸表网草截导流框])图)",
+    re.IGNORECASE,
+)
+# 用户"要看到/列出/查找/确认图片"的动作词：与图片词同时命中才判定为图像意图，
+# 避免"这张图片是谁画的"这类只是提及图片、并不是要显示的请求被误判。
+_IMAGE_VIEW_ACTION_RE = re.compile(
+    r"(列出|查看|找找|查找|找到|看看|看一下|看一看|看|显示|展示|预览|确认|查询|打开|发给|给我|浏览|翻看|看图|识图|贴出|放出)",
+    re.IGNORECASE,
+)
+
+
+def _image_intent(text: str) -> bool:
+    """用户是否明确要求查看/列出/查找图片（据此决定枚举类工具返回的图片是否作为附件显示）。
+
+    必须同时命中"图片词"与"查看/列出/查找/确认类动作词"，才算图像意图，减少误伤。
+    """
+    t = str(text or "")
+    return bool(_IMAGE_MEDIA_TERM_RE.search(t) and _IMAGE_VIEW_ACTION_RE.search(t))
+
+
+def extract_attachments(runs: list[dict[str, Any]], allow_enumerated_media: bool = False) -> list[dict[str, str]]:
     extensions = (
         ".png", ".jpg", ".jpeg", ".webp", ".gif",
         ".mp4", ".webm", ".mov", ".m4v", ".ogv",
         ".wav", ".mp3", ".m4a", ".ogg", ".flac",
     )
+    # 枚举类工具（列出/搜索目录、按名匹配文件）的返回值是一批文件路径；
+    # 只有当用户明确要求查看/列出/查找图片时才把它们当可显示附件，否则不作为附件，
+    # 避免 glob/list 把一堆不相干的图片都拉进消息末尾。
+    enumeration_tools = {"glob_files", "glob", "list_directory", "search_files", "grep", "find_files"}
     # 结构化媒体记录里存放"真实路径/URL"的键。识别到这类 dict 时只产出单个附件，
     # 其 thumb_path/name 作为该附件的元数据，而不是被当作独立附件再次扫描。
     source_keys = ("path", "source", "url", "view_url", "file")
@@ -2121,6 +2146,9 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
             visit(item)
 
     for run in runs:
+        # 枚举类工具（glob/list/search）返回一批路径；若非“用户明确要看图”，跳过其图片附件。
+        if not allow_enumerated_media and str(run.get("tool") or "") in enumeration_tools:
+            continue
         result = run.get("result", "")
         try:
             visit(json.loads(result))
