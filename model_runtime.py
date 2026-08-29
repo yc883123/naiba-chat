@@ -1887,11 +1887,18 @@ class ModelRuntime:
             try:
                 arguments = json.loads(raw_args) if raw_args.strip() else {}
             except json.JSONDecodeError as exc:
-                logger.warning("工具调用解析失败：参数不是合法 JSON")
-                raise RuntimeError(f"工具调用参数不是合法 JSON：{exc}") from exc
+                # Large native tool-call arguments (e.g. a full workflow JSON) can
+                # be truncated/malformed mid-stream. Do NOT abort the whole run with
+                # a fatal error — surface a retryable "parse_error" action so the
+                # agent loop asks the model to re-emit a clean tool call.
+                logger.warning(
+                    "工具调用解析失败：参数不是合法 JSON（len=%d, head=%r…）：%s",
+                    len(raw_args), raw_args[:120], exc,
+                )
+                return json.dumps({"type": "parse_error"}, ensure_ascii=False)
             if not isinstance(arguments, dict):
                 logger.warning("工具调用解析失败：参数不是 JSON 对象")
-                raise RuntimeError("工具调用参数必须是 JSON 对象")
+                return json.dumps({"type": "parse_error"}, ensure_ascii=False)
             actions.append({"type": "tool", "tool": name, "arguments": arguments})
         payload = actions[0] if len(actions) == 1 else {"type": "tools", "calls": actions}
         return json.dumps(payload, ensure_ascii=False)

@@ -736,18 +736,23 @@ def build_comfyui_tool_specs() -> list[ToolSpec]:
             description=(
                 "一次提交多个 ComfyUI API 工作流并在后台统一轮询。适合生图、短剧分段和视频生成；"
                 "直接返回 Job ID，随后用 job_status/job_wait/job_output 查询。无需先激活 Skill。"
+                "工作流一律采用“改文件再引用”：先用 comfyui_prepare_workflow 确认工作流属性，再用 read_file 读取，"
+                "用 edit_file 修改本地工作流文件，再通过 workflow_paths 提交文件路径；"
+                "不要把完整工作流 JSON 内联进 workflows 参数。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "workflows": {
                         "type": "array",
-                        "description": "ComfyUI API 格式工作流数组；每个元素对应一个片段",
+                        "description": "ComfyUI API 格式工作流数组；每个元素对应一个片段。仅在极小的临时工作流时使用，"
+                        "一般应改用 workflow_paths 引用本地文件以避免内联大 JSON",
                         "items": {"type": "object"},
                     },
                     "workflow_paths": {
                         "type": "array",
-                        "description": "API 工作流 JSON 文件路径数组；适合脚本/批处理，避免在对话中搬运大 JSON",
+                        "description": "API 工作流 JSON 文件路径数组；提交前先用 comfyui_prepare_workflow 确认工作流属性，再用 read_file 读取，"
+                        "再用 edit_file 对该文件做局部精确替换（改提示词/seed/尺寸等），最后把路径传给本参数；",
                         "items": {"type": "string"},
                     },
                     "workflow": {

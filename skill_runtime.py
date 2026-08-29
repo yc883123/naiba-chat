@@ -1257,6 +1257,15 @@ class SkillAgent:
             guide_parts.append("脚本负责解析素材、批量提交、轮询和校验，随后用 job_status/job_wait/job_output 查看结果。")
         if "comfyui_prepare_workflow" in allowed:
             guide_parts.append("遇到 JSON 工作流先调用 comfyui_prepare_workflow 判断是 UI 还是 API 格式。")
+        if "comfyui_batch" in allowed:
+            guide_parts.append(
+                "ComfyUI 工作流提交统一走“改文件、再引用”路径：先用 comfyui_prepare_workflow 确定文件基本属性，然后使用 read_file 读取本地工作流文件，"
+                "需要改动（提示词、seed、尺寸、节点等）时用 edit_file 对该文件做局部精确替换"
+                "改完后调用 comfyui_batch 时用 workflow_paths 传入文件路径。"
+            )
+            guide_parts.append(
+                "只允许“读取 + 局部修改本地工作流文件 + workflow_paths 引用文件提交”这一种方式，避免模型整段搬运大 JSON。"
+            )
         if {"comfyui_prepare_workflow", "comfyui_batch"} <= allowed:
             guide_parts.append("若已有多个 API 工作流，优先一次调用 comfyui_batch，不要让模型逐节点手工拼 JSON 或逐段手工轮询。")
         guide_parts.append("Skill 只是说明，不是工具开关。")
