@@ -392,7 +392,13 @@ class ModelRuntime:
             lock.release()
             diagnostics["total_ms"] = round((time.perf_counter() - total_started) * 1000, 1)
             self.last_diagnostics = diagnostics
-        if not reasoning_enabled:
+        # DeepSeek thinking mode REQUIRES assistant reasoning_content to be passed
+        # back on every tool-call message ("The reasoning_content in the thinking
+        # mode must be passed back to the API"). Even when the UI has reasoning
+        # display off, we must keep the captured reasoning so `last_reasoning`
+        # feeds `reasoning_content` into the agent loop's assistant messages.
+        # The streaming display is already suppressed by `effective_status`.
+        if not reasoning_enabled and not ModelRuntime._is_deepseek_profile(profile):
             reasoning = ""
         self.last_reasoning = reasoning
         self.last_usage = usage
@@ -1271,9 +1277,29 @@ class ModelRuntime:
                     if status:
                         status({"type": "status", "message": "当前接口不支持原生 Tool Calling，已切换兼容工具协议"})
                     continue
-                reasoning_rejection = any(
-                    marker in detail.lower()
-                    for marker in ("reasoning_content", "reasoning_effort", "thinking", "unknown field")
+                # DeepSeek thinking mode rejects an assistant history message that
+                # is missing reasoning_content ("must be passed back to the API").
+                # That is the OPPOSITE of "this field is not accepted", so we must
+                # NOT trigger the strip-fields fallback — otherwise the retry drops
+                # reasoning_content and is guaranteed to fail with the same 400.
+                lower_detail = str(detail).lower()
+                reasoning_required = any(
+                    marker in lower_detail
+                    for marker in (
+                        "must be passed", "must be provided", "must be included",
+                        "must be returned", "is required", "required to be",
+                    )
+                )
+                reasoning_rejection = (
+                    not reasoning_required
+                    and any(
+                        marker in lower_detail
+                        for marker in (
+                            "reasoning_content", "reasoning_effort", "thinking",
+                            "unknown field", "unrecognized", "does not support",
+                            "unsupported", "invalid field",
+                        )
+                    )
                 )
                 if (
                     not is_local
