@@ -721,6 +721,7 @@ class ConversationRunManager:
         plan_id = str(snapshot.get("plan_id") or run.get("plan_id") or "")
         sink = _RunEventSink(self, run_id, cancel_event)
         skills: list[dict[str, str]] = []
+        run_context: dict[str, Any] | None = None
         search_sources: list[dict[str, str]] = []
         vision_trace: dict[str, Any] = {"requests": 0, "cache_hit": False}
         chat_diagnostics: dict[str, Any] = {}
@@ -1158,7 +1159,10 @@ class ConversationRunManager:
                 except (LookupError, ValueError):
                     pass
             # 把已累积的中止内容持久化为一条"已中止"assistant 消息，避免取消后输出丢失。
-            aborted_message = self._persist_aborted_message(run_id, conversation_id, skills)
+            aborted_message = self._persist_aborted_message(
+                run_id, conversation_id, skills,
+                trace=(run_context or {}).get("trace_messages") or [],
+            )
             self.app.storage.update_background_task(
                 run_id, status="cancelled", detail={"message": "任务已取消"}, finished=True
             )
@@ -1299,13 +1303,28 @@ class ConversationRunManager:
                 time.sleep(3.0)
                 current = self.get(run_id)
                 if current and current.get("status") == "cancelling":
+                    # 兜底：即便 run 线程没能及时重建“已中止”消息（模型流卡住/空闲），
+                    # 也在这里把已累积的内容持久化，避免中途输出丢失。
+                    aborted_message = None
+                    try:
+                        conversation_id = str(current.get("conversation_id") or "")
+                        skills = (current.get("detail") or {}).get("skills") or []
+                        if conversation_id:
+                            aborted_message = self._persist_aborted_message(
+                                run_id, conversation_id, skills
+                            )
+                    except Exception:
+                        aborted_message = None
                     self.app.storage.update_background_task(
                         run_id,
                         status="cancelled",
                         detail={"message": "任务已取消"},
                         finished=True,
                     )
-                    self.emit(run_id, {"type": "cancelled", "message": "任务已取消"})
+                    cancelled_payload: dict[str, Any] = {"type": "cancelled", "message": "任务已取消"}
+                    if aborted_message:
+                        cancelled_payload["aborted_message"] = aborted_message
+                    self.emit(run_id, cancelled_payload)
             except Exception:
                 pass
 
@@ -1316,6 +1335,7 @@ class ConversationRunManager:
         run_id: str,
         conversation_id: str,
         skills: list[dict[str, Any]],
+        trace: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any] | None:
         """取消时把本次已累积(reasoning/部分回复/工具)重建为一条\"已中止\"assistant 消息并入库。
 
@@ -1325,6 +1345,16 @@ class ConversationRunManager:
             events = self.app.storage.list_run_events(run_id)
         except Exception:
             return None
+        # 避免重复：该 run 若已入库过“已中止”消息（例如 forced-cancel 兜底已先写入），直接返回，
+        # 防止“正常取消路径”与“看门狗兜底”各写一条。
+        try:
+            conversation = self.app.storage.get_conversation(conversation_id)
+            for msg in (conversation or {}).get("messages", []) or []:
+                meta = msg.get("metadata") or {}
+                if meta.get("aborted") and str(meta.get("run_id") or "") == run_id:
+                    return None
+        except Exception:
+            pass
         reasoning: list[str] = []
         reasoning_parts: list[str] = []
         content_parts: list[str] = []
@@ -1372,6 +1402,7 @@ class ConversationRunManager:
             "run_id": run_id,
             "skills": skills,
             "activity": _safe_activity(events, reasoning, tool_runs),
+            "trace": trace or [],
         }
         try:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)

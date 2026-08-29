@@ -4416,7 +4416,14 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
         console.error('[naiba] cancelled 事件渲染崩溃:', error, 'message=', event.aborted_message);
       }
     } else {
-      answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
+      // 没有 aborted_message（例如 forced-cancel 未及时重建）：绝不能清空已展示的中途输出，
+      // 只在真正无任何内容时才显示占位提示；否则会抹掉 AI 已输出的回复。
+      const hasContent = Boolean((answer.dataset.raw || '').trim())
+        || row.querySelector('.reasoning-block, .tool-run, .stream-prose, .tool-confirm');
+      if (!hasContent) {
+        answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
+      }
+      setActivity(event.message || '任务已取消');
     }
   } else if (event.type === 'run_failed') {
     clearElapsedStatus();

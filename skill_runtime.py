@@ -1427,10 +1427,17 @@ class SkillAgent:
                 consumed += 1
             return consumed
 
+        def abort_run() -> None:
+            # 把本轮已累积的模型消息（工具调用/结果/推理）写入 trace，供“已中止”消息携带，
+            # 让中止后的 AI 也能精确重放这轮轨迹。
+            if isinstance(run_context, dict):
+                run_context["trace_messages"] = messages[trace_start:]
+            event({"type": "run_cancelled", "reason": "用户取消"})
+            raise TaskCancelled("任务已取消")
+
         while True:
             if cancel_event and cancel_event.is_set():
-                event({"type": "run_cancelled", "reason": "用户取消"})
-                raise TaskCancelled("任务已取消")
+                abort_run()
             step += 1
             consume_interjections()
             event({"type": "step_started", "step": step})
@@ -1442,12 +1449,10 @@ class SkillAgent:
                 # 模型 HTTP 调用被取消信号中断时抛 RuntimeError("任务已取消")，
                 # 统一转成 TaskCancelled，使其走"取消"而非"失败"路径。
                 if cancel_event and (cancel_event.is_set() or str(exc) == "任务已取消"):
-                    event({"type": "run_cancelled", "reason": "用户取消"})
-                    raise TaskCancelled("任务已取消")
+                    abort_run()
                 raise
             if cancel_event and cancel_event.is_set():
-                event({"type": "run_cancelled", "reason": "用户取消"})
-                raise TaskCancelled("任务已取消")
+                abort_run()
             reasoning = getattr(model_runtime, "last_reasoning", "") if model_runtime else ""
             usage = getattr(model_runtime, "last_usage", {}) if model_runtime else {}
             if usage:
@@ -1635,8 +1640,7 @@ class SkillAgent:
                     event({"type": "assistant_response", "is_tool": True, "tool": tool})
                     event({"type": "tool_requested", "tool": tool, "arguments": arguments, "reason": call.get("reason", "")})
                 if cancel_event and cancel_event.is_set():
-                    event({"type": "run_cancelled", "reason": "用户取消"})
-                    raise TaskCancelled("任务已取消")
+                    abort_run()
 
                 key = f"{tool}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
                 if parallel_safe:
