@@ -3168,11 +3168,24 @@ function applyAgentToolDependency(scope, changedTool, checked) {
   return [...result];
 }
 
+function updateGroupSelectAll(groupEl) {
+  if (!groupEl) return;
+  const all = groupEl.querySelector('input.group-select-all');
+  if (!all) return;
+  const toolCbs = [...groupEl.querySelectorAll('.permission-grid input[type="checkbox"]')];
+  const selected = toolCbs.filter((cb) => state.agentFormToolScope.includes(cb.value));
+  all.checked = toolCbs.length > 0 && selected.length === toolCbs.length;
+  // 半选态：该分类下只有部分工具被勾选。
+  all.indeterminate = toolCbs.length > 0 && selected.length > 0 && selected.length < toolCbs.length;
+}
+
 function syncAgentToolCheckboxes(list) {
   if (!list) return;
-  list.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+  list.querySelectorAll('.permission-grid input[type="checkbox"]').forEach((cb) => {
     cb.checked = state.agentFormToolScope.includes(cb.value);
   });
+  // 同步各分类的“全选”框状态（含半选）。
+  list.querySelectorAll('.agent-tool-group').forEach(updateGroupSelectAll);
 }
 
 async function renderAgentToolPicker() {
@@ -3212,7 +3225,24 @@ async function renderAgentToolPicker() {
     groupEl.className = 'agent-tool-group';
     const head = document.createElement('div');
     head.className = 'agent-tool-group-head';
-    head.textContent = group;
+    const headTitle = document.createElement('span');
+    headTitle.textContent = group;
+    head.append(headTitle);
+    // 分类级“全选”勾选框：紧跟分类名右侧，点击一次勾选/取消该分类所有工具（沿用依赖联动）。
+    const allCb = document.createElement('input');
+    allCb.type = 'checkbox';
+    allCb.className = 'group-select-all';
+    allCb.setAttribute('data-group', group);
+    allCb.title = `全选/取消全选「${group}」分类下的所有工具`;
+    head.append(allCb);
+    allCb.addEventListener('change', () => {
+      let scope = state.agentFormToolScope;
+      for (const tool of tools) {
+        scope = applyAgentToolDependency(scope, tool.name, allCb.checked);
+      }
+      state.agentFormToolScope = scope;
+      syncAgentToolCheckboxes(list);
+    });
     groupEl.append(head);
     const grid = document.createElement('div');
     grid.className = 'permission-grid';
@@ -3248,6 +3278,8 @@ async function renderAgentToolPicker() {
     groupEl.append(grid);
     list.append(groupEl);
   }
+  // 初始渲染后同步一次，让各分类“全选”框进入正确的勾选/半选状态。
+  syncAgentToolCheckboxes(list);
 }
 
 function hideAgentForm() {

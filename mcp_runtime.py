@@ -7,6 +7,7 @@ import time
 import traceback
 from contextlib import AsyncExitStack
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from datetime import timedelta
 from typing import Any, Callable
 
 
@@ -40,6 +41,10 @@ class MCPServerConnection:
         self._session = None
         self._stack: AsyncExitStack | None = None
         self._stop_signal: asyncio.Event | None = None
+        # mcp SDK 1.x 的 call_tool 期望 read_timeout_seconds 为 timedelta；2.x 为 float 秒数。
+        # 连接建立时按实际打包的 SDK 签名自适应，避免传错类型导致
+        # AttributeError: 'float' object has no attribute 'total_seconds'。
+        self._read_timeout_is_timedelta = True
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._call_lock = threading.Lock()
@@ -111,6 +116,16 @@ class MCPServerConnection:
     async def _connect(self) -> None:
         from mcp import ClientSession, StdioServerParameters
         from mcp.client.stdio import stdio_client
+
+        # 适配 mcp SDK 的 call_tool 入参类型：1.x 用 timedelta，2.x 用 float 秒数。
+        # 按实际打包版本运行时探测一次（mcp 是懒加载，无法在模块顶部导入）。
+        try:
+            import inspect as _inspect
+            param = _inspect.signature(ClientSession.call_tool).parameters.get("read_timeout_seconds")
+            annotation = str(getattr(param, "annotation", "") or "")
+            self._read_timeout_is_timedelta = bool(annotation) and "timedelta" in annotation
+        except Exception:
+            self._read_timeout_is_timedelta = True  # 保守：mcp 1.x 用 timedelta
 
         self._stack = AsyncExitStack()
         parameters = StdioServerParameters(
@@ -192,8 +207,13 @@ class MCPServerConnection:
                     self._session.call_tool(
                         tool_name,
                         arguments,
-                        # mcp SDK 2.x 中 read_timeout_seconds 为 float 秒数；旧版为 timedelta。
-                        read_timeout_seconds=float(timeout),
+                        # mcp SDK 1.x 期望 read_timeout_seconds 为 timedelta（内部调
+                        # .total_seconds()）；2.x 为 float 秒数。按打包版本自适应。
+                        read_timeout_seconds=(
+                            timedelta(seconds=timeout)
+                            if self._read_timeout_is_timedelta
+                            else float(timeout)
+                        ),
                     ),
                     self._loop,
                 )

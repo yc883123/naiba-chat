@@ -537,7 +537,9 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .permission-grid small { color: var(--muted); line-height: 1.35; }
 .agent-display { display: inline-block; max-width: min(220px, 20vw); height: 34px; line-height: 34px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
 .agent-tool-group { margin: 0 0 12px; }
-.agent-tool-group-head { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; }
+.agent-tool-group-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; }
+.agent-tool-group-head > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-tool-group-head .group-select-all { width: 17px; height: 17px; margin: 0; padding: 0; border: 0; flex: none; accent-color: #3b82f6; cursor: pointer; }
 #agentToolScope { max-height: 320px; overflow: auto; padding: 4px 2px; }
 .skill-dir-add, .skill-install { display: flex; gap: 9px; margin-bottom: 18px; }
 .skill-dir-add input, .skill-install input[type="file"] { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }

@@ -31,7 +31,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install --disable-pip-version-check --upgrade pyinstaller pywebview pystray "mcp==1.29.0"
+          python -m pip install --disable-pip-version-check --upgrade pyinstaller pywebview pystray "mcp==2.1.1"
           python -m pip install --disable-pip-version-check --upgrade --force-reinstall --no-cache-dir pillow
           python -c "from PIL import Image; print('Pillow', Image.__version__)"
 

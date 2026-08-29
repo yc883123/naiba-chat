@@ -35,7 +35,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 ```powershell
 git clone https://github.com/yc883123/naiba-chat.git
 Set-Location naiba-chat
-python -m pip install pywebview pystray pillow "mcp==1.29.0"
+python -m pip install pywebview pystray pillow "mcp==2.1.1"
 python server.py
 ```
 

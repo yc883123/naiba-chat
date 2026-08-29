@@ -77,7 +77,20 @@ a = Analysis(
         (str(root / "release_notes.json"), "."),
         (str(icon_path), "."),
     ],
-    hiddenimports=["mcp", "mcp.client.stdio"],
+    hiddenimports=[
+        "mcp",
+        "mcp.client.stdio",
+        # mcp 2.x runtime deps: these are imported dynamically / often missed by the
+        # module graph, so bundle them explicitly to avoid load-time ImportError.
+        "mcp_types",
+        "httpx2",
+        "httpcore2",
+        "truststore",
+        "opentelemetry",
+        "opentelemetry.context",
+        "opentelemetry.propagate",
+        "opentelemetry.trace",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
