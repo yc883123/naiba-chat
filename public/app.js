@@ -682,6 +682,7 @@ function activityMarkup(activity = []) {
     try {
       if (item.type === 'reasoning') html += reasoningMarkup([item.text], index === lastReasoningIndex);
       else if (item.type === 'tool' && item.run) html += toolRunMarkup(item.run);
+      else if (item.type === 'prose') html += `<div class="stream-prose">${markdown(item.text)}</div>`;
     } catch (_) { /* 单个条目异常不影响整体 */ }
   });
   return html;
@@ -911,15 +912,21 @@ function messageElement(message, temporary = false) {
     row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
     const abortedBadge = metadata.aborted ? '<span class="aborted-badge">已中止</span>' : '';
-    const activityHtml = metadata.activity?.length ? activityMarkup(metadata.activity) : '';
+    const activity = Array.isArray(metadata.activity) ? metadata.activity : [];
+    const activityHtml = activity.length ? activityMarkup(activity) : '';
+    const activityHasProse = activity.some((item) => item && item.type === 'prose');
     const reasoningToolHtml = activityHtml || (reasoningMarkup(metadata.reasoning, true) + toolMarkup(metadata.tool_runs));
+    // 当 activity 已内嵌正文（prose 条目）时，正文按时间交错展示，不再在末尾重复渲染；
+    // 末尾的 answer-content 仅保留用于复制/检索（隐藏），避免与时间线重复。
+    const hideBottomContent = activityHasProse && !temporary;
     row.innerHTML = `
       <div class="message-avatar">AI</div>
       <div class="message-body">
         ${skillMarkup(metadata.skills)}
+        ${hideBottomContent ? abortedBadge : ''}
         ${reasoningToolHtml}
         ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
-        <div class="answer-content" data-raw="">${temporary ? '' : abortedBadge + markdown(message.content)}</div>
+        <div class="answer-content" data-raw="" ${hideBottomContent ? 'style="display:none"' : ''}>${temporary ? '' : abortedBadge + markdown(message.content)}</div>
         ${temporary ? '' : sourcesMarkup(metadata.sources)}
         ${mediaMarkup(metadata.attachments)}
         ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance })}
@@ -4900,9 +4907,9 @@ function bindEvents() {
     }
     const copyButton = event.target.closest('[data-copy-message]');
     if (copyButton) {
-      const text = copyButton.closest('.message-body').querySelector('.answer-content').innerText;
+      const text = copyButton.closest('.message-body').querySelector('.answer-content')?.textContent || '';
       try {
-        await copyText(text);
+        await copyText(text.trim());
         toast('已复制回复');
       } catch (error) {
         toast(`复制失败：${error.message}`);

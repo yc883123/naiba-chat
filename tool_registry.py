@@ -813,28 +813,6 @@ def build_capability_tool_specs() -> list[ToolSpec]:
             permission="confirm",
         ),
         ToolSpec(
-            name="activate_skill",
-            description=(
-                "激活已经安装的 Skill，并在下一轮加载其可信说明。"
-                "仅在用户明确点名 Skill，或 capability_inventory 找到确实相关的 Skill 后调用。"
-            ),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "skills": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Skill ID 或完整名称，最多 4 个",
-                    },
-                },
-                "required": ["skills"],
-            },
-            side_effect=False,
-            retryable=False,
-            timeout=30,
-            permission="confirm",
-        ),
-        ToolSpec(
             name="install_skill",
             description=(
                 "安装经过校验的本地 Skill 文件夹、ZIP 或单个 Markdown。"

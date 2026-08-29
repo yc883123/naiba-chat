@@ -18,13 +18,13 @@ from vision_runtime import IMAGE_SUFFIXES, VISION_TOOL_NAMES, VisionBudget
 # - Ask/Plan 模式：仅只读分析与搜索工具（crop/pixel_diff 等写文件工具排除）。
 JOB_TOOLS = ("run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write", "artifact_report")
 HARNESS_TOOLS = ("glob_files", "edit_file", "pwsh", "read", "write", "edit", "glob", "grep")
-CAPABILITY_TOOLS = ("capability_inventory", "activate_skill", "install_skill")
+CAPABILITY_TOOLS = ("capability_inventory", "install_skill")
 VISION_READONLY_TOOLS = (
     "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
 )
 VISION_WRITING_TOOLS = ("vision_crop", "vision_pixel_diff")
 SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("vision_read_folder", "web_search", "comfyui_prepare_workflow", "comfyui_batch")
-SYSTEM_TOOLS_READONLY = ("capability_inventory", "activate_skill") + VISION_READONLY_TOOLS + ("web_search",)
+SYSTEM_TOOLS_READONLY = ("capability_inventory",) + VISION_READONLY_TOOLS + ("web_search",)
 
 
 def _safe_activity(
@@ -40,25 +40,43 @@ def _safe_activity(
 def _build_activity_timeline(
     events: list[dict[str, Any]], reasonings: list[str], runs: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """按运行事件的时间序，把思考段与工具调用交错产出，供前端按时间显示思维链/工具链。
+    """按运行事件的时间序，把思考段、正文与工具调用交错产出，供前端按时间显示思维链/工具链。
 
-    内容复用传入的 reasonings 与 runs（避免重复/不一致），仅用 events 的先后顺序决定
-    交错。计数不齐时把剩余段落追加到末尾兜底。本函数为模块级，绝不放进任何类体。
+    正文（delta 事件）会作为 ``{"type": "prose", "text": ...}`` 条目插入到它发生的
+    时间点上，因此收尾后的最终回复也能保持“思考→正文→工具→…”的交错，而不是把所有
+    正文统一放到末尾。内容复用传入的 reasonings 与 runs（避免重复/不一致），仅用 events
+    的先后顺序决定交错。计数不齐时把剩余段落追加到末尾兜底。本函数为模块级。
     """
     activity: list[dict[str, Any]] = []
     ri = 0
     ti = 0
     in_reasoning = False
+    prose: list[str] = []
+
+    def flush_prose() -> None:
+        if prose:
+            activity.append({"type": "prose", "text": "".join(prose)})
+            prose.clear()
+
+    def flush_reasoning() -> None:
+        nonlocal ri
+        if in_reasoning and ri < len(reasonings):
+            activity.append({"type": "reasoning", "text": reasonings[ri]})
+            ri += 1
+
     for ev in events:
         kind = str(ev.get("type") or "")
+        if kind == "delta":
+            prose.append(str(ev.get("content") or ""))
+            continue
+        flush_prose()
         if kind == "reasoning_start":
             in_reasoning = True
         elif kind == "reasoning_end":
-            if in_reasoning and ri < len(reasonings):
-                activity.append({"type": "reasoning", "text": reasonings[ri]})
-                ri += 1
+            flush_reasoning()
             in_reasoning = False
         elif kind == "reasoning":
+            flush_reasoning()
             if ri < len(reasonings):
                 activity.append({"type": "reasoning", "text": reasonings[ri]})
                 ri += 1
@@ -66,6 +84,8 @@ def _build_activity_timeline(
             if ti < len(runs):
                 activity.append({"type": "tool", "run": runs[ti]})
                 ti += 1
+    flush_prose()
+    flush_reasoning()
     while ri < len(reasonings):
         activity.append({"type": "reasoning", "text": reasonings[ri]})
         ri += 1
@@ -465,8 +485,6 @@ class ConversationRunManager:
                 allowed_tools = self._resolve_allowed_tools(
                     mode, agent, web_search_enabled, model_key, enabled_tool_ids
                 )
-                # 只允许 Agent 预设的 Skill：禁止运行中通过 activate_skill 注入新的 Skill 提示。
-                allowed_tools = [tool for tool in allowed_tools if tool != "activate_skill"]
             if "skills" in disabled_features:
                 skill_policy = {"mode": "exclusive", "skill_ids": []}
             else:
@@ -580,12 +598,9 @@ class ConversationRunManager:
                 "generation_options": self._generation_options(self.app.config, model_key),
                 "web_search_enabled": bool(web_search_enabled),
                 "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
-                "allowed_tools": [
-                    tool for tool in self._resolve_allowed_tools(
-                        "craft", agent, bool(web_search_enabled), model_key
-                    )
-                    if tool != "activate_skill"
-                ],
+                "allowed_tools": self._resolve_allowed_tools(
+                    "craft", agent, bool(web_search_enabled), model_key
+                ),
                 "permission_mode": str(conversation.get("permission_mode") or "confirm"),
                 "skill_policy": normalize_skill_policy(
                     {"mode": "exclusive", "skill_ids": [
@@ -863,7 +878,7 @@ class ConversationRunManager:
             if "skills" in disabled_features:
                 allowed_tools = [
                     tool for tool in allowed_tools
-                    if tool not in {"activate_skill", "install_skill", "run_skill_script"}
+                    if tool not in {"install_skill", "run_skill_script"}
                 ]
             if brain_supports_images:
                 # 多模态大脑隐藏按需看图的 vision_* 工具，但保留 vision_read_folder
@@ -1342,6 +1357,7 @@ class ConversationRunManager:
             "tool_runs": tool_runs,
             "run_id": run_id,
             "skills": skills,
+            "activity": _safe_activity(events, reasoning, tool_runs),
         }
         try:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)

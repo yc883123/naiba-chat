@@ -1059,7 +1059,7 @@ class SkillAgent:
                 raise TaskCancelled("任务已取消")
             # Auto routing must not spend a full model request before every
             # ordinary chat turn. Strong local matches are activated directly;
-            # ambiguous tasks can use capability_inventory -> activate_skill
+            # ambiguous tasks can use capability_inventory to discover available tools
             # from the main agent turn.
             routed = self._match_skills(routing_message, skills, 3)
             existing = {item["id"] for item in active}
@@ -1137,7 +1137,7 @@ class SkillAgent:
         # 技能注入策略（会话冻结，为缓存与 ref 路由稳定）：
         # - 冻结政策里的技能（policy["skill_ids"]）始终以完整 SKILL.md 注入 system 前端，
         #   逐字节稳定，跨轮不再因历史而变，保住前缀缓存与 ref 路由信息；
-        # - 动态技能（本地路由命中 / 轮中 activate_skill 激活）只在“首次出现”时补一条
+        # - 动态技能（本地路由命中，已默认禁用）只在“首次出现”时补一条
         #   尾部系统级指令（[技能指令]），进 trace 后每轮原样重放，不再重复追加。
         history_blob = "\n".join(
             ("\n".join(str(part.get("text") or "") for part in item.get("content") if isinstance(part, dict))
@@ -1273,7 +1273,7 @@ class SkillAgent:
             system += (
                 "\n\n工具说明：会话可用工具已全部声明并可直接调用，无需先查询或激活。"
                 "确需某一工具的详细说明/参数/使用场景时，用 capability_inventory 查询该工具；"
-                "capability_inventory 不是启用工具的门槛。激活 Skill 用 activate_skill；"
+                "capability_inventory 不是启用工具的门槛。"
                 "普通聊天、看图、翻译或总结无需查询能力。耗时任务可用后台 Job；完成前必须收集结果。"
             )
         if agent_system_prompt.strip():
@@ -1601,7 +1601,7 @@ class SkillAgent:
                 len(normalized_calls) > 1
                 and tool_registry is not None
                 and all(
-                    str(call.get("tool") or "") not in {"capability_inventory", "activate_skill", "todo_write"}
+                    str(call.get("tool") or "") not in {"capability_inventory", "todo_write"}
                     and not tool_registry.side_effect(str(call.get("tool") or ""))
                     for call in normalized_calls
                 )
@@ -1659,7 +1659,7 @@ class SkillAgent:
                             native_tools[:] = [
                                 spec for spec in native_tools
                                 if str(spec.get("name") or "")
-                                not in {"capability_inventory", "activate_skill"}
+                                not in {"capability_inventory"}
                             ]
                             options["tools"] = native_tools
                             # 能力清单披露不再前插 system（会破坏前缀缓存），改为尾部系统级指令；
@@ -1706,7 +1706,8 @@ class SkillAgent:
                     event({"type": "run_failed", "error": error})
                     return f"{error}。", runs, reasonings, self._summarize_usage(usages)
 
-            # activate_skill mutates the active list in the trusted host. Add
+            # 运行中不再通过 activate_skill 注入 Skill（该工具已移除）；此块仅兜底
+            # 首次出现的预设 Skill，正常情况不会新增内容。
             # newly activated instructions as a trailing system-level directive
             # (NOT prepended to the system message, which would break the cached
             # prefix); never pass Skill instructions as an untrusted tool-result.
@@ -2321,7 +2322,7 @@ class SkillAgent:
             return set(allowed)
         text = str(message or "").lower()
         compact = re.sub(r"\s+", "", text)
-        gateways = {name for name in ("capability_inventory", "activate_skill") if name in allowed}
+        gateways = {"capability_inventory"} if "capability_inventory" in allowed else set()
         visible = set(gateways)
         # Harness-style direct tool surface: an actionable task gets the
         # generic automation primitives immediately.  Skills may add domain
@@ -2405,8 +2406,6 @@ class SkillAgent:
         # models into repeatedly querying the static capability inventory.
         if visible - gateways:
             visible.discard("capability_inventory")
-            if "skill" not in compact and "技能" not in compact:
-                visible.discard("activate_skill")
         return visible
 
     @staticmethod

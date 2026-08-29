@@ -158,62 +158,10 @@ class CapabilityRuntime:
                 "调用已列出的工具时，优先使用接口工具；若该工具没有作为接口工具出现，"
                 "输出兼容 JSON 动作："
                 '{"type":"tool","tool":"工具名","arguments":{...}}。'
-                "只有 skills 数组确实列出所需 Skill 时，才可使用其中的准确 ID 或完整名称调用 "
-                "activate_skill；不得猜测 Skill 名称。"
+                "只有 skills 数组确实列出所需 Skill 时，才可使用其中的准确 ID 或完整名称；不得猜测 Skill 名称。"
             ),
         }
         return True, json.dumps(result, ensure_ascii=False)
-
-    def activate_skill(
-        self,
-        arguments: dict[str, Any],
-        active_skills: list[dict[str, Any]],
-        run_context: dict[str, Any] | None = None,
-    ) -> tuple[bool, str]:
-        requested = [str(item).strip() for item in arguments.get("skills") or [] if str(item).strip()]
-        if not requested:
-            return False, "至少需要一个 Skill ID 或名称"
-        policy = (run_context or {}).get("skill_policy") or {}
-        skills = self.app.catalog.scan()
-        if str(policy.get("mode") or "") == "exclusive":
-            allowed_ids = {str(item) for item in policy.get("skill_ids") or []}
-            skills = [skill for skill in skills if str(skill.get("id") or "") in allowed_ids]
-        by_key: dict[str, dict[str, Any]] = {}
-        for skill in skills:
-            by_key[str(skill.get("id") or "").lower()] = skill
-            by_key[str(skill.get("name") or "").lower()] = skill
-        selected: list[dict[str, Any]] = []
-        missing: list[str] = []
-        for key in requested[:4]:
-            skill = by_key.get(key.lower())
-            if skill is None:
-                missing.append(key)
-            elif skill not in selected:
-                selected.append(skill)
-        if missing:
-            return False, "未找到或不允许激活 Skill：" + "、".join(missing)
-        routing_message = str((run_context or {}).get("routing_message") or "").lower()
-        blocked_mcp = [
-            str(skill.get("name") or skill.get("id") or "")
-            for skill in selected
-            if skill.get("requires_mcp") and "mcp" not in routing_message
-        ]
-        if blocked_mcp:
-            return False, (
-                "MCP Skill 只能在用户明确要求 MCP 配置或连接时激活："
-                + "、".join(blocked_mcp)
-            )
-        active_ids = {str(skill.get("id") or "") for skill in active_skills}
-        activated: list[dict[str, str]] = []
-        for skill in selected:
-            skill_id = str(skill.get("id") or "")
-            if skill_id not in active_ids:
-                active_skills.append(skill)
-                active_ids.add(skill_id)
-            activated.append({"id": skill_id, "name": str(skill.get("name") or "")})
-        if isinstance(run_context, dict):
-            run_context["skills_changed"] = True
-        return True, json.dumps({"activated": activated}, ensure_ascii=False)
 
     def install_skill(
         self,
@@ -274,6 +222,5 @@ class CapabilityRuntime:
     def tool_handlers(self) -> dict[str, Any]:
         return {
             "capability_inventory": self.inventory,
-            "activate_skill": self.activate_skill,
             "install_skill": self.install_skill,
         }
