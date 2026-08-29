@@ -154,6 +154,44 @@ def _network_error_code(error: BaseException) -> int | None:
     return int(value) if isinstance(value, int) else None
 
 
+# ``urllib.request`` builds its global opener lazily on the FIRST request and then
+# caches it for the whole process. On Windows it derives proxies from the registry
+# / environment at that moment. If proxy or VPN/TUN software is toggled mid-session
+# (or the proxy process restarts), the cached opener still points at a now-dead
+# proxy, so every later API call fails with a connection-level refusal/reset even
+# though the target host is reachable directly. We keep a direct (proxy-bypassed)
+# opener as a fallback for exactly this case.
+_NO_PROXY_OPENER: urllib.request.OpenerDirector | None = None
+
+
+def _no_proxy_opener() -> urllib.request.OpenerDirector:
+    """Return a process-wide opener that ignores system/environment proxies."""
+    global _NO_PROXY_OPENER
+    if _NO_PROXY_OPENER is None:
+        _NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return _NO_PROXY_OPENER
+
+
+def _urlopen_proxy_resilient(
+    request: urllib.request.Request,
+    timeout: float,
+) -> Any:
+    """Open ``request`` with the default opener (system proxy aware), and on a
+    connection-level refusal/reset (10053/10054/10061) retry once with a direct,
+    proxy-bypassed connection. If the direct attempt also fails, re-raise the
+    original error. Used by short-lived one-shot calls (e.g. the model list)."""
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except (urllib.error.URLError, OSError) as exc:
+        code = _network_error_code(exc)
+        if code in FAST_RETRY_NETWORK_ERRORS:
+            try:
+                return _no_proxy_opener().open(request, timeout=timeout)
+            except Exception:
+                pass
+        raise
+
+
 class _NullLock:
     def acquire(self):
         return True
@@ -364,18 +402,36 @@ class ModelRuntime:
         request: urllib.request.Request,
         timeout: float,
         cancel_event: threading.Event | None = None,
+        opener: urllib.request.OpenerDirector | None = None,
     ):
-        """Run urllib in a daemon worker so a cancelled vision call returns promptly."""
+        """Run urllib in a daemon worker so a cancelled vision call returns promptly.
+
+        ``opener`` (optional) selects an explicit opener — used to retry with a
+        direct, proxy-bypassed connection when the system proxy has gone stale.
+        """
+        open_function = opener.open if opener is not None else urllib.request.urlopen
         if cancel_event is None:
-            return urllib.request.urlopen(request, timeout=timeout)
+            return open_function(request, timeout=timeout)
         if cancel_event.is_set():
             raise RuntimeError("任务已取消")
         done = threading.Event()
+        abandoned = threading.Event()
         result: dict[str, Any] = {}
 
         def worker() -> None:
             try:
-                result["response"] = urllib.request.urlopen(request, timeout=timeout)
+                response = open_function(request, timeout=timeout)
+                if abandoned.is_set():
+                    # Main thread already gave up (user cancelled). Close the
+                    # fresh connection right away so sockets are not leaked over
+                    # a long session (which eventually makes the whole process
+                    # unable to connect — to remote or local hosts).
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+                else:
+                    result["response"] = response
             except BaseException as exc:  # noqa: BLE001 - propagate worker errors
                 result["error"] = exc
             finally:
@@ -384,11 +440,15 @@ class ModelRuntime:
         threading.Thread(target=worker, name="naiba-http-request", daemon=True).start()
         while not done.wait(0.1):
             if cancel_event.is_set():
+                abandoned.set()
                 raise RuntimeError("任务已取消")
         if cancel_event.is_set():
             response = result.get("response")
             if response is not None:
-                response.close()
+                try:
+                    response.close()
+                except Exception:
+                    pass
             raise RuntimeError("任务已取消")
         error = result.get("error")
         if error is not None:
@@ -636,7 +696,7 @@ class ModelRuntime:
 
         request = urllib.request.Request(endpoint, headers=headers, method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with _urlopen_proxy_resilient(request, 60) as response:
                 raw = response.read().decode("utf-8", errors="replace")
                 content_type = response.headers.get("Content-Type", "") if hasattr(response, "headers") else ""
                 try:
@@ -1044,7 +1104,10 @@ class ModelRuntime:
         endpoint_port = parsed_endpoint.port or (443 if parsed_endpoint.scheme == "https" else 80)
         target = "本地模型" if is_local else "在线模型"
         target_detail = f"{target}“{provider_name}”" if provider_name else target
-        target_detail += f"（{endpoint_host}:{endpoint_port}）"
+        # Include the endpoint PATH (not only host:port) so a mis-routed request
+        # (e.g. an unexpected /v1/models) is immediately visible in the error.
+        endpoint_path = parsed_endpoint.path or "/"
+        target_detail += f"（{endpoint_host}:{endpoint_port}{endpoint_path}）"
         request_timeout = (
             LOCAL_MODEL_TIMEOUT_SECONDS
             if is_local
@@ -1066,6 +1129,8 @@ class ModelRuntime:
         tool_fallback_used = False
         stream_options_fallback_used = False
         reasoning_fallback_used = False
+        request_opener: urllib.request.OpenerDirector | None = None
+        no_proxy_tried = False
         if diagnostics is not None:
             parsed = urllib.parse.urlsplit(endpoint)
             diagnostics.update({
@@ -1078,7 +1143,7 @@ class ModelRuntime:
             if diagnostics is not None:
                 diagnostics["attempts"] = attempt + 1
             try:
-                with ModelRuntime._urlopen_cancelable(request, request_timeout, cancel_event) as response:
+                with ModelRuntime._urlopen_cancelable(request, request_timeout, cancel_event, request_opener) as response:
                     if stream_enabled and response_format == "ollama":
                         streamed = ModelRuntime._read_ollama_stream(response, status)
                         content = ModelRuntime._clean_content(streamed["content"])
@@ -1099,7 +1164,7 @@ class ModelRuntime:
                                     method="POST",
                                 )
                                 with ModelRuntime._urlopen_cancelable(
-                                    retry_request, request_timeout, cancel_event
+                                    retry_request, request_timeout, cancel_event, request_opener
                                 ) as retry_response:
                                     streamed = ModelRuntime._read_ollama_stream(retry_response, status)
                                 content = ModelRuntime._clean_content(streamed["content"])
@@ -1274,6 +1339,23 @@ class ModelRuntime:
             except (urllib.error.URLError, OSError) as exc:
                 reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
                 error_code = _network_error_code(exc)
+                # A connection-level refusal/reset for an ONLINE provider often
+                # follows a stale system proxy (proxy/TUN toggled mid-session, or
+                # the proxy process restarted). urllib caches the proxy in its
+                # opener at first use, so it will keep failing on the same dead
+                # proxy. Before giving up, retry once with a direct,
+                # proxy-bypassed connection.
+                if (
+                    not is_local
+                    and not connection_test
+                    and not no_proxy_tried
+                    and error_code in FAST_RETRY_NETWORK_ERRORS
+                ):
+                    no_proxy_tried = True
+                    request_opener = _no_proxy_opener()
+                    if status:
+                        status({"type": "status", "message": "检测到代理/TUN 连接异常，正在尝试直连重试"})
+                    continue
                 retryable_test_error = connection_test and error_code in FAST_RETRY_NETWORK_ERRORS
                 if not is_local and attempt + 1 < attempts and (not connection_test or retryable_test_error):
                     delay = (0.5 if connection_test else 1.5) * (attempt + 1)
@@ -2186,12 +2268,20 @@ class ModelRuntime:
             if not target_path.startswith(marker):
                 continue
             marker_root = marker.rstrip("/")
+            rest = target_path[len(marker_root):]  # e.g. "/chat/completions"
             if base_path.endswith(marker_root):
-                path = base_path + target_path[len(marker_root):]
+                path = base_path + rest
                 break
             marker_index = base_path.rfind(marker)
             if marker_index >= 0:
                 path = base_path[:marker_index] + target_path
+                break
+            # base_url already carries an endpoint path (e.g. a full chat URL
+            # pasted in) but omitted the API-version marker. Re-root it onto the
+            # versioned target instead of doubling the path, which would otherwise
+            # produce broken URLs such as .../chat/completions/v1/chat/completions.
+            if base_path.endswith(rest):
+                path = target_path
                 break
         if not path:
             path = base_path + target_path

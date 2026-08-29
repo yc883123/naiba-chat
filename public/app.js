@@ -335,20 +335,28 @@ function escapeHtml(value) {
 
 function markdown(text) {
   const codeBlocks = [];
-  let safe = escapeHtml(text).replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => {
+  const addCodeBlock = (language, code) => {
     const index = codeBlocks.length;
-    const lang = escapeHtml(language.trim());
+    const lang = escapeHtml(String(language || '').trim());
     codeBlocks.push(
       `<div class="code-block"><div class="code-block-bar">` +
       `<span class="code-lang">${lang}</span>` +
       `<button type="button" class="code-copy" data-copy-code>复制</button>` +
       `</div><pre><code data-language="${lang}">${code}</code></pre></div>`
     );
-    return `\n@@CODE_${index}@@\n`;
-  });
+    return index;
+  };
+  let safe = escapeHtml(text)
+    // 完整（已配对 ```...````）围栏代码块先提取，避免其内容被后续行内替换误伤。
+    .replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@\n`)
+    // 流式输出时常见“未封闭的尾部围栏”：只有开栏 ```，尚未等到对应 ```。
+    // 之前这种块会被当作普通文本显示（露出 ``` ... 原始标记），导致代码区看起来
+    // “流式中断”，要等整个回复结束（done 全量渲染）才突然变成代码框。
+    // 这里把它也提取成代码框，随内容增长实时渲染在框内，不再中断。
+    .replace(/```([^\n]*)\n([\s\S]*)$/, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@`);
   safe = safe
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
     .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   const blocks = [];
   let paragraph = [];
