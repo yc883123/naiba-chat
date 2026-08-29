@@ -72,7 +72,7 @@
           <div class="empty-mark">S</div>
           <h1>开始新对话</h1>
           <div class="starter-grid">
-            <button data-prompt="确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。确认接口可用后，等待用户指令，后续优先通过 mcp 工具完成用户要求的 ComfyUI 生成任务。将当前工作区目录下的所有工作流 json 文件加上 “_backup” 后缀复制一份，直接覆盖可能已经存在的带 “_backup” 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 “_backup” 后缀的所有工作流。">通过 mcp 调用 ComfyUI（请先连接 ComfyUI mcp 服务器）</button>
+            <button data-prompt="确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。确认接口可用后，等待用户指令，后续只允许通过 mcp 工具调用 ComfyUI 进行生成任务。将当前工作区目录下的所有工作流 json 文件加上 “_backup” 后缀复制一份，直接覆盖可能已经存在的带 “_backup” 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 “_backup” 后缀的所有工作流。">通过 mcp 调用 ComfyUI（请先连接 ComfyUI mcp 服务器）</button>
             <button data-prompt="先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；若未启动，提示用户启动 ComfyUI。确认接口可用后，等待用户指令，后续通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。将当前工作区目录下的所有工作流 json 文件加上 “_backup” 后缀复制一份，直接覆盖可能已经存在的带 “_backup” 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 “_backup” 后缀的所有工作流。">通过 http 调用 ComfyUI（请先启动 ComfyUI）</button>
             <button data-prompt="帮我设置本地 Comfy MCP 连接，按照 https://docs.comfy.org/agent-tools/mcp.md#local-comfy-mcp-connection 的设置指南操作。优先使用本地 Comfyui 的 python 环境。当发现不止一个的时候，优先寻找正在运行的 Comfyui 对应的环境。当发现没有已运行的 Comfyui 但本地存在多个 Comfyui 环境时，停止行动并向用户发出询问。安装完成 mcp 服务后，记得提醒用户在 mcp 相关的 agent 设置页面内手动开启由 mcp 服务所引入的新的 comfy mcp tools。">帮我设置本地 Comfy MCP 连接</button>
             <button data-prompt="列出你当前所有可用工具。">列出所有可用工具</button>

@@ -1481,6 +1481,8 @@ class ConversationRunManager:
             "skills": skills,
             "activity": _safe_activity(events, reasoning, tool_runs),
             "trace": trace or [],
+            # 中止/取消的轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
+            "attachments": extract_attachments(tool_runs),
         }
         try:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)

@@ -124,6 +124,41 @@ def _fit_image_pixels(img: Any, max_pixels: int) -> Any:
     return img.resize((nw, nh), Image.LANCZOS)
 
 
+def _ensure_webp_thumb(main_path: Path) -> str:
+    """Generate a ``<stem>_thumb.webp`` next to ``main_path`` if missing.
+
+    Best-effort: returns the thumb path on success, else ``""`` so the caller can
+    fall back (e.g. to the main image). Used by generated-media caching so every
+    ComfyUI image has a served thumbnail in the history.
+    """
+    try:
+        from PIL import Image, ImageOps
+
+        if main_path.suffix.lower() not in IMAGE_SUFFIXES:
+            return ""
+        if not main_path.is_file():
+            return ""
+        thumb_path = _thumb_webp_path(main_path)
+        if thumb_path.is_file() and thumb_path.stat().st_size > 0:
+            return str(thumb_path)
+        img = Image.open(main_path)
+        img.load()
+        if (img.format or "").upper() == "GIF":
+            return ""
+        img = ImageOps.exif_transpose(img)
+        imaging = dict(APP.config.data.get("imaging") or {}) if getattr(APP, "config", None) else {}
+        thumb_px = max(1, int(imaging.get("thumbnail_max_pixels", 500000) or 500000))
+        thumb_img = _fit_image_pixels(img, thumb_px)
+        buf = io.BytesIO()
+        out = thumb_img.convert("RGBA") if thumb_img.mode in ("P", "RGBA") else thumb_img
+        out.save(buf, format="WEBP", quality=82)
+        thumb_path.parent.mkdir(parents=True, exist_ok=True)
+        thumb_path.write_bytes(buf.getvalue())
+        return str(thumb_path)
+    except Exception:  # noqa: BLE001 - thumbnail is best-effort
+        return ""
+
+
 def _process_uploaded_image(
     data: bytes, filename: str, imaging: dict[str, Any]
 ) -> tuple[bytes, str | None, bytes]:
@@ -2032,7 +2067,21 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
 
     def is_media(text: str) -> bool:
-        return text.lower().split("?")[0].endswith(extensions)
+        text = str(text or "")
+        t = text.lower().split("?")[0]
+        if t.endswith(extensions):
+            return True
+        # ComfyUI 产物 URL 形如 http://127.0.0.1:8188/view?filename=xxx.png
+        # （图片名在查询参数里，路径末尾是 /view 而非扩展名）。
+        try:
+            parsed = urllib.parse.urlsplit(text)
+            if parsed.scheme in ("http", "https"):
+                fn = (urllib.parse.parse_qs(parsed.query).get("filename", [""])[0] or "").lower()
+                if fn.endswith(extensions):
+                    return True
+        except Exception:  # noqa: BLE001
+            pass
+        return False
 
     def record(source: str, name: str = "", thumb: str = "") -> None:
         if source and is_media(source):
@@ -2124,7 +2173,14 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
                         else:
                             shutil.copy2(local_path.resolve(), destination)
                     source = str(destination)
+                    # 缓存主图后同步生成缩略图，否则前端请求 <source>_thumb.webp 会 404 → 破图占位符。
+                    if not thumb_path:
+                        thumb_path = _ensure_webp_thumb(destination)
+                        if not thumb_path:
+                            # 缩略图生成失败时退化为用主图当缩略图，保证可显示。
+                            thumb_path = source
                 except (OSError, urllib.error.URLError, ValueError):
+                    # 缓存/下载失败：ComfyUI 的 /view URL 会由 /api/file 代理拉取，保留它即可显示。
                     source = source
         if source in seen:
             continue
@@ -2145,7 +2201,32 @@ def extract_attachments(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
             order.append(key)
         elif attachment.get("thumb_path") and not by_key[key].get("thumb_path"):
             by_key[key] = attachment
-    return [by_key[key] for key in order][:20]
+    # 内容级去重：同一张图可能被 ComfyUI /view URL 与复制到目录的本地路径各记录一份
+    # （来源不同、文件名也可能不同）。对已缓存的图片按文件字节做 SHA-256，完全一致视为同一张，
+    # 只保留第一份，避免“同图在末尾反复显示”。仅针对本轮消息内的附件，不遍历历史记录。
+    final: list[dict[str, str]] = []
+    seen_content: set[str] = set()
+    for attachment in (by_key[key] for key in order):
+        source = str(attachment.get("source") or "")
+        try:
+            p = Path(source).expanduser()
+            if p.is_file() and p.stat().st_size > 0:
+                h = hashlib.sha256()
+                with p.open("rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        h.update(chunk)
+                content_key = "file:" + h.hexdigest()
+            else:
+                content_key = "url:" + source
+        except Exception:  # noqa: BLE001 - 读取失败按来源去重兜底
+            content_key = "url:" + source
+        if content_key in seen_content:
+            continue
+        seen_content.add(content_key)
+        final.append(attachment)
+        if len(final) >= 20:
+            break
+    return final
 
 
 def _infer_supports_images(provider: dict[str, Any]) -> bool:
