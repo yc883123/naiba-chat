@@ -1244,7 +1244,6 @@ async function initialize() {
   $('#serverLabel').textContent = '服务已连接';
   state.workspaces = Array.isArray(state.bootstrap?.workspaces) ? state.bootstrap.workspaces : [];
   renderNetworkAccess();
-  $('#skillPolicyMode').value = state.skillMode;
   populateModels();
   renderAgents();
   renderAgentManager();
@@ -2376,44 +2375,31 @@ function currentAgentFixedSkillIds() {
   return (agent?.skill_ids || []).map(String);
 }
 
-// 有效启用的 Skill = Agent 固定 Skill + 手动勾选 Skill（去重）
+// 有效启用的 Skill = 仅当前会话 Agent 预设的固定 Skill（不再允许用户自行选择/切换模式）。
 function effectiveSkillIds() {
-  if (state.skillMode === 'exclusive') return [...new Set(state.selectedSkills)];
-  if (state.skillMode === 'auto') return [...new Set(currentAgentFixedSkillIds())];
-  return [...new Set([...currentAgentFixedSkillIds(), ...state.selectedSkills])];
+  return [...new Set(currentAgentFixedSkillIds())];
 }
 
 function renderSkills(filter = '') {
   if (!state.bootstrap) return;
   const query = filter.trim().toLowerCase();
   const fixed = new Set(currentAgentFixedSkillIds());
-  const effective = new Set(effectiveSkillIds());
-  const exclusive = state.skillMode === 'exclusive';
-  const automatic = state.skillMode === 'auto';
   const skills = state.bootstrap.skills.filter((skill) =>
     !query || `${skill.name} ${skill.description}`.toLowerCase().includes(query));
   $('#skillList').innerHTML = skills.map((skill) => `
-    <label class="skill-item${fixed.has(skill.id) && !exclusive ? ' fixed' : ''}">
-      <input type="checkbox" value="${skill.id}" ${effective.has(skill.id) ? 'checked' : ''} ${(fixed.has(skill.id) && !exclusive) || automatic ? 'disabled' : ''}>
+    <label class="skill-item${fixed.has(skill.id) ? ' fixed' : ''}">
+      <input type="checkbox" value="${skill.id}" ${fixed.has(skill.id) ? 'checked' : ''} disabled>
       <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
-      ${fixed.has(skill.id) && !exclusive ? '<em>Agent 固定</em>' : (skill.script_count ? `<em>${skill.script_count} 脚本</em>` : '')}
+      ${fixed.has(skill.id) ? '<em>Agent 已选择</em>' : '<em>未启用</em>'}
     </label>`).join('');
   updateSkillSummary();
 }
 
 function updateSkillSummary() {
-  const fixed = currentAgentFixedSkillIds().length;
-  const effective = effectiveSkillIds().length;
-  const labels = { auto: '自动', pinned: '固定', exclusive: '仅限' };
-  const hints = {
-    auto: '根据当前消息自动选择相关 Skill',
-    pinned: '始终加载所选 Skill，并允许自动补充',
-    exclusive: '只允许所选的一个或多个 Skill',
-  };
-  $('#skillCount').textContent = state.skillMode === 'auto' ? '自动' : `${labels[state.skillMode]} ${effective}`;
-  $('#skillPolicyHint').textContent = hints[state.skillMode];
-  const fixedNote = fixed && state.skillMode !== 'exclusive' ? `（含 ${fixed} 个 Agent 固定）` : '';
-  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，${effective} 个启用${fixedNote}`;
+  const fixedCount = currentAgentFixedSkillIds().length;
+  $('#skillCount').textContent = `已选 ${fixedCount}`;
+  $('#skillPolicyHint').textContent = '仅当前 Agent 预设启用的 Skill，仅供查看，不可更改';
+  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，已启用 ${fixedCount} 个（由当前 Agent 预设决定）`;
 }
 
 function renderProviders() {
@@ -3933,10 +3919,6 @@ async function sendChatMessage(textOverride = '') {
     toast('请等待文件上传完成');
     return;
   }
-  if (!(state.lightweightMode && state.lightweightDisabledFeatures.includes('skills')) && state.skillMode === 'exclusive' && !state.selectedSkills.length) {
-    toast('仅允许所选 Skill 时，请至少选择一个 Skill');
-    return;
-  }
   if (!state.conversationId) await createConversation();
   if (state.chatRunId || state.abortController) {
     await sendRunInterjection(text);
@@ -3969,8 +3951,8 @@ async function sendChatMessage(textOverride = '') {
         attachments,
         model_key: $('#modelSelect').value,
         skill_policy: {
-          mode: state.skillMode,
-          skill_ids: state.skillMode === 'auto' ? [] : state.selectedSkills,
+          mode: 'exclusive',
+          skill_ids: currentAgentFixedSkillIds(),
         },
         web_search_enabled: state.webSearchEnabled,
       }),
@@ -4771,20 +4753,7 @@ function bindEvents() {
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
-  $('#skillPolicyMode').addEventListener('change', (event) => {
-    state.skillMode = event.target.value;
-    localStorage.setItem('naibaChatSkillMode', state.skillMode);
-    renderSkills($('#skillSearch').value);
-  });
   $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
-  $('#skillList').addEventListener('change', (event) => {
-    if (event.target.type !== 'checkbox') return;
-    state.selectedSkills = event.target.checked
-      ? [...new Set([...state.selectedSkills, event.target.value])]
-      : state.selectedSkills.filter((id) => id !== event.target.value);
-    localStorage.setItem('naibaChatSkillIds', JSON.stringify(state.selectedSkills));
-    updateSkillSummary();
-  });
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
     if (state.chatRunId || state.abortController) cancelCurrentRun();

@@ -61,7 +61,7 @@
             <span aria-hidden="true">↓</span><span class="button-label">卸载模型</span>
           </button>
           <button class="control-button task-button" id="openTasks" title="查看异步任务"><span id="taskCount">0</span> <span class="button-label">任务</span></button>
-          <button class="control-button" id="openSkills"><span id="skillCount">自动</span> <span class="button-label">Skills</span></button>
+          <button class="control-button" id="openSkills" title="查看当前会话已选择的 Skill"><span id="skillCount">已选 0</span> <span class="button-label">Skill</span></button>
           <button class="mcp-button" id="mcpStatus" title="查看 MCP 状态"><i></i><span>MCP</span></button>
           <button class="control-button" id="reloadPage" type="button" title="刷新页面（内嵌窗口无法使用 F5 时点击）"><span aria-hidden="true">↻</span><span class="button-label">刷新</span></button>
         </div>
@@ -179,16 +179,11 @@
 
   <dialog id="skillsDialog" class="panel-dialog">
     <div class="dialog-toolbar">
-      <div><h2>Skills</h2><p id="skillsSummary"></p></div>
+      <div><h2>Skill（Agent 已选择）</h2><p id="skillsSummary"></p></div>
       <button class="icon-button" data-close="skillsDialog" title="关闭" aria-label="关闭">×</button>
     </div>
     <label class="skill-policy-row">
-      <span><b>Skill 策略</b><small id="skillPolicyHint">根据当前消息自动选择相关 Skill</small></span>
-      <select id="skillPolicyMode" aria-label="Skill 策略">
-        <option value="auto">自动选择</option>
-        <option value="pinned">固定使用所选 Skill</option>
-        <option value="exclusive">仅允许所选 Skill</option>
-      </select>
+      <span><b>Skill 策略</b><small id="skillPolicyHint">仅当前 Agent 预设启用的 Skill，仅供查看，不可更改</small></span>
     </label>
     <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
     <div class="skill-list" id="skillList"></div>

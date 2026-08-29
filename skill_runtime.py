@@ -100,8 +100,7 @@ def normalize_skill_policy(
             raise ValueError("未知 Skill：" + ", ".join(unknown))
 
     if mode == "exclusive":
-        if not selected:
-            raise ValueError("exclusive 模式至少需要指定一个 Skill")
+        # 允许为空：exclusive 未选中任何 Skill 时表示该轮不加载任何 Skill（无自动匹配）。
         effective_ids = selected
     elif mode == "auto":
         fixed = _ids(fixed_ids)

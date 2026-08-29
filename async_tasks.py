@@ -465,16 +465,25 @@ class ConversationRunManager:
                 allowed_tools = self._resolve_allowed_tools(
                     mode, agent, web_search_enabled, model_key, enabled_tool_ids
                 )
+                # 只允许 Agent 预设的 Skill：禁止运行中通过 activate_skill 注入新的 Skill 提示。
+                allowed_tools = [tool for tool in allowed_tools if tool != "activate_skill"]
             if "skills" in disabled_features:
                 skill_policy = {"mode": "exclusive", "skill_ids": []}
             else:
                 catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
                 catalog = catalog_getter() if callable(catalog_getter) else []
+                # 只使用该会话 Agent 固定启用的 Skill（预设）：忽略前端传入的 skill_policy，
+                # 固定为 exclusive（不自动路由、不额外注入），skill_ids 取 Agent 预设的固定 Skill。
+                agent_skill_ids = [str(item) for item in (agent.get("skill_ids") or []) if str(item).strip()]
+                if catalog:
+                    available_ids = {
+                        str(item.get("id") or "")
+                        for item in (catalog.values() if isinstance(catalog, dict) else catalog)
+                        if isinstance(item, dict)
+                    }
+                    agent_skill_ids = [sid for sid in agent_skill_ids if sid in available_ids]
                 skill_policy = normalize_skill_policy(
-                    body.get("skill_policy"),
-                    legacy_auto=body.get("auto_skills"),
-                    legacy_ids=body.get("skill_ids"),
-                    fixed_ids=agent.get("skill_ids"),
+                    {"mode": "exclusive", "skill_ids": agent_skill_ids},
                     catalog=catalog,
                 )
             snapshot = {
@@ -571,13 +580,17 @@ class ConversationRunManager:
                 "generation_options": self._generation_options(self.app.config, model_key),
                 "web_search_enabled": bool(web_search_enabled),
                 "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
-                "allowed_tools": self._resolve_allowed_tools(
-                    "craft", agent, bool(web_search_enabled), model_key
-                ),
+                "allowed_tools": [
+                    tool for tool in self._resolve_allowed_tools(
+                        "craft", agent, bool(web_search_enabled), model_key
+                    )
+                    if tool != "activate_skill"
+                ],
                 "permission_mode": str(conversation.get("permission_mode") or "confirm"),
                 "skill_policy": normalize_skill_policy(
-                    None,
-                    fixed_ids=agent.get("skill_ids"),
+                    {"mode": "exclusive", "skill_ids": [
+                        str(s) for s in (agent.get("skill_ids") or []) if str(s).strip()
+                    ]},
                     catalog=catalog,
                 ),
             }
