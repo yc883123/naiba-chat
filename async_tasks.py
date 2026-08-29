@@ -203,6 +203,10 @@ class _RunEventSink:
         self._last_flush = time.monotonic()
         self._announced_tools: set[str] = set()
         self.failure_message: str | None = None
+        # Guard the delta buffer so the run thread and the watchdog thread can both
+        # flush safely (the watchdog may persist the aborted message without the run
+        # thread ever reaching its own flush path).
+        self._flush_lock = threading.Lock()
 
     def __call__(self, payload: dict[str, Any]) -> None:
         if self.cancel_event.is_set():
@@ -251,11 +255,14 @@ class _RunEventSink:
         self.manager.emit(self.run_id, payload)
 
     def flush(self) -> None:
-        if not self._delta:
-            return
-        content = self._delta
-        self._delta = ""
-        self._last_flush = time.monotonic()
+        with self._flush_lock:
+            if not self._delta:
+                return
+            content = self._delta
+            self._delta = ""
+            self._last_flush = time.monotonic()
+        # Emit outside the lock: the content is already claimed above, so a
+        # concurrent flush sees an empty buffer and returns without duplicating.
         self.manager.emit(self.run_id, {"type": "delta", "content": content})
 
 
@@ -271,6 +278,8 @@ class ConversationRunManager:
         self._threads: dict[str, threading.Thread] = {}
         self._conditions: dict[str, threading.Condition] = {}
         self._executors: dict[str, Any] = {}
+        self._sinks: dict[str, _RunEventSink] = {}
+        self._sinks_lock = threading.Lock()
 
     def _resolve_allowed_tools(
         self,
@@ -743,6 +752,7 @@ class ConversationRunManager:
         mode = str(snapshot.get("interaction_mode") or run.get("interaction_mode") or "craft")
         plan_id = str(snapshot.get("plan_id") or run.get("plan_id") or "")
         sink = _RunEventSink(self, run_id, cancel_event)
+        self._register_sink(run_id, sink)
         skills: list[dict[str, str]] = []
         run_context: dict[str, Any] | None = None
         search_sources: list[dict[str, str]] = []
@@ -1131,7 +1141,7 @@ class ConversationRunManager:
                 "tool_runs": runs,
                 "allowed_tools": allowed_tools,
                 "reasoning": reasonings,
-                "activity": _safe_activity(self.app.storage.list_run_events(run_id), reasonings, runs),
+                "activity": _safe_activity(self._all_run_events(run_id), reasonings, runs),
                 "usage": usage,
                 "performance": performance,
                 "attachments": extract_attachments(runs),
@@ -1278,6 +1288,7 @@ class ConversationRunManager:
             self._threads.pop(run_id, None)
             self._conditions.pop(run_id, None)
             self._executors.pop(run_id, None)
+        self._unregister_sink(run_id)
 
     def list(self, conversation_id: str = "", active_only: bool = False) -> list[dict[str, Any]]:
         return self.app.storage.list_background_tasks(conversation_id, active_only)
@@ -1353,6 +1364,47 @@ class ConversationRunManager:
 
         threading.Thread(target=watchdog, daemon=True).start()
 
+    def _register_sink(self, run_id: str, sink: _RunEventSink) -> None:
+        with self._sinks_lock:
+            self._sinks[run_id] = sink
+
+    def _unregister_sink(self, run_id: str) -> None:
+        with self._sinks_lock:
+            self._sinks.pop(run_id, None)
+
+    def _flush_sink(self, run_id: str) -> None:
+        """Flush any pending delta buffered in this run's sink (thread-safe)."""
+        with self._sinks_lock:
+            sink = self._sinks.get(run_id)
+        if sink is not None:
+            try:
+                sink.flush()
+            except Exception:
+                pass
+
+    def _all_run_events(self, run_id: str) -> list[dict[str, Any]]:
+        """Read EVERY event for a run, paginating past the 500-row default limit.
+
+        ``list_run_events`` caps at 500 rows per call, so long tool/agent runs
+        easily exceed it. Truncating the event history is what made the aborted
+        message lose the most recent output, so payloads that reconstruct content
+        from events must page through the whole stream.
+        """
+        events: list[dict[str, Any]] = []
+        after = 0
+        while True:
+            batch = self.app.storage.list_run_events(run_id, after=after, limit=500)
+            if not batch:
+                break
+            events.extend(batch)
+            if len(batch) < 500:
+                break
+            last_seq = int(batch[-1].get("sequence") or 0)
+            if last_seq <= after:
+                break
+            after = last_seq
+        return events
+
     def _persist_aborted_message(
         self,
         run_id: str,
@@ -1365,7 +1417,10 @@ class ConversationRunManager:
         这样中止内容不会丢：刷新/重渲染/后续上下文都能看到它（D1：作为普通 assistant 消息计入历史）。
         """
         try:
-            events = self.app.storage.list_run_events(run_id)
+            # 先把 sink 里尚未落库的 delta 主动刷出（即便看门狗兜底先执行），
+            # 避免取消时最后一段输出被缓冲丢在内存里。
+            self._flush_sink(run_id)
+            events = self._all_run_events(run_id)
         except Exception:
             return None
         # 避免重复：该 run 若已入库过“已中止”消息（例如 forced-cancel 兜底已先写入），直接返回，
