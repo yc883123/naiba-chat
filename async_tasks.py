@@ -26,6 +26,18 @@ VISION_WRITING_TOOLS = ("vision_crop", "vision_pixel_diff")
 SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("vision_read_folder", "web_search", "comfyui_prepare_workflow", "comfyui_batch")
 SYSTEM_TOOLS_READONLY = ("capability_inventory",) + VISION_READONLY_TOOLS + ("web_search",)
 
+# Cross-tool dependency closure: a Job CREATOR tool is useless without the QUERY
+# tools that its own description tells the model to use afterwards. If a creator
+# is enabled but its query tools are filtered out (agent tool_scope / baked
+# enabled_tool_ids / plan mode), the model would be told to query with tools that
+# are not actually declared — the exact "disabled tool still referenced" trap.
+# So a creator always drags its required query tools along.
+JOB_CREATOR_TOOL_DEPS = {
+    "run_in_background": ("job_output", "job_status", "job_wait", "job_kill"),
+    "subagent": ("job_output",),
+    "comfyui_batch": ("job_output", "job_status", "job_wait"),
+}
+
 
 def _safe_activity(
     events: list[dict[str, Any]], reasonings: list[str], runs: list[dict[str, Any]]
@@ -315,6 +327,17 @@ class ConversationRunManager:
                 # Capability detection must never remove tools on an unknown
                 # or temporarily unavailable model profile.
                 pass
+        # Dependency closure: ensure Job creators are always paired with the
+        # query tools their descriptions reference, so the model never sees a
+        # "use job_output/job_status/job_wait" instruction for a tool that was
+        # filtered out of the declaration.
+        present = set(allowed_tools)
+        for creator, deps in JOB_CREATOR_TOOL_DEPS.items():
+            if creator in present:
+                for dep in deps:
+                    if dep not in present:
+                        allowed_tools.append(dep)
+                        present.add(dep)
         return allowed_tools
 
     def _all_tool_names(self) -> list[str]:

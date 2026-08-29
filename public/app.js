@@ -3142,6 +3142,39 @@ function showAgentForm(agent = null) {
   $('#agentName').focus();
 }
 
+// Agent 设置：工具选择的联动规则。创建者工具依赖其查询工具（与后端
+// JOB_CREATOR_TOOL_DEPS / 依赖闭包保持一致）。选中创建者时自动带上查询工具；
+// 取消某个查询工具时，若仍有选中的创建者依赖它，则同步取消该创建者，保证
+// “创建者被允许 ⇔ 其描述里让你查询的工具也被允许”的 invariant 不被打破。
+const AGENT_TOOL_DEP_RULES = {
+  run_in_background: ['job_output', 'job_status', 'job_wait', 'job_kill'],
+  subagent: ['job_output'],
+  comfyui_batch: ['job_output', 'job_status', 'job_wait'],
+};
+
+function applyAgentToolDependency(scope, changedTool, checked) {
+  const result = new Set(scope);
+  if (checked) {
+    result.add(changedTool);
+    const deps = AGENT_TOOL_DEP_RULES[changedTool];
+    if (deps) deps.forEach((dep) => result.add(dep));
+  } else {
+    result.delete(changedTool);
+    // 取消的若是某创建者必需的查询工具，则把这些创建者也一并取消。
+    for (const [creator, deps] of Object.entries(AGENT_TOOL_DEP_RULES)) {
+      if (deps.includes(changedTool) && result.has(creator)) result.delete(creator);
+    }
+  }
+  return [...result];
+}
+
+function syncAgentToolCheckboxes(list) {
+  if (!list) return;
+  list.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+    cb.checked = state.agentFormToolScope.includes(cb.value);
+  });
+}
+
 async function renderAgentToolPicker() {
   const list = $('#agentToolScope');
   if (!list) return;
@@ -3159,6 +3192,15 @@ async function renderAgentToolPicker() {
     state.agentFormToolScope = state.agentFormIsNew
       ? catalog.filter((t) => t.default_selected).map((t) => t.name)
       : catalog.map((t) => t.name);
+  }
+  // 初始加载也应用依赖联动：创建者被选中时自动带上其查询工具，
+  // 保证显示的勾选状态与运行时会实际放行的 allowed_tools 一致（后端也有同款依赖闭包）。
+  const depAdds = new Set();
+  for (const [creator, deps] of Object.entries(AGENT_TOOL_DEP_RULES)) {
+    if (state.agentFormToolScope.includes(creator)) deps.forEach((dep) => depAdds.add(dep));
+  }
+  if (depAdds.size) {
+    state.agentFormToolScope = [...new Set([...state.agentFormToolScope, ...depAdds])];
   }
   list.innerHTML = '';
   const groups = {};
@@ -3186,13 +3228,17 @@ async function renderAgentToolPicker() {
         cb.title = '针对文本模型：通过视觉车道解读图片。';
       }
       cb.addEventListener('change', (e) => {
-        state.agentFormToolScope = e.target.checked
-          ? [...new Set([...state.agentFormToolScope, tool.name])]
-          : state.agentFormToolScope.filter((n) => n !== tool.name);
+        state.agentFormToolScope = applyAgentToolDependency(
+          state.agentFormToolScope, tool.name, e.target.checked,
+        );
+        syncAgentToolCheckboxes(list);
       });
       const span = document.createElement('span');
       const b = document.createElement('b');
       b.textContent = tool.name;
+      if (AGENT_TOOL_DEP_RULES[tool.name]) {
+        b.title = '选中后会自动带上其依赖的查询工具（job_output/job_status/job_wait/job_kill 等）。';
+      }
       const small = document.createElement('small');
       small.textContent = tool.description || '';
       span.append(b, small);
