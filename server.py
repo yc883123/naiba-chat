@@ -2016,21 +2016,12 @@ def _copy_model_trace_message(message: Any) -> dict[str, Any] | None:
 
 
 def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Build model history while carrying only the most recent image batch."""
-    selected_paths: list[str] = []
-    for item in reversed(conversation_messages[-16:]):
-        if item.get("role") != "user":
-            continue
-        batch = []
-        for attachment in (item.get("metadata") or {}).get("attachments") or []:
-            source = str(attachment.get("path") or "")
-            if Path(source).suffix.lower() in IMAGE_MEDIA_TYPES and source not in batch:
-                batch.append(source)
-        if batch:
-            selected_paths = batch[:MODEL_IMAGE_HISTORY_LIMIT]
-            break
-    selected_images = set(selected_paths)
+    """Build model history.
 
+    每条用户消息**基于自身附件**确定性携带图片内容（cap 到 MODEL_IMAGE_HISTORY_LIMIT），
+    不再按“全局最近图片批次”选择——否则新一轮上传图片会让旧图片消息的图片内容消失/出现，
+    改变其序列化字节、破坏前缀缓存。
+    """
     history: list[dict[str, Any]] = []
     for item in conversation_messages:
         if item.get("role") not in {"user", "assistant"}:
@@ -2045,13 +2036,16 @@ def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dic
             ]
             if paths:
                 content += "\n" + "\n".join(paths)
-            image_parts = [
-                encoded
-                for upload in previous_uploads
-                if str(upload.get("path") or "") in selected_images
-                for encoded in [encode_image_for_model(str(upload.get("path") or ""))]
-                if encoded
-            ]
+            image_parts: list[dict[str, Any]] = []
+            for upload in previous_uploads:
+                path = str(upload.get("path") or "")
+                if not path or Path(path).suffix.lower() not in IMAGE_MEDIA_TYPES:
+                    continue
+                if len(image_parts) >= MODEL_IMAGE_HISTORY_LIMIT:
+                    break
+                encoded = encode_image_for_model(path)
+                if encoded:
+                    image_parts.append(encoded)
             if image_parts:
                 history.append(
                     {
