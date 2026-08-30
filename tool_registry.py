@@ -797,29 +797,25 @@ def build_comfyui_tool_specs() -> list[ToolSpec]:
 
 
 def build_capability_tool_specs() -> list[ToolSpec]:
-    """Tools used by the generic orchestration loop to discover and fill gaps."""
+    """Skill 安装/解压/定位类工具。"""
     return [
         ToolSpec(
-            name="capability_inventory",
+            name="inspect_installed_skill",
             description=(
-                "按任务查询当前可用的工具、Skill 与 MCP 服务。普通问答不要调用；"
-                "只有确实需要操作但当前未提供对应工具时才调用。返回结果包含可直接使用的参数格式。"
+                "定位一个已安装 Skill 的文件位置（SKILL.md 路径与根目录），供读取/编辑该 Skill 用。"
+                "支持按 Skill 名称或 id 精确查找；返回其 path/root。修改后重启或下次引用即生效。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "query": _string("要完成的操作或所需能力，例如“读取文件”或“运行 ComfyUI 工作流”", ""),
-                    "tools": {"type": "array", "items": {"type": "string"}, "default": []},
-                    "skills": {"type": "array", "items": {"type": "string"}, "default": []},
-                    "mcp_servers": {"type": "array", "items": {"type": "string"}, "default": []},
-                    "executables": {"type": "array", "items": {"type": "string"}, "default": []},
-                    "paths": {"type": "array", "items": {"type": "string"}, "default": []},
+                    "skill": _string("要定位的 Skill 名称或 id"),
                 },
+                "required": ["skill"],
             },
             side_effect=False,
-            retryable=True,
+            retryable=False,
             timeout=30,
-            permission="confirm",
+            permission="auto",
         ),
         ToolSpec(
             name="install_skill",

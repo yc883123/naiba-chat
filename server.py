@@ -739,7 +739,7 @@ _BUILT_IN_SCOPE_ALL = (
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
     "todo_write", "artifact_report",
     "comfyui_prepare_workflow", "comfyui_batch",
-    "capability_inventory", "install_skill",
+    "install_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
     "vision_crop", "vision_pixel_diff", "vision_read_folder",
 )
@@ -819,7 +819,7 @@ _TOOL_GROUP = {
     "job_wait": "后台/Job/子任务", "job_kill": "后台/Job/子任务", "subagent": "后台/Job/子任务",
     "todo_write": "后台/Job/子任务", "artifact_report": "后台/Job/子任务",
     "comfyui_prepare_workflow": "ComfyUI", "comfyui_batch": "ComfyUI",
-    "capability_inventory": "能力/Skill 管理", "install_skill": "能力/Skill 管理",
+    "install_skill": "能力/Skill 管理", "unpack_skill_archive": "能力/Skill 管理", "inspect_installed_skill": "能力/Skill 管理",
     "vision_describe": "视觉（文本模型）", "vision_ground": "视觉（文本模型）", "vision_detect": "视觉（文本模型）",
     "vision_ocr": "视觉（文本模型）", "vision_colors": "视觉（文本模型）",
     "vision_crop": "视觉（文本模型）", "vision_pixel_diff": "视觉（文本模型）",
@@ -864,7 +864,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
         "todo_write", "artifact_report",
         "comfyui_prepare_workflow", "comfyui_batch",
-        "capability_inventory", "install_skill",
+        "install_skill", "unpack_skill_archive", "inspect_installed_skill",
         "vision_read_folder", "vision_describe", "vision_ground", "vision_detect", "vision_ocr",
         "vision_colors", "vision_crop", "vision_pixel_diff",
     )

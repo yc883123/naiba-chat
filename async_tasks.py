@@ -18,13 +18,13 @@ from vision_runtime import IMAGE_SUFFIXES, VISION_TOOL_NAMES, VisionBudget
 # - Ask/Plan 模式：仅只读分析与搜索工具（crop/pixel_diff 等写文件工具排除）。
 JOB_TOOLS = ("run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write", "artifact_report")
 HARNESS_TOOLS = ("glob_files", "edit_file", "pwsh", "read", "write", "edit", "glob", "grep")
-CAPABILITY_TOOLS = ("capability_inventory", "install_skill")
+CAPABILITY_TOOLS = ("install_skill", "unpack_skill_archive", "inspect_installed_skill")
 VISION_READONLY_TOOLS = (
     "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
 )
 VISION_WRITING_TOOLS = ("vision_crop", "vision_pixel_diff")
 SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("vision_read_folder", "web_search", "comfyui_prepare_workflow", "comfyui_batch")
-SYSTEM_TOOLS_READONLY = ("capability_inventory",) + VISION_READONLY_TOOLS + ("web_search",)
+SYSTEM_TOOLS_READONLY = VISION_READONLY_TOOLS + ("web_search",)
 
 # Cross-tool dependency closure: a Job CREATOR tool is useless without the QUERY
 # tools that its own description tells the model to use afterwards. If a creator

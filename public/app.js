@@ -4572,6 +4572,36 @@ async function removeStarterPrompt(index) {
   }
 }
 
+const SKILL_EDIT_PRESET =
+  '用户希望编辑本应用内一个已安装的 Skill。本会话已为你启用 inspect_installed_skill（以及读取/编辑/写入文件）工具。'
+  + '请按以下流程执行，并【先等待用户指定要编辑哪个 Skill】：\n'
+  + '1. 等待用户给出目标 Skill（支持名称或 id）。\n'
+  + '2. 调用 inspect_installed_skill{skill: <名称或id>} 拿到该 Skill 的 path（SKILL.md）与 root（所在目录）。\n'
+  + '3. 用 read_file 读取 SKILL.md 及其相关脚本/资源，向用户概述当前内容。\n'
+  + '4. 按用户要求，用 edit_file/write_file 修改 SKILL.md、描述、脚本等；修改前可先与用户确认改动点，改完说明改了什么。\n'
+  + '5. 提醒用户：改动会持久化到该 Skill 文件；切换/重开会话或重新引用（/技能名）后生效。\n'
+  + '6. 若用户给的 Skill 不存在（inspect_installed_skill 返回未找到），向用户说明可用的 Skill，不要凭空编造。';
+
+async function startSkillEdit() {
+  if (state.chatRunId || state.abortController) {
+    toast('请先等待当前任务结束或停止后再编辑 Skill');
+    return;
+  }
+  if (!state.conversationId) await createConversation();
+  const cid = state.conversationId;
+  try {
+    const result = await api(`/api/conversations/${cid}/tools`, {
+      method: 'POST',
+      body: { tools: ['inspect_installed_skill', 'read_file', 'edit_file', 'write_file'] },
+    });
+    toast(`已启用编辑 Skill 工具${result.added?.length ? `（新增 ${result.added.length} 个）` : ''}`);
+  } catch (error) {
+    toast(`启用编辑工具失败：${error.message}`);
+    return;
+  }
+  sendMessage(SKILL_EDIT_PRESET);
+}
+
 async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
 }
@@ -5759,6 +5789,7 @@ function bindEvents() {
   });
   $$('.starter-grid button').forEach((button) => button.addEventListener('click', () => {
     if (button.dataset.installSkill) startSkillInstall();
+    else if (button.dataset.editSkill) startSkillEdit();
     else if (button.id === 'starterAddBtn') openStarterPromptDialog();
     else if (button.dataset.prompt != null) sendMessage(button.dataset.prompt);
   }));
