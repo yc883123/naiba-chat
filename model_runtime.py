@@ -1916,8 +1916,14 @@ class ModelRuntime:
             return "pending"
         first = probe[0]
         if first in "{[":
-            # JSON object / array agent action is never part of the answer.
-            return "tool"
+            # JSON object / array agent action is never part of the answer, but
+            # only when it actually carries the action-style "type"/"tool" key.
+            # A bare "{" or "[" that is simply the tail of streamed prose/code
+            # (e.g. Java braces, "[Shot 1]" labels) must be forwarded as text,
+            # otherwise multi-code-block answers stall until the stream ends.
+            if re.search(r'"\s*(?:type|tool)"\s*:', probe[:200]):
+                return "tool"
+            return "text"
         if first == "<":
             match = re.match(r"^<([A-Za-z][\w-]*)", probe)
             if not match:

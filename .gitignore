@@ -127,6 +127,9 @@ stop.bat
 stop.ps1
 setup.bat
 
+# 版本更新说明（本地维护，不随仓库发布）
+版本更新说明.md
+
 # Skills are part of the product. Always track every file under this tree,
 # even when a global ignore rule would normally match its extension or folder.
 !skills/

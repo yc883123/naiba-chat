@@ -333,6 +333,103 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+// ---- Markdown 内联处理：逐段 / 逐单元格执行，避免加粗/代码/链接跨行、跨段落或跨表格行泄漏 ----
+function markdownInline(s) {
+  return String(s || '')
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+}
+
+// 防御式表格单元格切分：按 | 切分一行，但：
+//  1) 不切分被内联标签（<code>/<a>/<strong>…）包裹的 |（例如 <code>a|b</code> 里的 |）；
+//  2) 支持 \| 转义（\| 作为一个字面 | 留在单元格里）。
+const TABLE_SHIELD_TAGS = new Set(['code','a','strong','b','em','i','span','del','s','u','sub','sup','pre','mark','kbd']);
+function splitMarkdownTableRow(row) {
+  const text = String(row || '').trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells = [];
+  let current = '';
+  let inTag = false;
+  const stack = [];
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '<') {
+      const m = text.slice(i).match(/^<\/?\s*([A-Za-z][\w-]*)/);
+      if (m) {
+        const tag = m[1].toLowerCase();
+        if (TABLE_SHIELD_TAGS.has(tag)) {
+          if (text[i + 1] === '/') stack.pop();
+          else stack.push(tag);
+        }
+      }
+      inTag = true;
+      current += ch;
+      continue;
+    }
+    if (ch === '>') { inTag = false; current += ch; continue; }
+    if (inTag) { current += ch; continue; }
+    if (ch === '|' && text[i - 1] === '\\') {
+      current = current.replace(/\\$/, '') + '|';
+      continue;
+    }
+    if (ch === '|' && stack.length === 0) {
+      cells.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  cells.push(current.trim());
+  return cells;
+}
+
+// 只有“以 | 开头、以 | 结尾且中间至少一个字符”的行才可能是一个表格行，
+// 避免把普通含 | 的文本（例如 “a | b，不是表格”）误判。
+function isMarkdownTableRow(line) {
+  const t = String(line || '').trim();
+  if (!t.startsWith('|') || !t.endsWith('|')) return false;
+  return t.length > 2;
+}
+
+// 分隔行：所有单元格都是 - 和可选 :（如 | :-- | --: |）。
+function isMarkdownTableSeparator(line) {
+  const t = String(line || '').trim();
+  if (!t.startsWith('|') || !t.endsWith('|')) return false;
+  const cells = splitMarkdownTableRow(t);
+  return cells.length >= 1 && cells.every((c) => /^:?-{3,}:?$/.test(c.trim()));
+}
+
+function collectMarkdownTable(lines, start) {
+  if (start + 1 >= lines.length) return null;
+  if (!isMarkdownTableRow(lines[start])) return null;
+  if (!isMarkdownTableSeparator(lines[start + 1])) return null;
+  const rows = [lines[start], lines[start + 1]];
+  let j = start + 2;
+  while (j < lines.length) {
+    const t = lines[j].trim();
+    if (!t) break;
+    if (!t.startsWith('|')) break;
+    rows.push(lines[j]);
+    j++;
+  }
+  return { rows, end: j };
+}
+
+function renderMarkdownTable(rows) {
+  // 每行先做内联（把 ** / `code` / [text](url) 换成 <strong>/<code>/<a>），再按 | 切分，
+  // 这样 “|” 在内联代码/链接/加粗里不会把单元格切坏；同时把加粗限制在“单行”内，避免跨行泄漏。
+  const header = splitMarkdownTableRow(markdownInline(rows[0]));
+  const body = rows.slice(2).map((r) => splitMarkdownTableRow(markdownInline(r)));
+  const colCount = Math.max(1, header.length, ...body.map((c) => c.length));
+  const th = header.map((c) => `<th>${c}</th>`).join('');
+  const tbody = body.map((cells) => {
+    let tds = '';
+    for (let k = 0; k < colCount; k++) tds += `<td>${k < cells.length ? cells[k] : ''}</td>`;
+    return `<tr>${tds}</tr>`;
+  }).join('');
+  return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${tbody}</tbody></table></div>`;
+}
+
 function markdown(text) {
   const codeBlocks = [];
   const addCodeBlock = (language, code) => {
@@ -354,10 +451,6 @@ function markdown(text) {
     // “流式中断”，要等整个回复结束（done 全量渲染）才突然变成代码框。
     // 这里把它也提取成代码框，随内容增长实时渲染在框内，不再中断。
     .replace(/```([^\n]*)\n([\s\S]*)$/, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@`);
-  safe = safe
-    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
   const blocks = [];
   let paragraph = [];
   let listType = '';
@@ -365,12 +458,14 @@ function markdown(text) {
 
   const flushParagraph = () => {
     if (!paragraph.length) return;
-    blocks.push(`<p>${paragraph.join('<br>')}</p>`);
+    // 段落结束时统一做内联，保证加粗/代码/链接只在单个段落内匹配，
+    // 避免一个未闭合 ** 跨过段落到后续内容才闭合导致“吞掉”整段。
+    blocks.push(`<p>${markdownInline(paragraph.join('<br>'))}</p>`);
     paragraph = [];
   };
   const flushList = () => {
     if (!listItems.length) return;
-    blocks.push(`<${listType}>${listItems.map((item) => `<li>${item}</li>`).join('')}</${listType}>`);
+    blocks.push(`<${listType}>${listItems.map((item) => `<li>${markdownInline(item)}</li>`).join('')}</${listType}>`);
     listType = '';
     listItems = [];
   };
@@ -381,8 +476,9 @@ function markdown(text) {
     listItems.push(item);
   };
 
-  for (const rawLine of safe.split('\n')) {
-    const line = rawLine.trim();
+  const lines = safe.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
     if (!line) {
       flushParagraph();
       flushList();
@@ -395,12 +491,21 @@ function markdown(text) {
       blocks.push(codeBlocks[Number(codeMatch[1])]);
       continue;
     }
+    // 表格：只有“表头行 + 紧跟的分隔行”才识别为表格，避免普通含 | 文本误判。
+    const table = collectMarkdownTable(lines, i);
+    if (table) {
+      flushParagraph();
+      flushList();
+      blocks.push(renderMarkdownTable(table.rows));
+      i = table.end - 1;
+      continue;
+    }
     const heading = line.match(/^(#{1,6})\s+(.+)$/);
     if (heading) {
       flushParagraph();
       flushList();
       const level = heading[1].length;
-      blocks.push(`<h${level}>${heading[2]}</h${level}>`);
+      blocks.push(`<h${level}>${markdownInline(heading[2])}</h${level}>`);
       continue;
     }
     if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(line)) {
