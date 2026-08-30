@@ -89,7 +89,11 @@
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
           <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">＋</button>
-          <textarea id="messageInput" rows="1" placeholder="输入消息" aria-label="消息"></textarea>
+          <div class="composer-input">
+            <div class="skill-popup" id="skillPopup" role="listbox" hidden></div>
+            <div class="input-mirror" id="inputMirror" aria-hidden="true"></div>
+            <textarea id="messageInput" rows="1" placeholder="输入消息" aria-label="消息"></textarea>
+          </div>
           <button class="icon-button deep-reasoning-button" type="button" id="deepReasoningButton" title="深度思考：关闭" aria-label="深度思考" aria-pressed="false">
             <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
               <circle cx="12" cy="12" r="1"></circle>
@@ -182,11 +186,11 @@
 
   <dialog id="skillsDialog" class="panel-dialog">
     <div class="dialog-toolbar">
-      <div><h2>Skill（Agent 已选择）</h2><p id="skillsSummary"></p></div>
+      <div><h2>Skill 快速引用</h2><p id="skillsSummary"></p></div>
       <button class="icon-button" data-close="skillsDialog" title="关闭" aria-label="关闭">×</button>
     </div>
     <label class="skill-policy-row">
-      <span><b>Skill 策略</b><small id="skillPolicyHint">仅当前 Agent 预设启用的 Skill，仅供查看，不可更改</small></span>
+      <span><b>Skill 引用</b><small id="skillPolicyHint">点击某项即在输入框光标处插入 /技能 引用；发送后按“首轮注入 / 后续追加”注入</small></span>
     </label>
     <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
     <div class="skill-list" id="skillList"></div>

@@ -11,7 +11,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -204,6 +204,20 @@ def _migrate_to_v10(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v11(db: sqlite3.Connection) -> None:
+    """Persist a conversation's frozen Skill policy (the turn-1 referenced skill ids).
+
+    首轮 /ref 引用的技能集会被冻结并持久化到会话，保证后续轮“首轮注入 system、
+    后续只追加末尾”能跨轮/跨重启稳定（为前缀缓存与 ref 路由稳定）。旧会话默认空串。
+    """
+    try:
+        db.execute("SELECT skill_policy FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN skill_policy TEXT NOT NULL DEFAULT ''"
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -216,6 +230,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     8: lambda db: _migrate_to_v8(db),
     9: _migrate_to_v9,
     10: _migrate_to_v10,
+    11: _migrate_to_v11,
 }
 
 
@@ -511,13 +526,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -525,7 +540,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -540,6 +555,79 @@ class ChatStorage:
                 ).fetchall()
                 result["messages"] = [self._message_dict(message) for message in messages]
             return result
+
+    def set_conversation_skill_policy(
+        self, conversation_id: str, policy: dict[str, Any] | None
+    ) -> None:
+        """Persist a conversation's frozen Skill policy (turn-1 referenced ids)."""
+        with self._connect() as db:
+            db.execute(
+                "UPDATE conversations SET skill_policy = ? WHERE id = ?",
+                (json.dumps(policy or {}, ensure_ascii=False), conversation_id),
+            )
+
+    def branch_conversation(self, source_id: str, message_id: str) -> dict[str, Any]:
+        """从源会话的分支点复制“之前”的历史到新会话，并完整复制源会话设置与冻结 Skill 策略。
+
+        非破坏性：源会话保持原样。新会话历史为分支点之前的全部消息（含 metadata，
+        使 build_model_history 能重建一致上下文）；返回新会话与分支消息（用于预填输入框）。
+        """
+        now = int(time.time() * 1000)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            src = db.execute("SELECT * FROM conversations WHERE id = ?", (source_id,)).fetchone()
+            if not src:
+                raise LookupError("源对话不存在")
+            rows = db.execute(
+                "SELECT id, role, content, metadata, created_at FROM messages "
+                "WHERE conversation_id = ? ORDER BY created_at, rowid",
+                (source_id,),
+            ).fetchall()
+            branch_rows = [dict(item) for item in rows]
+            branch_idx = next((i for i, m in enumerate(branch_rows) if m["id"] == message_id), None)
+            if branch_idx is None:
+                raise LookupError("消息不存在")
+            if branch_rows[branch_idx]["role"] != "user":
+                raise ValueError("只能从用户消息分支")
+            # 有历史时才继承源会话冻结技能集（保证新会话 system 前缀与复制的一致）；
+            # 分支点是首条消息时留空，让首轮按现有规则重新冻结。
+            inherited_skill_policy = src["skill_policy"] if branch_idx > 0 else ""
+            new_id = uuid.uuid4().hex
+            db.execute(
+                "INSERT INTO conversations("
+                "id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, "
+                "lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, "
+                "stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, "
+                "skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    new_id, f"{str(src['title'] or '新对话')}（分支）", src["mode"], src["permission_mode"],
+                    src["web_search_enabled"], src["deep_reasoning_enabled"], src["lightweight_mode"],
+                    src["lightweight_disabled_features"], 1, src["system_prompt"], src["stream_enabled"],
+                    src["workspace_dir"], src["workspace_group"], src["reasoning_effort"],
+                    src["enabled_tool_ids"], inherited_skill_policy, src["provider_id"], src["model_key"],
+                    src["agent_id"], src["interaction_mode"], now, now,
+                ),
+            )
+            for m in branch_rows[:branch_idx]:
+                db.execute(
+                    "INSERT INTO messages(id, conversation_id, role, content, metadata, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (uuid.uuid4().hex, new_id, m["role"], m["content"], m["metadata"], m["created_at"]),
+                )
+            branch_meta = json.loads(branch_rows[branch_idx]["metadata"] or "{}")
+            branch_message = {
+                "id": branch_rows[branch_idx]["id"],
+                "role": "user",
+                "content": branch_rows[branch_idx]["content"],
+                "metadata": branch_meta,
+                "display_content": branch_meta.get("display_content") or branch_rows[branch_idx]["content"],
+                "attachments": branch_meta.get("attachments") or [],
+            }
+        return {
+            "conversation": self.get_conversation(new_id, include_messages=True),
+            "branch_message": branch_message,
+        }
 
     def update_conversation_settings(
         self,
@@ -1057,6 +1145,7 @@ class ChatStorage:
         plan_id: str = "",
         parent_job_id: str = "",
         owner_session_id: str = "",
+        display_message: str = "",
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Atomically append the user message and create its owning run."""
         now = int(time.time() * 1000)
@@ -1067,6 +1156,9 @@ class ChatStorage:
             "run_id": run_id,
             "agent_id": str(agent.get("id") or ""),
         }
+        if str(display_message or "").strip():
+            # 气泡展示原样（含 /ref 蓝色），而 content 存模型看到的剥离版本。
+            metadata["display_content"] = str(display_message)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             # A parent chat Run is allowed to spawn child Jobs.  The previous
@@ -1486,6 +1578,12 @@ class ChatStorage:
             )
         except (json.JSONDecodeError, TypeError):
             result["enabled_tool_ids"] = []
+        try:
+            result["skill_policy"] = json.loads(
+                result.get("skill_policy") or "{}"
+            )
+        except (json.JSONDecodeError, TypeError):
+            result["skill_policy"] = {}
         return result
 
     @staticmethod

@@ -3233,6 +3233,21 @@ class RequestHandler(BaseHTTPRequestHandler):
                 ),
                 HTTPStatus.CREATED,
             )
+        elif path.startswith("/api/conversations/") and path.endswith("/branch"):
+            conversation_id = path.split("/")[-2]
+            message_id = str(body.get("message_id") or "")
+            if not conversation_id or not message_id:
+                self._json({"error": "conversation_id 和 message_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                result = APP.storage.branch_conversation(conversation_id, message_id)
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+                return
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json(result, HTTPStatus.CREATED)
         elif path.startswith("/api/conversations/") and path.endswith("/settings"):
             conversation_id = path.split("/")[-2]
             title = body.get("title")

@@ -532,22 +532,38 @@ class ConversationRunManager:
                     mode, agent, web_search_enabled, model_key, enabled_tool_ids
                 )
             if "skills" in disabled_features:
-                skill_policy = {"mode": "exclusive", "skill_ids": []}
+                skill_policy = {"mode": "exclusive", "skill_ids": [], "referenced_ids": []}
             else:
                 catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
                 catalog = catalog_getter() if callable(catalog_getter) else []
-                # 只使用该会话 Agent 固定启用的 Skill（预设）：忽略前端传入的 skill_policy，
-                # 固定为 exclusive（不自动路由、不额外注入），skill_ids 取 Agent 预设的固定 Skill。
-                agent_skill_ids = [str(item) for item in (agent.get("skill_ids") or []) if str(item).strip()]
+                available_ids = {
+                    str(item.get("id") or "")
+                    for item in (catalog.values() if isinstance(catalog, dict) else catalog)
+                    if isinstance(item, dict)
+                }
+                # 本轮 /ref 引用（前端已解析成具体 skill id，并把 /ref 文本从消息里剥掉）。
+                body_policy = body.get("skill_policy")
+                ref_policy = body_policy if isinstance(body_policy, dict) else {}
+                referenced_ids = [
+                    str(item) for item in (ref_policy.get("referenced_ids") or []) if str(item).strip()
+                ]
+                # 会话级冻结集：首轮（会话还没有消息）把本轮引用定为冻结集并持久化；
+                # 后续轮沿用已持久化的冻结集，本轮新引用走“尾部追加”。与冻结集重合的引用去重、
+                # 只在引用时生效（预设 skill 也走这一条：删掉预填即不引用）。
+                stored_policy = conversation.get("skill_policy")
+                stored_policy = stored_policy if isinstance(stored_policy, dict) else {}
+                stored_ids = [str(item) for item in (stored_policy.get("skill_ids") or []) if str(item).strip()]
+                if not stored_policy and not (conversation.get("messages") or []):
+                    frozen_ids = sorted({str(item) for item in referenced_ids})
+                    self.app.storage.set_conversation_skill_policy(
+                        conversation_id, {"mode": "exclusive", "skill_ids": frozen_ids}
+                    )
+                else:
+                    frozen_ids = stored_ids
                 if catalog:
-                    available_ids = {
-                        str(item.get("id") or "")
-                        for item in (catalog.values() if isinstance(catalog, dict) else catalog)
-                        if isinstance(item, dict)
-                    }
-                    agent_skill_ids = [sid for sid in agent_skill_ids if sid in available_ids]
+                    frozen_ids = [sid for sid in frozen_ids if sid in available_ids]
                 skill_policy = normalize_skill_policy(
-                    {"mode": "exclusive", "skill_ids": agent_skill_ids},
+                    {"mode": "exclusive", "skill_ids": frozen_ids, "referenced_ids": referenced_ids},
                     catalog=catalog,
                 )
             snapshot = {
@@ -586,6 +602,7 @@ class ConversationRunManager:
                     snapshot,
                     mode,
                     plan_id,
+                    display_message=str(body.get("display_message") or ""),
                 )
             except RuntimeError as exc:
                 active_error = self._active_error(exc)

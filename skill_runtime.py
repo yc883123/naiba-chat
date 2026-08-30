@@ -47,6 +47,10 @@ SKILL_POLICY_MODES = {"auto", "pinned", "exclusive"}
 # re-broken by a wrapper-text difference.
 SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参考资料时，使用 read_file 读取：\n"
 
+# 被引用技能合计体量达到该阈值时，向前端发 skill_warning 提示，但**完整下发**不截断
+# （点 13：只提示、不静默截断）。前端在发送前也用同类阈值自行估算提醒。
+SKILL_CONTENT_WARN_CHARS = 60000
+
 # Conservative context ceiling (tokens) used when a provider exposes no window
 # (e.g. DeepSeek's /v1/models returns no context-length field, so auto-detection
 # yields 0). Rather than silently truncating history — which both drops context
@@ -76,6 +80,9 @@ def normalize_skill_policy(
 
     explicit_policy = isinstance(raw_policy, dict)
     selected = _ids(raw_policy.get("skill_ids")) if explicit_policy else _ids(legacy_ids)
+    # referenced_ids：本轮消息里通过 /ref 显式引用的技能（可与冻结集重合）。它是
+    # “本轮要启用”的技能，其中不在冻结集内的会走尾部追加；冻结集仍由 skill_ids 决定。
+    referenced = _ids(raw_policy.get("referenced_ids")) if explicit_policy else []
     if explicit_policy:
         mode = str(raw_policy.get("mode") or "auto").strip().lower()
     elif selected:
@@ -98,6 +105,8 @@ def normalize_skill_policy(
         unknown = [skill_id for skill_id in selected if skill_id not in available]
         if unknown:
             raise ValueError("未知 Skill：" + ", ".join(unknown))
+        # 引用里未知/已删除的技能静默丢弃（前端在染色时已解析成具体 id，这里只兜底）。
+        referenced = [skill_id for skill_id in referenced if skill_id in available]
 
     if mode == "exclusive":
         # 允许为空：exclusive 未选中任何 Skill 时表示该轮不加载任何 Skill（无自动匹配）。
@@ -113,7 +122,7 @@ def normalize_skill_policy(
             fixed = [skill_id for skill_id in fixed if skill_id in available]
         effective_ids = list(dict.fromkeys([*fixed, *selected]))
 
-    return {"mode": mode, "skill_ids": effective_ids}
+    return {"mode": mode, "skill_ids": effective_ids, "referenced_ids": referenced}
 
 
 POWERSHELL_UTF8_PREFIX = (
@@ -267,6 +276,10 @@ class SkillCatalog:
                     continue
                 declared_name = _frontmatter_value(text, "name") or skill_file.parent.name
                 name = _skill_display_name(skill_file) or declared_name
+                # ref：/ 索引引用用的“可手输、无空白”别名。来自声明标识（frontmatter name
+                # 或目录名），把连续空白折叠成单个连字符，保证能在输入框里手输；与展示用名字
+                # name 分开，避免 display_name 带空格或重名破坏引用解析。
+                ref = re.sub(r"\s+", "-", declared_name).strip("-") or declared_name
                 description = _frontmatter_value(text, "description")
                 declared_mcp = (
                     _frontmatter_value(text, "requires_mcp")
@@ -299,7 +312,9 @@ class SkillCatalog:
                 found[skill_id] = {
                     "id": skill_id,
                     "name": name,
+                    "ref": ref,
                     "description": description or "未提供描述",
+                    "char_count": len(text),
                     "path": str(skill_file),
                     "root": str(skill_file.parent),
                     "script_count": script_count,
@@ -1051,7 +1066,14 @@ class SkillAgent:
         if isinstance(run_context, dict):
             run_context["skill_policy"] = dict(policy)
         routing_message = str((run_context or {}).get("routing_message") or user_message)
-        active = [skill_map[skill_id] for skill_id in policy["skill_ids"]]
+        # active = 冻结集 + 本轮 /ref 引用集。冻结集决定“注入 system 前端”的技能；
+        # 本轮引用但不在冻结集内的技能，会由 _run_active 走“尾部追加”路径。
+        # 有序合并：冻结集在前（已按 id 规范化排序），本轮新增引用在后，去重。
+        merged_ids = list(dict.fromkeys([
+            *policy["skill_ids"],
+            *(policy.get("referenced_ids") or []),
+        ]))
+        active = [skill_map[skill_id] for skill_id in merged_ids if skill_id in skill_map]
         user_skill_ids = {item["id"] for item in active}
         usages: list[dict[str, int]] = []
         if policy["mode"] in {"auto", "pinned"}:
@@ -1131,13 +1153,12 @@ class SkillAgent:
 
         skill_prompts = []
         loaded_skill_ids: set[str] = set()
-        remaining_skill_chars = 52000
-        exclusive_skills = str(((run_context or {}).get("skill_policy") or {}).get("mode") or "") == "exclusive"
+        total_skill_chars = 0
 
         # 技能注入策略（会话冻结，为缓存与 ref 路由稳定）：
         # - 冻结政策里的技能（policy["skill_ids"]）始终以完整 SKILL.md 注入 system 前端，
         #   逐字节稳定，跨轮不再因历史而变，保住前缀缓存与 ref 路由信息；
-        # - 动态技能（本地路由命中，已默认禁用）只在“首次出现”时补一条
+        # - 本轮 /ref 引用但不在冻结集内的技能，只在“首次出现”时补一条
         #   尾部系统级指令（[技能指令]），进 trace 后每轮原样重放，不再重复追加。
         history_blob = "\n".join(
             ("\n".join(str(part.get("text") or "") for part in item.get("content") if isinstance(part, dict))
@@ -1155,24 +1176,20 @@ class SkillAgent:
                 return str(reader(skill["path"]))
             return Path(skill["path"]).read_text(encoding="utf-8", errors="replace")
 
-        def render_skill_block(skill: dict[str, Any]) -> str | None:
+        def render_skill_block(skill: dict[str, Any]) -> str:
             """Render one skill as a byte-stable ``<skill>`` block.
 
-            始终保留完整 SKILL.md（含 ref 路由），不再因为内容已进历史而退化成轻量技能卡
-            （那会丢失 ref 路由并改变 system 字节、破坏前缀缓存）。
+            始终保留完整 SKILL.md（含 ref 路由），不做任何截断：这一点 13 明确“只提示、
+            不静默截断”，体量超阈值时由调用方发 skill_warning 事件，内容照常完整下发。
             """
-            nonlocal remaining_skill_chars
+            nonlocal total_skill_chars
             try:
                 content = read_active_skill(skill)
             except OSError as exc:
                 content = f"无法读取技能：{exc}"
-            allowance = 18000 if exclusive_skills else min(18000, remaining_skill_chars)
-            if allowance <= 0:
-                return None
+            total_skill_chars += len(content)
             loaded_skill_ids.add(str(skill.get("id") or skill.get("path") or ""))
-            if not exclusive_skills:
-                remaining_skill_chars -= allowance
-            return f"<skill name=\"{skill['name']}\" root=\"{skill['root']}\">\n{content[:allowance]}\n</skill>"
+            return f"<skill name=\"{skill['name']}\" root=\"{skill['root']}\">\n{content}\n</skill>"
 
         # 冻结前端技能（来自政策）：顺序与内容由政策决定，跨轮字节稳定。
         _frozen_policy = (run_context or {}).get("skill_policy") or {}
@@ -1182,10 +1199,7 @@ class SkillAgent:
         tail_skills = [s for s in active if str(s.get("id") or "") not in frozen_skill_ids]
 
         for skill in front_skills:
-            block = render_skill_block(skill)
-            if block is None:
-                break
-            skill_prompts.append(block)
+            skill_prompts.append(render_skill_block(skill))
 
         # 动态技能：仅当技能内容尚未出现在历史里（如首轮刚匹配）时才补一条尾部系统级指令；
         # 一旦进入历史（trace 原样重放），之后不再重复追加，避免冗余也保证字节稳定。
@@ -1199,10 +1213,16 @@ class SkillAgent:
             signature = skill_content_signature(probe or "")
             if skill_path and signature and signature in history_blob:
                 continue
-            block = render_skill_block(skill)
-            if block is None:
-                continue
-            tail_skill_prompts.append(block)
+            tail_skill_prompts.append(render_skill_block(skill))
+
+        if total_skill_chars > SKILL_CONTENT_WARN_CHARS:
+            event({
+                "type": "skill_warning",
+                "message": (
+                    f"本次会话引用的技能合计约 {total_skill_chars} 字符，体积较大，"
+                    "可能影响响应速度或上下文。已完整注入，不会截断；如不需要可移除对应 /技能 引用。"
+                ),
+            })
 
         allowed = set(allowed_tools)
         native_tools: list[dict[str, Any]] = []

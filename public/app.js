@@ -1013,8 +1013,8 @@ function messageElement(message, temporary = false) {
     });
   }
   if (message.role === 'user') {
-    const actions = message.id ? `<div class="message-actions"><button data-edit-message title="编辑并从此处重新开始">编辑</button>${metadata.interjection && !metadata.interjection_consumed ? '<button data-delete-message title="删除这条消息">删除</button>' : ''}</div>` : '';
-    row.innerHTML = `<div class="message-body">${markdown(message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
+    const actions = message.id ? `<div class="message-actions"><button data-branch-message title="从这条消息分支到新会话继续">分支</button>${metadata.interjection && !metadata.interjection_consumed ? '<button data-delete-message title="删除这条消息">删除</button>' : ''}</div>` : '';
+    row.innerHTML = `<div class="message-body">${renderUserContent(metadata.display_content || message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
     const abortedBadge = metadata.aborted ? '<span class="aborted-badge">已中止</span>' : '';
     const activity = Array.isArray(metadata.activity) ? metadata.activity : [];
@@ -1107,9 +1107,13 @@ function startEditMessage(row) {
   }
   const body = row.querySelector('.message-body');
   if (!body || body.querySelector('textarea[data-edit-input]')) return;
-  // 提取纯文本内容（不含附件标记）
+  // 提取纯文本内容（不含附件标记）。带 /ref 引用的消息优先回填原始 display_content（含引用的原文），
+  // 否则退到 DOM 文本/rawContent。
+  const displayContent = row.__messageMetadata?.display_content;
   const textContent = body.childNodes[0]?.textContent ?? body.textContent;
-  const currentText = row.dataset.rawContent || textContent.trim();
+  const currentText = (displayContent !== undefined && displayContent !== '')
+    ? displayContent
+    : (row.dataset.rawContent || textContent.trim());
   const attachments = row.__messageMetadata?.attachments || [];
   row.dataset.rawContent = currentText;
   body.innerHTML = `
@@ -1176,6 +1180,48 @@ async function confirmEditMessage(row, newText) {
   } catch (error) {
     toast(`编辑失败：${error.message}`);
     if (state.conversationId) openConversation(state.conversationId);
+  }
+}
+
+// 从某条 user 消息分支：新开一个会话，复制分支点之前的历史，并把分支消息预填进输入框。
+// 非破坏性（原会话保留）；运行中不显示分支按钮（见 CSS .conversation-running），此处兜底拦截。
+async function branchMessage(row) {
+  if (state.chatRunId || state.abortController) {
+    toast('请先等待当前任务结束或停止后再分支');
+    return;
+  }
+  const messageId = row?.dataset.messageId;
+  const sourceId = state.conversationId;
+  if (!messageId || !sourceId) {
+    toast('分支失败：消息或会话不存在');
+    return;
+  }
+  try {
+    const result = await api(`/api/conversations/${sourceId}/branch`, {
+      method: 'POST',
+      body: { message_id: messageId },
+    });
+    const newConversation = result.conversation || {};
+    const branch = result.branch_message || {};
+    // 让新会话进入侧栏列表
+    const index = state.conversations.findIndex((c) => c.id === newConversation.id);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...newConversation };
+    else state.conversations.unshift(newConversation);
+    // 切到新会话（复用 openConversation 的完整装载逻辑）
+    await openConversation(newConversation.id);
+    // 预填分支消息内容（原样，含 /ref），并恢复其附件为待上传（走现有输入逻辑）
+    hideSkillPopup();
+    const input = $('#messageInput');
+    input.value = branch.display_content || branch.content || '';
+    resizeTextarea();
+    renderInputMirror();
+    state.pendingFiles = (branch.attachments || []).map((f) => ({ name: f.name, path: f.path, size: f.size, thumb_path: f.thumb_path }));
+    renderPendingFiles();
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    toast('已从该消息分支到新会话');
+  } catch (error) {
+    toast(`分支失败：${error.message}`);
   }
 }
 
@@ -2169,7 +2215,7 @@ async function onSidebarTreeClick(event) {
       else state.expandedGroups.add(name);
       renderSidebar();
     } else if (action === 'new-in-group') {
-      createConversation(actionEl.dataset.workspaceGroup || '', actionEl.dataset.workspaceDir || '');
+      createConversation(actionEl.dataset.workspaceGroup || '', actionEl.dataset.workspaceDir || '', true);
     } else if (action === 'delete-workspace') {
       deleteWorkspace(actionEl.dataset.workspaceName || '');
     }
@@ -2205,7 +2251,7 @@ async function createWorkspace() {
     toast(`已创建工作区「${name}」`);
     // 新建工作区后立即在该工作区内创建一个新对话并打开，选择框同步显示该工作区。
     try {
-      await createConversation(name, dir);
+      await createConversation(name, dir, true);
     } catch (error) {
       toast(`工作区已创建，但新建对话失败：${error.message}`);
     }
@@ -2234,7 +2280,7 @@ async function deleteWorkspace(name) {
   }
 }
 
-async function createConversation(workspaceGroup = '', workspaceDir = '') {
+async function createConversation(workspaceGroup = '', workspaceDir = '', prefillSkills = false) {
   detachRunSubscription();
   hideChoiceButtons();
   const conversation = await api('/api/conversations', {
@@ -2273,6 +2319,7 @@ async function createConversation(workspaceGroup = '', workspaceDir = '') {
   renderMessages([]);
   renderPermissionModeSwitch();
   closeSidebar();
+  if (prefillSkills) prefillPresetSkillsInComposer(conversation);
   $('#messageInput').focus();
 }
 
@@ -2511,21 +2558,20 @@ function renderSkills(filter = '') {
   const query = filter.trim().toLowerCase();
   const fixed = new Set(currentAgentFixedSkillIds());
   const skills = state.bootstrap.skills.filter((skill) =>
-    !query || `${skill.name} ${skill.description}`.toLowerCase().includes(query));
+    !query || `${skill.name} ${skill.description} ${skill.ref || ''}`.toLowerCase().includes(query));
   $('#skillList').innerHTML = skills.map((skill) => `
-    <label class="skill-item${fixed.has(skill.id) ? ' fixed' : ''}">
-      <input type="checkbox" value="${skill.id}" ${fixed.has(skill.id) ? 'checked' : ''} disabled>
-      <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
-      ${fixed.has(skill.id) ? '<em>Agent 已选择</em>' : '<em>未启用</em>'}
-    </label>`).join('');
+    <button type="button" class="skill-item skill-click" data-skill-insert="${skill.id}">
+      <span><b>${escapeHtml(skill.name)}</b>${fixed.has(skill.id) ? '<em>预设</em>' : ''}<p>${escapeHtml(skill.description || '')}</p></span>
+      <span class="skill-tag" title="点击插入到输入框">/${escapeHtml(skill.ref || skill.name)}</span>
+    </button>`).join('');
   updateSkillSummary();
 }
 
 function updateSkillSummary() {
   const fixedCount = currentAgentFixedSkillIds().length;
-  $('#skillCount').textContent = `已选 ${fixedCount}`;
-  $('#skillPolicyHint').textContent = '仅当前 Agent 预设启用的 Skill，仅供查看，不可更改';
-  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，已启用 ${fixedCount} 个（由当前 Agent 预设决定）`;
+  $('#skillCount').textContent = `Skill ${state.bootstrap.skills.length}`;
+  $('#skillPolicyHint').textContent = '点击某项即在输入框光标处插入 /技能 引用；发送后按“首轮注入 / 后续追加”注入';
+  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，当前 Agent 预设 ${fixedCount} 个（新建会话自动预填引用）`;
 }
 
 function renderProviders() {
@@ -4131,14 +4177,18 @@ async function sendChatMessage(textOverride = '') {
   // 用户新发起一轮：恢复跟随，让新答复从底部开始流式显示。
   stickToBottom = true;
   hideChoiceButtons();
+  const referencedIds = parseSkillReferences(text).map((tok) => tok.skill.id);
+  const messageText = stripSkillReferences(text);
   const conversationId = state.conversationId;
   const attachments = state.pendingFiles.map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
   state.pendingFiles = [];
   renderPendingFiles();
   input.value = '';
   resizeTextarea();
+  renderInputMirror();
+  hideSkillPopup();
   if ($('#emptyState')) $('#emptyState').hidden = true;
-  $('#messages').append(messageElement({ role: 'user', content: text, metadata: { attachments } }));
+  $('#messages').append(messageElement({ role: 'user', content: messageText, metadata: { attachments, display_content: text } }));
   const row = createRunRow({ id: '', kind: 'chat' });
   const controller = new AbortController();
   const runGeneration = ++state.runGeneration; // 本段对话流的新一代
@@ -4151,12 +4201,13 @@ async function sendChatMessage(textOverride = '') {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${state.token}` },
       body: JSON.stringify({
         conversation_id: conversationId,
-        message: text,
+        message: messageText,
+        display_message: text,
         attachments,
         model_key: $('#modelSelect').value,
         skill_policy: {
           mode: 'exclusive',
-          skill_ids: currentAgentFixedSkillIds(),
+          referenced_ids: referencedIds,
         },
         web_search_enabled: state.webSearchEnabled,
       }),
@@ -4437,6 +4488,10 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     if (user.length) parts.push(`已启用 ${user.map((s) => s?.name).join('、')}`);
     if (auto.length) parts.push(`已自动匹配 ${auto.map((s) => s?.name).join('、')}`);
     setActivity(parts.join('；'));
+  } else if (event.type === 'skill_warning') {
+    const warning = String(event.message || '本次引用的技能体积较大，已完整注入但可能影响响应速度');
+    toast(warning);
+    setActivity(warning);
   } else if (event.type === 'tools_available') {
     // Tool schemas are runtime state, not user-facing message content.
     // Keep tool execution/result details available without dumping the full
@@ -4816,6 +4871,8 @@ async function rejectTool(confirmId, runId = state.chatRunId) {
 
 function setBusy(busy) {
   state.chatBusy = busy;
+  const mc = $('#messages');
+  if (mc) mc.classList.toggle('conversation-running', busy);
   const sendBtn = $('#sendButton');
   sendBtn.disabled = false;
   sendBtn.classList.toggle('is-stop', busy);
@@ -4848,6 +4905,240 @@ function reloadPage() {
   if (state.elapsedTimer) clearElapsedStatus();
   window.location.reload();
 }
+
+// ============================================================
+// Skill 快速引用（/ 索引 + 蓝色高亮 + 顶栏点击插入 + 发送解析）
+// ============================================================
+function skillList() { return Array.isArray(state.bootstrap?.skills) ? state.bootstrap.skills : []; }
+
+// 按 /ref 反查 skill：优先 ref，其次 name，忽略大小写。
+function skillByRef(refText) {
+  const key = String(refText || '').trim().toLowerCase();
+  if (!key) return null;
+  return skillList().find((s) => String(s.ref || '').toLowerCase() === key)
+    || skillList().find((s) => String(s.name || '').toLowerCase() === key) || null;
+}
+
+// 识别文本里所有 <(^|\s)/ref> 且命中了已安装 skill 的引用。
+function tokenizeSkillRefs(text) {
+  const matches = [];
+  const re = /(^|\s)\/([^\s/#]+)/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[2];
+    const skill = skillByRef(name);
+    if (!skill) continue;
+    const slashAt = m.index + m[1].length;
+    matches.push({ start: slashAt, end: slashAt + 1 + name.length, text: '/' + name, skill });
+  }
+  return matches;
+}
+
+// 供镜像层/气泡：把文本转成带 <span class="skill-ref"> 高亮的 HTML。
+function highlightSkillRefsHtml(text) {
+  const tokens = tokenizeSkillRefs(text);
+  if (!tokens.length) return escapeHtml(text);
+  let out = ''; let pos = 0;
+  for (const tok of tokens) {
+    out += escapeHtml(text.slice(pos, tok.start));
+    out += `<span class="skill-ref">${escapeHtml(tok.text)}</span>`;
+    pos = tok.end;
+  }
+  out += escapeHtml(text.slice(pos));
+  return out;
+}
+
+function renderInputMirror() {
+  const mirror = $('#inputMirror');
+  const input = $('#messageInput');
+  if (!mirror || !input) return;
+  const value = input.value;
+  mirror.innerHTML = (value ? highlightSkillRefsHtml(value) : '') + '\u200b';
+  mirror.scrollTop = input.scrollTop;
+}
+
+// 当前光标所在的那个 <(^|\s)/name…> token；无效时返回 null。
+function currentSlashToken(value, cursor) {
+  if (!value || cursor == null) return null;
+  const isWS = (ch) => ch === undefined || /\s/.test(ch);
+  let i = cursor;
+  while (i > 0 && !isWS(value[i - 1])) i--;
+  if (i >= cursor || value[i] !== '/') return null;
+  if (i > 0 && !isWS(value[i - 1])) return null;
+  let j = cursor;
+  while (j < value.length && !isWS(value[j])) j++;
+  if (cursor < i + 1 || cursor > j) return null;
+  return { tokenStart: i, tokenEnd: j, typed: value.slice(i + 1, cursor) };
+}
+
+const popupState = { open: false, selectedIndex: 0, items: [], token: null };
+
+function positionSkillPopup() {
+  const popup = $('#skillPopup');
+  const input = $('#messageInput');
+  if (!popup || !input || popup.hidden) return;
+  const rect = input.getBoundingClientRect();
+  const ph = popup.offsetHeight;
+  let top = rect.top - ph - 6;
+  if (top < 8) top = rect.bottom + 6;
+  popup.style.left = `${Math.max(8, rect.left)}px`;
+  popup.style.width = `${rect.width}px`;
+  popup.style.top = `${top}px`;
+}
+
+function showSkillPopup(items, selectedIndex, token) {
+  const popup = $('#skillPopup');
+  if (!popup) return;
+  popupState.open = true; popupState.items = items; popupState.token = token; popupState.selectedIndex = selectedIndex;
+  if (!items.length) {
+    popup.innerHTML = '<div class="skill-popup-empty">没有匹配的 Skill</div>';
+    popup.hidden = false;
+    positionSkillPopup();
+    return;
+  }
+  popup.innerHTML = items.map((s, i) => `
+    <button type="button" role="option" class="skill-popup-item${i === selectedIndex ? ' selected' : ''}" data-skill-index="${i}">
+      <b>${escapeHtml(s.ref || s.name)}</b><span>${escapeHtml(s.name)}</span><small>${escapeHtml(s.description || '')}</small><em class="skill-size">${s.char_count ? ('~' + s.char_count) : ''}</em>
+    </button>`).join('');
+  popup.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+  popup.hidden = false;
+  positionSkillPopup();
+}
+
+function hideSkillPopup() {
+  popupState.open = false; popupState.items = []; popupState.token = null; popupState.selectedIndex = 0;
+  const popup = $('#skillPopup');
+  if (popup) popup.hidden = true;
+}
+
+function setSkillPopupSelection(index) {
+  popupState.selectedIndex = index;
+  const popup = $('#skillPopup');
+  popup?.querySelectorAll('[data-skill-index]').forEach((el) => {
+    el.classList.toggle('selected', Number(el.dataset.skillIndex) === index);
+  });
+  popup?.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+}
+
+function updateSkillPopup() {
+  const input = $('#messageInput');
+  if (!input) return hideSkillPopup();
+  const token = currentSlashToken(input.value, input.selectionStart);
+  if (!token) return hideSkillPopup();
+  const query = token.typed.toLowerCase();
+  const items = skillList().filter((s) =>
+    !query || `${s.ref || ''} ${s.name || ''} ${s.description || ''}`.toLowerCase().includes(query));
+  items.sort((a, b) => {
+    const ap = String(a.ref || '').toLowerCase().startsWith(query) ? 0 : 1;
+    const bp = String(b.ref || '').toLowerCase().startsWith(query) ? 0 : 1;
+    return ap - bp || String(a.ref || '').localeCompare(String(b.ref || ''));
+  });
+  showSkillPopup(items, 0, token);
+}
+
+function moveSkillPopupSelection(delta) {
+  if (!popupState.open || !popupState.items.length) return;
+  const n = popupState.items.length;
+  setSkillPopupSelection((popupState.selectedIndex + delta + n) % n);
+}
+
+function commitSkillSelection(skill) {
+  const input = $('#messageInput');
+  const value = input.value;
+  const cursor = input.selectionStart;
+  const token = currentSlashToken(value, cursor);
+  if (!token) { hideSkillPopup(); return; }
+  const replacement = '/' + (skill.ref || skill.name) + ' ';
+  const newValue = value.slice(0, token.tokenStart) + replacement + value.slice(token.tokenEnd);
+  const newCursor = token.tokenStart + replacement.length;
+  input.value = newValue;
+  input.setSelectionRange(newCursor, newCursor);
+  resizeTextarea();
+  renderInputMirror();
+  hideSkillPopup();
+  input.focus();
+}
+
+// 在光标处插入一个 skill 引用（顶栏点击 / 预填复用）。
+function insertSkillRefAtCursor(skill) {
+  const input = $('#messageInput');
+  if (!input) return;
+  const refText = '/' + (skill.ref || skill.name);
+  const cs = input.selectionStart ?? input.value.length;
+  const ce = input.selectionEnd ?? input.value.length;
+  const before = input.value.slice(0, cs);
+  const after = input.value.slice(ce);
+  const needsLeading = cs > 0 && !/\s/.test(input.value[cs - 1]);
+  const insertion = (needsLeading ? ' ' : '') + refText + ' ';
+  input.value = before + insertion + after;
+  const newCursor = before.length + insertion.length;
+  input.setSelectionRange(newCursor, newCursor);
+  resizeTextarea();
+  renderInputMirror();
+}
+
+// 新会话：把当前 Agent 预设 skill 以 /ref 引用预填到输入框（用户删掉即不引用，统一途径）。
+function prefillPresetSkillsInComposer(conversation) {
+  const input = $('#messageInput');
+  if (!input) return;
+  const agentId = String(conversation?.agent_id || '');
+  const agent = (state.bootstrap?.agents || []).find((a) => a.id === agentId);
+  const presetIds = new Set((agent?.skill_ids || []).map(String));
+  if (!presetIds.size) return;
+  const skills = skillList().filter((s) => presetIds.has(String(s.id)));
+  if (!skills.length) return;
+  input.value = skills.map((s) => '/' + (s.ref || s.name)).join(' ') + ' ';
+  resizeTextarea();
+  renderInputMirror();
+  input.setSelectionRange(input.value.length, input.value.length);
+  input.focus();
+}
+
+// 解析并返回本消息引用的 skill（去重）。
+function parseSkillReferences(text) {
+  const seen = new Set();
+  const refs = [];
+  for (const tok of tokenizeSkillRefs(text)) {
+    if (seen.has(tok.skill.id)) continue;
+    seen.add(tok.skill.id);
+    refs.push(tok);
+  }
+  return refs;
+}
+
+// 把 /ref 引用从消息文本里剥离（发给模型用）；若剥空则保留原文（纯引用调用场景）。
+function stripSkillReferences(text) {
+  const tokens = tokenizeSkillRefs(text);
+  if (!tokens.length) return text;
+  let out = ''; let pos = 0;
+  for (const tok of tokens) {
+    out += text.slice(pos, tok.start);
+    pos = tok.end;
+  }
+  out += text.slice(pos);
+  const cleaned = out.replace(/\s+/g, ' ').trim();
+  return cleaned || text;
+}
+
+// 用户气泡：优先显示 display_content（含 /ref），并对命中 skill 的引用高亮；保留 markdown。
+function renderUserContent(text) {
+  const tokens = tokenizeSkillRefs(text);
+  if (!tokens.length) return markdown(text);
+  let protectedText = ''; let pos = 0; let idx = 0;
+  const mapping = [];
+  for (const tok of tokens) {
+    protectedText += text.slice(pos, tok.start);
+    const ph = `@@SKILLREF${idx++}@@`;
+    mapping.push({ ph, text: tok.text });
+    protectedText += ph;
+    pos = tok.end;
+  }
+  protectedText += text.slice(pos);
+  let html = markdown(protectedText);
+  for (const m of mapping) html = html.split(m.ph).join(`<span class="skill-ref">${escapeHtml(m.text)}</span>`);
+  return html;
+}
+
 
 function resizeTextarea() {
   const input = $('#messageInput');
@@ -4949,7 +5240,7 @@ function bindEvents() {
       $('#authError').textContent = error.message;
     }
   });
-  $('#newChatButton').addEventListener('click', () => createConversation());
+  $('#newChatButton').addEventListener('click', () => createConversation('', '', true));
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#unloadModel').addEventListener('click', unloadCurrentModel);
   $('#agentSelect').addEventListener('change', saveAgentSelection);
@@ -4986,8 +5277,31 @@ function bindEvents() {
     if (state.chatRunId || state.abortController) cancelCurrentRun();
     else sendMessage();
   });
-  $('#messageInput').addEventListener('input', resizeTextarea);
+  $('#messageInput').addEventListener('input', () => { resizeTextarea(); renderInputMirror(); updateSkillPopup(); });
+  $('#messageInput').addEventListener('select', updateSkillPopup);
+  $('#messageInput').addEventListener('click', updateSkillPopup);
+  $('#messageInput').addEventListener('focus', updateSkillPopup);
+  $('#messageInput').addEventListener('scroll', () => { const mirror = $('#inputMirror'); if (mirror) mirror.scrollTop = $('#messageInput').scrollTop; positionSkillPopup(); });
+  window.addEventListener('resize', positionSkillPopup);
   $('#messageInput').addEventListener('keydown', (event) => {
+    if (popupState.open) {
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        moveSkillPopupSelection(event.key === 'ArrowDown' ? 1 : -1);
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        const sel = popupState.items[popupState.selectedIndex];
+        if (sel) commitSkillSelection(sel);
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        hideSkillPopup();
+        return;
+      }
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       if (state.chatRunId || state.abortController) {
@@ -4997,6 +5311,29 @@ function bindEvents() {
         sendMessage();
       }
     }
+  });
+  $('#skillPopup').addEventListener('mousedown', (event) => event.preventDefault());
+  $('#skillPopup').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-skill-index]');
+    if (!button) return;
+    const sel = popupState.items[Number(button.dataset.skillIndex)];
+    if (sel) commitSkillSelection(sel);
+  });
+  $('#skillPopup').addEventListener('mouseover', (event) => {
+    const button = event.target.closest('[data-skill-index]');
+    if (!button) return;
+    const idx = Number(button.dataset.skillIndex);
+    if (idx !== popupState.selectedIndex) setSkillPopupSelection(idx);
+  });
+  $('#skillList').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-skill-insert]');
+    if (!button) return;
+    const skill = skillList().find((s) => s.id === button.dataset.skillInsert);
+    if (!skill) return;
+    insertSkillRefAtCursor(skill);
+    renderInputMirror();
+    $('#skillsDialog').close();
+    $('#messageInput').focus();
   });
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
   $('#lightweightModeToggle').addEventListener('change', toggleLightweightMode);
@@ -5134,6 +5471,11 @@ function bindEvents() {
       } catch (error) {
         toast(`复制失败：${error.message}`);
       }
+      return;
+    }
+    const branchButton = event.target.closest('[data-branch-message]');
+    if (branchButton) {
+      branchMessage(branchButton.closest('.message-row'));
       return;
     }
     const editButton = event.target.closest('[data-edit-message]');
