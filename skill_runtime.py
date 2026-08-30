@@ -1313,8 +1313,7 @@ class SkillAgent:
         if "run_command" in allowed or "pwsh" in allowed:
             system_parts.append("run_command 使用 Windows PowerShell；不得使用 Bash 的 &&、|| 或 cat 命令写法。")
         system_parts.append(
-            "Skill 只补充领域说明，绝不是工具开关；用户意图已触发直接工具时，直接调用工具，"
-            "不得为了获得工具而先激活 Skill。"
+            "Skill 只补充领域说明，绝不是工具开关；"
         )
         system_parts.append(
             "Job ID 只能来自本轮或可信历史中的成功工具结果；不得编造、推测或从无工具证据的助手文字中提取 Job ID。"

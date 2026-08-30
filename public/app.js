@@ -1395,6 +1395,8 @@ async function enableLanAccess() {
 }
 
 async function initialize() {
+  restoreSidebarWidth();
+  sidebarScrollToActive = true;
   try {
     state.bootstrap = await api('/api/bootstrap');
   } catch (error) {
@@ -2109,13 +2111,126 @@ function currentConversationWorkspaceGroup() {
   return c ? (c.workspace_group || '').trim() : '';
 }
 
+// ---- 侧栏虚拟化（懒加载）：只渲染可视范围内的行，滚动时按窗口重绘 ----
+let sidebarRowCache = [];
+let sidebarOffsetCache = [];
+let sidebarTotalH = 0;
+let sidebarMetrics = null;
+let sidebarScrollToActive = false;
+let sidebarScrollRaf = 0;
+let sidebarShowAll = new Set(); // 已“展开全部会话”的工作区名集合（默认全部折叠到 5 条）
+const SIDE_BUFFER = 240; // 视口上下预渲染缓冲（px）
+const SIDE_CONV_LIMIT = 5; // 每个展开工作区默认显示的最新会话数
+
+function sidebarMetricsNow() {
+  if (sidebarMetrics) return sidebarMetrics;
+  const holder = document.createElement('div');
+  holder.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;width:260px;';
+  holder.innerHTML = '<div class="workspace-group"><div class="workspace-group-header">X</div></div>'
+    + '<button class="workspace-new-chat">＋</button><div class="conversation-item"><span>X</span></div>'
+    + '<button class="workspace-showmore">展开其余 0 个会话</button>';
+  document.body.appendChild(holder);
+  sidebarMetrics = {
+    header: holder.querySelector('.workspace-group-header').offsetHeight || 32,
+    newchat: holder.querySelector('.workspace-new-chat').offsetHeight || 34,
+    item: holder.querySelector('.conversation-item').offsetHeight || 40,
+    showmore: holder.querySelector('.workspace-showmore').offsetHeight || 34,
+  };
+  holder.remove();
+  return sidebarMetrics;
+}
+
+function sidebarRowHeight(row) {
+  const m = sidebarMetricsNow();
+  if (row.type === 'header') return m.header;
+  if (row.type === 'newchat') return m.newchat;
+  if (row.type === 'showmore' || row.type === 'showless') return m.showmore;
+  return m.item;
+}
+
+function computeSidebarOffsets(rows) {
+  const offsets = new Array(rows.length);
+  let y = 0;
+  for (let i = 0; i < rows.length; i++) { offsets[i] = y; y += sidebarRowHeight(rows[i]); }
+  return { offsets, totalH: y };
+}
+
+function sidebarRowAt(offsets, pos) {
+  let lo = 0, hi = offsets.length - 1, ans = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (offsets[mid] <= pos) { ans = mid; lo = mid + 1; } else hi = mid - 1;
+  }
+  return ans;
+}
+
+function sidebarRowHtml(row) {
+  if (row.type === 'header') {
+    return `<div class="workspace-group ${row.isExp ? 'expanded' : ''}" data-workspace-name="${escapeHtml(row.wsName)}" data-workspace-dir="${escapeHtml(row.dir)}">
+      <div class="workspace-group-header" data-action="toggle-group">
+        <span class="workspace-caret">▸</span>
+        <span class="workspace-group-name">${escapeHtml(row.label)}</span>
+        <span class="workspace-count">${row.count}</span>
+        ${row.isUngrouped ? '' : `<button class="workspace-delete" data-action="delete-workspace" data-workspace-name="${escapeHtml(row.wsName)}" title="删除工作区" aria-label="删除工作区">×</button>`}
+      </div>
+    </div>`;
+  }
+  if (row.type === 'newchat') {
+    return `<button class="workspace-new-chat" data-action="new-in-group" data-workspace-group="${escapeHtml(row.wsName)}" data-workspace-dir="${escapeHtml(row.dir)}">＋ 新会话</button>`;
+  }
+  if (row.type === 'showmore') {
+    return `<button class="workspace-showmore" data-action="show-more" data-workspace-name="${escapeHtml(row.wsName)}">展开其余 ${row.remaining} 个会话</button>`;
+  }
+  if (row.type === 'showless') {
+    return `<button class="workspace-showmore" data-action="show-less" data-workspace-name="${escapeHtml(row.wsName)}">收起</button>`;
+  }
+  const c = row.c;
+  return `<div class="conversation-item ${c.id === state.conversationId ? 'active' : ''}" data-conversation-id="${c.id}">
+    <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(c.title)} 的设置">⚙</button>
+    <button class="conversation-open" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</button>
+    <span class="conversation-time">${escapeHtml(formatRelativeTime(c.updated_at))}</span>
+    <button class="delete-conversation" title="删除对话" aria-label="删除对话">删除</button>
+  </div>`;
+}
+
+function renderSidebarWindow(scrollTop) {
+  const tree = $('#sidebarWorkspaceTree');
+  if (!tree) return;
+  if (!sidebarRowCache.length) {
+    tree.innerHTML = '<div class="workspace-empty">暂无对话</div>';
+    return;
+  }
+  const vh = tree.clientHeight || Math.max(240, Math.round(window.innerHeight * 0.4));
+  let start = Math.max(0, sidebarRowAt(sidebarOffsetCache, scrollTop - SIDE_BUFFER));
+  let end = sidebarRowAt(sidebarOffsetCache, scrollTop + vh + SIDE_BUFFER) + 1;
+  if (end < start + 1) end = start + 1;
+  end = Math.min(sidebarRowCache.length, end + 1);
+  const top = sidebarOffsetCache[start];
+  const html = sidebarRowCache.slice(start, end).map(sidebarRowHtml).join('');
+  tree.innerHTML = `<div class="sidebar-virtual" style="height:${sidebarTotalH}px"><div class="sidebar-virtual-window" style="top:${top}px">${html}</div></div>`;
+}
+
+function sidebarClampWidth(w) {
+  return Math.max(170, Math.min(Math.max(170, window.innerWidth * 0.3), w));
+}
+
+function restoreSidebarWidth() {
+  const saved = parseFloat(localStorage.getItem('naibaChatSidebarW') || '');
+  const base = (saved && !isNaN(saved)) ? saved : 272;
+  document.documentElement.style.setProperty('--sidebar-w', sidebarClampWidth(base) + 'px');
+}
+
 function renderSidebar() {
   const tree = $('#sidebarWorkspaceTree');
   if (!tree) return;
   const search = (state.workspaceSearch || '').trim().toLowerCase();
   const activeWs = currentConversationWorkspaceGroup();
   if (!state.expandedGroups.has('__init')) {
-    state.expandedGroups = new Set(['__init', '', activeWs]);
+    // 启动时只展开“当前会话所处的工作区”，其余工作区折叠；当前会话尚未确定时暂不展开任何组。
+    state.expandedGroups = new Set(['__init']);
+    if (state.conversations.some((c) => c.id === state.conversationId)) {
+      state.expandedGroups.add(activeWs);
+    }
   }
   const groups = new Map();
   for (const c of state.conversations) {
@@ -2133,7 +2248,6 @@ function renderSidebar() {
     if (key && !seen.has(key)) { seen.add(key); orderedNames.push(key); }
   }
   orderedNames.push('');
-
   const sortConv = (list) => {
     const arr = [...list];
     if (state.workspaceSort === 'name') arr.sort((a, b) => String(a.title).localeCompare(String(b.title), 'zh'));
@@ -2141,40 +2255,43 @@ function renderSidebar() {
     return arr;
   };
 
-  const html = orderedNames.map((wsName) => {
+  const rows = [];
+  for (const wsName of orderedNames) {
     const isUngrouped = wsName === '';
     const label = isUngrouped ? '未分组' : wsName;
-    const dir = registered.find((w) => w.name === wsName)?.dir || '';
+    const dir = (registered.find((w) => w.name === wsName) || {}).dir || '';
     let list = sortConv(groups.get(wsName) || []);
     if (search) {
       const filtered = list.filter((c) => String(c.title || '').toLowerCase().includes(search) || label.toLowerCase().includes(search));
-      if (filtered.length === 0) return '';
+      if (!filtered.length) continue;
       list = filtered;
     }
-    const expanded = state.expandedGroups.has(wsName);
-    const convHtml = list.map((c) => `
-      <div class="conversation-item ${c.id === state.conversationId ? 'active' : ''}" data-conversation-id="${c.id}">
-        <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(c.title)} 的设置">⚙</button>
-        <button class="conversation-open" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</button>
-        <span class="conversation-time">${escapeHtml(formatRelativeTime(c.updated_at))}</span>
-        <button class="delete-conversation" title="删除对话" aria-label="删除对话">删除</button>
-      </div>`).join('');
-    return `
-      <div class="workspace-group ${expanded ? 'expanded' : ''}" data-workspace-name="${escapeHtml(wsName)}" data-workspace-dir="${escapeHtml(dir)}">
-        <div class="workspace-group-header" data-action="toggle-group">
-          <span class="workspace-caret">▸</span>
-          <span class="workspace-group-name">${escapeHtml(label)}</span>
-          <span class="workspace-count">${list.length}</span>
-          ${isUngrouped ? '' : `<button class="workspace-delete" data-action="delete-workspace" data-workspace-name="${escapeHtml(wsName)}" title="删除工作区" aria-label="删除工作区">×</button>`}
-        </div>
-        <div class="workspace-group-body">
-          <button class="workspace-new-chat" data-action="new-in-group" data-workspace-group="${escapeHtml(wsName)}" data-workspace-dir="${escapeHtml(dir)}">＋ 新会话</button>
-          ${convHtml}
-        </div>
-      </div>`;
-  }).join('');
+    const isExp = state.expandedGroups.has(wsName);
+    rows.push({ type: 'header', wsName, label, dir, isUngrouped, isExp, count: list.length });
+    if (isExp) {
+      rows.push({ type: 'newchat', wsName, dir });
+      const showAll = sidebarShowAll.has(wsName);
+      const limit = SIDE_CONV_LIMIT;
+      const shown = showAll || list.length <= limit ? list : list.slice(0, limit);
+      for (const c of shown) rows.push({ type: 'item', c, wsName });
+      if (list.length > limit && !showAll) {
+        rows.push({ type: 'showmore', wsName, remaining: list.length - limit });
+      } else if (list.length > limit && showAll) {
+        rows.push({ type: 'showless', wsName });
+      }
+    }
+  }
 
-  tree.innerHTML = html || '<div class="workspace-empty">暂无对话</div>';
+  const { offsets, totalH } = computeSidebarOffsets(rows);
+  sidebarRowCache = rows; sidebarOffsetCache = offsets; sidebarTotalH = totalH;
+  let st = tree.scrollTop;
+  if (sidebarScrollToActive) {
+    sidebarScrollToActive = false;
+    const idx = rows.findIndex((r) => r.type === 'item' && r.c.id === state.conversationId);
+    if (idx >= 0) st = offsets[idx];
+  }
+  renderSidebarWindow(st);
+  tree.scrollTop = st;
 }
 
 function renderComposerWorkspace() {
@@ -2213,6 +2330,14 @@ async function onSidebarTreeClick(event) {
       const name = groupEl?.dataset.workspaceName || '';
       if (state.expandedGroups.has(name)) state.expandedGroups.delete(name);
       else state.expandedGroups.add(name);
+      renderSidebar();
+    } else if (action === 'show-more') {
+      const name = actionEl.dataset.workspaceName || '';
+      sidebarShowAll.add(name);
+      renderSidebar();
+    } else if (action === 'show-less') {
+      const name = actionEl.dataset.workspaceName || '';
+      sidebarShowAll.delete(name);
       renderSidebar();
     } else if (action === 'new-in-group') {
       createConversation(actionEl.dataset.workspaceGroup || '', actionEl.dataset.workspaceDir || '', true);
@@ -2305,6 +2430,7 @@ async function createConversation(workspaceGroup = '', workspaceDir = '', prefil
   state.conversations.unshift(conversation);
   state.expandedGroups.add(currentConversationWorkspaceGroup());
   renderComposerWorkspace();
+  sidebarScrollToActive = true;
   renderSidebar();
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
@@ -2339,6 +2465,14 @@ async function openConversation(id) {
   if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...conversation };
   state.conversationSnapshot = conversationSnapshot(conversation);
   console.log('[naiba] openConversation', id.slice(0, 8), '服务器返回消息数=', (conversation.messages || []).length);
+  // 若打开的会话处于“最新 5 条”预览之外，自动展开该工作区的全部会话以便其在侧栏可见。
+  const visGroup = currentConversationWorkspaceGroup();
+  if (visGroup) {
+    const wsConvs = state.conversations.filter((c) => (c.workspace_group || '').trim() === visGroup);
+    const recent = [...wsConvs].sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+    if (recent.findIndex((c) => c.id === id) >= SIDE_CONV_LIMIT) sidebarShowAll.add(visGroup);
+  }
+  sidebarScrollToActive = true;
   renderSidebar();
   applyConversationModel(conversation);
   applyConversationAgent(conversation);
@@ -5518,6 +5652,49 @@ function bindEvents() {
   $('#closeSidebar').addEventListener('click', closeSidebar);
   $('#sidebarBackdrop').addEventListener('click', closeSidebar);
   $('#sidebarWorkspaceTree').addEventListener('click', onSidebarTreeClick);
+  // 侧栏虚拟化：滚动时按窗口重绘可视行
+  $('#sidebarWorkspaceTree').addEventListener('scroll', () => {
+    if (sidebarScrollRaf) return;
+    sidebarScrollRaf = requestAnimationFrame(() => {
+      sidebarScrollRaf = 0;
+      const tree = $('#sidebarWorkspaceTree');
+      if (tree && sidebarRowCache.length) renderSidebarWindow(tree.scrollTop);
+    });
+  }, { passive: true });
+  // 侧栏宽度可调：拖动 resizer，限制在 [170, 窗口30%]，并持久化
+  const sidebarResizer = $('#sidebarResizer');
+  if (sidebarResizer) {
+    const clampSidebarW = (w) => Math.max(170, Math.min(Math.max(170, window.innerWidth * 0.3), w));
+    sidebarResizer.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      sidebarResizer.classList.add('dragging');
+      const shellLeft = (document.querySelector('.app-shell')?.getBoundingClientRect().left || 0);
+      const onMove = (e) => {
+        document.documentElement.style.setProperty('--sidebar-w', clampSidebarW(e.clientX - shellLeft) + 'px');
+      };
+      const onUp = () => {
+        sidebarResizer.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const w = document.documentElement.style.getPropertyValue('--sidebar-w');
+        localStorage.setItem('naibaChatSidebarW', w);
+        renderSidebar();
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  // 窗口大小变化时，把侧栏宽度压回窗口 30% 上限，并重绘虚拟列表
+  const recalcSidebarW = () => {
+    const cur = parseFloat(document.documentElement.style.getPropertyValue('--sidebar-w') || 0) || 272;
+    const maxW = Math.max(170, window.innerWidth * 0.3);
+    if (cur > maxW) {
+      document.documentElement.style.setProperty('--sidebar-w', maxW + 'px');
+      localStorage.setItem('naibaChatSidebarW', maxW + 'px');
+    }
+    renderSidebar();
+  };
+  window.addEventListener('resize', recalcSidebarW);
   $('#addWorkspace').addEventListener('click', createWorkspace);
   $('#workspaceSort').addEventListener('click', () => {
     state.workspaceSort = state.workspaceSort === 'updated' ? 'name' : 'updated';
