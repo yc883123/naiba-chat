@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sqlite3
 import time
@@ -592,6 +593,20 @@ class ChatStorage:
             # 有历史时才继承源会话冻结技能集（保证新会话 system 前缀与复制的一致）；
             # 分支点是首条消息时留空，让首轮按现有规则重新冻结。
             inherited_skill_policy = src["skill_policy"] if branch_idx > 0 else ""
+            # 标题用递增序号，避免“（分支）（分支）”叠加：去掉源标题末尾的 (N)，再取已有同名标题的最大序号 +1。
+            src_title = str(src["title"] or "新对话").strip() or "新对话"
+            base_title = re.sub(r"\s*\(\d+\)\s*$", "", src_title).rstrip()
+            existing_titles = [str(r[0] or "") for r in db.execute("SELECT title FROM conversations").fetchall()]
+            nums: list[int] = []
+            for t in existing_titles:
+                ts = str(t).strip()
+                if ts == base_title:
+                    nums.append(0)
+                    continue
+                m = re.search(r"\s*\((\d+)\)\s*$", ts)
+                if m and ts[: m.start()].rstrip() == base_title:
+                    nums.append(int(m.group(1)))
+            new_title = f"{base_title} ({max(nums) + 1 if nums else 1})"
             new_id = uuid.uuid4().hex
             db.execute(
                 "INSERT INTO conversations("
@@ -601,7 +616,7 @@ class ChatStorage:
                 "skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at"
                 ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    new_id, f"{str(src['title'] or '新对话')}（分支）", src["mode"], src["permission_mode"],
+                    new_id, new_title, src["mode"], src["permission_mode"],
                     src["web_search_enabled"], src["deep_reasoning_enabled"], src["lightweight_mode"],
                     src["lightweight_disabled_features"], 1, src["system_prompt"], src["stream_enabled"],
                     src["workspace_dir"], src["workspace_group"], src["reasoning_effort"],

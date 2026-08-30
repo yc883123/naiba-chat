@@ -4953,7 +4953,8 @@ function renderInputMirror() {
   const input = $('#messageInput');
   if (!mirror || !input) return;
   const value = input.value;
-  mirror.innerHTML = (value ? highlightSkillRefsHtml(value) : '') + '\u200b';
+  // 空内容时用一个零宽字符撑起镜像层；非空时只放原文本（不额外追加零宽字符，避免影响换行）。
+  mirror.innerHTML = value ? highlightSkillRefsHtml(value) : '\u200b';
   mirror.scrollTop = input.scrollTop;
 }
 
@@ -4998,7 +4999,8 @@ function showSkillPopup(items, selectedIndex, token) {
   }
   popup.innerHTML = items.map((s, i) => `
     <button type="button" role="option" class="skill-popup-item${i === selectedIndex ? ' selected' : ''}" data-skill-index="${i}">
-      <b>${escapeHtml(s.ref || s.name)}</b><span>${escapeHtml(s.name)}</span><small>${escapeHtml(s.description || '')}</small><em class="skill-size">${s.char_count ? ('~' + s.char_count) : ''}</em>
+      <div class="skill-popup-main"><b>${escapeHtml(s.name)}</b><em class="skill-size">${s.char_count ? ('~' + s.char_count) : ''}</em></div>
+      <div class="skill-popup-sub"><span class="skill-popup-ref">/${escapeHtml(s.ref || s.name)}</span><small>${escapeHtml(s.description || '')}</small></div>
     </button>`).join('');
   popup.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
   popup.hidden = false;
