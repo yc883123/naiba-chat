@@ -4302,7 +4302,12 @@ async function resumeConversationRun(conversationId) {
 
 async function sendChatMessage(textOverride = '') {
   const input = $('#messageInput');
-  const text = (textOverride || input.value).trim();
+  const inputText = String(input.value || '').trim();
+  const buttonText = String(textOverride || '').trim();
+  // 点击按钮发送时，把按钮附带的内容与输入框已有内容合并，避免丢失预设（如 agent 预设的 skill 引用）。
+  const text = buttonText
+    ? (inputText ? `${inputText}\n${buttonText}` : buttonText)
+    : inputText;
   if (!text || state.taskSubmitting) return;
   if (state.pendingFiles.some((file) => file.uploading)) {
     toast('请等待文件上传完成');
