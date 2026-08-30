@@ -1178,6 +1178,8 @@ async function confirmEditMessage(row, newText) {
     const input = $('#messageInput');
     input.value = text;
     resizeTextarea();
+    renderInputMirror();
+    updateSkillPopup();
     await sendMessage();
   } catch (error) {
     toast(`编辑失败：${error.message}`);
@@ -4384,6 +4386,8 @@ async function sendRunInterjection(text) {
   renderPendingFiles();
   input.value = '';
   resizeTextarea();
+  renderInputMirror();
+  hideSkillPopup();
   try {
     const result = await api('/api/chat/interject', {
       method: 'POST',
@@ -5118,6 +5122,8 @@ function fillComposer(text) {
   if (!input) return;
   input.value = String(text || '');
   resizeTextarea();
+  renderInputMirror();
+  updateSkillPopup();
   input.focus();
 }
 

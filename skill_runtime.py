@@ -1074,14 +1074,11 @@ class SkillAgent:
             *(policy.get("referenced_ids") or []),
         ]))
         active = [skill_map[skill_id] for skill_id in merged_ids if skill_id in skill_map]
-        user_skill_ids = {item["id"] for item in active}
         usages: list[dict[str, int]] = []
         if active:
-            # source 区分“用户显式启用/固化”与“自动匹配”，前端据此显示为
-            # “已启用 Skill”或“已自动匹配 Skill”，避免误导用户。
+            # 技能均为用户显式启用/引用（无自动匹配），前端显示为“已启用 Skill”。
             event({"type": "skills", "skills": [
-                {"id": item["id"], "name": item["name"],
-                 "source": "user" if item["id"] in user_skill_ids else "auto"}
+                {"id": item["id"], "name": item["name"], "source": "user"}
                 for item in active
             ]})
 
@@ -1772,8 +1769,7 @@ class SkillAgent:
                 event({
                     "type": "skills",
                     "skills": [
-                        {"id": item["id"], "name": item["name"],
-                         "source": "user" if item["id"] in user_skill_ids else "auto"}
+                        {"id": item["id"], "name": item["name"], "source": "user"}
                         for item in active
                     ],
                 })
