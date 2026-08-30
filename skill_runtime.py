@@ -1076,16 +1076,6 @@ class SkillAgent:
         active = [skill_map[skill_id] for skill_id in merged_ids if skill_id in skill_map]
         user_skill_ids = {item["id"] for item in active}
         usages: list[dict[str, int]] = []
-        if policy["mode"] in {"auto", "pinned"}:
-            if cancel_event and cancel_event.is_set():
-                raise TaskCancelled("任务已取消")
-            # Auto routing must not spend a full model request before every
-            # ordinary chat turn. Strong local matches are activated directly;
-            # ambiguous tasks rely on the main agent turn.
-            routed = self._match_skills(routing_message, skills, 3)
-            existing = {item["id"] for item in active}
-            routed = [item for item in routed if item["id"] not in existing]
-            active.extend(routed[:max(0, 4 - len(active))])
         if active:
             # source 区分“用户显式启用/固化”与“自动匹配”，前端据此显示为
             # “已启用 Skill”或“已自动匹配 Skill”，避免误导用户。
@@ -1101,13 +1091,12 @@ class SkillAgent:
         # MCP is intentionally outside NaibaChat's built-in capability set.
         # A Skill may document an external MCP client, but its metadata cannot
         # grant tools, start servers, or change this run's permissions.
-        intent_mcp = bool(re.search(r"mcp|comfy-mcp|注册\s*mcp|配置\s*mcp", routing_message, re.I))
         if isinstance(run_context, dict):
+            # MCP 披露改为常驻：只要会话声明了 call_mcp，就稳定注入已注册 MCP 说明，
+            # 不再按“本轮是否提及 mcp”渐进披露（避免 system 跨轮字节变化破坏前缀缓存）。
             run_context["mcp_active"] = bool(
-                intent_mcp and (
-                    "call_mcp" in allowed_tools
-                    or any(str(name).startswith("mcp__") for name in allowed_tools)
-                )
+                "call_mcp" in allowed_tools
+                or any(str(name).startswith("mcp__") for name in allowed_tools)
             )
         # Official comfy-mcp is installed/registered only when a conversation
         # actually routes to that Skill.  It must never be a settings-page
@@ -2265,214 +2254,6 @@ class SkillAgent:
                 trimmed.append(part)
         return trimmed
 
-    def _route_skills(
-        self,
-        message: str,
-        skills: list[dict[str, Any]],
-        profile: dict[str, Any],
-        options: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        candidates = self._prefilter(message, skills, 14)
-        if not candidates:
-            return []
-        catalog_text = "\n".join(
-            f"- {item['id']} | {item['name']} | {item['description'][:220]}" for item in candidates
-        )
-        prompt = (
-            "根据用户请求选择最多 3 个确实有帮助的技能。闲聊或普通问答可以不选。"
-            "只输出 JSON，例如 {\"skills\":[\"id1\"]}。\n\n"
-            f"用户请求：{message}\n\n技能候选：\n{catalog_text}"
-        )
-        router_options = dict(options)
-        router_options["max_tokens"] = max(1024, min(int(options.get("max_tokens", 8192)), 2048))
-        raw = self.model_complete(
-            profile,
-            [{"role": "system", "content": "你是技能路由器，只输出有效 JSON。"}, {"role": "user", "content": prompt}],
-            router_options,
-            None,
-        )
-        parsed = self._extract_json(raw)
-        ids = parsed.get("skills", []) if isinstance(parsed, dict) else []
-        candidate_map = {item["id"]: item for item in candidates}
-        candidate_map.update({item["name"].lower(): item for item in candidates})
-        selected = []
-        for item in ids[:3]:
-            key = str(item)
-            skill = candidate_map.get(key) or candidate_map.get(key.lower())
-            if skill and skill not in selected:
-                selected.append(skill)
-        return selected
-
-    @classmethod
-    def _match_skills(
-        cls, message: str, skills: list[dict[str, Any]], limit: int
-    ) -> list[dict[str, Any]]:
-        """Select only strong local Skill matches without another model call."""
-        normalized = re.sub(r"\s+", "", str(message or "").lower())
-        ascii_words = set(re.findall(r"[a-z0-9][a-z0-9_.-]{1,}", str(message or "").lower()))
-        chunks = re.findall(r"[\u3400-\u9fff]{2,}", normalized)
-        scored: list[tuple[int, str, dict[str, Any]]] = []
-        for skill in skills:
-            # MCP guidance is opt-in. A generic ComfyUI mention must not
-            # silently activate an external MCP setup Skill.
-            if skill.get("requires_mcp") and "mcp" not in normalized:
-                continue
-            name = str(skill.get("name") or "")
-            skill_id = str(skill.get("id") or "")
-            if (
-                name.lower() == "comfyui-shortdrama"
-                and not re.search(r"短剧|视频|ref2va|minimax|h3|单元|分镜", normalized, re.I)
-            ):
-                continue
-            if (
-                name.lower() == "minimax-drama-prompt"
-                and not re.search(r"短剧|视频|文戏|对白|剧情|minimax|10\s*[–—-]?\s*15秒|10秒|15秒", normalized, re.I)
-            ):
-                continue
-            if (
-                name.lower() == "comfyui-llama-model-bridge"
-                and not re.search(r"llama|ollama|lm\s*studio|gguf|mmproj|模型目录|共享模型|硬链接|转换|迁移", normalized, re.I)
-            ):
-                continue
-            haystack = re.sub(
-                r"\s+", "", f"{name} {skill.get('description') or ''}".lower()
-            )
-            compact_name = re.sub(r"[\s_-]+", "", name.lower())
-            score = 0
-            if compact_name and len(compact_name) >= 2 and compact_name in normalized:
-                score += 100
-            if skill_id and skill_id.lower() in normalized:
-                score += 100
-            for word in ascii_words:
-                if len(word) >= 3 and word in haystack:
-                    score += 8
-            seen_ngrams: set[str] = set()
-            for chunk in chunks:
-                for size in (4, 3, 2):
-                    for index in range(max(0, len(chunk) - size + 1)):
-                        token = chunk[index:index + size]
-                        if token in seen_ngrams:
-                            continue
-                        seen_ngrams.add(token)
-                        if token in haystack:
-                            score += size
-            if score >= 12:
-                scored.append((score, name.lower(), skill))
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [skill for _score, _name, skill in scored[:max(0, limit)]]
-
-    @staticmethod
-    def _visible_tool_names(
-        message: str,
-        allowed: set[str],
-        schemas: list[dict[str, Any]],
-        active_skills: list[dict[str, Any]],
-    ) -> set[str]:
-        """Return the small schema subset useful for the current turn."""
-        if len(allowed) <= 8:
-            return set(allowed)
-        text = str(message or "").lower()
-        compact = re.sub(r"\s+", "", text)
-        gateways = {"capability_inventory"} if "capability_inventory" in allowed else set()
-        visible = set(gateways)
-        # Harness-style direct tool surface: an actionable task gets the
-        # generic automation primitives immediately.  Skills may add domain
-        # knowledge but never unlock these tools.
-        actionable = any(token in compact for token in (
-            "读取", "查看", "检查", "分析", "查找", "搜索", "修改", "修复", "编辑", "写入", "创建",
-            "生成", "构建", "运行", "执行", "测试", "验证", "整理", "转换", "下载", "安装",
-            "read", "inspect", "search", "edit", "fix", "write", "create", "build", "run", "test",
-        ))
-        if actionable:
-            visible.update(name for name in (
-                "read_file", "write_file", "edit_file", "list_directory", "search_files", "glob_files", "pwsh",
-            ) if name in allowed)
-        if any(token in compact for token in ("后台", "批量", "并行", "生成", "构建", "执行", "运行", "测试", "background", "batch", "build", "run", "test")):
-            visible.update(name for name in (
-                "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "todo_write",
-            ) if name in allowed)
-        if any(token in compact for token in ("产物", "成品", "交付", "验证", "校验", "输出文件", "artifact", "deliver", "output")):
-            visible.update(name for name in ("artifact_report",) if name in allowed)
-
-        # 图片读取意图：真正要求“读图/看图/列文件夹”时才暴露读取类工具。仅笼统提到
-        # “图片”的普通描述性闲聊必须保持精简（见
-        # test_progressive_tool_visibility_keeps_plain_chat_compact）。
-        image_intent = actionable or any(token in compact for token in (
-            "看图", "读图", "识图", "查看图片", "读取图片", "文件夹", "目录",
-            "read images", "folder of images", "image folder",
-        ))
-        if image_intent and any(keyword in compact for keyword in (
-            "图片", "图", "读图", "识图", "看图", "图像", "image", "picture",
-            "photo", "visual", "read images", "folder of images",
-        )):
-            visible.update(name for name in (
-                "vision_read_folder", "vision_describe", "read_file",
-                "list_directory", "glob_files", "search_files",
-            ) if name in allowed)
-
-        groups = (
-            (("文件", "目录", "源码", "代码", "读取", "查找", "搜索文件", "path", "file", "folder"),
-             {"read_file", "list_directory", "search_files", "glob_files"}),
-            (("修改", "编辑", "写入", "保存", "创建文件", "追加", "write", "edit", "patch"),
-             {"read_file", "write_file", "edit_file", "list_directory", "search_files", "glob_files"}),
-            (("命令", "终端", "脚本", "运行", "执行", "powershell", "python", "shell", "安装依赖"),
-             {"run_command", "pwsh", "write_file", "run_skill_script", "run_in_background", "job_output", "job_status", "job_wait"}),
-            (("联网", "网页", "网址", "新闻", "最新", "搜索网络", "http", "url", "website"),
-             {"web_search", "http_request"}),
-            (("后台", "并行", "子agent", "子 agent", "background", "subagent", "job"),
-             {"run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write"}),
-            (("ocr", "文字识别", "裁剪", "坐标", "检测", "取色", "像素", "ground", "crop"),
-             {"vision_ground", "vision_detect", "vision_crop", "vision_ocr", "vision_colors", "vision_pixel_diff"}),
-            (("comfyui", "8188", "system_stats", "生成图片", "生成图", "生图"),
-             {"http_request", "read_file", "write_file", "run_command", "run_in_background",
-              "job_output", "job_status", "job_wait", "comfyui_prepare_workflow", "comfyui_batch"}),
-            (("工作流", "workflow", "提交并生成", "queueprompt", "queue prompt"),
-             {"http_request", "read_file", "write_file", "run_command", "run_in_background",
-              "job_output", "job_status", "job_wait", "comfyui_prepare_workflow", "comfyui_batch"}),
-            (("短剧", "视频生成", "ref2va", "minimaxh3", "minimax h3"),
-             {"http_request", "read_file", "write_file", "run_command", "run_skill_script",
-              "run_in_background", "job_output", "job_status", "job_wait", "comfyui_prepare_workflow", "comfyui_batch"}),
-            (("mcp", "comfy-mcp", "注册mcp", "注册 mcp"),
-             {"call_mcp", "register_mcp"}),
-            (("安装skill", "安装 skill", "导入skill", "导入 skill"),
-             {"install_skill"}),
-        )
-        for keywords, names in groups:
-            if any(keyword in compact for keyword in keywords):
-                visible.update(name for name in names if name in allowed)
-
-        for spec in schemas:
-            name = str(spec.get("name") or "")
-            if name not in allowed:
-                continue
-            fragments = [part for part in re.split(r"[_\W]+", name.lower()) if len(part) >= 3]
-            if name.lower() in text or any(part in text for part in fragments):
-                visible.add(name)
-
-        if active_skills:
-            visible.update(
-                name for name in ("read_file", "run_skill_script") if name in allowed
-            )
-        # Once task-specific tools are visible, do not tempt weaker local
-        # models into repeatedly querying the static capability inventory.
-        if visible - gateways:
-            visible.discard("capability_inventory")
-        return visible
-
-    @staticmethod
-    def _prefilter(message: str, skills: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-        normalized = re.sub(r"\s+", "", message.lower())
-        units = set(normalized) | {normalized[index : index + 2] for index in range(max(0, len(normalized) - 1))}
-        scored = []
-        for skill in skills:
-            haystack = (skill["name"] + skill["description"]).lower()
-            score = sum(3 if len(unit) > 1 else 1 for unit in units if unit and unit in haystack)
-            if skill["name"].lower() in normalized:
-                score += 30
-            scored.append((score, skill))
-        scored.sort(key=lambda item: (-item[0], item[1]["name"]))
-        useful = [item for score, item in scored if score > 0]
-        return (useful or [item for _, item in scored])[:limit]
 
     @classmethod
     def _parse_action(cls, text: str) -> dict[str, Any]:
