@@ -824,13 +824,14 @@ def build_capability_tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="install_skill",
             description=(
-                "安装经过校验的本地 Skill 文件夹、ZIP 或单个 Markdown。"
+                "安装经过校验的本地 Skill 文件夹或单个 Markdown（.md）。"
+                "压缩包不接受：先用 unpack_skill_archive 解压到工作区，再对该文件夹调用本工具。"
                 "来源可先由现有工具下载到工作区；安装成功后本轮即可继续使用该 Skill。"
             ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "source_path": _string("本地 Skill 文件夹、ZIP 或 Markdown 的绝对路径"),
+                    "source_path": _string("本地 Skill 文件夹或 Markdown（.md）的绝对路径"),
                     "name": _string("可选安装名称", ""),
                     "destination": _string("可选的已配置 Skill 根目录", ""),
                 },
@@ -840,6 +841,27 @@ def build_capability_tool_specs() -> list[ToolSpec]:
             retryable=False,
             timeout=120,
             permission="confirm",
+        ),
+        ToolSpec(
+            name="unpack_skill_archive",
+            description=(
+                "校验并解压一个本地 Skill zip 压缩包到工作区的专用子目录（.skill_incoming）。"
+                "后端会做强校验（zip 损坏、越界路径、zip 炸弹、体积、是否含 SKILL.md），"
+                "校验通过才解压并返回解压后含 SKILL.md 的文件夹绝对路径；"
+                "随后用 install_skill 安装该文件夹。rar/7z 暂不支持，请先转成 zip。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "archive_path": _string("本地 Skill zip 压缩包的绝对路径"),
+                    "name": _string("可选的目标解压目录名（默认取压缩包文件名）", ""),
+                },
+                "required": ["archive_path"],
+            },
+            side_effect=True,
+            retryable=False,
+            timeout=120,
+            permission="auto",
         ),
     ]
 

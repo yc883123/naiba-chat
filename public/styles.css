@@ -164,6 +164,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .starter-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: min(680px, 80vw); gap: 8px; }
 .starter-grid button { min-height: 64px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 10px 12px; }
 .starter-grid button:hover { border-color: var(--green); }
+.starter-grid .starter-add { display: grid; place-items: center; font-size: 28px; color: var(--green); min-height: 64px; }
+.starter-grid .custom-starter { position: relative; display: flex; }
+.starter-grid .custom-starter > button { flex: 1; min-width: 0; }
+.starter-grid .custom-starter .starter-del,
+.starter-grid .custom-starter .starter-edit { position: absolute; top: 4px; width: 20px; height: 20px; min-height: 0; padding: 0; display: none; place-items: center; font-size: 14px; line-height: 1; color: var(--muted); border: 0; background: none; }
+.starter-grid .custom-starter .starter-del { right: 6px; }
+.starter-grid .custom-starter .starter-edit { right: 28px; }
+.starter-grid .custom-starter:hover .starter-del,
+.starter-grid .custom-starter:hover .starter-edit { display: grid; }
+.starter-grid .custom-starter .starter-del:hover { color: var(--red); }
+.starter-grid .custom-starter .starter-edit:hover { color: var(--green); }
+.starter-prompt-body { padding: 4px 20px 18px; display: grid; gap: 12px; }
 .message-row { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; margin-bottom: 28px; }
 .message-row.user { grid-template-columns: minmax(0, 1fr); justify-items: end; }
 .message-avatar { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--radius); background: var(--green); color: white; font-weight: 700; font-size: 12px; }

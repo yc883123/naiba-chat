@@ -79,6 +79,8 @@
             <button data-prompt="列出你当前所有可用工具。">列出所有可用工具</button>
             <button data-prompt="列出当前文件夹下的所有文件。">列出所有文件</button>
             <button data-prompt="不进行任何操作，先理解你已接收到的系统指令，然后等待后续命令。">等待用户指令</button>
+            <button data-install-skill="1">安装 Skill</button>
+            <button class="starter-add" id="starterAddBtn" title="添加自定义指令" aria-label="添加自定义指令">＋</button>
           </div>
         </div>
       </section>
@@ -195,6 +197,21 @@
     </label>
     <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
     <div class="skill-list" id="skillList"></div>
+  </dialog>
+
+  <dialog id="starterPromptDialog" class="panel-dialog">
+    <div class="dialog-toolbar">
+      <div><h2>添加自定义指令</h2><p>保存后可在「开始新对话」页快速复用</p></div>
+      <button class="icon-button" data-close="starterPromptDialog" type="button" title="关闭" aria-label="关闭">×</button>
+    </div>
+    <div class="starter-prompt-body">
+      <label class="field-wide">指令标题<input id="starterPromptTitle" type="text" maxlength="40" placeholder="例如：整理工作流"></label>
+      <label class="field-wide">指令内容<textarea id="starterPromptText" rows="6" placeholder="输入发送给 AI 的完整指令"></textarea></label>
+      <div class="form-actions">
+        <button class="control-button" type="button" data-close="starterPromptDialog">取消</button>
+        <button class="primary-button" id="saveStarterPrompt" type="button">保存</button>
+      </div>
+    </div>
   </dialog>
 
   <dialog id="skillImportDialog" class="panel-dialog skill-import-dialog">

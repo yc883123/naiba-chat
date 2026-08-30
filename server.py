@@ -1047,6 +1047,47 @@ class ConfigStore:
             self.save()
             return list(self.data["skills_dirs"])
 
+    def get_starter_prompts(self) -> list[dict[str, str]]:
+        with self.lock:
+            items = self.data.get("starter_prompts", [])
+            if isinstance(items, list):
+                return [dict(item) for item in items if isinstance(item, dict)]
+            return []
+
+    def add_starter_prompt(self, title: str, text: str) -> list[dict[str, str]]:
+        title = " ".join(str(title or "").strip().split())[:40] or "自定义指令"
+        text = str(text or "").strip()
+        if not text:
+            raise ValueError("指令内容不能为空")
+        with self.lock:
+            prompts = self.data.setdefault("starter_prompts", [])
+            if not isinstance(prompts, list):
+                prompts = []
+                self.data["starter_prompts"] = prompts
+            prompts.append({"title": title, "text": text})
+            self.save()
+        return self.get_starter_prompts()
+
+    def remove_starter_prompt(self, index: int) -> list[dict[str, str]]:
+        with self.lock:
+            prompts = self.data.setdefault("starter_prompts", [])
+            if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
+                prompts.pop(int(index))
+                self.save()
+        return self.get_starter_prompts()
+
+    def update_starter_prompt(self, index: int, title: str, text: str) -> list[dict[str, str]]:
+        title = " ".join(str(title or "").strip().split())[:40] or "自定义指令"
+        text = str(text or "").strip()
+        if not text:
+            raise ValueError("指令内容不能为空")
+        with self.lock:
+            prompts = self.data.setdefault("starter_prompts", [])
+            if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
+                prompts[int(index)] = {"title": title, "text": text}
+                self.save()
+        return self.get_starter_prompts()
+
     def _resolve_dir(self, raw: str) -> Path:
         path = Path(raw).expanduser()
         if not path.is_absolute():
@@ -3108,6 +3149,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"conversations": APP.storage.list_conversations(mode=mode)})
         elif path == "/api/workspaces":
             self._json({"workspaces": APP.config.data.get("workspaces", [])})
+        elif path == "/api/starter-prompts":
+            self._json({"prompts": APP.config.get_starter_prompts()})
         elif path.startswith("/api/conversations/"):
             conversation_id = path.rsplit("/", 1)[-1]
             conversation = APP.storage.get_conversation(conversation_id)
@@ -3248,6 +3291,23 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             self._json(result, HTTPStatus.CREATED)
+        elif path.startswith("/api/conversations/") and path.endswith("/tools"):
+            conversation_id = path.split("/")[-2]
+            tools = body.get("tools") or []
+            if not isinstance(tools, list) or not tools:
+                self._json({"error": "tools 必须是非空数组"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                result = APP.runs.enable_conversation_tools(
+                    conversation_id, [str(item) for item in tools if str(item).strip()]
+                )
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
+                return
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json(result, HTTPStatus.OK)
         elif path.startswith("/api/conversations/") and path.endswith("/settings"):
             conversation_id = path.split("/")[-2]
             title = body.get("title")
@@ -3573,6 +3633,38 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._delete_skill(body)
         elif path == "/api/skills/unhide":
             self._unhide_skill(body)
+        elif path == "/api/starter-prompts":
+            title = str(body.get("title") or "").strip()
+            text = str(body.get("text") or "").strip()
+            if not text:
+                self._json({"error": "指令内容不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                prompts = APP.config.add_starter_prompt(title, text)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"prompts": prompts}, HTTPStatus.CREATED)
+        elif path.startswith("/api/starter-prompts/"):
+            index = path.rsplit("/", 1)[-1]
+            try:
+                idx = int(index)
+                if idx < 0:
+                    raise ValueError
+            except ValueError:
+                self._json({"error": "无效的指令序号"}, HTTPStatus.BAD_REQUEST)
+                return
+            title = str(body.get("title") or "").strip()
+            text = str(body.get("text") or "").strip()
+            if not text:
+                self._json({"error": "指令内容不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                prompts = APP.config.update_starter_prompt(idx, title, text)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"prompts": prompts})
         elif path == "/api/migration/backup":
             self._json(APP.migration_backup())
         elif path == "/api/migration/run":
@@ -3746,6 +3838,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         if path == "/api/tasks/clear":
             self._json({"deleted": APP.storage.clear_terminal_background_tasks()})
+        elif path.startswith("/api/starter-prompts/"):
+            index = path.rsplit("/", 1)[-1]
+            try:
+                idx = int(index)
+                if idx < 0:
+                    raise ValueError
+            except ValueError:
+                self._json({"error": "无效的指令序号"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"prompts": APP.config.remove_starter_prompt(idx)})
         elif path.startswith("/api/conversations/") and path.endswith("/messages"):
             conversation_id = path.split("/")[-2]
             if APP.storage.list_background_tasks(conversation_id, active_only=True):

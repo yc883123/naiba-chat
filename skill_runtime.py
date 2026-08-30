@@ -1081,8 +1081,7 @@ class SkillAgent:
                 raise TaskCancelled("任务已取消")
             # Auto routing must not spend a full model request before every
             # ordinary chat turn. Strong local matches are activated directly;
-            # ambiguous tasks can use capability_inventory to discover available tools
-            # from the main agent turn.
+            # ambiguous tasks rely on the main agent turn.
             routed = self._match_skills(routing_message, skills, 3)
             existing = {item["id"] for item in active}
             routed = [item for item in routed if item["id"] not in existing]
@@ -1243,8 +1242,6 @@ class SkillAgent:
                 *tool_lines,
                 "优先使用原生工具；接口不支持时可输出兼容 JSON 工具动作。不要主动逐条列举所有工具。",
             ]
-            if "capability_inventory" in allowed:
-                guide_lines.append("capability_inventory 仅用于查询某个工具的具体说明/参数/使用场景，不是启用或发现工具的门槛。")
             tool_guide = "\n".join(guide_lines)
         else:
             tool_guide = "\n".join(
@@ -1348,13 +1345,6 @@ class SkillAgent:
             "未经用户直接要求，不读取或外传凭据、密钥及无关文件。\n\n",
         ])
         system = "".join(system_parts) + workspace_line + tool_guide + script_first_guide
-        if "capability_inventory" in allowed:
-            system += (
-                "\n\n工具说明：会话可用工具已全部声明并可直接调用，无需先查询或激活。"
-                "确需某一工具的详细说明/参数/使用场景时，用 capability_inventory 查询该工具；"
-                "capability_inventory 不是启用工具的门槛。"
-                "普通聊天、看图、翻译或总结无需查询能力。耗时任务可用后台 Job；完成前必须收集结果。"
-            )
         if agent_system_prompt.strip():
             system += "\n\n用户配置的 Agent 指令：\n" + agent_system_prompt.strip()
         mcp_guide = self.executor.mcp_tool_guide()
@@ -1456,7 +1446,6 @@ class SkillAgent:
         repeat_count = 0
         no_progress_signature = ""
         no_progress_count = 0
-        completed_inventory_queries: set[str] = set()
         unsupported_claim_retries = 0
         unsupported_submission_retries = 0
         parse_error_count = 0
@@ -1619,7 +1608,7 @@ class SkillAgent:
                             correction = (
                                 "你刚才声称 ComfyUI 已连接或正常运行，但本轮没有成功的连接检查工具证据。"
                                 "请立即调用 http_request，对 http://127.0.0.1:8188/system_stats 执行 GET；"
-                                "只有 HTTP 200 后才能确认。不要调用 capability_inventory，也不要把 HTTP API 称为 MCP 接口。"
+                                "只有 HTTP 200 后才能确认。也不要把 HTTP API 称为 MCP 接口。"
                             )
                         else:
                             correction = (
@@ -1699,7 +1688,7 @@ class SkillAgent:
                 len(normalized_calls) > 1
                 and tool_registry is not None
                 and all(
-                    str(call.get("tool") or "") not in {"capability_inventory", "todo_write"}
+                    str(call.get("tool") or "") not in {"todo_write"}
                     and not tool_registry.side_effect(str(call.get("tool") or ""))
                     for call in normalized_calls
                 )
@@ -1738,44 +1727,10 @@ class SkillAgent:
                 key = f"{tool}:{json.dumps(arguments, ensure_ascii=False, sort_keys=True)}"
                 if parallel_safe:
                     success, result = parallel_results[call_index]
-                elif tool == "capability_inventory" and key in completed_inventory_queries:
-                    success, result = False, (
-                        "该轮相同的能力查询已经返回过；禁止用不同措辞重复查同一批工具。需要其他工具的说明时，"
-                        "请针对具体工具名查询，或直接使用函数声明中已有的说明。"
-                    )
                 else:
                     success, result = self._execute_with_retry(
                         tool, arguments, active, allowed, tool_registry, cancel_event, event, run_context
                     )
-                    if tool == "capability_inventory" and success:
-                        completed_inventory_queries.add(key)
-                        revealed = self._reveal_inventory_tools(
-                            result, allowed, available_schemas, native_tools
-                        )
-                        if revealed:
-                            native_tools[:] = [
-                                spec for spec in native_tools
-                                if str(spec.get("name") or "")
-                                not in {"capability_inventory"}
-                            ]
-                            options["tools"] = native_tools
-                            # 能力清单披露不再前插 system（会破坏前缀缓存），改为尾部系统级指令；
-                            # 该消息落在 trace 范围内，下一轮会随 trace 原样重放，字节稳定。
-                            messages.append({
-                                "role": "user",
-                                "content": (
-                                    "[系统指令] 以下为能力清单披露的工具，视为系统级要求，后续必须直接使用；"
-                                    "能力清单与 Skill 激活入口已关闭，禁止猜测 Skill 名称：\n- "
-                                    + "\n- ".join(revealed)
-                                ),
-                            })
-                            event({
-                                "type": "tools_available",
-                                "tools": [
-                                    {"name": name, "description": "能力清单动态披露"}
-                                    for name in revealed
-                                ],
-                            })
                 tool_logger(tool, arguments, result, success)
                 run = {"tool": tool, "arguments": arguments, "result": result[:30000], "success": success, "reason": str(call.get("reason") or "")}
                 runs.append(run)
@@ -1881,31 +1836,6 @@ class SkillAgent:
             event({"type": "step_finished", "step": step})
 
     @staticmethod
-    def _reveal_inventory_tools(
-        result: str,
-        allowed: set[str],
-        available_schemas: list[dict[str, Any]],
-        native_tools: list[dict[str, Any]],
-    ) -> list[str]:
-        try:
-            payload = json.loads(result)
-        except (json.JSONDecodeError, TypeError):
-            return []
-        requested = {
-            str(item.get("name") or "")
-            for item in payload.get("tools") or []
-            if isinstance(item, dict) and item.get("name")
-        }
-        existing = {str(item.get("name") or "") for item in native_tools}
-        revealed: list[str] = []
-        for spec in available_schemas:
-            name = str(spec.get("name") or "")
-            if name in requested and name in allowed and name not in existing:
-                native_tools.append(spec)
-                existing.add(name)
-                revealed.append(name)
-        return revealed
-
     @staticmethod
     def _unsupported_comfyui_connection_claim(
         routing_message: str,
@@ -2868,15 +2798,97 @@ def validate_and_install_skill(
     try:
         if src.is_dir():
             return _install_folder(src, managed, name)
-        if src.suffix.lower() == ".zip":
-            return _install_zip(src, managed, name)
         if src.suffix.lower() == ".md":
             return _install_single_md(src, managed, name)
-        return {"success": False, "error": "不支持的来源类型：仅支持文件夹、ZIP 或单个 .md 文件"}
+        if src.suffix.lower() == ".zip":
+            return {"success": False, "error": "压缩包请先使用 unpack_skill_archive 解压到工作区后，再对该文件夹调用 install_skill"}
+        return {"success": False, "error": "不支持的来源类型：仅支持文件夹或单个 .md 文件"}
     except _SkillInstallError as exc:
         return {"success": False, "error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         return {"success": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def validate_and_extract_archive(
+    archive_path: Any,
+    target_dir: Any,
+    name: str | None = None,
+) -> dict[str, Any]:
+    """校验一个 zip 压缩包并在安全校验通过后解压到 target_dir（工作区专属子目录）。
+
+    校验与 ``_install_zip`` 一致：zip 损坏、越界路径（绝对/``..``/盘符/UNC）、
+    zip 炸弹比率、条目数/体积上限、解压后必须含 SKILL.md。校验失败抛 ``_SkillInstallError``。
+
+    Returns:
+        {"success": True, "extracted_dir": str, "root_dir": str, "name": str}
+        或 {"success": False, "error": str}
+    """
+    src = Path(archive_path).expanduser().resolve()
+    if not src.is_file() or src.suffix.lower() != ".zip":
+        return {"success": False, "error": "仅支持 .zip 压缩包（rar/7z 暂不支持，请转成 zip）"}
+    target = Path(target_dir).expanduser().resolve()
+    try:
+        archive = zipfile.ZipFile(src)
+    except zipfile.BadZipFile as exc:
+        return {"success": False, "error": f"不是有效的 zip 压缩包：{exc}"}
+    with archive:
+        default_error = None
+        try:
+            bad = archive.testzip()
+            if bad is not None:
+                return {"success": False, "error": f"压缩包损坏：{bad}"}
+            members = archive.infolist()
+            if len(members) > MAX_FILE_COUNT:
+                return {"success": False, "error": f"压缩包内文件数量过多（超过 {MAX_FILE_COUNT}）"}
+            total_uncompressed = sum(member.file_size for member in members)
+            if total_uncompressed > MAX_TOTAL_SIZE:
+                return {"success": False, "error": "压缩包解压后体积过大（超过 50 MB）"}
+            compressed = src.stat().st_size
+            if compressed > 0 and total_uncompressed > ZIP_BOMB_RATIO * compressed:
+                return {"success": False, "error": "检测到可能的 zip 炸弹（解压体积远超压缩体积）"}
+            for member in members:
+                if member.file_size > MAX_UNCOMPRESSED_ENTRY:
+                    return {"success": False, "error": f"压缩包单文件解压后过大（超过 50 MB）：{member.filename}"}
+                filename = member.filename
+                parts = Path(filename).parts
+                if (
+                    Path(filename).is_absolute()
+                    or filename.startswith("/")
+                    or ".." in parts
+                    or any(":" in part for part in parts)
+                ):
+                    return {"success": False, "error": f"压缩包包含非法或越界路径：{filename}"}
+            if not _zip_has_skill_md(archive):
+                return {"success": False, "error": "压缩包缺少 SKILL.md（需位于顶层或下一级目录）"}
+            target.mkdir(parents=True, exist_ok=True)
+            dest = _unique_dir(target, name or src.stem)
+            dest.mkdir(parents=True, exist_ok=True)
+            for member in members:
+                t = (dest / member.filename).resolve()
+                if t != dest and not _path_within(t, dest):
+                    return {"success": False, "error": f"压缩包包含越界路径：{member.filename}"}
+            archive.extractall(dest)
+        except _SkillInstallError as exc:
+            default_error = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            default_error = f"{type(exc).__name__}: {exc}"
+        if default_error:
+            return {"success": False, "error": default_error}
+    # 定位含 SKILL.md 的目录（顶层或下一级）
+    head = dest
+    if not (dest / "SKILL.md").is_file():
+        sub = next(
+            (child for child in dest.iterdir() if child.is_dir() and (child / "SKILL.md").is_file()),
+            None,
+        )
+        if sub is not None:
+            head = sub
+    return {
+        "success": True,
+        "extracted_dir": str(head),
+        "root_dir": str(dest),
+        "name": str(head.name),
+    }
 
 
 def remove_skill_references(

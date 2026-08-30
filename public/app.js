@@ -68,6 +68,8 @@ const state = {
   workspaceSort: 'updated',
   workspaceSearch: '',
   expandedGroups: new Set(),
+  customPrompts: [],
+  editingStarterPrompt: -1,
 };
 const draggedFileCache = new Map();
 
@@ -1431,6 +1433,7 @@ async function initialize() {
   renderMcp();
   renderUpdateStatus(state.bootstrap.update || {});
   await loadConversations();
+  await loadStarterPrompts();
   await loadTasks();
   startTaskSync();
   startConversationSync();
@@ -4452,6 +4455,123 @@ async function deleteMessage(row) {
   }
 }
 
+const SKILL_INSTALL_PRESET =
+  '用户希望在本应用内通过你安装一个 Skill。本会话已为你启用 install_skill / unpack_skill_archive（以及读取/编辑/写入文件）工具。'
+  + '请按以下流程执行，并【先等待用户给出具体指令】：\n'
+  + '1. 等待用户说明要安装来源。来源只支持：本地文件夹、单个 .md 文件、或一个 .zip 压缩包（rar/7z 暂不支持，提醒用户先转成 zip）。\n'
+  + '2. 拿到来源后：\n'
+  + '   - 文件夹：直接用 read_file 确认其顶层或下一级存在 SKILL.md；\n'
+  + '   - 单个 .md：直接用 read_file 读取；\n'
+  + '   - 压缩包：先调 unpack_skill_archive{archive_path}（后端会做强校验并解压到工作区 .skill_incoming），再用 read_file 确认解压出的 SKILL.md。\n'
+  + '3. 校验 SKILL.md：确认它能被识别为 Skill——必须包含 YAML frontmatter，且同时有 name 与 description。若不合法（缺 frontmatter、缺 name/description、格式错误），用 edit_file/write_file 帮用户修正后再继续。\n'
+  + '4. 安装：\n'
+  + '   - 文件夹/解压后的文件夹 → install_skill{source_path: <该文件夹绝对路径>}；\n'
+  + '   - 单个 .md → install_skill{source_path: <该 .md 绝对路径>}。\n'
+  + '5. 安装成功后：清理工作区 .skill_incoming 下的临时解压目录（unpack_skill_archive 留下的那个），并告知用户该 Skill 已安装、如何再次使用（可通过 /技能名 引用）。\n'
+  + '6. 若用户给的来源不是有效的 Skill（无合法 SKILL.md 或不是上述类型），不要强行安装，向用户说明并请其提供正确的来源。';
+
+async function startSkillInstall() {
+  if (state.chatRunId || state.abortController) {
+    toast('请先等待当前任务结束或停止后再安装 Skill');
+    return;
+  }
+  if (!state.conversationId) await createConversation();
+  const cid = state.conversationId;
+  try {
+    const result = await api(`/api/conversations/${cid}/tools`, {
+      method: 'POST',
+      body: { tools: ['install_skill', 'unpack_skill_archive', 'read_file', 'edit_file', 'write_file'] },
+    });
+    toast(`已启用 Skill 安装工具${result.added?.length ? `（新增 ${result.added.length} 个）` : ''}`);
+  } catch (error) {
+    toast(`启用安装工具失败：${error.message}`);
+    return;
+  }
+  sendMessage(SKILL_INSTALL_PRESET);
+}
+
+// ---- 自定义指令（开始新对话页的“+”按钮）：固化到用户 config，可快速复用 ----
+async function loadStarterPrompts() {
+  try {
+    const r = await api('/api/starter-prompts');
+    state.customPrompts = Array.isArray(r.prompts) ? r.prompts : [];
+    renderStarterPrompts();
+  } catch (error) {
+    state.customPrompts = [];
+  }
+}
+
+function renderStarterPrompts() {
+  const grid = document.querySelector('.starter-grid');
+  const addBtn = $('#starterAddBtn');
+  if (!grid || !addBtn) return;
+  grid.querySelectorAll('.custom-starter').forEach((el) => el.remove());
+  state.customPrompts.forEach((p, i) => {
+    if (!p || !p.text) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'custom-starter';
+    const main = document.createElement('button');
+    main.type = 'button';
+    main.title = `点击复用：${p.title || '自定义指令'}`;
+    main.textContent = p.title || '自定义指令';
+    main.addEventListener('click', () => sendMessage(p.text));
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    edit.className = 'starter-edit';
+    edit.title = '编辑此指令';
+    edit.textContent = '✎';
+    edit.addEventListener('click', (e) => { e.stopPropagation(); openStarterPromptDialog(i); });
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'starter-del';
+    del.title = '删除此指令';
+    del.textContent = '×';
+    del.addEventListener('click', (e) => { e.stopPropagation(); removeStarterPrompt(i); });
+    wrap.appendChild(main);
+    wrap.appendChild(edit);
+    wrap.appendChild(del);
+    grid.insertBefore(wrap, addBtn);
+  });
+}
+
+function openStarterPromptDialog(index = -1) {
+  state.editingStarterPrompt = index;
+  const p = (index >= 0 ? state.customPrompts[index] : null) || {};
+  $('#starterPromptTitle').value = p.title || '';
+  $('#starterPromptText').value = p.text || '';
+  $('#starterPromptDialog').showModal();
+  $('#starterPromptTitle').focus();
+}
+
+async function saveStarterPrompt() {
+  const title = $('#starterPromptTitle').value;
+  const text = $('#starterPromptText').value;
+  if (!text.trim()) { toast('指令内容不能为空'); return; }
+  const editing = state.editingStarterPrompt;
+  try {
+    const url = editing >= 0 ? `/api/starter-prompts/${editing}` : '/api/starter-prompts';
+    const r = await api(url, { method: 'POST', body: { title, text } });
+    state.customPrompts = r.prompts || [];
+    state.editingStarterPrompt = -1;
+    renderStarterPrompts();
+    $('#starterPromptDialog').close();
+    toast(editing >= 0 ? '已更新自定义指令' : '已保存自定义指令');
+  } catch (error) {
+    toast(`保存失败：${error.message}`);
+  }
+}
+
+async function removeStarterPrompt(index) {
+  try {
+    const r = await api(`/api/starter-prompts/${index}`, { method: 'DELETE' });
+    state.customPrompts = r.prompts || [];
+    renderStarterPrompts();
+    toast('已删除自定义指令');
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
+}
+
 async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
 }
@@ -5637,7 +5757,12 @@ function bindEvents() {
     }
     if (event.target.closest('[data-delete-message]')) deleteMessage(row);
   });
-  $$('.starter-grid button').forEach((button) => button.addEventListener('click', () => sendMessage(button.dataset.prompt)));
+  $$('.starter-grid button').forEach((button) => button.addEventListener('click', () => {
+    if (button.dataset.installSkill) startSkillInstall();
+    else if (button.id === 'starterAddBtn') openStarterPromptDialog();
+    else if (button.dataset.prompt != null) sendMessage(button.dataset.prompt);
+  }));
+  $('#saveStarterPrompt').addEventListener('click', saveStarterPrompt);
   $('#copyAddress').addEventListener('click', async () => {
     if (!state.bootstrap?.lan_enabled || !state.bootstrap?.lan_url) return;
     try {

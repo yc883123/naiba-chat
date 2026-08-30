@@ -379,6 +379,38 @@ class ConversationRunManager:
         self.app.storage.set_enabled_tool_ids(str(conversation.get("id") or ""), baked)
         return baked
 
+    def enable_conversation_tools(
+        self, conversation_id: str, tool_ids: list[str]
+    ) -> dict[str, Any]:
+        """向指定会话“追加/保底注入”若干工具到其固化的启用工具集。
+
+        若会话尚未固化工具集，先按当前 Agent 规则固化成全集，再并集合并；已固化则直接并集。
+        只加不删，用于“开始页安装skill”按钮临时/持久启用的能力工具与读写工具。
+        """
+        conversation = self.app.storage.get_conversation(conversation_id)
+        if not conversation:
+            raise LookupError("对话不存在")
+        agent = self.app.config.get_agent(str(conversation.get("agent_id") or ""))
+        if not agent:
+            agent = self.app.config.get_agent(self.app.config.default_agent_id()) or {
+                "id": "", "name": "Agent", "system_prompt": "", "skill_ids": []
+            }
+        existing = conversation.get("enabled_tool_ids") or []
+        existing = [str(x) for x in existing if str(x).strip()]
+        if not existing:
+            existing = self._bake_session_tool_ids(conversation, agent)
+            existing = [str(x) for x in existing if str(x).strip()]
+        known = set(self._all_tool_names())
+        added: list[str] = []
+        for t in tool_ids:
+            t = str(t or "").strip()
+            if t and t in known and t not in existing:
+                existing.append(t)
+                added.append(t)
+        if added:
+            self.app.storage.set_enabled_tool_ids(conversation_id, existing)
+        return {"enabled_tool_ids": existing, "added": added}
+
     def _condition(self, run_id: str) -> threading.Condition:
         with self._lock:
             return self._conditions.setdefault(run_id, threading.Condition(self._lock))

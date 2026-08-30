@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from skill_runtime import validate_and_install_skill
+from skill_runtime import validate_and_install_skill, validate_and_extract_archive
 
 
 class CapabilityRuntime:
@@ -169,17 +169,16 @@ class CapabilityRuntime:
         active_skills: list[dict[str, Any]],
         run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
-        policy = (run_context or {}).get("skill_policy") or {}
-        if str(policy.get("mode") or "") == "exclusive":
-            return False, "exclusive 模式禁止安装或激活白名单外 Skill"
+        # 放宽：exclusive 模式下也允许安装（中途导入 Skill），供后续引用/使用。
         source = str(arguments.get("source_path") or "").strip()
         if not source:
             return False, "缺少 source_path"
-        configured = self.app.config.get_skills_dirs()
         destination_raw = str(arguments.get("destination") or "").strip()
-        if not destination_raw:
-            destination_raw = str(configured[0] if configured else "skills")
-        destination = self.app.config._resolve_dir(destination_raw)
+        if destination_raw:
+            destination = self.app.config._resolve_dir(destination_raw)
+        else:
+            # 缺省装到托管目录（数据目录的上级 /skills），而不是遗留 APP_DIR/skills。
+            destination = self.app.config.resolve_managed_skills_dir()
         result = validate_and_install_skill(
             source,
             destination,
@@ -188,7 +187,8 @@ class CapabilityRuntime:
         if not result.get("success"):
             return False, str(result.get("error") or "Skill 安装失败")
 
-        self.app.config.add_skills_dir(destination_raw)
+        # 把实际安装目标目录（绝对路径）固化进配置，供后续持久扫描。
+        self.app.config.add_skills_dir(str(destination))
         # Register the resolved destination. Relative names must resolve against
         # the app's configured skill root, not the process working directory.
         self.app.catalog.add_directory(destination)
@@ -219,8 +219,32 @@ class CapabilityRuntime:
             active_skills.append(installed)
         return True, json.dumps(result, ensure_ascii=False)
 
+    def unpack_skill_archive(
+        self,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        run_context: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        """校验并解压一个 Skill zip 到工作区专属子目录（由后端代码做强校验）。
+
+        AI 拿到解压后的文件夹路径后，再用 install_skill 安装。
+        """
+        archive_path = str(arguments.get("archive_path") or "").strip()
+        if not archive_path:
+            return False, "缺少 archive_path"
+        name = str(arguments.get("name") or "").strip() or None
+        workspace = getattr((run_context or {}).get("executor"), "workspace", None) or ""
+        if not workspace:
+            return False, "无法确定工作区目录"
+        incoming = Path(workspace).expanduser().resolve() / ".skill_incoming"
+        result = validate_and_extract_archive(archive_path, incoming, name)
+        if not result.get("success"):
+            return False, str(result.get("error") or "解压校验失败")
+        return True, json.dumps(result, ensure_ascii=False)
+
     def tool_handlers(self) -> dict[str, Any]:
         return {
             "capability_inventory": self.inventory,
             "install_skill": self.install_skill,
+            "unpack_skill_archive": self.unpack_skill_archive,
         }
