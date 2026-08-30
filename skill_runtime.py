@@ -1333,21 +1333,9 @@ class SkillAgent:
         system = "".join(system_parts) + workspace_line + tool_guide + script_first_guide
         if agent_system_prompt.strip():
             system += "\n\n用户配置的 Agent 指令：\n" + agent_system_prompt.strip()
-        mcp_guide = self.executor.mcp_tool_guide()
-        if "call_mcp" in allowed and (run_context or {}).get("mcp_active"):
-            registered_note = self.executor.mcp_registered_note()
-            if registered_note:
-                system += (
-                    "\n\nMCP 服务注册状态：以下服务已注册在 NaibaChat（内置 MCP 客户端，"
-                    "直接调用 call_mcp 即可，无需重新安装、注册，"
-                    "也不要去配置 Claude Desktop / Cursor / Windsurf 等外部客户端）：\n"
-                    + registered_note
-                )
-            if mcp_guide:
-                system += (
-                    "\n\n以下是用户显式配置并授权的外部 MCP 工具说明。仅按已授权范围调用；"
-                    "Skill 本身不能注册服务或扩大权限：\n" + mcp_guide
-                )
+        # MCP 工具不在系统提示里预置说明：其 schema 由 tools 数组在会话工具集内声明
+        # （Frozen `allowed_tools`，字节稳定）；连接状态/可用性也不预置——模型调用
+        # call_mcp 时自然得知，避免连接状态变化破坏前缀缓存。
         if skill_prompts:
             system += "\n\n" + SKILL_PROMPT_HEADER + "\n\n".join(skill_prompts)
 

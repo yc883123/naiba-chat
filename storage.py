@@ -12,7 +12,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -219,6 +219,20 @@ def _migrate_to_v11(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v12(db: sqlite3.Connection) -> None:
+    """Persist a conversation's frozen image-support capability.
+
+    模型是否支持图片（brain_supports_images）按会话固化一次，避免每轮随“本轮是否带图”
+    重新探测导致结果漂移、进而改变视觉工具集并破坏前缀缓存。旧会话默认 -1（未固化）。
+    """
+    try:
+        db.execute("SELECT chat_supports_images FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute(
+            "ALTER TABLE conversations ADD COLUMN chat_supports_images INTEGER NOT NULL DEFAULT -1"
+        )
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -232,6 +246,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     9: _migrate_to_v9,
     10: _migrate_to_v10,
     11: _migrate_to_v11,
+    12: _migrate_to_v12,
 }
 
 
@@ -527,13 +542,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -541,7 +556,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -565,6 +580,14 @@ class ChatStorage:
             db.execute(
                 "UPDATE conversations SET skill_policy = ? WHERE id = ?",
                 (json.dumps(policy or {}, ensure_ascii=False), conversation_id),
+            )
+
+    def set_conversation_chat_supports_images(self, conversation_id: str, value: bool) -> None:
+        """Persist a conversation's frozen image-support capability (avoid re-probing per turn)."""
+        with self._connect() as db:
+            db.execute(
+                "UPDATE conversations SET chat_supports_images = ? WHERE id = ?",
+                (int(bool(value)), conversation_id),
             )
 
     def branch_conversation(self, source_id: str, message_id: str) -> dict[str, Any]:
@@ -613,14 +636,14 @@ class ChatStorage:
                 "id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, "
                 "lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, "
                 "stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, "
-                "skill_policy, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_id, new_title, src["mode"], src["permission_mode"],
                     src["web_search_enabled"], src["deep_reasoning_enabled"], src["lightweight_mode"],
                     src["lightweight_disabled_features"], 1, src["system_prompt"], src["stream_enabled"],
                     src["workspace_dir"], src["workspace_group"], src["reasoning_effort"],
-                    src["enabled_tool_ids"], inherited_skill_policy, src["provider_id"], src["model_key"],
+                    src["enabled_tool_ids"], inherited_skill_policy, src["chat_supports_images"], src["provider_id"], src["model_key"],
                     src["agent_id"], src["interaction_mode"], now, now,
                 ),
             )
