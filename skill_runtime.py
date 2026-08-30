@@ -1651,9 +1651,12 @@ class SkillAgent:
                     content = "尚未提交 ComfyUI 任务：本轮没有成功的 /prompt、comfyui_batch 或等价提交工具结果。"
                 if reasoning:
                     event({"type": "reasoning", "content": reasoning})
-                event({"type": "assistant_response", "content": content[:2000], "is_tool": False})
+                # 不要把最终答复截断在 2000 字符：assistant_response / run_completed 是
+                # 前端用于重建最终答复正文的事件源，截断会让长答复（如 H3 多段提示词）在
+                # “正文到某处就消失、只显示到冒号”的 bug 中显示不全。
+                event({"type": "assistant_response", "content": content, "is_tool": False})
                 event({"type": "step_finished", "step": step})
-                event({"type": "run_completed", "message": content[:2000]})
+                event({"type": "run_completed", "message": content})
                 # 让 trace 成为这一轮发给模型的完整字节序列：把最终答复也纳入 messages，
                 # 使 trace = 线上最后一步请求 + 答复。这样重放端只需重放 trace，就能逐字节
                 # 还原整轮上下文，不必再依赖“答复不在 trace 里”这条容易失效的隐式约定
