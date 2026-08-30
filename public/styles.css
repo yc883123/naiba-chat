@@ -213,10 +213,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-body :not(pre) > code { background: #e7eae5; padding: 2px 5px; border-radius: 3px; }
 .message-body .table-wrap { overflow-x: auto; margin: 10px 0; }
 .message-body table { border-collapse: collapse; width: 100%; min-width: 260px; font-size: 13px; line-height: 1.45; }
-.message-body th, .message-body td { border: 1px solid #3c423c; padding: 6px 9px; text-align: left; vertical-align: top; word-break: break-word; }
-.message-body th { background: #303530; color: #d8ddd8; font-weight: 600; }
-.message-body td { background: #252925; }
-.message-body tbody tr:nth-child(even) td { background: #2a2f2a; }
+.message-body th, .message-body td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; word-break: break-word; color: var(--text); }
+.message-body th { background: var(--surface-2); font-weight: 600; }
+.message-body td { background: var(--surface); }
+.message-body tbody tr:nth-child(even) td { background: var(--surface-2); }
 .message-body a { color: var(--green); }
 .message-actions { margin-top: 8px; display: flex; gap: 8px; }
 .message-actions button { border: 0; background: none; color: var(--muted); padding: 2px 5px; font-size: 12px; }
