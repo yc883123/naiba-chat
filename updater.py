@@ -17,8 +17,6 @@ from typing import Any, Callable
 REPOSITORY = "yc883123/naiba-chat"
 MANIFEST_ASSET = "naiba-chat-update.json"
 EXECUTABLE_ASSET = "naiba-chat.exe"
-LATEST_RELEASE_URL = f"https://github.com/{REPOSITORY}/releases/latest"
-LATEST_DOWNLOAD_URL = f"{LATEST_RELEASE_URL}/download"
 DEFAULT_RELEASE_NOTES = [
     "修复 Windows 10053/10054/10061 瞬时连接错误，并在失败时显示供应商主机和排查提示。",
     "修复推理模型只返回 reasoning 时测试连接被误判失败的问题。",
@@ -37,17 +35,26 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _release_body_to_notes(body: Any) -> list[str]:
+    """把 GitHub Release body 转成结构化更新说明列表，供版本下拉展示。"""
+    if not body:
+        return []
+    return [line.strip() for line in str(body).splitlines() if line.strip()]
+
+
 class UpdateManager:
-    def __init__(self, app_dir: Path, data_dir: Path, auto_update: bool = True):
+    def __init__(self, app_dir: Path, data_dir: Path):
         self.app_dir = app_dir.resolve()
         self.data_dir = data_dir.resolve()
-        self.auto_update = bool(auto_update)
         self.lock = threading.RLock()
         self.latest: dict[str, Any] | None = None
+        self.releases: list[dict[str, Any]] = []
+        self.releases_loaded_at = 0
         self.phase = "idle"
         self.error = ""
         self.checked_at = 0
         self.build = self._read_build_info()
+        self.pending_verification = self.verify_pending()
 
     def _run_git(self, *args: str, timeout: int = 30) -> str:
         attempts = 2 if args and args[0] in {"fetch", "pull", "ls-remote"} else 1
@@ -162,7 +169,6 @@ class UpdateManager:
                 "repository": REPOSITORY,
                 "supported": self.supported,
                 "mode": self.mode,
-                "auto_update": self.auto_update,
                 "current_version": self.build.get("version", "dev"),
                 "current_commit": current_commit,
                 "phase": self.phase,
@@ -174,11 +180,13 @@ class UpdateManager:
                 "release_notes": latest.get("release_notes", []),
                 "published_at": latest.get("published_at", ""),
                 "release_url": latest.get("release_url", ""),
+                "releases": list(self.releases),
+                "pending_verification": self.pending_verification,
                 "source_dirty": self._source_dirty(),
             }
 
     @staticmethod
-    def _request_json(url: str, timeout: int = 20) -> dict[str, Any]:
+    def _request_json(url: str, timeout: int = 20) -> dict[str, Any] | list[Any]:
         request = urllib.request.Request(
             url,
             headers={
@@ -189,7 +197,7 @@ class UpdateManager:
         )
         with urllib.request.urlopen(request, timeout=timeout) as response:
             value = json.loads(response.read().decode("utf-8-sig"))
-        if not isinstance(value, dict):
+        if not isinstance(value, (dict, list)):
             raise RuntimeError("更新服务器返回了无效数据")
         return value
 
@@ -220,6 +228,96 @@ class UpdateManager:
             "asset": asset,
             "version": str(manifest.get("version") or commit[:7]),
             "release_notes": release_notes,
+        }
+
+    def _fetch_releases(self, force: bool = False) -> list[dict[str, Any]]:
+        cache = self.data_dir / "update" / "releases.json"
+        if not force and self.releases_loaded_at and time.time() - self.releases_loaded_at < 6 * 3600:
+            return self.releases
+        url = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=100"
+        data = self._request_json(url)
+        if not isinstance(data, list):
+            raise RuntimeError("更新服务器返回了无效数据")
+        releases: list[dict[str, Any]] = []
+        for item in data:
+            tag = str(item.get("tag_name") or "")
+            if not tag:
+                continue
+            assets = item.get("assets") or []
+            asset_names = {str(asset.get("name") or "") for asset in assets}
+            releases.append(
+                {
+                    "tag": tag,
+                    "version": tag.lstrip("v"),
+                    "published_at": str(item.get("published_at") or ""),
+                    "release_url": str(item.get("html_url") or ""),
+                    "release_notes": _release_body_to_notes(item.get("body")),
+                    "installable": MANIFEST_ASSET in asset_names and EXECUTABLE_ASSET in asset_names,
+                    "current": False,
+                }
+            )
+        current_version = self.build.get("version", "")
+        for release in releases:
+            if release["version"] == current_version:
+                release["current"] = True
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(releases, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+        self.releases = releases
+        self.releases_loaded_at = int(time.time())
+        return releases
+
+    def _fetch_manifest_for_tag(self, tag: str) -> dict[str, Any]:
+        base = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
+        manifest = self._validate_manifest(self._request_json(f"{base}/{MANIFEST_ASSET}"))
+        manifest.update(
+            {
+                "download_url": f"{base}/{EXECUTABLE_ASSET}",
+                "published_at": "",
+                "release_url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}",
+                "tag": tag,
+            }
+        )
+        return manifest
+
+    def _write_pending(self, latest: dict[str, Any]) -> None:
+        update_dir = self.data_dir / "update"
+        update_dir.mkdir(parents=True, exist_ok=True)
+        marker = update_dir / "pending-update.json"
+        marker.write_text(
+            json.dumps(
+                {
+                    "version": latest.get("version", ""),
+                    "commit": latest.get("commit", ""),
+                    "tag": latest.get("tag", ""),
+                    "installed_at": int(time.time()),
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+    def verify_pending(self) -> dict[str, Any]:
+        marker = self.data_dir / "update" / "pending-update.json"
+        if not marker.is_file():
+            return {"pending": False}
+        try:
+            data = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            marker.unlink(missing_ok=True)
+            return {"pending": False}
+        marker.unlink(missing_ok=True)
+        target_commit = str(data.get("commit") or "")
+        current_commit = self.build.get("commit", "")
+        ok = bool(target_commit) and target_commit == current_commit
+        return {
+            "pending": True,
+            "ok": ok,
+            "target_version": str(data.get("version") or ""),
+            "target_commit": target_commit,
+            "current_commit": current_commit,
         }
 
     def check(self, force: bool = False) -> dict[str, Any]:
@@ -261,16 +359,14 @@ class UpdateManager:
                         self.phase = "available" if update_available else "current"
                     self.checked_at = int(time.time())
                 return self.status()
-            manifest_url = f"{LATEST_DOWNLOAD_URL}/{MANIFEST_ASSET}"
-            executable_url = f"{LATEST_DOWNLOAD_URL}/{EXECUTABLE_ASSET}"
-            manifest = self._validate_manifest(self._request_json(manifest_url))
-            manifest.update(
-                {
-                    "download_url": executable_url,
-                    "published_at": str(manifest.get("published_at") or ""),
-                    "release_url": LATEST_RELEASE_URL,
-                }
-            )
+            releases = self._fetch_releases(force=force)
+            installable = [release for release in releases if release["installable"]]
+            if not installable:
+                raise RuntimeError("没有可安装的发布版本")
+            latest_meta = installable[0]
+            manifest = self._fetch_manifest_for_tag(latest_meta["tag"])
+            manifest["published_at"] = latest_meta["published_at"]
+            manifest["release_url"] = latest_meta["release_url"]
             current_number = self._build_number(self.build.get("version", ""))
             latest_number = self._build_number(manifest.get("version", ""))
             current_release = self._release_version_key(self.build.get("version", ""))
@@ -409,66 +505,34 @@ Remove-Item -LiteralPath $Downloaded -Force -ErrorAction SilentlyContinue
             creationflags=creation_flags,
         )
 
-    def _launch_source_updater(self) -> None:
-        update_dir = self.data_dir / "update"
-        update_dir.mkdir(parents=True, exist_ok=True)
-        script = update_dir / "apply-source-update.ps1"
-        launcher = self.app_dir / "launcher.py"
-        script.write_text(
-            """param([int]$ProcessId, [string]$Repository, [string]$Python, [string]$Launcher)
-$ErrorActionPreference = 'Stop'
-Wait-Process -Id $ProcessId -Timeout 30 -ErrorAction SilentlyContinue
-Set-Location -LiteralPath $Repository
-& git pull --ff-only origin master
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-Start-Process -FilePath $Python -ArgumentList @($Launcher) -WorkingDirectory $Repository -WindowStyle Hidden
-""",
-            encoding="utf-8",
-        )
-        subprocess.Popen(
-            [
-                "powershell.exe",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(script),
-                "-ProcessId",
-                str(os.getpid()),
-                "-Repository",
-                str(self.app_dir),
-                "-Python",
-                str(Path(sys.executable).resolve()),
-                "-Launcher",
-                str(launcher),
-            ],
-            cwd=str(self.app_dir),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-
-    def start_install(self, on_ready: Callable[[], None] | None) -> dict[str, Any]:
+    def start_install(
+        self, target_tag: str | None = None, on_ready: Callable[[], None] | None = None
+    ) -> dict[str, Any]:
         if not self.supported:
             raise RuntimeError("当前运行方式不支持自动更新")
-        if self.mode == "source" and on_ready is None:
-            raise RuntimeError("源码更新需要从桌面启动器运行")
+        if self.mode == "source":
+            raise RuntimeError("源码模式不支持一键更新，请在终端中执行 git pull --ff-only origin master")
         with self.lock:
             if self.phase in {"downloading", "restarting"}:
-                return self.status()
-            latest = dict(self.latest or {})
+                raise RuntimeError("更新正在下载或重启中，请稍候")
+        if target_tag:
+            meta = next((release for release in self.releases if release["tag"] == target_tag), None)
+            if not meta:
+                raise RuntimeError("目标版本不存在")
+            latest = self._fetch_manifest_for_tag(target_tag)
+            latest["published_at"] = meta["published_at"]
+            latest["release_url"] = meta["release_url"]
+            if latest.get("commit") == self.build.get("commit"):
+                raise RuntimeError("当前已安装该版本，无需更新")
+        else:
+            with self.lock:
+                latest = dict(self.latest or {})
             if not latest or latest.get("commit") == self.build.get("commit"):
                 raise RuntimeError("没有可安装的新版本")
-            if self.mode == "source" and self._source_dirty():
-                raise RuntimeError("工作区有未提交修改，请先提交或清理后再更新")
+        with self.lock:
             self.phase = "downloading"
             self.error = ""
-
-        if self.mode == "source":
-            self._launch_source_updater()
-            with self.lock:
-                self.phase = "restarting"
-            if on_ready:
-                threading.Timer(0.5, on_ready).start()
-            return self.status()
+        self._write_pending(latest)
 
         def install() -> None:
             try:
@@ -486,18 +550,3 @@ Start-Process -FilePath $Python -ArgumentList @($Launcher) -WorkingDirectory $Re
 
         threading.Thread(target=install, name="naiba-update-install", daemon=True).start()
         return self.status()
-
-    def start_auto_update(self, on_ready: Callable[[], None] | None, delay: float = 4.0) -> None:
-        if not self.auto_update or not self.supported:
-            return
-
-        def run() -> None:
-            time.sleep(delay)
-            status = self.check()
-            if status["update_available"]:
-                try:
-                    self.start_install(on_ready)
-                except RuntimeError:
-                    pass
-
-        threading.Thread(target=run, name="naiba-update-check", daemon=True).start()

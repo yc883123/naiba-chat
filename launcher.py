@@ -217,7 +217,8 @@ class Launcher:
             text_select=True,
         )
         self.window.events.closing += self._on_window_closing
-        srv.APP.updater.start_auto_update(self._quit)
+        # 启动后仅做后台元数据检查（不自动安装），前端通过 30 秒轮询感知结果。
+        threading.Timer(4.0, srv.APP.updater.start_check).start()
         icon_path = srv.RESOURCE_DIR / "icon.ico"
         start_kwargs = {}
         if icon_path.is_file():

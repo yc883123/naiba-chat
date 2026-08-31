@@ -686,6 +686,17 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 }
 .update-status span { color: var(--muted); font-size: 12px; }
 .update-status b { min-width: 0; overflow-wrap: anywhere; text-align: right; font-size: 13px; }
+.update-version-select {
+  max-width: 300px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: right;
+}
 .update-status p { margin: 0; padding: 12px; background: var(--surface); color: var(--muted); font-size: 13px; line-height: 1.5; }
 .update-actions { justify-content: flex-start; margin: 14px 0; }
 .toast {

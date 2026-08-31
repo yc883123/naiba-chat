@@ -365,7 +365,7 @@ def _sync_bundled_skills(source: Path, target: Path) -> bool:
 
 def _copy_legacy_data(source: Path, replace_empty_target: bool = True) -> dict[str, bool]:
     """Merge a legacy install into the current data directory, including all subdirectories."""
-    report = {"config": False, "data": False}
+    report = {"config": False, "data": False, "skills": False}
     legacy_config = source / "config.json"
     legacy_data = source / "data"
     APP_DIR.mkdir(parents=True, exist_ok=True)
@@ -407,6 +407,16 @@ def _copy_legacy_data(source: Path, replace_empty_target: bool = True) -> dict[s
         if item.name in {"chat.db", "chat.db-wal", "chat.db-shm", "server.lock"}:
             continue
         report["data"] = _merge_data_tree(item, DATA_DIR / item.name) or report["data"]
+
+    # 导入旧安装根目录的 Skills（旧版 APP_DIR/skills 或数据目录同级 skills）到新托管目录。
+    managed_skills = (DATA_DIR / "skills").resolve()
+    for legacy_skills in (
+        (source / "skills").resolve(),
+        (source.parent / "skills").resolve(),
+        (legacy_data / "skills").resolve(),
+    ):
+        if legacy_skills.is_dir() and legacy_skills != managed_skills:
+            report["skills"] = _merge_data_tree(legacy_skills, managed_skills) or report["skills"]
     return report
 
 
@@ -1111,12 +1121,12 @@ class ConfigStore:
         return path.resolve()
 
     def resolve_managed_skills_dir(self, raw: str | None = None) -> Path:
-        """持久化 Skills 目录（单一事实来源）：跟随数据目录，位于其同级 skills 文件夹。
+        """持久化 Skills 目录（单一事实来源）：位于数据目录内的 ``skills`` 文件夹。
 
-        默认落在 ``resolve_data_dir().parent / "skills"``，使 Skills 随数据目录离开
-        C 盘 APP_DIR，不再写死为 ``APP_DIR/skills``。
+        默认落在 ``resolve_data_dir() / "skills"``，使 Skills 随数据目录离开
+        C 盘 APP_DIR，不再写死为 ``APP_DIR/skills``，也不放在数据目录同级。
         """
-        return (self.resolve_data_dir(raw).parent / "skills").resolve()
+        return (self.resolve_data_dir(raw) / "skills").resolve()
 
     def skills_dirs_resolved(self) -> list[Path]:
         """返回解析后的 Skills 扫描目录，旧 ``APP_DIR/skills`` 重定向到托管目录。
@@ -2441,8 +2451,20 @@ class NaibaChatApp:
         # without this copy, replacing the executable can make a Skill that
         # existed in the previous build disappear from the user's catalog.
         bundled_skills = (RESOURCE_DIR / "skills").resolve()
-        # 托管 Skills 目录跟随数据目录（DATA_DIR.parent/skills），不再固定于 C 盘 APP_DIR。
+        # 托管 Skills 目录位于数据目录内（DATA_DIR/skills），不再固定于 C 盘 APP_DIR。
         managed_skills = self.config.resolve_managed_skills_dir()
+        # 启动幂等合并：把旧版「数据目录同级 skills」与旧版「APP_DIR/skills」中的
+        # 用户自定义 Skill 合并进新托管目录（目标已有文件优先，不删除旧目录）。
+        # 内置 Skills 由下方 _sync_bundled_skills 单独同步，这里跳过以免覆盖打包版本。
+        for legacy_src in (
+            (DATA_DIR.parent / "skills").resolve(),
+            (APP_DIR / "skills").resolve(),
+        ):
+            if legacy_src.is_dir() and legacy_src != managed_skills:
+                try:
+                    _merge_data_tree(legacy_src, managed_skills)
+                except OSError as exc:
+                    print(f"Merging legacy Skills failed: {exc}")
         if bundled_skills.is_dir() and bundled_skills != managed_skills:
             try:
                 _sync_bundled_skills(bundled_skills, managed_skills)
@@ -2533,9 +2555,7 @@ class NaibaChatApp:
         # jobs that explicitly opted into resume are safely re-created from
         # their durable checkpoint and persisted parameters.
         self.jobs.resume_interrupted()
-        # Local smoke/test builds can opt out without changing persisted user settings.
-        auto_update = os.environ.get("NAIBA_DISABLE_AUTO_UPDATE", "").strip().lower() not in {"1", "true", "yes"}
-        self.updater = UpdateManager(APP_DIR, DATA_DIR, auto_update=auto_update)
+        self.updater = UpdateManager(APP_DIR, DATA_DIR)
         self.update_restart_callback = None
         # 后台自动连接所有已启用 MCP 服务；对启动时未连上的做周期重试，
         # 保证 MCP 工具在会话固化工具集之前就绪（否则新会话烘焙不到它们）。
@@ -2868,7 +2888,7 @@ class NaibaChatApp:
         return connection.state()
 
     def import_legacy_data(self, source: Path) -> dict[str, Any]:
-        """从用户指定的旧数据目录导入 config.json 与 data/（保留目标已存在数据）。"""
+        """从用户指定的旧数据目录导入 config.json、data/ 与 Skills（保留目标已存在数据）。"""
         source = Path(source)
         legacy_config = source / "config.json"
         legacy_data = source / "data"
@@ -2977,9 +2997,10 @@ class NaibaChatApp:
         if existing_db.exists() and _database_has_conversations(existing_db):
             return {"ok": False, "error": f"目标目录已有对话数据：{target}"}
         # Skill 托管目录跟随数据目录：源为当前实际运行数据目录（storage.data_dir）
-        # 同级的 skills（或旧版 C 盘 APP_DIR/skills），目标为目标 data_dir 同级 skills。
-        old_managed = (source.parent / "skills").resolve()
-        new_managed = (target.parent / "skills").resolve()
+        # 内的 skills（或旧版同级 skills、旧版 C 盘 APP_DIR/skills），目标为目标 data_dir 内 skills。
+        old_managed = (source / "skills").resolve()
+        old_sibling_managed = (source.parent / "skills").resolve()
+        new_managed = (target / "skills").resolve()
         legacy_managed = (APP_DIR / "skills").resolve()
         try:
             with self.storage._connect() as db:
@@ -2994,19 +3015,18 @@ class NaibaChatApp:
                     _merge_data_tree(item, target / item.name)
                 elif not (target / item.name).exists():
                     shutil.copy2(item, target / item.name)
-            # 搬迁托管 Skills 目录（旧 managed 或旧 APP_DIR/skills → 新 managed）。
+            # 搬迁托管 Skills 目录（旧 managed / 旧同级 managed / 旧 APP_DIR/skills → 新 managed）。
             old_managed_sources = []
-            if old_managed.is_dir():
-                old_managed_sources.append(old_managed)
-            if legacy_managed.is_dir() and legacy_managed != old_managed:
-                old_managed_sources.append(legacy_managed)
+            for candidate in (old_managed, old_sibling_managed, legacy_managed):
+                if candidate.is_dir() and candidate not in old_managed_sources:
+                    old_managed_sources.append(candidate)
             if old_managed_sources and new_managed != old_managed:
                 new_managed.mkdir(parents=True, exist_ok=True)
                 for old_src in old_managed_sources:
                     if old_src.is_dir():
                         _merge_data_tree(old_src, new_managed)
-            # 改写 skills_dirs：把指向旧 managed / 旧 APP_DIR/skills 的项改写为新绝对路径。
-            old_refs = {str(old_managed), str(legacy_managed)}
+            # 改写 skills_dirs：把指向旧 managed / 旧同级 managed / 旧 APP_DIR/skills 的项改写为新绝对路径。
+            old_refs = {str(old_managed), str(old_sibling_managed), str(legacy_managed)}
             with self.config.lock:
                 dirs = self.config.data.setdefault("skills_dirs", [])
                 rewritten = []
@@ -3653,7 +3673,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(APP.updater.start_check(force=True))
         elif path == "/api/update/install":
             try:
-                self._json(APP.updater.start_install(APP.update_restart_callback))
+                target_tag = None
+                if isinstance(body, dict):
+                    target_tag = body.get("tag")
+                self._json(APP.updater.start_install(target_tag=target_tag, on_ready=APP.update_restart_callback))
             except RuntimeError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/uploads":
@@ -4084,8 +4107,8 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _resolve_skill_dest(self, body: dict[str, Any]) -> tuple[str, Path] | None:
         """解析 Skill 安装目标目录：未指定时默认安装到托管 Skills 目录。
 
-        托管 Skills 目录跟随数据目录（DATA_DIR.parent/skills）；旧 ``APP_DIR/skills``
-        重定向到托管目录，保证旧配置不丢且新的默认落点离开 C 盘。
+        托管 Skills 目录位于数据目录内（DATA_DIR/skills）；旧 ``APP_DIR/skills``
+        与旧数据目录同级 skills 会重定向/合并到托管目录，保证旧配置不丢且默认落点离开 C 盘。
         """
         configured = APP.config.get_skills_dirs()
         managed = APP.config.resolve_managed_skills_dir()

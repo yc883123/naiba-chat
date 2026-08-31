@@ -48,6 +48,7 @@ const state = {
   providerKindTab: 'online',
   syncTimer: null,
   syncInFlight: false,
+  updatePollTimer: null,
   conversationSnapshot: '',
   agentFormSkillIds: [],
   agentFormToolScope: [],
@@ -1440,6 +1441,23 @@ async function initialize() {
   startTaskSync();
   startConversationSync();
   startMcpPoll();
+  startUpdatePoll();
+}
+
+// 后台检查可能启动时才开始（checking 阶段），前端以 30 秒间隔轮询感知结果。
+function startUpdatePoll() {
+  if (state.updatePollTimer) return;
+  state.updatePollTimer = window.setInterval(async () => {
+    const status = state.bootstrap.update || {};
+    if (['checking', 'downloading', 'restarting'].includes(status.phase)) return;
+    try {
+      const next = await api('/api/update');
+      if (next.checked_at !== status.checked_at || next.phase !== status.phase) {
+        state.bootstrap.update = next;
+        renderUpdateStatus(next);
+      }
+    } catch (_) { /* 网络抖动时忽略，下一轮重试 */ }
+  }, 30000);
 }
 
 const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
@@ -1778,12 +1796,33 @@ async function savePlanEdit(event) {
 
 function renderUpdateStatus(status) {
   const current = status.current_version || '开发版';
-  const latest = status.latest_version || '尚未检查';
   $('#currentVersion').textContent = status.current_commit ? `${current} · ${status.current_commit.slice(0, 7)}` : current;
-  $('#latestVersion').textContent = status.latest_commit ? `${latest} · ${status.latest_commit.slice(0, 7)}` : latest;
-  const notes = Array.isArray(status.release_notes)
-    ? status.release_notes.filter((note) => String(note || '').trim())
-    : (status.release_notes ? [String(status.release_notes)] : []);
+  const select = $('#updateVersionSelect');
+  const releases = Array.isArray(status.releases) ? status.releases : [];
+  const previousValue = select.value;
+  // 重建版本下拉：仅保留可安装项，当前版本标记为「当前」。
+  const options = releases
+    .filter((release) => release.installable)
+    .map((release) => {
+      const option = document.createElement('option');
+      option.value = release.tag;
+      const label = release.current ? `${release.version}（当前）` : release.version;
+      option.textContent = release.published_at ? `${label} · ${release.published_at.slice(0, 10)}` : label;
+      return option;
+    });
+  select.replaceChildren(...options);
+  select.disabled = options.length === 0 || ['checking', 'downloading', 'restarting'].includes(status.phase);
+  // 保留用户已选版本；否则默认选中最新可安装版本。
+  if (previousValue && options.some((option) => option.value === previousValue)) {
+    select.value = previousValue;
+  } else if (options.length > 0) {
+    select.value = options[0].value;
+  }
+  const selectedTag = select.value;
+  const selected = releases.find((release) => release.tag === selectedTag);
+  const notes = selected && Array.isArray(selected.release_notes)
+    ? selected.release_notes.filter((note) => String(note || '').trim())
+    : (selected && selected.release_notes ? [String(selected.release_notes)] : []);
   const notesPanel = $('#updateNotes');
   const notesList = $('#updateNotesList');
   notesList.replaceChildren(...notes.map((note) => {
@@ -1794,7 +1833,7 @@ function renderUpdateStatus(status) {
   // 仅根据是否存在更新内容显示/隐藏详情；不重置用户已展开/收起状态
   notesPanel.hidden = notes.length === 0;
   const messages = {
-    idle: '启动后会自动从 GitHub 检查并安装更新。',
+    idle: '启动后仅检查更新，不会自动安装；请手动选择版本后点击「立即更新」。',
     checking: '正在检查更新…',
     current: '当前已经是最新版本。',
     available: '发现新版本，可以立即安装。',
@@ -1805,10 +1844,22 @@ function renderUpdateStatus(status) {
   $('#updateMessage').textContent = !status.supported
     ? '当前运行目录不支持自动更新，请确认它来自受支持的 Git 仓库。'
     : (messages[status.phase] || messages.idle);
-  if (status.mode === 'source' && status.source_dirty && status.update_available) {
-    $('#updateMessage').textContent = '发现新提交，但工作区有未提交修改；请先提交或清理后再更新。';
+  const pending = status.pending_verification;
+  if (pending && pending.pending) {
+    $('#updateMessage').textContent = pending.ok
+      ? `上次更新已完成并验证通过（${pending.target_version}）。`
+      : `上次更新到 ${pending.target_version} 后版本校验失败，请重新检查更新或手动安装。`;
+  } else if (status.mode === 'source') {
+    $('#updateMessage').textContent = '源码模式不支持一键更新，请在终端中执行 git pull --ff-only origin master。';
+  } else if (selected && selected.current) {
+    $('#updateMessage').textContent = '当前已安装该版本，无需更新。';
+  } else if (status.phase === 'available' && selected) {
+    $('#updateMessage').textContent = `将安装 ${selected.version}，完成后程序自动重启。`;
   }
-  $('#installUpdate').hidden = !status.update_available || ['downloading', 'restarting'].includes(status.phase);
+  const canInstall = status.supported && status.mode !== 'source'
+    && selected && !selected.current
+    && !['downloading', 'restarting'].includes(status.phase);
+  $('#installUpdate').hidden = !canInstall;
   $('#checkUpdate').disabled = ['checking', 'downloading', 'restarting'].includes(status.phase);
 }
 
@@ -1850,11 +1901,23 @@ async function checkUpdate() {
 
 async function installUpdate() {
   const button = $('#installUpdate');
+  const select = $('#updateVersionSelect');
+  const tag = select.value;
+  const status = state.bootstrap.update || {};
+  const releases = Array.isArray(status.releases) ? status.releases : [];
+  const selected = releases.find((release) => release.tag === tag);
+  if (!selected) {
+    toast('请先选择要安装的版本');
+    return;
+  }
+  if (!confirm(`确定要安装版本 ${selected.version} 吗？更新完成后程序将自动重启。`)) {
+    return;
+  }
   button.disabled = true;
   try {
-    const status = await api('/api/update/install', { method: 'POST', body: {} });
-    state.bootstrap.update = status;
-    renderUpdateStatus(status);
+    const newStatus = await api('/api/update/install', { method: 'POST', body: { tag } });
+    state.bootstrap.update = newStatus;
+    renderUpdateStatus(newStatus);
     toast('正在下载更新，完成后会自动重启');
   } catch (error) {
     toast(`更新失败：${error.message}`);
@@ -5991,6 +6054,7 @@ function bindEvents() {
   $('#saveToken').addEventListener('click', saveAccessToken);
   $('#checkUpdate').addEventListener('click', checkUpdate);
   $('#installUpdate').addEventListener('click', installUpdate);
+  $('#updateVersionSelect').addEventListener('change', () => renderUpdateStatus(state.bootstrap.update || {}));
   $('#openSkillImport').addEventListener('click', () => {
     setSkillImportStatus('');
     $('#skillImportDialog').showModal();
