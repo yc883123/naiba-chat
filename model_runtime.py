@@ -18,11 +18,11 @@ logger = logging.getLogger("naiba.model_runtime")
 
 def _cache_debug_enabled() -> bool:
     """诊断总开关：默认开启（CACHE_DEBUG_ON），或设 NAIBA_DEBUG_CACHE=1 也可开启。"""
-    try:
-        from server import _cache_debug_enabled as _enabled
-    except Exception:
-        return True
-    return bool(_enabled())
+    # try:
+    #     from server import _cache_debug_enabled as _enabled
+    # except Exception:
+    #     return True
+    return True #bool(_enabled())
 
 
 def _debug_wire_digest(messages: list[dict[str, Any]], status: StatusCallback | None) -> None:
@@ -41,6 +41,48 @@ def _debug_wire_digest(messages: list[dict[str, Any]], status: StatusCallback | 
             j = ""
         lines.append(f"    [{i}:{m.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]")
     status({"type": "debug_cache", "label": "wire", "lines": lines})
+
+
+def _debug_complete_marker(
+    kind: str,
+    request_format: str,
+    messages: list[dict[str, Any]],
+    status: StatusCallback | None,
+) -> None:
+    """无条件标记：只要进入 ModelRuntime.complete 就打，用于确认 wire 代码确实在
+    真正调用路径上（排除“EXE 里是旧模块/没走到 complete/格式不对”三种可能）。"""
+    if not _cache_debug_enabled() or not callable(status):
+        return
+    what = (
+        f"[CACHE] complete-entry kind={kind} format={request_format} "
+        f"messages={len(messages) if isinstance(messages, list) else None} "
+        f"msgs_type={type(messages).__name__}"
+    )
+    status({"type": "debug_cache", "label": "complete-entry", "lines": [what]})
+
+
+def _sanitize_payload(obj: Any, limit: int = 500) -> Any:
+    """把 payload 里的超长字符串（通常是 base64 图片）压成占位符，便于逐字段比对。"""
+    if isinstance(obj, str):
+        return obj if len(obj) <= limit else f"<str:{len(obj)}>{obj[:40]}…"
+    if isinstance(obj, list):
+        return [_sanitize_payload(item, limit) for item in obj]
+    if isinstance(obj, dict):
+        return {key: _sanitize_payload(value, limit) for key, value in obj.items()}
+    return obj
+
+
+def _debug_payload_dump(payload: dict[str, Any], status: StatusCallback | None) -> None:
+    """把**发给模型**的完整 payload 打出来（图片 base64 压成占位符，其他字段全保留），
+    逐字段对比“第 N 轮请求 vs 第 N+1 轮请求”，定位是哪部分（instructions/tools/messages/…）
+    在每轮变化导致缓存断链。"""
+    if not _cache_debug_enabled() or not callable(status):
+        return
+    try:
+        txt = json.dumps(_sanitize_payload(payload), ensure_ascii=False, sort_keys=True)
+    except Exception:
+        txt = "<payload dump failed>"
+    status({"type": "debug_cache", "label": "payload-dump", "lines": [txt]})
 
 
 StatusCallback = Callable[[dict[str, Any]], None]
@@ -367,6 +409,7 @@ class ModelRuntime:
         # 按 profile.kind 路由，禁止在线/本地跨模式 fallback。
         kind = str(profile.get("kind") or "").strip().lower()
         request_format = str(profile.get("request_format") or "openai_chat").strip().lower()
+        _debug_complete_marker(kind, request_format, messages, status)
         if not kind:
             # 旧 profile 未携带 kind 时按请求格式推断，保持兼容。
             kind = "local" if request_format in LOCAL_REQUEST_FORMATS else "online"
@@ -1109,8 +1152,14 @@ class ModelRuntime:
         else:
             raise ValueError(f"不支持的在线请求格式：{request_format}")
 
-        if isinstance(payload.get("messages"), list):
-            _debug_wire_digest(payload["messages"], status)
+        _wire_msgs = payload.get("messages")
+        if not isinstance(_wire_msgs, list):
+            _wire_msgs = payload.get("input")
+        if isinstance(_wire_msgs, list):
+            _debug_wire_digest(_wire_msgs, status)
+        else:
+            _debug_wire_digest(messages, status)  # 兜底：任何格式都打原始 messages
+        _debug_payload_dump(payload, status)
 
         request = urllib.request.Request(
             endpoint,

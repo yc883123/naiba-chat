@@ -2062,12 +2062,27 @@ def build_model_history(
     conversation_messages: list[dict[str, Any]],
     event=None,
 ) -> list[dict[str, Any]]:
-    """Build model history.
+    """Build model history while carrying only the most recent image batch.
 
-    每条用户消息**基于自身附件**确定性携带图片内容（cap 到 MODEL_IMAGE_HISTORY_LIMIT），
-    不再按“全局最近图片批次”选择——否则新一轮上传图片会让旧图片消息的图片内容消失/出现，
-    改变其序列化字节、破坏前缀缓存。
+    DeepSeek 的缓存不覆盖图片（input_image）：若历史里每条 user 消息都重发完整图，命中率
+    会冻在第一张图。因此只把**最近一批图片**（最多 MODEL_IMAGE_HISTORY_LIMIT 张，来自最近
+    一条带图 user 消息）注入历史，更早的图一律只保留 ``[用户上传文件：<路径>]`` 文本占位，
+    使输入成为“稳定文本 + 最近一批图”，缓存随文本前缀逐轮增长。
     """
+    selected_paths: list[str] = []
+    for item in reversed(conversation_messages[-16:]):
+        if item.get("role") != "user":
+            continue
+        batch: list[str] = []
+        for attachment in (item.get("metadata") or {}).get("attachments") or []:
+            source = str(attachment.get("path") or "")
+            if Path(source).suffix.lower() in IMAGE_MEDIA_TYPES and source not in batch:
+                batch.append(source)
+        if batch:
+            selected_paths = batch[:MODEL_IMAGE_HISTORY_LIMIT]
+            break
+    selected_images = set(selected_paths)
+
     history: list[dict[str, Any]] = []
     replay_seq = 0
     for item in conversation_messages:
@@ -2086,7 +2101,7 @@ def build_model_history(
             image_parts: list[dict[str, Any]] = []
             for upload in previous_uploads:
                 path = str(upload.get("path") or "")
-                if not path or Path(path).suffix.lower() not in IMAGE_MEDIA_TYPES:
+                if path not in selected_images:
                     continue
                 if len(image_parts) >= MODEL_IMAGE_HISTORY_LIMIT:
                     break
