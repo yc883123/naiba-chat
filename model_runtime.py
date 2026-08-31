@@ -17,12 +17,12 @@ logger = logging.getLogger("naiba.model_runtime")
 
 
 def _cache_debug_enabled() -> bool:
-    """诊断总开关：默认开启（CACHE_DEBUG_ON），或设 NAIBA_DEBUG_CACHE=1 也可开启。"""
-    # try:
-    #     from server import _cache_debug_enabled as _enabled
-    # except Exception:
-    #     return True
-    return True #bool(_enabled())
+    """诊断总开关：跟随 server.CACHE_DEBUG_ON（默认关闭），或设 NAIBA_DEBUG_CACHE=1 也可开启。"""
+    try:
+        from server import _cache_debug_enabled as _enabled
+    except Exception:
+        return False
+    return bool(_enabled())
 
 
 def _debug_wire_digest(messages: list[dict[str, Any]], status: StatusCallback | None) -> None:

@@ -1,4 +1,11 @@
 [
+  "Naiba Chat 1.6.0 Beta 更新：优化多轮图片对话的缓存命中率，切换 Agent 后自动追加其预设 Skill 引用。",
+  "缓存优化：图片对话历史改为「每条 user 消息独立携带自己的完整图片、稳定重发」，不再按「只保留最近图片/翻转占位」选择，避免缓存命中率忽高忽低；图片以 content 块（image_url / input_image）发送，不把 base64 当文本，命中率随对话稳定上涨。",
+  "切换 Agent：切换顶部 Agent 后自动在输入框末尾追加该 Agent 预设 Skill 的 /ref 引用（已在框内的跳过，避免重复）。",
+  "移除调试：关闭缓存诊断日志（默认不打印；设 CACHE_DEBUG_ON=True 或 NAIBA_DEBUG_CACHE=1 可开启）。",
+  "Skill 系统重构：支持在任意时刻输入 / 弹出已安装 Skill 索引，选择即可向当前会话注入任意 Skill（/ref 引用）；Skill 引用在首轮注入 system、后续轮追加到会话末尾，以保持 DeepSeek 前缀缓存稳定。",
+  "安装/编辑 Skill：新增「安装 Skill」「编辑 Skill」，AI 可调用 install_skill / unpack_skill_archive 安装技能，或用 inspect_installed_skill 定位并编辑已有技能。",
+  "左侧边栏：会话列表改为虚拟化/懒加载、默认折叠、可拖拽调宽，交互更轻量清晰。",
   "Naiba Chat 1.5.1 Beta 更新：修复多项流式输出与长答复显示问题，增强在线模型连接稳定性。",
   "流式输出：修复模型输出含大括号/方括号代码块（如 Java/C/JS 的大括号 { }、[Shot 1] 标签）时，后端误把这类正文当作工具调用协议、停止推送流式增量，导致前端显示卡住、要等整段输出完才完整渲染的问题；现在这类正文按普通文本实时推送，多个代码块可随内容同步渲染。",
   "流式输出：修复长答复（如 MiniMax H3 多段提示词）在 assistant_response / run_completed 事件中被硬编码截断到 2000 字符、导致结尾段落（如 overall_soundscape / non_diegetic_music）丢失的问题；现在完整下发。",

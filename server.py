@@ -1991,9 +1991,8 @@ def _content_read_tool_outputs(tool_runs: list[dict[str, Any]]) -> str:
     )
 
 
-# 前缀缓存诊断开关：默认开启（调试“第 N 轮请求 vs 第 N+1 轮历史”字节分叉）。
-# 平时不需要时，把 CACHE_DEBUG_ON 改为 False 即可（等价于原先设 NAIBA_DEBUG_CACHE=1）。
-CACHE_DEBUG_ON = True
+# 前缀缓存诊断开关：默认关闭。需要调试时改为 True（或设 NAIBA_DEBUG_CACHE=1）。
+CACHE_DEBUG_ON = False
 
 
 def _cache_debug_enabled() -> bool:

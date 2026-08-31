@@ -1,11 +1,16 @@
-# Naiba Chat 1.5.1 Beta
+# Naiba Chat 1.6.0 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.5.1 Beta 在 1.5.0 的基础上重点修复流式渲染与长答复显示问题：解决含大括号/方括号代码块（如 Java/C/JS 的 `{ }`、`[Shot 1]` 标签）被误判为工具调用、导致流式输出卡住、要等整段输出完才完整渲染的问题；修复长答复被截断到 2000 字符导致结尾段落丢失的问题；修复 `**a * b**` 这类含字面星号加粗无法渲染的问题。
+1.6.0 Beta 重点优化多轮图片对话的缓存命中率与 Agent 切换体验，并重构 Skill 系统：图片对话历史改为「每条 user 消息独立携带自己的完整图片、稳定重发」，避免缓存命中率忽高忽低；图片以 content 块发送，不把 base64 当文本，命中率随对话稳定上涨；切换顶部 Agent 后自动在输入框末尾追加该 Agent 预设 Skill 的 `/ref` 引用；支持输入 `/` 在任意时刻向当前会话注入任意 Skill，并新增「安装 Skill」「编辑 Skill」引导能力，改进左侧边栏样式。
 
-## 1.5.1 Beta 主要能力
+## 1.6.0 Beta 主要能力
 
+- **多轮图片缓存稳定**：图片对话历史按每条 user 消息完整携带并稳定重发，不再因「只保留最近图片/占位翻转」导致 DeepSeek 缓存命中率波动；图片以 `image_url`/`input_image` 内容块发送，命中率随对话稳定上涨。
+- **切换 Agent 附加 Skill 引用**：切换顶部 Agent 后自动在输入框末尾追加该 Agent 预设 Skill 的 `/ref` 引用（已在框内的跳过，避免重复）。
+- **Skill 系统重构**：输入 `/` 弹出已安装 Skill 索引，可在任意时刻向当前会话注入任意 Skill（`/ref` 引用）；引用在首轮注入 system、后续轮追加到会话末尾，保持 DeepSeek 前缀缓存稳定。
+- **安装/编辑 Skill**：新增「安装 Skill」「编辑 Skill」按钮，AI 可调用 `install_skill`/`unpack_skill_archive` 安装技能，或用 `inspect_installed_skill` 定位并编辑已有技能。
+- **左侧边栏改进**：会话列表虚拟化/懒加载、默认折叠、可拖拽调宽，交互更轻量清晰。
 - **意图直接触发工具**：工具不再依赖先启动某个 Skill。Skill 只提供领域说明和流程建议，不是能力开关。
 - **通用 Agent 自动化**：支持多步工具调用、后台 Job、状态查询、计划执行、子任务和失败后的有界恢复。
 - **会话工具集固化**：会话可用工具在首条消息时固化（`enabled_tool_ids` / Agent 的 `tool_scope`），之后不可中途更改；工具选择页支持按分类「全选/全不选」，联动工具须同时选中。
@@ -24,7 +29,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.5.1-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.0-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -112,13 +117,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.5.1-beta-windows-x64.zip`
+- `naiba-chat-1.6.0-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.5.1 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.0 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -131,7 +136,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.5.1-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.0-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
