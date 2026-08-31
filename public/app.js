@@ -2073,6 +2073,7 @@ async function saveAgentSelection() {
     renderSidebar();
     renderSkills($('#skillSearch')?.value || '');
     toast('Agent 已切换');
+    appendPresetSkillsToComposer(value);
   } catch (error) {
     toast(`切换失败：${error.message}`);
     applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
@@ -5394,6 +5395,26 @@ function prefillPresetSkillsInComposer(conversation) {
   const skills = skillList().filter((s) => presetIds.has(String(s.id)));
   if (!skills.length) return;
   input.value = skills.map((s) => '/' + (s.ref || s.name)).join(' ') + ' ';
+  resizeTextarea();
+  renderInputMirror();
+  input.setSelectionRange(input.value.length, input.value.length);
+  input.focus();
+}
+
+// 切换 Agent 后：把该 Agent 预设 Skill 以 /ref 追加到输入框末尾（已在框内的跳过，避免重复）。
+function appendPresetSkillsToComposer(agentId) {
+  const input = $('#messageInput');
+  if (!input) return;
+  const agent = (state.bootstrap?.agents || []).find((a) => String(a.id) === String(agentId));
+  const presetIds = new Set((agent?.skill_ids || []).map(String));
+  if (!presetIds.size) return;
+  const skills = skillList().filter((s) => presetIds.has(String(s.id)));
+  if (!skills.length) return;
+  const existing = input.value.trimEnd();
+  const have = new Set(tokenizeSkillRefs(existing).map((t) => String(t.skill.id)));
+  const refs = skills.filter((s) => !have.has(String(s.id))).map((s) => '/' + (s.ref || s.name));
+  if (!refs.length) return;
+  input.value = existing ? existing + ' ' + refs.join(' ') : refs.join(' ');
   resizeTextarea();
   renderInputMirror();
   input.setSelectionRange(input.value.length, input.value.length);
