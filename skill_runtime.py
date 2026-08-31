@@ -24,6 +24,38 @@ from mcp_runtime import MCPRegistry
 logger = logging.getLogger("naiba.skill_runtime")
 
 
+def _cache_debug_enabled() -> bool:
+    """诊断总开关：默认开启（CACHE_DEBUG_ON），或设 NAIBA_DEBUG_CACHE=1 也可开启。
+
+    延迟导入避免与 server 的循环导入；导入失败时按默认开启处理。
+    """
+    try:
+        from server import _cache_debug_enabled as _enabled
+    except Exception:
+        return True
+    return bool(_enabled())
+
+
+def _debug_message_digest(messages, label: str, event=None) -> None:
+    """缓存诊断辅助：逐条输出组装后消息的 [索引:角色:字节数:哈希]。
+
+    默认开启（CACHE_DEBUG_ON）或设 NAIBA_DEBUG_CACHE=1 时触发，用来对比“第 N 轮请求”
+    与“第 N+1 轮历史”中对应消息是否字节一致，定位前缀缓存的分叉点。优先通过 ``event``
+    回调以 ``debug_cache`` 事件推给前端（用户在浏览器控制台可见）；无回调时兜底写 stderr。
+    """
+    lines = [f"[CACHE] {label} digest ({len(messages)} msgs):"]
+    for i, m in enumerate(messages[:40]):
+        try:
+            j = json.dumps(m, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            j = ""
+        lines.append(f"    [{i}:{m.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]")
+    if callable(event):
+        event({"type": "debug_cache", "label": label, "lines": lines})
+    else:
+        print("\n".join(lines), file=sys.stderr, flush=True)
+
+
 EventCallback = Callable[[dict[str, Any]], None]
 
 # Mirror of the agent-protocol markers in model_runtime used to decide whether
@@ -1411,6 +1443,12 @@ class SkillAgent:
                 ),
             })
 
+        # 缓存诊断（默认关闭）：设置环境变量 NAIBA_DEBUG_CACHE=1 开启。逐条打印组装后的
+        # 模型消息 [索引:角色:字节数:哈希]，用来对比“第 N 轮请求”与“第 N+1 轮历史”是否
+        # 字节一致，定位前缀缓存分叉点。
+        if _cache_debug_enabled():
+            _debug_message_digest(messages, "initial", event)
+
         runs = []
         reasonings: list[str] = []
         # model_complete 是 ModelRuntime.complete 的绑定方法，可通过 __self__ 读取 last_reasoning
@@ -1486,6 +1524,8 @@ class SkillAgent:
             event({"type": "status", "message": f"正在思考（第 {step} 轮）"})
             event({"type": "model_request", "step": step})
             try:
+                if _cache_debug_enabled():
+                    _debug_message_digest(messages, f"step-{step}-request", event)
                 raw = self.model_complete(profile, messages, options, event)
             except RuntimeError as exc:
                 # 模型 HTTP 调用被取消信号中断时抛 RuntimeError("任务已取消")，
@@ -1646,6 +1686,8 @@ class SkillAgent:
                 if isinstance(run_context, dict):
                     messages.append(assistant_message(content))
                     run_context["trace_messages"] = messages[trace_start:]
+                    if _cache_debug_enabled():
+                        _debug_message_digest(messages[trace_start:], "trace-persist", event)
                     logger.info(
                         "[trace] persisted this-turn messages=%s (start=%s, includes-final-answer)",
                         len(messages) - trace_start,

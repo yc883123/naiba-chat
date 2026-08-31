@@ -1991,6 +1991,49 @@ def _content_read_tool_outputs(tool_runs: list[dict[str, Any]]) -> str:
     )
 
 
+# 前缀缓存诊断开关：默认开启（调试“第 N 轮请求 vs 第 N+1 轮历史”字节分叉）。
+# 平时不需要时，把 CACHE_DEBUG_ON 改为 False 即可（等价于原先设 NAIBA_DEBUG_CACHE=1）。
+CACHE_DEBUG_ON = True
+
+
+def _cache_debug_enabled() -> bool:
+    """诊断总开关：默认开启，或显式设 NAIBA_DEBUG_CACHE=1 也开启。"""
+    return bool(CACHE_DEBUG_ON) or os.environ.get("NAIBA_DEBUG_CACHE") == "1"
+
+
+def _debug_replay_digest(trace: list[Any], label: str, event=None) -> None:
+    """缓存诊断辅助（配套 skill_runtime._debug_message_digest）：对一条 assistant
+    消息的 replayed trace，用与 build_model_history 完全相同的重建逻辑（_copy_model_trace_message）
+    逐条求 [索引:角色:字节数:哈希]。与 skill_runtime 里的 `trace-persist`（该轮 live 原样消息）
+    对齐比对，即可发现“trace 在持久化/重建过程中是否被改动”从而破坏前缀缓存。
+
+    默认开启（CACHE_DEBUG_ON）或设 NAIBA_DEBUG_CACHE=1 时触发。优先通过 ``event`` 回调以
+    ``debug_cache`` 事件推给前端（浏览器控制台可见）；无回调时兜底写 stderr。
+    """
+    if not _cache_debug_enabled():
+        return
+    lines = [f"[CACHE] {label} replay digest ({len(trace)} msgs):"]
+    for i, m in enumerate(trace[:40]):
+        try:
+            tmsg = _copy_model_trace_message(m)
+        except Exception:
+            tmsg = None
+        if tmsg is None:
+            lines.append(f"    [{i}:dropped:0:-]")
+            continue
+        try:
+            j = json.dumps(tmsg, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            j = ""
+        lines.append(
+            f"    [{i}:{tmsg.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]"
+        )
+    if callable(event):
+        event({"type": "debug_cache", "label": label, "lines": lines})
+    else:
+        print("\n".join(lines), file=sys.stderr, flush=True)
+
+
 def _copy_model_trace_message(message: Any) -> dict[str, Any] | None:
     """Faithfully rebuild a stored ``trace`` entry so the replayed history stays
     byte-identical to what the agent actually sent to the model that turn.
@@ -2015,7 +2058,10 @@ def _copy_model_trace_message(message: Any) -> dict[str, Any] | None:
     return out
 
 
-def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_model_history(
+    conversation_messages: list[dict[str, Any]],
+    event=None,
+) -> list[dict[str, Any]]:
     """Build model history.
 
     每条用户消息**基于自身附件**确定性携带图片内容（cap 到 MODEL_IMAGE_HISTORY_LIMIT），
@@ -2023,6 +2069,7 @@ def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dic
     改变其序列化字节、破坏前缀缓存。
     """
     history: list[dict[str, Any]] = []
+    replay_seq = 0
     for item in conversation_messages:
         if item.get("role") not in {"user", "assistant"}:
             continue
@@ -2079,6 +2126,9 @@ def build_model_history(conversation_messages: list[dict[str, Any]]) -> list[dic
                         continue
                     history.append(tmsg)
                     last_replayed = tmsg
+                if _cache_debug_enabled():
+                    _debug_replay_digest(trace, f"replay-{replay_seq}", event)
+                replay_seq += 1
                 already_has_answer = bool(
                     last_replayed is not None
                     and last_replayed.get("role") == "assistant"

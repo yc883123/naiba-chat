@@ -883,7 +883,7 @@ class ConversationRunManager:
                     "medium" if snapshot.get("deep_reasoning_enabled", False) else "off"
                 )
             reasoning_effort = profile["reasoning_effort"]
-            history = build_model_history(snapshot.get("conversation_messages") or [])
+            history = build_model_history(snapshot.get("conversation_messages") or [], event)
             # 视觉自动路由（Phase 1）：文本大脑不支持看图时，把图片改写为不可信描述注入；
             # 纯文本大脑绝不会收到原始 image_url。
             image_pending = any(

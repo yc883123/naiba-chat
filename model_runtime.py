@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 import threading
@@ -13,6 +14,33 @@ import urllib.request
 from typing import Any, Callable
 
 logger = logging.getLogger("naiba.model_runtime")
+
+
+def _cache_debug_enabled() -> bool:
+    """诊断总开关：默认开启（CACHE_DEBUG_ON），或设 NAIBA_DEBUG_CACHE=1 也可开启。"""
+    try:
+        from server import _cache_debug_enabled as _enabled
+    except Exception:
+        return True
+    return bool(_enabled())
+
+
+def _debug_wire_digest(messages: list[dict[str, Any]], status: StatusCallback | None) -> None:
+    """缓存诊断：对**真正发给模型**（经 _openai_messages 转换后）的消息逐条求哈希，
+    用来对比“第 N 轮请求”与“第 N+1 轮历史”对应消息的 wire 字节是否一致。
+    与 skill_runtime 的 `step-*-request`（原始消息）对齐，可分辨“原始 base64 相同
+    但 wire 图片不同 / DeepSeek 不缓存 image 区域”。
+    """
+    if not _cache_debug_enabled() or not callable(status):
+        return
+    lines = [f"[CACHE] wire digest ({len(messages)} msgs):"]
+    for i, m in enumerate(messages[:40]):
+        try:
+            j = json.dumps(m, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            j = ""
+        lines.append(f"    [{i}:{m.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]")
+    status({"type": "debug_cache", "label": "wire", "lines": lines})
 
 
 StatusCallback = Callable[[dict[str, Any]], None]
@@ -1080,6 +1108,9 @@ class ModelRuntime:
                 headers["Authorization"] = f"Bearer {api_key}"
         else:
             raise ValueError(f"不支持的在线请求格式：{request_format}")
+
+        if isinstance(payload.get("messages"), list):
+            _debug_wire_digest(payload["messages"], status)
 
         request = urllib.request.Request(
             endpoint,

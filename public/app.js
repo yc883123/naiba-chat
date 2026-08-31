@@ -4723,6 +4723,15 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   const collapseReasoning = () => {
     row.querySelectorAll('.reasoning-block').forEach((block) => { block.open = false; });
   };
+  if (event.type === 'debug_cache') {
+    // 缓存诊断（NAIBA_DEBUG_CACHE=1 时由后端推送）：逐条 [索引:角色:字节数:哈希]
+    console.groupCollapsed(`[CACHE] ${event.label || ''}`);
+    (event.lines || []).forEach((line) => console.log(line));
+    console.groupEnd();
+    window.__CACHE_DEBUG__ ??= [];
+    window.__CACHE_DEBUG__.push({ label: event.label || '', lines: event.lines || [] });
+    return;
+  }
   if (event.type === 'run_started') {
     state.chatRunId = String(event.run_id || '');
     state.runConversationId = conversationId;
