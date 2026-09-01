@@ -31,7 +31,6 @@ ALL_TOOLS = (
     "write_file",
     "list_directory",
     "search_files",
-    "run_command",
     "run_skill_script",
     "http_request",
     "glob_files",
@@ -91,7 +90,7 @@ class ReadOnlyToolExecutor:
     写类工具在 SkillAgent 层已通过 allowed_tools 过滤，本代理作为最后防线。
     """
 
-    BLOCKED_TOOLS = {"write_file", "edit_file", "run_command", "pwsh", "run_skill_script", "register_mcp"}
+    BLOCKED_TOOLS = {"write_file", "edit_file", "pwsh", "run_skill_script", "register_mcp"}
 
     def __init__(self, inner: ToolExecutor):
         self._inner = inner

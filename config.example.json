@@ -14,7 +14,7 @@
     "write_file",
     "list_directory",
     "search_files",
-    "run_command",
+    "pwsh",
     "run_skill_script",
     "http_request"
   ],

@@ -674,7 +674,7 @@ def default_config() -> dict[str, Any]:
             "write_file",
             "list_directory",
             "search_files",
-            "run_command",
+            "pwsh",
             "run_skill_script",
             "http_request",
         ],
@@ -744,7 +744,7 @@ def default_config() -> dict[str, Any]:
 # 全部可选工具：内置 Agent 的 tool_scope 默认“全开启”，用户可再按需裁剪。
 _BUILT_IN_SCOPE_ALL = (
     "read_file", "list_directory", "search_files", "glob_files",
-    "write_file", "edit_file", "run_command", "pwsh", "run_skill_script",
+    "write_file", "edit_file", "pwsh", "run_skill_script",
     "http_request", "web_search", "register_mcp", "call_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
     "todo_write", "artifact_report",
@@ -821,7 +821,7 @@ _TOOL_GROUP = {
     "read_file": "文件读取/搜索", "list_directory": "文件读取/搜索", "search_files": "文件读取/搜索",
     "glob_files": "文件读取/搜索",
     "write_file": "文件写入/编辑", "edit_file": "文件写入/编辑",
-    "run_command": "命令执行", "pwsh": "命令执行",
+    "pwsh": "命令执行",
     "run_skill_script": "Skill 脚本",
     "http_request": "网络", "web_search": "网络",
     "register_mcp": "MCP", "call_mcp": "MCP",
@@ -844,7 +844,7 @@ _MODEL_TARGET = {
 # 能力Skill 网关默认不选，用户可自行开启并明确其成本。
 _DEFAULT_SELECTED_TOOLS = frozenset({
     "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
-    "run_command", "pwsh", "run_skill_script", "http_request", "web_search", "vision_read_folder",
+    "pwsh", "run_skill_script", "http_request", "web_search", "vision_read_folder",
 })
 
 
@@ -869,7 +869,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # 端到端顺序：把前端呈现顺序稳定化，避免逐轮随机
     order = (
         "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
-        "run_command", "pwsh", "run_skill_script", "http_request", "web_search",
+        "pwsh", "run_skill_script", "http_request", "web_search",
         "register_mcp", "call_mcp",
         "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
         "todo_write", "artifact_report",
@@ -951,18 +951,28 @@ class ConfigStore:
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
         self._migrate_default_agent_skills()
+        self._migrate_legacy_tool_names()
         tools = self.data.get("agent_tools")
-        # MCP is an explicit external integration, never a default capability.
-        # Remove the exact historical default pair while preserving a user's
-        # separately selected MCP tools and configured server definitions.
+        # run_command 已并入 pwsh：历史默认集里保存的是 run_command（而非 pwsh）。
+        # 先统一映射死工具名，避免升级后通用 Agent 静默丢失命令执行能力。
         if isinstance(tools, list):
+            mapped = ["pwsh" if str(item) == "run_command" else item for item in tools]
+            # MCP is an explicit external integration, never a default capability.
+            # Remove the exact historical default pair while preserving a user's
+            # separately selected MCP tools and configured server definitions.
             legacy_default = {
                 "read_file", "write_file", "list_directory", "search_files",
-                "run_command", "run_skill_script", "http_request",
+                "run_skill_script", "http_request",
                 "register_mcp", "call_mcp",
             }
-            if set(tools) <= legacy_default:
-                self.data["agent_tools"] = [item for item in tools if item not in {"register_mcp", "call_mcp"}]
+            # 旧配置只要等同于「历史默认工具集」（含 run_command 或已为 pwsh 都算）
+            # 就移除默认 MCP 入口；定制过的工具集保留原选择，仅做死工具名映射。
+            if set(mapped) <= legacy_default | {"pwsh"}:
+                self.data["agent_tools"] = [
+                    item for item in mapped if item not in {"register_mcp", "call_mcp"}
+                ]
+            elif mapped != tools:
+                self.data["agent_tools"] = mapped
         # 在线/本地模型配置分层：为旧 providers 补全 kind/local_backend，并生成 default_model_key。
         self._migrate_model_profiles()
         self.save()
@@ -981,6 +991,21 @@ class ConfigStore:
                 agent["skill_ids"] = []
                 continue
             agent["skill_ids"] = [str(item) for item in skills if str(item) not in legacy]
+
+    def _migrate_legacy_tool_names(self) -> None:
+        """run_command 已并入 pwsh：清理持久化 Agent 工具范围里的死工具名。"""
+        agents = self.data.get("agents")
+        if not isinstance(agents, list):
+            return
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            scope = agent.get("tool_scope")
+            if isinstance(scope, list):
+                agent["tool_scope"] = [
+                    "pwsh" if str(item) == "run_command" else item
+                    for item in scope
+                ]
 
     def save(self) -> None:
         with self.lock:
@@ -1271,7 +1296,7 @@ class ConfigStore:
                     elif key == "agent_tools":
                         valid_tools = {
                             "read_file", "write_file", "list_directory", "search_files",
-                            "run_command", "run_skill_script", "http_request",
+                            "pwsh", "run_skill_script", "http_request",
                         }
                         requested = values[key] if isinstance(values[key], list) else []
                         self.data[key] = [tool for tool in requested if tool in valid_tools]
@@ -1964,7 +1989,7 @@ def encode_image_for_model(source: str) -> dict[str, str] | None:
 # 这些工具的结果属于“内容/文件/图像读取”，模型在后续轮次可能仍要引用
 # （例如读取的 SKILL.md、references、配置、以及 vision_describe 的图片描述）。
 # 它们会被持久注入到下一轮及之后的历史，避免模型跨轮丢失或反复调用视觉 API。
-# 其余的一次性/查询类工具（run_command、list_directory、job_*、web_search 等）
+# 其余的一次性/查询类工具（pwsh、list_directory、job_*、web_search 等）
 # 不注入历史，防止上下文无限膨胀。
 CONTENT_READ_TOOLS = frozenset({"read_file", "search_files", "vision_read_folder", "vision_describe"})
 

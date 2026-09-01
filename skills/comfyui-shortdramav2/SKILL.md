@@ -9,7 +9,7 @@ description: 通用短剧批量生成模板：用 ComfyUI + MiniMax H3 Ref2VA �
 
 > 先启动 ComfyUI，再运行脚本。此 Skill 不依赖 MCP，也不会注册或安装
 > MCP；没有加载本 Skill 时，仍可用 NaibaChat 的通用 `http_request` 或
-> `run_command`/`comfy` CLI 直接调用 ComfyUI。
+> `pwsh`/`comfy` CLI 直接调用 ComfyUI。
 
 ## 什么时候用
 

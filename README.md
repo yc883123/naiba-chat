@@ -1,10 +1,13 @@
-# Naiba Chat 1.6.4 Beta
+# Naiba Chat 1.6.5 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.4 Beta 修复暂停/取消的竞态问题：一次暂停立即中断事件流、看门狗与待执行重连，停止期间锁定发送，取消父 Run 会级联取消子 Job 与 follow-up Run，并稳定断线重连。
+1.6.5 Beta 在 1.6.4 的基础上统一命令执行工具为 pwsh，并优化手机端渲染：修复移动端横向滚动条，顶部模型/Agent 选择器与操作按钮在窄屏下自动换行排布，输入框完整占宽不再被压缩。
 
-## 1.6.4 Beta 主要能力
+## 1.6.5 Beta 主要能力
+
+- **命令执行统一**：`run_command` 已并入 `pwsh`，命令执行只保留 `pwsh` 一个工具，避免重复声明与选择困惑；升级后旧配置、Agent 工具范围与历史会话中的 `run_command` 会自动迁移为 `pwsh`，内置/自定义 Agent 均不会丢失命令执行能力。
+- **手机端渲染优化**：修复移动端横向滚动条问题（视口宽度改用 100% 并隐藏横向溢出）；顶部模型/Agent 选择器改为网格布局自动换行，操作按钮在窄屏下换行到第二行，超小屏（≤380px）降级为两列；输入框在窄屏下完整占宽，图标与发送按钮不再被压缩；底部工作区、权限开关、轻量模式等元信息在超小屏改为单列排列。
 
 - **暂停/取消竞态修复**：一次暂停立即中断当前事件流、看门狗与待执行重连，并停止轮询恢复；「正在停止」期间禁止发送和恢复旧 Run，服务端确认终态后才恢复；取消父 Run 会级联取消子 Job 与 follow-up Run；完成/暂停并发窗口加锁，取消后不再创建自动 follow-up。
 - **断线重连稳定**：重连复用同一回答气泡并从最后事件序号继续，不再重复回放；`/api/chat/cancel` 支持通过 `conversation_id` 定位尚未返回 `run_id` 的 Run；未处理插话保留在记录中并标记为停止，不会自动发送；Job 即使在轮询返回的竞态中完成，也会服从已有取消标记。
@@ -36,7 +39,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.4-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.5-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -124,13 +127,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.4-beta-windows-x64.zip`
+- `naiba-chat-1.6.5-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.4 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.5 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -143,7 +146,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.4-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.5-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 

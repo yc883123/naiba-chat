@@ -1024,7 +1024,7 @@ class VisionRouter:
                 continue
         if not images:
             return False, "vision_read_folder: 图片读取/缓存失败"
-        note = f"已缓存并读取 {len(images)} 张图片；点击缩略图查看大图，主图与缩略图均已存入宿主。"
+        note = f"已读取 {len(images)} 张图片"
         return True, json.dumps({"note": note, "images": images}, ensure_ascii=False)
 
     def _resolve_paths(self, args: dict[str, Any]) -> list[str]:

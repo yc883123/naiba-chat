@@ -1640,11 +1640,16 @@ class ChatStorage:
         except (json.JSONDecodeError, TypeError):
             result["lightweight_disabled_features"] = []
         try:
-            result["enabled_tool_ids"] = json.loads(
-                result.get("enabled_tool_ids") or "[]"
-            )
+            parsed = json.loads(result.get("enabled_tool_ids") or "[]")
+            if not isinstance(parsed, list):
+                parsed = []
         except (json.JSONDecodeError, TypeError):
-            result["enabled_tool_ids"] = []
+            parsed = []
+        # run_command 已并入 pwsh：历史会话固化工具集可能含死工具名，读时统一映射，
+        # 避免该会话的模型声明里既没有 pwsh 也没有 run_command 而丢失命令执行。
+        result["enabled_tool_ids"] = [
+            "pwsh" if str(item) == "run_command" else item for item in parsed
+        ]
         try:
             result["skill_policy"] = json.loads(
                 result.get("skill_policy") or "{}"

@@ -27,7 +27,6 @@ SUBAGENT_ALLOWED_TOOLS = [
     "glob_files",
     "write_file",
     "edit_file",
-    "run_command",
     "pwsh",
     "run_skill_script",
     "http_request",

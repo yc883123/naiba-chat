@@ -760,7 +760,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 }
 
 @media (max-width: 760px) {
-  html, body, .app-shell, .chat-main, .topbar, .messages { width: 100vw; max-width: 100vw; min-width: 0; }
+  html, body, .app-shell, .chat-main, .topbar, .messages, .composer-wrap { width: 100%; max-width: 100%; min-width: 0; }
+  html, body { overflow-x: hidden; }
   .mobile-only { display: inline-grid; }
   .app-shell { display: block; }
   .sidebar { position: fixed; inset: 0 auto 0 0; width: min(86vw, 310px); transform: translateX(-102%); transition: transform .2s; }
@@ -768,25 +769,48 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .sidebar-resizer { display: none; }
   .sidebar-backdrop { position: fixed; inset: 0; background: rgba(20, 24, 20, .45); z-index: 15; }
   .sidebar-backdrop.open { display: block; }
-  .chat-main { height: 100dvh; grid-template-rows: 54px minmax(0, 1fr) auto; }
-  .topbar { position: relative; display: block; padding: 0; overflow: hidden; }
-  #openSidebar { position: absolute; left: 8px; top: 9px; }
+  .chat-main { height: 100dvh; min-height: 0; grid-template-rows: auto minmax(0, 1fr) auto; overflow: hidden; }
+  .topbar {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-items: center;
+    gap: 6px 6px;
+    min-height: 0;
+    padding: 8px;
+    overflow: hidden;
+  }
+  #openSidebar { position: static; grid-column: 1; grid-row: 1; }
   .workspace-control { display: none; }
   .model-control > span, .agent-control > span { display: none; }
-  .model-control { position: absolute; left: 49px; right: calc(50% + 4px); top: 10px; width: auto; min-width: 0; overflow: hidden; z-index: 1; }
-  .agent-control { position: absolute; left: calc(50% + 4px); right: 130px; top: 10px; width: auto; min-width: 0; overflow: hidden; z-index: 1; }
-  .model-control select, .agent-control select { max-width: 100%; width: 100%; min-width: 0; padding-left: 8px; }
+  .model-control, .agent-control { position: static; width: auto; min-width: 0; max-width: none; overflow: hidden; z-index: auto; }
+  .model-control { grid-column: 2; grid-row: 1; }
+  .agent-control { grid-column: 3; grid-row: 1; }
+  .model-control select, .agent-control select { max-width: 100%; width: 100%; min-width: 0; padding: 0 24px 0 8px; text-overflow: ellipsis; }
   .mcp-button span { display: none; }
-  .mcp-button { min-width: 34px; padding: 0 12px; }
-  .topbar-actions { position: absolute; right: 8px; top: 10px; gap: 4px; z-index: 3; }
-  .control-button { padding: 0 8px; }
+  .topbar-actions {
+    position: static;
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    min-width: 0;
+    overflow: hidden;
+    gap: 4px;
+    z-index: auto;
+  }
+  .mcp-button, .control-button { min-width: 34px; max-width: 100%; padding: 0 8px; }
   .unload-model-button .button-label { display: none; }
   .unload-model-button { min-width: 38px; }
   #openSkills .button-label { display: none; }
   #openSkills, #openTasks { min-width: 34px; }
   #openTasks .button-label { display: none; }
+  #reloadPage .button-label { display: none; }
+  #reloadPage { min-width: 34px; }
   #skillCount { min-width: 0; height: auto; background: transparent; color: inherit; font-size: 12px; }
-  .messages { padding: 22px 14px 18px; }
+  .messages { min-height: 0; padding: 22px 14px 18px; overflow-x: hidden; }
   .starter-grid { grid-template-columns: 1fr; width: min(440px, 88vw); }
   .starter-grid button { min-height: 48px; }
   .message-row.user .message-body { max-width: 88%; }
@@ -794,9 +818,12 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .conversation-item .delete-conversation { opacity: 1; color: #e5a6a1; }
   .conversation-settings { opacity: 1; }
   .lightweight-feature-options { grid-template-columns: 1fr; }
-  .composer-wrap { padding: 7px 10px max(8px, env(safe-area-inset-bottom)); }
+  .composer-wrap { padding: 7px 10px max(8px, env(safe-area-inset-bottom)); overflow-x: hidden; }
+  .composer { min-width: 0; width: 100%; }
+  .composer-input { min-width: 0; }
+  .composer .icon-button, .composer .send-button { flex: none; }
   .composer-meta { grid-template-columns: 1fr auto; }
-  .composer-meta-left { grid-column: 1; }
+  .composer-meta-left { grid-column: 1; min-width: 0; }
   .lightweight-mode-toggle { grid-column: 2; grid-row: 1; }
   .lightweight-mode-toggle small { display: none; }
   #runtimeStatus { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
@@ -812,4 +839,18 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .permission-grid { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: 1fr; }
   .settings-dialog, .panel-dialog, .conversation-settings-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+}
+
+@media (max-width: 380px) {
+  .topbar { grid-template-columns: auto minmax(0, 1fr); }
+  .agent-control { grid-column: 2; grid-row: 2; }
+  .topbar-actions { grid-row: 3; }
+  .topbar { grid-template-rows: auto auto auto; }
+  .composer-meta { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .composer-meta-left, .lightweight-mode-toggle, #runtimeStatus { grid-column: 1; grid-row: auto; justify-self: start; }
+  .composer-meta-left { width: 100%; }
+  .composer-workspace, .permission-mode-switch { max-width: 100%; }
+  #composerWorkspaceSelect { max-width: min(150px, 55vw); }
+  .lightweight-mode-toggle { justify-self: start; }
+  #runtimeStatus { justify-self: start; }
 }

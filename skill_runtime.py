@@ -383,7 +383,6 @@ class ToolExecutor:
     DANGEROUS_TOOLS = {
         "pwsh": "执行 PowerShell 命令",
         "edit_file": "精确修改文件",
-        "run_command": "执行系统命令",
         "write_file": "写入文件",
         "run_skill_script": "运行技能脚本",
         "http_request": "发送HTTP请求",
@@ -823,7 +822,7 @@ class ToolExecutor:
         path.write_text(text.replace(old, new, -1 if replace_all else 1), encoding="utf-8")
         return f"已修改 {path}：替换 {count if replace_all else 1} 处"
 
-    def _tool_run_command(self, args: dict[str, Any]) -> str:
+    def _tool_pwsh(self, args: dict[str, Any]) -> str:
         command = str(args.get("command") or "").strip()
         if not command:
             raise ValueError("command 不能为空")
@@ -845,9 +844,6 @@ class ToolExecutor:
         )
         output = (completed.stdout + ("\n" + completed.stderr if completed.stderr else "")).strip()
         return f"exit_code={completed.returncode}\n{output[:max_output]}"
-
-    def _tool_pwsh(self, args: dict[str, Any]) -> str:
-        return self._tool_run_command(args)
 
     def _tool_run_skill_script(self, args: dict[str, Any], active_skills: list[dict[str, Any]]) -> str:
         skill_name = str(args.get("skill") or "")
@@ -1049,7 +1045,7 @@ class SkillAgent:
 - write_file: {"path":"绝对路径","content":"内容","append":false}
 - list_directory: {"path":"绝对路径","recursive":false,"limit":200}
 - search_files: {"path":"目录","query":"文本","pattern":"*.py","limit":100,"max_file_size":5242880}
-- run_command: {"command":"PowerShell 命令","cwd":"工作目录","timeout":120,"max_output":50000}
+- pwsh: {"command":"PowerShell 命令","cwd":"工作目录","timeout":120,"max_output":50000}
 - run_skill_script: {"skill":"技能名","script":"scripts/example.py","args":[],"timeout":120}
 - http_request: {"url":"https://...","method":"GET","headers":{},"body":null,"timeout":60,"max_bytes":100000}
 - register_mcp: {"id":"服务ID","command":"程序路径","args":[],"env":{},"enabled":true}
@@ -1278,7 +1274,7 @@ class SkillAgent:
             guide_parts.append(
                 "通用自动化遵循 Harness 式模块化路径：先用 glob_files/search_files/read_file 查找已有模块；可复用时直接复用。"
             )
-        if {"write_file", "edit_file", "pwsh", "run_command"} & allowed:
+        if {"write_file", "edit_file", "pwsh"} & allowed:
             guide_parts.append(
                 "涉及重复转换、批处理、轮询或结构化数据处理时，用 write_file/edit_file 生成或维护小型 Python/PowerShell 脚本，短任务用 pwsh。"
             )
@@ -1289,9 +1285,9 @@ class SkillAgent:
         if "todo_write" in allowed:
             guide_parts.append("多步骤任务用 todo_write 维护进度。")
         guide_parts.append("互不依赖的只读查询可以在同一轮并行调用。")
-        if {"write_file", "run_command", "run_in_background"} & allowed:
+        if {"write_file", "pwsh", "run_in_background"} & allowed:
             guide_parts.append(
-                "ComfyUI/短剧自动化优先采用 Harness 式脚本路径：先用 write_file 生成或复用一个小型 Python 编排脚本，再用 run_command 或 run_in_background 执行。"
+                "ComfyUI/短剧自动化优先采用 Harness 式脚本路径：先用 write_file 生成或复用一个小型 Python 编排脚本，再用 pwsh 或 run_in_background 执行。"
             )
         if {"job_status", "job_wait", "job_output"} <= allowed:
             guide_parts.append("脚本负责解析素材、批量提交、轮询和校验，随后用 job_status/job_wait/job_output 查看结果。")
@@ -1330,8 +1326,8 @@ class SkillAgent:
             "能直接回答时不要调用工具；需要操作时持续执行到完成，只有缺少权限、凭据、必要输入或不可推断的关键选择才询问。",
             "工具失败时依据错误做有界恢复；不得把已提交说成已完成，也不得声称完成未执行的操作。",
         ]
-        if "run_command" in allowed or "pwsh" in allowed:
-            system_parts.append("run_command 使用 Windows PowerShell；不得使用 Bash 的 &&、|| 或 cat 命令写法。")
+        if "pwsh" in allowed:
+            system_parts.append("pwsh 使用 Windows PowerShell；不得使用 Bash 的 &&、|| 或 cat 命令写法。")
         system_parts.append(
             "Skill 只补充领域说明，绝不是工具开关；"
         )
@@ -1651,8 +1647,8 @@ class SkillAgent:
                         # 只引用当前确实可用的提交方式，避免让模型去用被禁用的工具。
                         if "comfyui_batch" in allowed:
                             submit_hint = "请立即调用可用的 comfyui_batch 提交，"
-                        elif {"http_request", "run_command"} & allowed:
-                            submit_hint = "请通过 http_request/run_command 对 /prompt 执行真实 POST 提交，"
+                        elif {"http_request", "pwsh"} & allowed:
+                            submit_hint = "请通过 http_request/pwsh 对 /prompt 执行真实 POST 提交，"
                         else:
                             submit_hint = "当前没有可用的 ComfyUI 提交工具，"
                         messages.append({
@@ -1660,11 +1656,11 @@ class SkillAgent:
                             "content": (
                                 "你刚才声称已提交 ComfyUI 任务，但本轮没有任何成功的提交工具证据，"
                                 "任务 ID 不能自行编造。"
-                                + ("请立即调用可用的 comfyui_batch，或通过 http_request/run_command 对 /prompt 执行真实 POST；"
+                                + ("请立即调用可用的 comfyui_batch，或通过 http_request/pwsh 对 /prompt 执行真实 POST；"
                                    "拿到真实 Job ID 或 prompt_id 后继续等待并验证结果。"
-                                   if (("comfyui_batch" in allowed) and ({"http_request", "run_command"} & allowed)) else submit_hint)
+                                   if (("comfyui_batch" in allowed) and ({"http_request", "pwsh"} & allowed)) else submit_hint)
                                 + ("如果还缺少必要参数，请明确指出，不能再次声称已提交。"
-                                   if ("comfyui_batch" in allowed or {"http_request", "run_command"} & allowed)
+                                   if ("comfyui_batch" in allowed or {"http_request", "pwsh"} & allowed)
                                    else "请如实说明无法提交，不能再次声称已提交。")
                             ),
                         })
@@ -1882,7 +1878,7 @@ class SkillAgent:
                 url = str(arguments.get("url") or "").lower()
                 if "system_stats" in url and "http 200" in result:
                     return False
-            if tool == "run_command":
+            if tool == "pwsh":
                 command = str(arguments.get("command") or "").lower()
                 if "system_stats" in command and ("200" in result or "success" in result):
                     return False
@@ -1949,7 +1945,7 @@ class SkillAgent:
                     marker in result for marker in ("prompt_id", "http 200", "http 201")
                 ):
                     return False
-            if tool in {"run_command", "pwsh"}:
+            if tool == "pwsh":
                 command = str(arguments.get("command") or "").lower()
                 if "/prompt" in command and any(
                     marker in result for marker in ("prompt_id", "exit_code=0", "statuscode: 200")

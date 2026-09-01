@@ -5,7 +5,7 @@
 默认超时、所需权限、执行函数与结果摘要函数。
 
 - 保留现有 9 个工具：``read_file`` / ``write_file`` / ``list_directory`` /
-  ``search_files`` / ``run_command`` / ``run_skill_script`` / ``http_request`` /
+  ``search_files`` / ``pwsh`` / ``run_skill_script`` / ``http_request`` /
   ``register_mcp`` / ``call_mcp``。
 - 新增通用任务工具：``run_in_background`` / ``job_output`` / ``job_status`` /
   ``job_wait`` / ``job_kill`` / ``subagent``。这些工具由 JobRegistry / SubAgentManager
@@ -316,24 +316,6 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ToolSpec(
             name="pwsh",
             description="执行 Windows PowerShell；与 Harness 的 pwsh 工具对应，支持短任务和脚本启动。",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "command": _string("PowerShell 命令"),
-                    "cwd": _string("工作目录", ""),
-                    "timeout": {"type": "integer", "default": 120},
-                    "max_output": {"type": "integer", "description": "最多返回的输出字符数", "default": 50000},
-                },
-                "required": ["command"],
-            },
-            side_effect=True,
-            retryable=False,
-            timeout=120,
-            permission="confirm",
-        ),
-        ToolSpec(
-            name="run_command",
-            description="在指定工作目录执行 PowerShell 命令。",
             parameters={
                 "type": "object",
                 "properties": {
