@@ -1,11 +1,12 @@
-# Naiba Chat 1.6.2 Beta
+# Naiba Chat 1.6.3 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.2 Beta 重点修复两个影响使用的问题：安装版（冻结 exe）执行 .py Skill 脚本会二次启动主程序、被实例锁误判为「已在运行」而失败，现在改为走 `--run-skill-script` 隐藏入口只执行脚本、不初始化 GUI/HTTP/实例锁；在线请求异常（如 HTTP 500）时 AI 已输出的思考/部分回复不再被错误信息整段覆盖丢失，失败内容会重建为带「未完成」标记的 assistant 消息持久化（刷新/重渲染/后续上下文都能看到），并保留独立错误提示。
+1.6.3 Beta 新增内置 RunningHub 技能：通过 RunningHub API 生成图片、视频、音频、3D 模型，并运行任意 RunningHub AI 应用（自定义 ComfyUI 工作流），覆盖 420+ 端点；技能随 EXE 打包，升级后启动时自动同步到本地数据目录。
 
-## 1.6.2 Beta 主要能力
+## 1.6.3 Beta 主要能力
 
+- **RunningHub 多媒体生成**：内置 runninghub 技能，覆盖文生图、图生视频、文生视频、TTS、音乐、3D 建模、图片放大、AI 应用（webappId）等 420+ 端点；支持 AI 站（runninghub.ai）与 CN 站（runninghub.cn）双站点，技能随 EXE 打包，升级后启动时自动同步到本地数据目录。
 - **Skill 脚本执行稳定**：安装版（冻结 exe）执行 .py Skill 脚本不再二次启动主程序触发实例锁；冻结版走 `--run-skill-script` 隐藏入口只执行脚本，`__main__` 语义、工作目录与参数透传保持不变。
 - **失败内容保留**：在线请求异常（如 HTTP 500）时已输出的思考/部分回复/工具活动不会被错误信息覆盖丢失，会重建为「未完成」assistant 消息持久化并保留独立错误提示，刷新/重渲染/后续上下文可见。
 - **启动错误清晰**：数据目录/锁文件不可写等权限/环境问题不再误报为「已在运行」，会给出具体目录与原因；启动失败以简洁中文提示退出，不再输出堆栈。
@@ -33,7 +34,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.2-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.3-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -121,13 +122,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.2-beta-windows-x64.zip`
+- `naiba-chat-1.6.3-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.2 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.3 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -140,7 +141,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.2-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.3-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
