@@ -184,7 +184,12 @@ class Launcher:
             except Exception:
                 pass
 
-        instance_lock = srv.acquire_instance_lock()
+        try:
+            instance_lock = srv.acquire_instance_lock()
+        except RuntimeError as exc:
+            # 已在运行或数据目录/锁文件不可写：简洁中文提示退出，不输出 traceback。
+            _notify_startup_error(str(exc))
+            raise SystemExit(2) from exc
         srv.APP = srv.NaibaChatApp()
         srv.APP.update_restart_callback = self._quit
         host = str(srv.APP.config.data.get("host", "0.0.0.0"))
@@ -236,7 +241,56 @@ class Launcher:
             self._exit_complete.set()
 
 
+def _notify_startup_error(message: str) -> None:
+    """桌面端启动失败提示：优先弹系统消息框（窗口/托盘场景下用户看不到 stderr）。"""
+    if sys.platform == "win32":
+        try:
+            ctypes.windll.user32.MessageBoxW(0, message, "naiba-chat 启动失败", 0x10)  # MB_ICONERROR
+            return
+        except Exception:
+            pass
+    print(message, file=sys.stderr)
+
+
+def _run_skill_script(argv: list[str]) -> int:
+    """冻结版子进程入口：naiba-chat.exe --run-skill-script <script> [args...]。
+
+    只设置 sys.argv 后以 __main__ 方式执行脚本，不初始化 GUI/HTTP 服务/实例锁。
+    返回进程退出码。
+    """
+    if not argv:
+        print("缺少 --run-skill-script 的脚本路径", file=sys.stderr)
+        return 2
+    script = argv[0]
+    if not os.path.isfile(script):
+        print(f"脚本不存在：{script}", file=sys.stderr)
+        return 1
+    sys.argv = [script, *argv[1:]]
+    try:
+        import runpy
+
+        runpy.run_path(script, run_name="__main__")
+    except SystemExit as exc:
+        code = exc.code
+        if isinstance(code, int):
+            return code
+        return 0 if code is None else 1
+    except BaseException:
+        import traceback
+
+        traceback.print_exc()
+        return 1
+    return 0
+
+
 def main() -> None:
+    # 隐藏入口：冻结版执行 .py Skill 脚本。必须先于任何初始化处理，
+    # 否则 naiba-chat.exe --run-skill-script <script> 会走到实例锁，
+    # 被误判为"已在运行"而无法执行脚本。
+    argv = sys.argv[1:]
+    if "--run-skill-script" in argv:
+        idx = argv.index("--run-skill-script")
+        raise SystemExit(_run_skill_script(argv[idx + 1 :]))
     Launcher().run()
 
 

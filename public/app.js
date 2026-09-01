@@ -1019,7 +1019,9 @@ function messageElement(message, temporary = false) {
     const actions = message.id ? `<div class="message-actions"><button data-branch-message title="从这条消息分支到新会话继续">分支</button>${metadata.interjection && !metadata.interjection_consumed ? '<button data-delete-message title="删除这条消息">删除</button>' : ''}</div>` : '';
     row.innerHTML = `<div class="message-body">${renderUserContent(metadata.display_content || message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
-    const abortedBadge = metadata.aborted ? '<span class="aborted-badge">已中止</span>' : '';
+    const abortedBadge = metadata.aborted
+      ? '<span class="aborted-badge">已中止</span>'
+      : metadata.partial ? '<span class="aborted-badge">未完成</span>' : '';
     const activity = Array.isArray(metadata.activity) ? metadata.activity : [];
     const activityHtml = activity.length ? activityMarkup(activity) : '';
     const activityHasProse = activity.some((item) => item && item.type === 'prose');
@@ -5076,7 +5078,30 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     clearElapsedStatus();
     clearVisionProgress();
     collapseReasoning();
-    answer.innerHTML = `<p>执行失败：${escapeHtml(event.message)}</p>`;
+    if (event.partial_message) {
+      // 失败时后端已把累积内容持久化为 partial assistant 消息，直接用其渲染，
+      // 保留已展示的思考/正文/工具，避免 HTTP 500 后内容被覆盖丢失。
+      try {
+        const partialRow = messageElement(event.partial_message);
+        row.replaceWith(partialRow);
+        updateContextUsage(null, event.partial_message);
+      } catch (error) {
+        console.error('[naiba] error 事件渲染崩溃:', error, 'message=', event.partial_message);
+      }
+    } else {
+      // 没有 partial_message：绝不能清空已展示的中途输出，
+      // 只在真正无任何内容时才显示错误占位；否则会抹掉 AI 已输出的回复。
+      const hasContent = Boolean((answer.dataset.raw || '').trim())
+        || row.querySelector('.reasoning-block, .tool-run, .stream-prose, .tool-confirm');
+      if (hasContent) {
+        const errNode = document.createElement('p');
+        errNode.className = 'run-error';
+        errNode.textContent = `执行失败：${event.message || '任务执行失败'}`;
+        answer.appendChild(errNode);
+      } else {
+        answer.innerHTML = `<p>执行失败：${escapeHtml(event.message || '任务执行失败')}</p>`;
+      }
+    }
     $('#runtimeStatus').textContent = '执行失败';
   }
   scrollToBottom();

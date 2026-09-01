@@ -1260,6 +1260,13 @@ class ConversationRunManager:
             sink.flush()
             traceback.print_exc()
             error_message = str(exc)
+            # 先把本次已累积(思考/部分回复/工具活动)重建为一条 partial assistant 消息，
+            # 避免 HTTP 500 等异常后已展示的内容丢失；刷新/重渲染/后续上下文都能看到它。
+            partial_message = self._persist_failed_message(
+                run_id, conversation_id, skills,
+                trace=(run_context or {}).get("trace_messages") or [],
+                error=error_message,
+            )
             try:
                 self.app.storage.add_message(
                     conversation_id,
@@ -1276,7 +1283,10 @@ class ConversationRunManager:
                 error=error_message,
                 finished=True,
             )
-            self.emit(run_id, {"type": "error", "message": error_message})
+            error_payload: dict[str, Any] = {"type": "error", "message": error_message}
+            if partial_message:
+                error_payload["partial_message"] = partial_message
+            self.emit(run_id, error_payload)
         finally:
             self._finish(run_id)
 
@@ -1486,6 +1496,33 @@ class ConversationRunManager:
                     return None
         except Exception:
             pass
+        reasoning, tool_runs, content, activity = self._rebuild_partial_run(run_id, events)
+        if not content:
+            content = "（已中止）"
+        metadata: dict[str, Any] = {
+            "aborted": True,
+            "reasoning": reasoning,
+            "tool_runs": tool_runs,
+            "run_id": run_id,
+            "skills": skills,
+            "activity": activity,
+            "trace": trace or [],
+            # 中止/取消的轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
+            "attachments": extract_attachments(tool_runs),
+        }
+        try:
+            return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _rebuild_partial_run(
+        run_id: str, events: list[dict[str, Any]]
+    ) -> tuple[list[str], list[dict[str, Any]], str, list[dict[str, Any]]]:
+        """从 run_events 重建部分运行内容：reasoning / tool_runs / 正文 / activity 时间线。
+
+        供"取消"与"失败"两类收尾路径复用，保证重建结果一致。
+        """
         reasoning: list[str] = []
         reasoning_parts: list[str] = []
         content_parts: list[str] = []
@@ -1524,17 +1561,50 @@ class ConversationRunManager:
             if text:
                 reasoning.append(text)
         content = "".join(content_parts).strip()
+        return reasoning, tool_runs, content, _safe_activity(events, reasoning, tool_runs)
+
+    def _persist_failed_message(
+        self,
+        run_id: str,
+        conversation_id: str,
+        skills: list[dict[str, Any]],
+        trace: list[dict[str, Any]] | None = None,
+        error: str = "",
+    ) -> dict[str, Any] | None:
+        """运行异常（如 HTTP 500）时把本次已累积内容重建为一条 partial assistant 消息并入库。
+
+        与取消路径共用事件重建逻辑：失败前的思考/部分回复/工具活动不丢失，
+        刷新/重渲染/后续上下文都能看到（作为普通 assistant 消息计入历史），
+        同时保留独立的 error 消息记录完整原因。
+        """
+        try:
+            # 先把 sink 里尚未落库的 delta 主动刷出，避免失败前最后一段输出被缓冲丢弃。
+            self._flush_sink(run_id)
+            events = self._all_run_events(run_id)
+        except Exception:
+            return None
+        # 避免重复：该 run 若已入库过 partial 消息（例如重复收尾），直接返回。
+        try:
+            conversation = self.app.storage.get_conversation(conversation_id)
+            for msg in (conversation or {}).get("messages", []) or []:
+                meta = msg.get("metadata") or {}
+                if meta.get("partial") and str(meta.get("run_id") or "") == run_id:
+                    return None
+        except Exception:
+            pass
+        reasoning, tool_runs, content, activity = self._rebuild_partial_run(run_id, events)
         if not content:
-            content = "（已中止）"
+            content = "（本次回答未完成）"
         metadata: dict[str, Any] = {
-            "aborted": True,
+            "partial": True,
             "reasoning": reasoning,
             "tool_runs": tool_runs,
             "run_id": run_id,
             "skills": skills,
-            "activity": _safe_activity(events, reasoning, tool_runs),
+            "activity": activity,
             "trace": trace or [],
-            # 中止/取消的轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
+            "error": error,
+            # 失败轮次也要把已生成的图片/媒体作为附件展示，避免"生成过但历史里看不到缩略图"。
             "attachments": extract_attachments(tool_runs),
         }
         try:

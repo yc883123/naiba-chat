@@ -1,0 +1,33 @@
+{
+  "comfyui_url": "http://127.0.0.1:8188",
+  "template_file": "MiniMaxH3-1采TE加速.json",
+  "output_prefix": "BOSS",
+  "unit_glob": "单元{unit:02d}_*.md",
+  "pictures": {
+    "1": "主角.png",
+    "2": "配角.png",
+    "3": "",
+    "4": "",
+    "5": "",
+    "6": "",
+    "7": "",
+    "8": "",
+    "9": ""
+  },
+  "audios": {
+    "1": "主角声音.mp3",
+    "2": "配角声音.wav",
+    "3": ""
+  },
+  "segment_pictures": {
+    "2": {
+      "3": "第三段专用角色图.png",
+      "4": "第三段专用场景图.png"
+    }
+  },
+  "segment_audios": {
+    "3": {
+      "1": "第三段专用声线.wav"
+    }
+  }
+}

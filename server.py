@@ -4561,25 +4561,32 @@ def write_status(host: str, port: int, token: str) -> None:
 
 
 def acquire_instance_lock():
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    handle = LOCK_PATH.open("a+b")
-    if LOCK_PATH.stat().st_size == 0:
-        handle.write(b"0")
-        handle.flush()
-    handle.seek(0)
     try:
-        if os.name == "nt":
-            import msvcrt
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        handle = LOCK_PATH.open("a+b")
+        if LOCK_PATH.stat().st_size == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
 
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
 
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            # 锁文件已能正常打开并写入，仍加锁失败，视为已有实例正在运行。
+            handle.close()
+            raise RuntimeError("naiba-chat 已经在运行，请勿重复启动") from exc
+        return handle
     except OSError as exc:
-        handle.close()
-        raise RuntimeError("naiba-chat 已经在运行，请勿重复启动") from exc
-    return handle
+        # 数据目录创建失败、锁文件打不开等属于环境/权限问题，绝不能误报为"重复启动"。
+        raise RuntimeError(
+            f"无法创建实例锁文件（{exc}）：请检查数据目录 {DATA_DIR} 及锁文件 {LOCK_PATH} 是否可写"
+        ) from exc
 
 
 def main() -> None:

@@ -868,7 +868,12 @@ class ToolExecutor:
             raise ValueError("args 必须是数组")
         suffix = script.suffix.lower()
         if suffix == ".py":
-            command = [self.python_executable, str(script), *map(str, raw_args)]
+            if getattr(sys, "frozen", False):
+                # 冻结版下 sys.executable 是 naiba-chat.exe：直接执行脚本会二次启动
+                # 主程序并触发实例锁，必须走隐藏入口（仅执行脚本、不初始化服务/锁）。
+                command = [sys.executable, "--run-skill-script", str(script), *map(str, raw_args)]
+            else:
+                command = [self.python_executable, str(script), *map(str, raw_args)]
         elif suffix == ".ps1":
             invocation = "& " + " ".join(
                 _powershell_literal(item) for item in [script, *map(str, raw_args)]
