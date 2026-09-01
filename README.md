@@ -1,10 +1,10 @@
-# Naiba Chat 1.6.0 Beta
+# Naiba Chat 1.6.1 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.0 Beta 重点优化多轮图片对话的缓存命中率与 Agent 切换体验，并重构 Skill 系统：图片对话历史改为「每条 user 消息独立携带自己的完整图片、稳定重发」，避免缓存命中率忽高忽低；图片以 content 块发送，不把 base64 当文本，命中率随对话稳定上涨；切换顶部 Agent 后自动在输入框末尾追加该 Agent 预设 Skill 的 `/ref` 引用；支持输入 `/` 在任意时刻向当前会话注入任意 Skill，并新增「安装 Skill」「编辑 Skill」引导能力，改进左侧边栏样式。
+1.6.1 Beta 重点重构检查更新流程并迁移 Skill 目录：更新检查改为基于 GitHub Releases 版本列表，可在设置中选择要安装的版本并支持版本回退，每个候选版本都会校验 manifest（仓库、commit、文件名、SHA-256）与可执行文件有效性，校验失败会拒绝安装并给出明确原因；下载中/校验中/待重启等状态实时展示，完成后引导重启生效，源码运行模式禁用一键更新并提示使用 `git pull`；托管 Skill 目录迁移到数据目录内 `skills/`，升级旧数据时自动搬迁并改写配置引用，避免升级后 Skill 丢失。
 
-## 1.6.0 Beta 主要能力
+## 1.6.1 Beta 主要能力
 
 - **多轮图片缓存稳定**：图片对话历史按每条 user 消息完整携带并稳定重发，不再因「只保留最近图片/占位翻转」导致 DeepSeek 缓存命中率波动；图片以 `image_url`/`input_image` 内容块发送，命中率随对话稳定上涨。
 - **切换 Agent 附加 Skill 引用**：切换顶部 Agent 后自动在输入框末尾追加该 Agent 预设 Skill 的 `/ref` 引用（已在框内的跳过，避免重复）。
@@ -23,13 +23,13 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 - **在线与本地模型**：支持 OpenAI-compatible、Anthropic、Gemini、Ollama、LM Studio、llama.cpp、Unsloth 等常见接口；针对 DeepSeek 思考模式会正确回传 `reasoning_content`。
 - **网络健壮性**：针对代理/VPN TUN 中途切换或代理进程重启导致的连接拒绝，会自动改用直连（绕过系统代理）重试；修复取消请求时的连接泄漏；错误提示附带完整接口路径便于定位。
 - **Skill 与 MCP 扩展**：Skill 可提供领域知识、模板和脚本。MCP 依赖升级到 2.1.1，并在应用启动时自动连接已启用服务（对启动时未连上的做周期重试）；`register_mcp` 只是登记服务，需重开会话后其工具才进入可用集，`call_mcp` 仅能调用当前会话可用集内的 MCP 工具。
-- **可校验更新**：Windows 更新包在安装前必须通过 SHA-256 校验，校验失败会拒绝替换程序。
+- **可校验更新**：更新检查基于 GitHub Releases 版本列表，支持在设置中选择版本安装与回退；每个候选版本都会校验 manifest（仓库、commit、文件名、SHA-256）与可执行文件有效性，任何一项不一致都会拒绝安装并给出明确原因。
 
 ## 开始使用
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.0-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.1-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -117,13 +117,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.0-beta-windows-x64.zip`
+- `naiba-chat-1.6.1-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.0 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.1 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -136,7 +136,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.0-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.1-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
