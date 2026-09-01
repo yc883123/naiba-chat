@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.6.3-beta
-  RELEASE_TAG: v1.6.3-beta
-  PACKAGE_NAME: naiba-chat-1.6.3-beta-windows-x64
+  RELEASE_VERSION: 1.6.4-beta
+  RELEASE_TAG: v1.6.4-beta
+  PACKAGE_NAME: naiba-chat-1.6.4-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.6.3 Beta release
+      - name: Publish 1.6.4 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.6.3 Beta
+          name: Naiba Chat 1.6.4 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,10 +99,17 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.6.3 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.6.4 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 新增内置 RunningHub 技能：覆盖文生图、图生视频、文生视频、TTS、音乐、3D 建模、图片放大、AI 应用（webappId）等 420+ 端点；技能随 EXE 打包，升级后启动时自动同步到本地数据目录。
+            - 暂停/取消即时中断：一次暂停立即中断当前事件流、看门狗与待执行重连，并停止轮询恢复。
+            - 停止期间锁定发送：「正在停止」期间禁止再发送和恢复旧 Run，服务端确认终态后才恢复。
+            - 重连不重复回放：断线重连复用同一回答气泡，从最后事件序号继续，不再重复回放。
+            - 按会话定位取消：/api/chat/cancel 支持通过 conversation_id 定位尚未返回 run_id 的 Run。
+            - 父 Run 级联取消：取消父 Run 会级联取消子 Job 与 follow-up Run。
+            - 并发窗口加锁：完成/暂停并发窗口已加锁，取消后禁止创建自动 follow-up。
+            - 插话保留不误发：未处理插话保留在记录中并标记为停止，不会自动发送。
+            - Job 服从取消标记：Job 即使轮询返回的竞态中完成，也服从已有取消标记。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

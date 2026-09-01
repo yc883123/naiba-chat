@@ -1,11 +1,13 @@
-# Naiba Chat 1.6.3 Beta
+# Naiba Chat 1.6.4 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.3 Beta 新增内置 RunningHub 技能：通过 RunningHub API 生成图片、视频、音频、3D 模型，并运行任意 RunningHub AI 应用（自定义 ComfyUI 工作流），覆盖 420+ 端点；技能随 EXE 打包，升级后启动时自动同步到本地数据目录。
+1.6.4 Beta 修复暂停/取消的竞态问题：一次暂停立即中断事件流、看门狗与待执行重连，停止期间锁定发送，取消父 Run 会级联取消子 Job 与 follow-up Run，并稳定断线重连。
 
-## 1.6.3 Beta 主要能力
+## 1.6.4 Beta 主要能力
 
+- **暂停/取消竞态修复**：一次暂停立即中断当前事件流、看门狗与待执行重连，并停止轮询恢复；「正在停止」期间禁止发送和恢复旧 Run，服务端确认终态后才恢复；取消父 Run 会级联取消子 Job 与 follow-up Run；完成/暂停并发窗口加锁，取消后不再创建自动 follow-up。
+- **断线重连稳定**：重连复用同一回答气泡并从最后事件序号继续，不再重复回放；`/api/chat/cancel` 支持通过 `conversation_id` 定位尚未返回 `run_id` 的 Run；未处理插话保留在记录中并标记为停止，不会自动发送；Job 即使在轮询返回的竞态中完成，也会服从已有取消标记。
 - **RunningHub 多媒体生成**：内置 runninghub 技能，覆盖文生图、图生视频、文生视频、TTS、音乐、3D 建模、图片放大、AI 应用（webappId）等 420+ 端点；支持 AI 站（runninghub.ai）与 CN 站（runninghub.cn）双站点，技能随 EXE 打包，升级后启动时自动同步到本地数据目录。
 - **Skill 脚本执行稳定**：安装版（冻结 exe）执行 .py Skill 脚本不再二次启动主程序触发实例锁；冻结版走 `--run-skill-script` 隐藏入口只执行脚本，`__main__` 语义、工作目录与参数透传保持不变。
 - **失败内容保留**：在线请求异常（如 HTTP 500）时已输出的思考/部分回复/工具活动不会被错误信息覆盖丢失，会重建为「未完成」assistant 消息持久化并保留独立错误提示，刷新/重渲染/后续上下文可见。
@@ -34,7 +36,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.3-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.4-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -122,13 +124,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.3-beta-windows-x64.zip`
+- `naiba-chat-1.6.4-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.3 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.4 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -141,7 +143,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.3-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.4-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 

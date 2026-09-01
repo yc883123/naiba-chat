@@ -124,10 +124,17 @@ class JobRegistry:
         }
 
     def _set_status(self, job_id: str, status: str, **fields: Any) -> None:
+        current = self.app.storage.get_background_task(job_id)
+        if current and current.get("cancel_requested") and status in JOB_ACTIVE:
+            return
         self.app.storage.update_job(job_id, status=status, **fields)
         self._emit(job_id, {"type": "job_status", "status": status, **fields})
 
     def _finish(self, job_id: str, status: str, error: str = "", result: dict[str, Any] | None = None, detail: dict[str, Any] | None = None) -> None:
+        current = self.app.storage.get_background_task(job_id)
+        if current and current.get("cancel_requested") and status != "cancelled":
+            status = "cancelled"
+            error = error or "用户取消"
         self.app.storage.update_job(
             job_id, status=status, error=error, result=result or {}, detail=detail, finished=True
         )

@@ -997,6 +997,7 @@ class ChatStorage:
             and str(message.get("metadata", {}).get("run_id") or "") == run_id
             and bool(message.get("metadata", {}).get("interjection_guided"))
             and not bool(message.get("metadata", {}).get("interjection_consumed"))
+            and not bool(message.get("metadata", {}).get("interjection_stopped"))
         ]
 
     def guide_run_interjection(
@@ -1058,6 +1059,33 @@ class ChatStorage:
                     (json.dumps(metadata, ensure_ascii=False), row["id"]),
                 )
 
+    def stop_pending_interjections(self, run_id: str) -> int:
+        """Keep queued interjections visible, but permanently prevent dispatch."""
+        stopped = 0
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT id, metadata FROM messages WHERE role = 'user' "
+                "AND json_extract(metadata, '$.run_id') = ? "
+                "AND json_extract(metadata, '$.interjection') = 1",
+                (run_id,),
+            ).fetchall()
+            for row in rows:
+                try:
+                    metadata = json.loads(row["metadata"] or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+                if metadata.get("interjection_consumed"):
+                    continue
+                if not metadata.get("interjection_stopped"):
+                    metadata["interjection_stopped"] = True
+                    db.execute(
+                        "UPDATE messages SET metadata = ? WHERE id = ?",
+                        (json.dumps(metadata, ensure_ascii=False), row["id"]),
+                    )
+                    stopped += 1
+        return stopped
+
     def delete_run_interjection(
         self, conversation_id: str, run_id: str, message_id: str
     ) -> bool:
@@ -1115,7 +1143,7 @@ class ChatStorage:
             db.execute("BEGIN IMMEDIATE")
             parent = db.execute(
                 "SELECT conversation_id FROM background_tasks WHERE id = ? "
-                "AND status = 'completed'", (parent_run_id,)
+                "AND status = 'completed' AND cancel_requested = 0", (parent_run_id,)
             ).fetchone()
             if not parent:
                 return None
@@ -1138,7 +1166,8 @@ class ChatStorage:
                 metadata = message.get("metadata") or {}
                 if (metadata.get("interjection") and str(metadata.get("run_id") or "") == parent_run_id
                         and not metadata.get("interjection_guided") and not metadata.get("interjection_consumed")
-                        and not metadata.get("interjection_dispatched")):
+                        and not metadata.get("interjection_dispatched")
+                        and not metadata.get("interjection_stopped")):
                     queued.append(message)
             if not queued:
                 return None
@@ -1163,11 +1192,11 @@ class ChatStorage:
                 "id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
                 "agent_id, agent_name, status, message, snapshot, detail, created_at, updated_at, "
                 "parent_job_id, owner_session_id"
-                ") VALUES (?, ?, 'chat', ?, ?, '', ?, ?, 'queued', ?, ?, '{}', ?, ?, '', ?)",
+                ") VALUES (?, ?, 'chat', ?, ?, '', ?, ?, 'queued', ?, ?, '{}', ?, ?, ?, ?)",
                 (run_id, conversation_id, str(frozen.get("interaction_mode") or "craft"),
                  str(queued[0].get("id") or ""), str(agent.get("id") or ""),
                  str(agent.get("name") or "Agent"), message, json.dumps(frozen, ensure_ascii=False),
-                 now, now, conversation_id),
+                 now, now, parent_run_id, conversation_id),
             )
             db.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (now, conversation_id))
         return self.get_background_task(run_id)
@@ -1484,7 +1513,7 @@ class ChatStorage:
             conditions.append("conversation_id = ?")
             parameters.append(conversation_id)
         if active_only:
-            conditions.append("status IN ('queued', 'running', 'waiting', 'cancelling')")
+            conditions.append("status IN ('queued', 'running', 'waiting', 'stopping', 'cancelling')")
         where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         parameters.append(max(1, min(int(limit), 200)))
         with self._connect() as db:

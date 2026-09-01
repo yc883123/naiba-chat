@@ -1212,26 +1212,31 @@ class ConversationRunManager:
                 "trace": (run_context or {}).get("trace_messages") or [],
                 **({"error": sink.failure_message} if sink.failure_message else {}),
             }
-            saved = self.app.storage.add_message(conversation_id, "assistant", response, metadata)
-            self.app.storage.update_background_task(
-                run_id,
-                status="failed" if sink.failure_message else "completed",
-                detail={"message": "任务已完成", "message_id": saved["id"]},
-                error=sink.failure_message,
-                finished=True,
-            )
+            with self._submit_lock:
+                current = self.app.storage.get_background_task(run_id)
+                if (cancel_event.is_set() or not current or current.get("cancel_requested")
+                        or current.get("status") in {"cancelling", "cancelled"}):
+                    raise TaskCancelled("任务已取消")
+                saved = self.app.storage.add_message(conversation_id, "assistant", response, metadata)
+                self.app.storage.update_background_task(
+                    run_id,
+                    status="failed" if sink.failure_message else "completed",
+                    detail={"message": "任务已完成", "message_id": saved["id"]},
+                    error=sink.failure_message,
+                    finished=True,
+                )
+                followup = None
+                if sink.failure_message is None:
+                    claim_followup = getattr(self.app.storage, "claim_interjections_for_followup", None)
+                    if callable(claim_followup):
+                        followup = claim_followup(run_id, snapshot)
+                    if followup:
+                        self._start(followup, self._run_chat)
             if choice_groups:
                 self.emit(
                     run_id,
                     {"type": "choice", "choices": choice_groups[0]["choices"], "choice_groups": choice_groups},
                 )
-            followup = None
-            if sink.failure_message is None:
-                claim_followup = getattr(self.app.storage, "claim_interjections_for_followup", None)
-                if callable(claim_followup):
-                    followup = claim_followup(run_id, snapshot)
-                if followup:
-                    self._start(followup, self._run_chat)
             self.emit(run_id, {
                 "type": "done",
                 "message": saved,
@@ -1375,24 +1380,49 @@ class ConversationRunManager:
         return self.events_after(run_id, after)
 
     def cancel(self, run_id: str) -> dict[str, Any] | None:
-        run = self.get(run_id)
-        if not run:
-            return None
-        if run.get("status") in self.ACTIVE:
+        with self._submit_lock:
+            run = self.get(run_id)
+            if not run:
+                return None
+            is_active = run.get("status") in self.ACTIVE
+            children = [
+                job for job in self.app.storage.list_background_tasks("", active_only=True, limit=200)
+                if str(job.get("parent_job_id") or "") == run_id
+            ]
             with self._lock:
                 event = self._events.get(run_id)
+                in_flight = run_id in self._threads
+            if not is_active and not in_flight and not children:
+                return run
             if event:
                 event.set()
             updated = self.app.storage.update_background_task(
                 run_id,
-                status="cancelling",
+                status="cancelling" if is_active else "cancelled",
                 cancel_requested=True,
-                detail={"message": "正在取消任务"},
+                detail={"message": "正在取消任务"} if is_active else {"message": "任务已取消"},
+                finished=not is_active,
             )
-            # 看门狗：即便模型调用未被及时中断，也强制推进到终态，避免前端/任务轮询一直卡在运行态。
-            self._schedule_forced_cancel(run_id)
+            stop_interjections = getattr(self.app.storage, "stop_pending_interjections", None)
+            if callable(stop_interjections):
+                stop_interjections(run_id)
+            conversation_id = str(run.get("conversation_id") or "")
+            for child in children:
+                child_id = str(child.get("id") or "")
+                if str(child.get("kind") or "") in {"chat", "plan_execute"}:
+                    self.cancel(child_id)
+                else:
+                    self.app.jobs.cancel(
+                        child_id,
+                        owner=conversation_id or None,
+                        reason="父任务取消",
+                    )
+            # Completion may have won the lock immediately before cancellation and
+            # created a follow-up.  Marking the terminal parent plus cascading its
+            # now-active child closes that race as well.
+            if is_active:
+                self._schedule_forced_cancel(run_id)
             return updated
-        return run
 
     def _schedule_forced_cancel(self, run_id: str) -> None:
         def watchdog() -> None:

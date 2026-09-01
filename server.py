@@ -3741,13 +3741,27 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json(APP.migration_merge(body))
         elif path == "/api/chat/cancel":
             run_id = str(body.get("run_id") or "").strip()
-            if not run_id:
-                self._json({"error": "run_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            conversation_id = str(body.get("conversation_id") or "").strip()
+            if not run_id and not conversation_id:
+                self._json({"error": "run_id 和 conversation_id 不能同时为空"}, HTTPStatus.BAD_REQUEST)
             else:
-                run = APP.runs.cancel(run_id)
+                if not run_id:
+                    active = next(
+                        (
+                            item for item in APP.runs.list(conversation_id, active_only=True)
+                            if str(item.get("kind") or "") in {"chat", "plan_execute"}
+                        ),
+                        None,
+                    )
+                    run_id = str((active or {}).get("id") or "")
+                run = APP.runs.get(run_id) if run_id else None
+                if run and conversation_id and str(run.get("conversation_id") or "") != conversation_id:
+                    self._json({"error": "运行不属于当前对话"}, HTTPStatus.BAD_REQUEST)
+                    return
+                cancelled = APP.runs.cancel(run_id) if run_id else None
                 self._json(
-                    {"cancelled": bool(run), "run": run},
-                    HTTPStatus.OK if run else HTTPStatus.NOT_FOUND,
+                    {"cancelled": bool(cancelled), "run": cancelled},
+                    HTTPStatus.OK if cancelled else HTTPStatus.NOT_FOUND,
                 )
         elif path.startswith("/api/jobs/") and path.endswith("/cancel"):
             job_id = path.split("/")[-2]

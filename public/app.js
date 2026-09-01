@@ -24,6 +24,11 @@ const state = {
   runConversationId: '',
   runSequence: 0,
   runEvents: {},
+  runRow: null,
+  runReconnectTimers: new Set(),
+  cancelRequested: false,
+  cancelConversationId: '',
+  cancelledRunIds: new Set(),
   // Run 过程看护/重连状态
   runGeneration: 0,        // 每次重建流自增，旧代回调一律丢弃，防竞态覆盖
   runAttempt: 0,           // 本次连接生命周期内的重连次数（指数退避用）
@@ -88,7 +93,11 @@ async function api(path, options = {}) {
   }
   const response = await fetch(path, { ...options, headers });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(payload.error || `HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -1059,7 +1068,8 @@ function isPendingRunGuidance(message) {
   return message?.role === 'user'
     && Boolean(metadata.interjection)
     && !metadata.interjection_guided
-    && !metadata.interjection_consumed;
+    && !metadata.interjection_consumed
+    && !metadata.interjection_stopped;
 }
 
 function runGuidanceElement(message) {
@@ -1486,6 +1496,7 @@ async function loadTasks() {
 // 探测后端是否仍有当前对话的活跃 Run，若有则 resumeRun 拉回流。
 // 只会在 runReconnectAt（>0 表示要恢复）且冷却已过时查询，避免每个轮询周期都打 /api/runs。
 async function maybeRecoverRunFromPoll() {
+  if (state.cancelRequested) return;
   if (state.abortController) return; // 已有活动流，无需兜底
   if (state.runRecovering) return;
   if (!state.checkRunEligible) return; // 未进入"等恢复"状态就不查询
@@ -3958,7 +3969,12 @@ function renderPendingFiles() {
   }).join('');
 }
 
-function detachRunSubscription() {
+function clearRunReconnectTimers() {
+  state.runReconnectTimers.forEach((timer) => window.clearTimeout(timer));
+  state.runReconnectTimers.clear();
+}
+
+function detachRunConnection() {
   state.abortController?.abort();
   clearVisionProgress();
   stopRunWatchdog();
@@ -3967,12 +3983,21 @@ function detachRunSubscription() {
   state.runWaitPrevText = '';
   state.runGeneration += 1;
   state.abortController = null;
+}
+
+function detachRunSubscription() {
+  detachRunConnection();
+  clearRunReconnectTimers();
   state.chatRunId = '';
   state.runConversationId = '';
   state.runSequence = 0;
+  state.runRow = null;
   state.runAttempt = 0;
   state.runReconnectAt = 0;
   state.runProbeMisses = 0;
+  state.checkRunEligible = false;
+  state.cancelRequested = false;
+  state.cancelConversationId = '';
   setConnectionState('connected');
   setBusy(false);
 }
@@ -3995,6 +4020,7 @@ function backoffDelay(attempt) {
 
 // 校验当前仍处于“给定代际的连接所对应的活动流”。
 function isRunGenerationActive(generation, controller = null) {
+  if (state.cancelRequested) return false;
   if (state.runGeneration !== generation) return false;
   if (controller && state.abortController !== controller) return false;
   return true;
@@ -4093,6 +4119,7 @@ function runWaitTick() {
 
 // 看门狗：检测“流既不推数据也不报错”的死流，并用真实探针区分“流死/服死”。
 function runWatchdogTick() {
+  if (state.cancelRequested) return;
   if (!state.abortController || !state.runLastActivityAt) return;
   if (state.runRecovering) return;
   // 冷却期内不行动，避免风暴
@@ -4111,6 +4138,7 @@ function runWatchdogTick() {
 }
 
 async function probeAndRecoverRun() {
+  if (state.cancelRequested) return;
   const controller = state.abortController;
   const conversationId = state.runConversationId || state.conversationId;
   const runId = state.chatRunId;
@@ -4143,12 +4171,13 @@ function enterReconnectCoolDown(showTimer = true) {
 
 // 断线自动重连：非 AbortError 且流仍当前时，指数退避 + 抖动后重建流。
 function scheduleRunReconnect(run, controller, generation) {
+  if (state.cancelRequested || state.cancelledRunIds.has(String(run?.id || ''))) return;
   if (!run?.id) return;
   if (!isRunGenerationActive(generation, controller)) return;
   state.runAttempt += 1;
   if (state.runAttempt > RUN_RECONNECT_ATTEMPTS) {
     // 超限：解绑当前（已死）控制器，交还轮询兜底，避免状态永远“活动中”却无法被兜底。
-    detachRunSubscription();
+    detachRunConnection();
     state.checkRunEligible = true;
     enterReconnectCoolDown(true);
     return;
@@ -4157,11 +4186,14 @@ function scheduleRunReconnect(run, controller, generation) {
   state.checkRunEligible = true;
   const delay = backoffDelay(state.runAttempt);
   showElapsedStatus('重连中…');
-  window.setTimeout(() => {
+  const timer = window.setTimeout(() => {
+    state.runReconnectTimers.delete(timer);
+    if (state.cancelRequested || state.cancelledRunIds.has(String(run.id))) return;
     if (!isRunGenerationActive(generation, controller)) return;
     // resumeRun 内部会自增 runGeneration，建立新一代连接
     void resumeRun(run, { fromReconnect: true, generation });
   }, delay);
+  state.runReconnectTimers.add(timer);
 }
 
 function clearVisionProgress() {
@@ -4224,6 +4256,7 @@ function createRunRow(run) {
   row.dataset.runKind = String(run.kind || 'chat');
   row.dataset.lightweightMode = String(state.lightweightMode);
   $('#messages').append(row);
+  state.runRow = row;
   scrollToBottom();
   return row;
 }
@@ -4254,6 +4287,7 @@ async function consumeRunStream(response, row, conversationId, runId, controller
           continue; // 单行解析失败不致命，跳过
         }
         if (event.type === 'heartbeat') continue;
+        if (state.cancelRequested || state.cancelledRunIds.has(String(event.run_id || runId || ''))) break;
         // 真实内容事件（非 heartbeat）→ 更新“内容进展”时间，供“等待中”计时使用。
         state.runContentActivityAt = Date.now();
         const eventRunId = String(event.run_id || runId || state.chatRunId || '');
@@ -4295,6 +4329,7 @@ async function finishRunSubscription(conversationId, controller) {
     state.chatRunId = '';
     state.runConversationId = '';
     state.runSequence = 0;
+    state.runRow = null;
     state.runAttempt = 0;
     state.runReconnectAt = 0;
     state.runProbeMisses = 0;
@@ -4313,17 +4348,18 @@ async function resumeRun(run, options = {}) {
   const conversationId = String(run?.conversation_id || '');
   const runId = String(run?.id || '');
   if (!runId || conversationId !== state.conversationId) return;
-  detachRunSubscription();
-  const generation = ++state.runGeneration; // 确立新一代连接
-  const row = createRunRow(run);
+  if (state.cancelRequested || state.cancelledRunIds.has(runId)) return;
+  const sameRun = state.chatRunId === runId && state.runConversationId === conversationId;
+  detachRunConnection();
+  const generation = state.runGeneration;
+  let row = sameRun ? state.runRow : null;
+  if (!row?.isConnected) row = createRunRow(run);
   const controller = new AbortController();
   state.abortController = controller;
   state.chatRunId = runId;
   state.runConversationId = conversationId;
-  const cached = state.runEvents[runId] || [];
-  state.runSequence = Number(cached.at(-1)?.sequence || 0);
+  if (!sameRun) state.runSequence = 0;
   setBusy(true);
-  cached.forEach((event) => handleChatEvent(event, row, conversationId, runId));
   void (async () => {
     let reconnectScheduled = false;
     try {
@@ -4335,7 +4371,7 @@ async function resumeRun(run, options = {}) {
       setConnectionState('connected');
       await consumeRunStream(response, row, conversationId, runId, controller, generation);
     } catch (error) {
-      if (error.name !== 'AbortError' && state.conversationId === conversationId) {
+      if (error.name !== 'AbortError' && !state.cancelRequested && state.conversationId === conversationId) {
         row.querySelector('.answer-content').innerHTML = `<p>恢复 Run 失败：${escapeHtml(error.message)}</p>`;
       }
       if (error.name !== 'AbortError' && isRunGenerationActive(generation, controller)) {
@@ -4354,10 +4390,10 @@ async function resumeRun(run, options = {}) {
 }
 
 async function resumeConversationRun(conversationId) {
-  if (!conversationId || conversationId !== state.conversationId || state.abortController) return;
+  if (!conversationId || conversationId !== state.conversationId || state.abortController || state.cancelRequested) return;
   try {
     const result = await api(`/api/runs?conversation_id=${encodeURIComponent(conversationId)}&active_only=1`);
-    if (conversationId !== state.conversationId || state.abortController) return;
+    if (conversationId !== state.conversationId || state.abortController || state.cancelRequested) return;
     const run = (result.runs || [])[0];
     if (run) await resumeRun(run);
     else setBusy(false);
@@ -4374,7 +4410,7 @@ async function sendChatMessage(textOverride = '') {
   const text = buttonText
     ? (inputText ? `${inputText}\n${buttonText}` : buttonText)
     : inputText;
-  if (!text || state.taskSubmitting) return;
+  if (!text || state.taskSubmitting || state.cancelRequested) return;
   if (state.pendingFiles.some((file) => file.uploading)) {
     toast('请等待文件上传完成');
     return;
@@ -4404,6 +4440,9 @@ async function sendChatMessage(textOverride = '') {
   const runGeneration = ++state.runGeneration; // 本段对话流的新一代
   state.abortController = controller;
   state.runConversationId = conversationId;
+  state.runSequence = 0;
+  state.cancelRequested = false;
+  state.cancelConversationId = '';
   setBusy(true);
   try {
     const response = await fetch('/api/chat', {
@@ -4778,6 +4817,7 @@ async function handlePasteImage(event) {
 
 function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
   if (conversationId !== state.conversationId) return;
+  if (state.cancelRequested || state.cancelledRunIds.has(String(event.run_id || runId || ''))) return;
   const answer = row.querySelector('.answer-content');
   const activity = row.querySelector('.run-activity');
   const setActivity = (content, html = false) => {
@@ -5064,11 +5104,11 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     }
     $('#runtimeStatus').textContent = '就绪';
     const followupRunId = String(event.followup_run_id || '');
-    if (followupRunId) {
+    if (followupRunId && !state.cancelRequested && !state.cancelledRunIds.has(String(runId || ''))) {
       void (async () => {
         try {
           const followup = await api(`/api/runs/${encodeURIComponent(followupRunId)}`);
-          if (followup?.id && state.conversationId === conversationId) await resumeRun(followup);
+          if (followup?.id && !state.cancelRequested && state.conversationId === conversationId) await resumeRun(followup);
         } catch (error) {
           console.debug('[naiba] 后续插话 Run 恢复失败:', error.message);
         }
@@ -5267,12 +5307,12 @@ function setBusy(busy) {
   const mc = $('#messages');
   if (mc) mc.classList.toggle('conversation-running', busy);
   const sendBtn = $('#sendButton');
-  sendBtn.disabled = false;
+  sendBtn.disabled = Boolean(state.cancelRequested);
   sendBtn.classList.toggle('is-stop', busy);
-  sendBtn.textContent = busy ? '■' : '↑';
-  sendBtn.title = busy ? '停止当前任务' : '发送';
+  sendBtn.textContent = state.cancelRequested ? '…' : (busy ? '■' : '↑');
+  sendBtn.title = state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送');
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
-  sendBtn.setAttribute('aria-label', busy ? '停止当前任务' : '发送');
+  sendBtn.setAttribute('aria-label', state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送'));
   $('#messageInput').disabled = false;
   updateContextComposerLock(busy);
   updateLightweightModeControl();
@@ -5281,12 +5321,66 @@ function setBusy(busy) {
 }
 
 async function cancelCurrentRun() {
-  const runId = state.chatRunId;
-  if (runId) {
-    try {
-      await api('/api/chat/cancel', { method: 'POST', body: { run_id: runId } });
-    } catch (error) {
-      console.debug('[naiba] cancel chat failed:', error.message);
+  if (state.cancelRequested) return;
+  const runId = String(state.chatRunId || '');
+  const conversationId = String(state.runConversationId || state.conversationId || '');
+  if (!runId && !conversationId) return;
+  state.cancelRequested = true;
+  state.cancelConversationId = conversationId;
+  if (runId) state.cancelledRunIds.add(runId);
+  state.checkRunEligible = false;
+  clearRunReconnectTimers();
+  detachRunConnection();
+  state.runReconnectAt = 0;
+  state.runAttempt = 0;
+  state.runRecovering = false;
+  setConnectionState('connected');
+  setBusy(true);
+  $('#runtimeStatus').textContent = '正在停止';
+
+  let terminalConfirmed = false;
+  try {
+    let result = null;
+    for (const delay of [0, 100, 250, 500, 1000]) {
+      if (delay) await new Promise((resolve) => window.setTimeout(resolve, delay));
+      try {
+        result = await api('/api/chat/cancel', {
+          method: 'POST', body: { run_id: runId, conversation_id: conversationId },
+        });
+        break;
+      } catch (error) {
+        // The initial /api/chat request and this fallback request are served by
+        // different threads.  Before run_started there is a tiny window where
+        // the conversation Run has not been committed yet.
+        if (runId || error.status !== 404 || delay === 1000) throw error;
+      }
+    }
+    const resolvedRunId = String(result?.run?.id || runId || '');
+    if (resolvedRunId) state.cancelledRunIds.add(resolvedRunId);
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const active = await api(`/api/runs?conversation_id=${encodeURIComponent(conversationId)}&active_only=1`);
+      if (!(active.runs || []).length) {
+        terminalConfirmed = true;
+        break;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 250));
+    }
+    if (!terminalConfirmed) throw new Error('服务端尚未确认任务已停止');
+    await loadTasks();
+    if (state.conversationId === conversationId) await openConversation(conversationId);
+  } catch (error) {
+    console.debug('[naiba] cancel chat failed:', error.message);
+    toast(`停止任务失败：${error.message}`);
+  } finally {
+    if (terminalConfirmed && state.cancelConversationId === conversationId) {
+      state.chatRunId = '';
+      state.runConversationId = '';
+      state.runSequence = 0;
+      state.runRow = null;
+      state.cancelRequested = false;
+      state.cancelConversationId = '';
+      state.checkRunEligible = false;
+      setBusy(false);
     }
   }
 }
