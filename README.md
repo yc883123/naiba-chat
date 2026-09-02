@@ -1,10 +1,16 @@
-# Naiba Chat 1.6.5 Beta
+# Naiba Chat 1.6.6 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.5 Beta 在 1.6.4 的基础上统一命令执行工具为 pwsh，并优化手机端渲染：修复移动端横向滚动条，顶部模型/Agent 选择器与操作按钮在窄屏下自动换行排布，输入框完整占宽不再被压缩。
+1.6.6 Beta 收紧 AI 交互选项识别：只认明确的「请选择/选一个/choose from」等完整意图，正文或代码里的裸 select/choose/pick 不再误弹选项按钮；意图行必须紧跟选项组才触发，选项文本过长不算交互选项，点选按钮时只发送选项文本。
 
-## 1.6.5 Beta 主要能力
+## 1.6.6 Beta 主要能力
+
+- **选项识别收紧**：只认明确的「请选择/选一个/choose from」等完整意图，正文或代码里的裸 `select`/`choose`/`pick` 不再误判成选项按钮；英文只保留完整词组（`pick one`/`choose one`/`select one`/`which one`/`which of`/`choose from`/`select from`）。
+- **意图必须紧跟选项**：意图行与选项组之间最多允许少量空行/单行间隔，长距离的「选择」字样不再触发按钮；选项文本过长（整段话）不算交互选项，意图行过长（长句里恰好含「选择」）也不算意图。
+- **紧凑选项正确拆分**：「请选择语言：1. 中文 2. 英文」这类同一行紧凑选项可正确拆分为多个选项按钮，CJK 标点后的编号也能识别。
+- **编号残留剥离**：选项中的「- 1. 安装依赖」会剥离编号残留，只保留「安装依赖」；孤立的 bullet 符号（`- `/`• `）不再打断正在收集的选项组。
+- **点击选项只发选项文本**：点选按钮发送时只发送该选项本身，不再拼接「请选择…」前缀，避免把问题重复带进下一条消息。
 
 - **命令执行统一**：`run_command` 已并入 `pwsh`，命令执行只保留 `pwsh` 一个工具，避免重复声明与选择困惑；升级后旧配置、Agent 工具范围与历史会话中的 `run_command` 会自动迁移为 `pwsh`，内置/自定义 Agent 均不会丢失命令执行能力。
 - **手机端渲染优化**：修复移动端横向滚动条问题（视口宽度改用 100% 并隐藏横向溢出）；顶部模型/Agent 选择器改为网格布局自动换行，操作按钮在窄屏下换行到第二行，超小屏（≤380px）降级为两列；输入框在窄屏下完整占宽，图标与发送按钮不再被压缩；底部工作区、权限开关、轻量模式等元信息在超小屏改为单列排列。
@@ -39,7 +45,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.5-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.6-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -127,13 +133,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.5-beta-windows-x64.zip`
+- `naiba-chat-1.6.6-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.5 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.6 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -146,7 +152,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.5-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.6-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 

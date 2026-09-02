@@ -5175,10 +5175,7 @@ function showChoiceButtons(choices, choiceGroups = []) {
   const selected = [];
   let groupIndex = 0;
 
-  const formatAnswer = (group, choice, index) => {
-    const prompt = group.prompt || `选择 ${index + 1}`;
-    return /[：:？?]$/.test(prompt) ? `${prompt}${choice}` : `${prompt}：${choice}`;
-  };
+  const formatAnswer = (group, choice, index) => choice;
 
   const renderGroup = () => {
     const group = groups[groupIndex];

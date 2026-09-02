@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.6.5-beta
-  RELEASE_TAG: v1.6.5-beta
-  PACKAGE_NAME: naiba-chat-1.6.5-beta-windows-x64
+  RELEASE_VERSION: 1.6.6-beta
+  RELEASE_TAG: v1.6.6-beta
+  PACKAGE_NAME: naiba-chat-1.6.6-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.6.5 Beta release
+      - name: Publish 1.6.6 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.6.5 Beta
+          name: Naiba Chat 1.6.6 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,11 +99,14 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.6.5 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.6.6 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 命令执行统一：run_command 已并入 pwsh，命令执行只保留 pwsh 一个工具；升级后旧配置、Agent 工具范围与历史会话中的 run_command 会自动迁移为 pwsh，内置/自定义 Agent 均不会丢失命令执行能力。
-            - 手机端渲染：修复移动端横向滚动条问题；顶部模型/Agent 选择器改为网格布局自动换行，操作按钮窄屏换行到第二行，超小屏（≤380px）降级为两列；输入框窄屏完整占宽，图标与发送按钮不再被压缩；底部元信息超小屏单列排列。
+            - 意图识别收紧：只认明确的「请选择/选一个/choose from」等完整意图，正文或代码里的裸 select/choose/pick 不再误判成选项。
+            - 意图必须紧跟选项：意图行与选项组之间最多允许少量空行/单行间隔，长距离的「选择」字样不再触发按钮；选项文本过长（整段话）也不算交互选项。
+            - 紧凑选项正确拆分：「请选择语言：1. 中文 2. 英文」这类同一行紧凑选项可正确拆分为多个选项按钮。
+            - 编号残留剥离：选项中的「- 1. 安装依赖」会剥离编号残留，只保留「安装依赖」；孤立的 bullet 符号不再打断选项组。
+            - 点击选项只发选项文本：点选按钮发送时只发送该选项本身，不再拼接「请选择…」前缀，避免把问题重复带进下一条消息。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.
