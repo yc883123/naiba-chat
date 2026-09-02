@@ -53,6 +53,7 @@ const state = {
   providerKindTab: 'online',
   syncTimer: null,
   syncInFlight: false,
+  syncPolling: false,
   updatePollTimer: null,
   conversationSnapshot: '',
   agentFormSkillIds: [],
@@ -61,13 +62,18 @@ const state = {
   toolCatalog: null,
   tasks: [],
   taskTimer: null,
+  taskPollInFlight: false,
+  taskPolling: false,
+  mcpPollInFlight: false,
+  mcpPolling: false,
+  mcpPollTimer: null,
   visionTimer: null,
   visionStartedAt: 0,
   webSearchEnabled: false,
   deepReasoningEnabled: false,
   reasoningEffort: 'auto',
   lightweightMode: false,
-  lightweightDisabledFeatures: ['tools', 'skills'],
+  lightweightDisabledFeatures: [],
   contextUsage: null,
   providerModelCapabilities: {},
   workspaces: [],
@@ -919,7 +925,9 @@ function updateContextComposerLock(busy = false) {
   // Always lock the input at the ceiling so the user cannot draft a new turn.
   if (input) {
     input.disabled = atCeiling;
-    input.placeholder = atCeiling ? '上下文已满，请新建对话后继续' : '';
+    input.placeholder = atCeiling
+      ? '上下文已满，请新建对话后继续'
+      : (busy ? '输入内容后按 Enter 插话' : '输入消息');
   }
   // During an in-progress run the send button doubles as the stop control, so
   // keep it clickable; otherwise lock it at the ceiling too.
@@ -998,6 +1006,39 @@ function sourcesMarkup(sources = []) {
   return items ? `<details class="message-sources"><summary>联网来源（${sources.length}）</summary><ol>${items}</ol></details>` : '';
 }
 
+// 消息末尾「本轮修改的文件」总结。桌面端文件名可点 → 打开右侧文件面板；
+// 手机端（≤760px）由 CSS + openFilePanel 双重把关，仅展示、不可点。
+const FILE_CHIP_MEDIA_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg', '.mp4', '.webm', '.mov', '.m4v', '.ogv', '.wav', '.mp3', '.m4a', '.ogg', '.flac']);
+
+function fileChangesSummaryMarkup(files = []) {
+  if (!Array.isArray(files) || !files.length) return '';
+  let edited = 0;
+  let created = 0;
+  for (const f of files) {
+    if (!f || !f.path) continue;
+    if (f.op === 'edit') edited += 1;
+    else created += 1;
+  }
+  if (!edited && !created) return '';
+  const chips = files.map((f) => {
+    if (!f || !f.path) return '';
+    const raw = String(f.path);
+    // 图片/视频/音频等多媒体产物走消息内原有附件卡片预览，不冒充"修改文件"chip
+    //（兜底：历史消息 metadata.files 里可能已混入媒体路径）。
+    const lower = raw.toLowerCase();
+    const dot = lower.lastIndexOf('.');
+    if (dot > 0 && FILE_CHIP_MEDIA_EXTS.has(lower.slice(dot))) return '';
+    const name = escapeHtml(f.name || raw.replace(/\\/g, '/').split('/').pop() || raw);
+    const isEdit = f.op === 'edit';
+    return `<button type="button" class="file-change-chip" data-file-op="${isEdit ? 'edit' : 'write'}" data-open-file="${escapeHtml(raw)}" title="${isEdit ? '编辑' : '新建'}：${escapeHtml(raw)}"><span class="file-change-op">${isEdit ? '改' : '新'}</span><span class="file-change-name">${name}</span></button>`;
+  }).filter(Boolean).join('');
+  if (!chips) return '';
+  const opNote = [];
+  if (created) opNote.push(`新建 ${created}`);
+  if (edited) opNote.push(`编辑 ${edited}`);
+  return `<div class="file-changes"><div class="file-changes-label">本轮修改文件${opNote.length ? `（${opNote.join(' · ')}）` : ''}</div><div class="file-changes-list">${chips}</div></div>`;
+}
+
 function toolAvailabilityMarkup(tools = []) {
   if (!Array.isArray(tools) || !tools.length) return '';
   const items = tools.map((tool) => {
@@ -1048,6 +1089,7 @@ function messageElement(message, temporary = false) {
         <div class="answer-content" data-raw="" ${hideBottomContent ? 'style="display:none"' : ''}>${temporary ? '' : abortedBadge + markdown(message.content)}</div>
         ${temporary ? '' : sourcesMarkup(metadata.sources)}
         ${mediaMarkup(metadata.attachments)}
+        ${temporary ? '' : fileChangesSummaryMarkup(metadata.files)}
         ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance })}
         ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
       </div>`;
@@ -1475,6 +1517,8 @@ function startUpdatePoll() {
 const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
 
 async function loadTasks() {
+  if (state.taskPollInFlight || document.visibilityState === 'hidden') return;
+  state.taskPollInFlight = true;
   try {
     const result = await api('/api/tasks');
     const previous = new Map(state.tasks.map((task) => [task.id, task.status]));
@@ -1489,6 +1533,8 @@ async function loadTasks() {
     await maybeRecoverRunFromPoll();
   } catch (error) {
     console.debug('[naiba] 任务同步失败:', error.message);
+  } finally {
+    state.taskPollInFlight = false;
   }
 }
 
@@ -1538,8 +1584,29 @@ async function maybeRecoverRunFromPoll() {
 }
 
 function startTaskSync() {
-  if (state.taskTimer) return;
-  state.taskTimer = window.setInterval(loadTasks, 1500);
+  if (state.taskPolling) return;
+  state.taskPolling = true;
+  scheduleTaskSync(1500);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      if (state.taskTimer) window.clearTimeout(state.taskTimer);
+      state.taskTimer = null;
+    } else {
+      scheduleTaskSync(0);
+    }
+  });
+}
+
+function scheduleTaskSync(delay = null) {
+  if (!state.taskPolling || document.visibilityState === 'hidden') return;
+  if (state.taskTimer) window.clearTimeout(state.taskTimer);
+  const active = state.checkRunEligible || state.tasks.some((task) => activeTaskStatuses.has(task.status));
+  const interval = active ? 1500 : 10000;
+  state.taskTimer = window.setTimeout(async () => {
+    state.taskTimer = null;
+    if (document.visibilityState === 'visible') await loadTasks();
+    scheduleTaskSync();
+  }, delay ?? interval);
 }
 
 function taskStatusLabel(status) {
@@ -2275,7 +2342,7 @@ function sidebarRowHtml(row) {
   </div>`;
 }
 
-function renderSidebarWindow(scrollTop) {
+function renderSidebarWindow(targetScrollTop) {
   const tree = $('#sidebarWorkspaceTree');
   if (!tree) return;
   if (!sidebarRowCache.length) {
@@ -2283,13 +2350,21 @@ function renderSidebarWindow(scrollTop) {
     return;
   }
   const vh = tree.clientHeight || Math.max(240, Math.round(window.innerHeight * 0.4));
-  let start = Math.max(0, sidebarRowAt(sidebarOffsetCache, scrollTop - SIDE_BUFFER));
-  let end = sidebarRowAt(sidebarOffsetCache, scrollTop + vh + SIDE_BUFFER) + 1;
-  if (end < start + 1) end = start + 1;
-  end = Math.min(sidebarRowCache.length, end + 1);
-  const top = sidebarOffsetCache[start];
+  // 关键修复：窗口必须按「夹紧后的真实滚动位置」渲染。
+  // 会话列表展开/收起、点击末尾条目触发跳转时，旧的 scrollTop 可能超出新的
+  // 可滚动范围（列表比视口矮或比之前短）。此前用未夹紧的值去算窗口，只渲染出
+  // 末尾几行，上半部分全空白——表现为“点击末尾条目后上面的条目不显示”。
+  const maxScroll = Math.max(0, sidebarTotalH - vh);
+  const st = Math.max(0, Math.min(Number(targetScrollTop) || 0, maxScroll));
+  let start = Math.max(0, sidebarRowAt(sidebarOffsetCache, st - SIDE_BUFFER));
+  let end = sidebarRowAt(sidebarOffsetCache, st + vh + SIDE_BUFFER) + 1;
+  if (end <= start) end = start + 1;
+  end = Math.min(sidebarRowCache.length, end);
   const html = sidebarRowCache.slice(start, end).map(sidebarRowHtml).join('');
-  tree.innerHTML = `<div class="sidebar-virtual" style="height:${sidebarTotalH}px"><div class="sidebar-virtual-window" style="top:${top}px">${html}</div></div>`;
+  tree.innerHTML = `<div class="sidebar-virtual" style="height:${sidebarTotalH}px">`
+    + `<div class="sidebar-virtual-window" style="top:${sidebarOffsetCache[start]}px">${html}</div></div>`;
+  // 高度突变后浏览器可能自行钳位 scrollTop；把夹紧后的值再写回一次，保证窗口与滚动一致。
+  if (tree.scrollTop !== st) tree.scrollTop = st;
 }
 
 function sidebarClampWidth(w) {
@@ -2372,8 +2447,9 @@ function renderSidebar() {
     const idx = rows.findIndex((r) => r.type === 'item' && r.c.id === state.conversationId);
     if (idx >= 0) st = offsets[idx];
   }
+  // renderSidebarWindow 内部会按「夹紧后的真实滚动位置」切窗口并回写 scrollTop，
+  // 不再在窗口算完后单独赋值——避免高度突变时窗口与滚动状态错位。
   renderSidebarWindow(st);
-  tree.scrollTop = st;
 }
 
 function renderComposerWorkspace() {
@@ -2520,10 +2596,7 @@ async function createConversation(workspaceGroup = '', workspaceDir = '', prefil
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
-  state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
-  state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['tools', 'skills'];
-  updateLightweightModeControl();
+  applyConversationLightweight(conversation);
   renderMessages([]);
   renderPermissionModeSwitch();
   closeSidebar();
@@ -2535,6 +2608,8 @@ async function openConversation(id) {
   if (id !== state.conversationId) {
     detachRunSubscription();
     hideChoiceButtons();
+    // 文件面板属于当前会话；切换会话时收起并清空打开的标签
+    closeFilePanel(true);
   }
   const conversation = await api(`/api/conversations/${id}`);
   state.conversationId = id;
@@ -2565,10 +2640,7 @@ async function openConversation(id) {
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
-  state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
-  state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['tools', 'skills'];
-  updateLightweightModeControl();
+  applyConversationLightweight(conversation);
   await resumeConversationRun(id);
   closeSidebar();
 }
@@ -2598,10 +2670,7 @@ async function syncCurrentConversation() {
     state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
     state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
     updateDeepReasoningButton();
-    state.lightweightMode = Boolean(Number(conversation.lightweight_mode || 0));
-    state.lightweightDisabledFeatures = Array.isArray(conversation.lightweight_disabled_features)
-      ? conversation.lightweight_disabled_features : ['tools', 'skills'];
-    updateLightweightModeControl();
+    applyConversationLightweight(conversation);
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
@@ -2610,11 +2679,30 @@ async function syncCurrentConversation() {
 }
 
 function startConversationSync() {
-  if (state.syncTimer) return;
-  state.syncTimer = window.setInterval(syncCurrentConversation, 1800);
+  if (state.syncPolling) return;
+  state.syncPolling = true;
+  scheduleConversationSync(1800);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') syncCurrentConversation();
+    if (document.visibilityState === 'hidden') {
+      if (state.syncTimer) window.clearTimeout(state.syncTimer);
+      state.syncTimer = null;
+    } else {
+      scheduleConversationSync(0);
+    }
   });
+}
+
+function scheduleConversationSync(delay = null) {
+  if (!state.syncPolling || document.visibilityState === 'hidden') return;
+  if (state.syncTimer) window.clearTimeout(state.syncTimer);
+  const activeTask = state.tasks.some((task) => activeTaskStatuses.has(task.status));
+  const activeRun = Boolean(state.chatRunId || state.abortController || state.checkRunEligible);
+  const interval = activeTask || activeRun ? 1800 : 10000;
+  state.syncTimer = window.setTimeout(async () => {
+    state.syncTimer = null;
+    await syncCurrentConversation();
+    scheduleConversationSync();
+  }, delay ?? interval);
 }
 
 function taskModeLabel(task) {
@@ -2665,11 +2753,6 @@ function openConversationSettings(id) {
   $('#conversationTitle').value = conversation.title_customized ? (conversation.title || '') : '';
   $('#conversationSystemPrompt').value = conversation.system_prompt || '';
   $('#conversationStreamEnabled').checked = Number(conversation.stream_enabled ?? 1) !== 0;
-  const disabled = Array.isArray(conversation.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features : ['tools', 'skills'];
-  $$('input[name="lightweightFeature"]').forEach((input) => {
-    input.checked = disabled.includes(input.value);
-  });
   $('#conversationSettingsDialog').showModal();
 }
 
@@ -2686,7 +2769,6 @@ async function saveConversationSettings(event) {
         title: $('#conversationTitle').value,
         system_prompt: $('#conversationSystemPrompt').value,
         stream_enabled: $('#conversationStreamEnabled').checked,
-        lightweight_disabled_features: $$('input[name="lightweightFeature"]:checked').map((input) => input.value),
       },
     });
     const index = state.conversations.findIndex((item) => item.id === id);
@@ -2694,8 +2776,7 @@ async function saveConversationSettings(event) {
     $('#conversationSettingsDialog').close();
     renderSidebar();
     if (id === state.conversationId) {
-      state.lightweightDisabledFeatures = updated.lightweight_disabled_features || ['tools', 'skills'];
-      updateLightweightModeControl();
+      applyConversationLightweight(updated);
     }
     toast('对话设置已保存');
   } catch (error) {
@@ -3904,6 +3985,8 @@ async function saveMcpServer() {
 // 轻量轮询：仅刷新状态相关字段（status/connected/active_calls/activity/last_used_at），
 // 保留 bootstrap 中已有的 tools 与 error 信息，使"使用中/已就绪"状态实时反映。
 async function pollMcpStatus() {
+  if (state.mcpPollInFlight || document.visibilityState === 'hidden') return;
+  state.mcpPollInFlight = true;
   try {
     const data = await api('/api/mcp/status/light');
     const servers = data.servers || [];
@@ -3927,12 +4010,36 @@ async function pollMcpStatus() {
     renderMcp();
   } catch (_error) {
     /* 轮询失败不阻断界面 */
+  } finally {
+    state.mcpPollInFlight = false;
   }
 }
 
 function startMcpPoll() {
-  if (state.mcpPollTimer) return;
-  state.mcpPollTimer = window.setInterval(pollMcpStatus, 2000);
+  if (state.mcpPolling) return;
+  state.mcpPolling = true;
+  scheduleMcpPoll(2000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      if (state.mcpPollTimer) window.clearTimeout(state.mcpPollTimer);
+      state.mcpPollTimer = null;
+    } else {
+      scheduleMcpPoll(0);
+    }
+  });
+}
+
+function scheduleMcpPoll(delay = null) {
+  if (!state.mcpPolling || document.visibilityState === 'hidden') return;
+  if (state.mcpPollTimer) window.clearTimeout(state.mcpPollTimer);
+  const servers = state.bootstrap?.mcp_servers || [];
+  const active = servers.some((server) => Number(server.active_calls || 0) > 0 || server.status === 'connecting');
+  const interval = active ? 2000 : 15000;
+  state.mcpPollTimer = window.setTimeout(async () => {
+    state.mcpPollTimer = null;
+    if (document.visibilityState === 'visible') await pollMcpStatus();
+    scheduleMcpPoll();
+  }, delay ?? interval);
 }
 
 async function uploadFiles(files) {
@@ -4768,37 +4875,60 @@ async function toggleDeepReasoning() {
   }
 }
 
+function applyConversationLightweight(conversation) {
+  // 轻量模式只能由下方“工具 / Skill”选项开启：勾选即关闭对应能力。
+  // 若会话从未开启过轻量模式（lightweight_mode=0），忽略旧版本残留的关闭项，
+  // 保证默认回到普通模式（什么都不勾选 = 普通对话）。
+  const enabled = Boolean(Number(conversation?.lightweight_mode || 0));
+  const stored = Array.isArray(conversation?.lightweight_disabled_features)
+    ? conversation.lightweight_disabled_features.filter((item) => item === 'tools' || item === 'skills')
+    : [];
+  state.lightweightDisabledFeatures = enabled ? stored : [];
+  state.lightweightMode = state.lightweightDisabledFeatures.length > 0;
+  updateLightweightModeControl();
+}
+
 function updateLightweightModeControl() {
-  const toggle = $('#lightweightModeToggle');
+  const toolsToggle = $('#lightweightToolsToggle');
+  const skillsToggle = $('#lightweightSkillsToggle');
   const attach = $('#attachButton');
-  if (toggle) {
-    toggle.checked = state.lightweightMode;
-    toggle.disabled = Boolean(state.chatRunId || state.abortController);
+  const disabled = new Set(state.lightweightDisabledFeatures || []);
+  for (const [input, key] of [[toolsToggle, 'tools'], [skillsToggle, 'skills']]) {
+    if (!input) continue;
+    input.checked = disabled.has(key);
+    input.disabled = Boolean(state.chatRunId || state.abortController);
   }
   if (attach) attach.disabled = false;
   updateDeepReasoningButton();
 }
 
-async function toggleLightweightMode() {
+async function toggleLightweightFeature(feature, checked) {
+  if (!['tools', 'skills'].includes(feature) || state.chatRunId || state.abortController) return;
   if (!state.conversationId) await createConversation();
-  if (state.chatRunId || state.abortController) return;
-  const previous = state.lightweightMode;
-  state.lightweightMode = !previous;
+  const previous = [...state.lightweightDisabledFeatures];
+  const previousMode = state.lightweightMode;
+  const next = new Set(previous);
+  // 直接使用用户本次勾选意图；不要在 await 之后重新读取 DOM（新会话创建会重置勾选框）。
+  if (checked) next.add(feature); else next.delete(feature);
+  state.lightweightDisabledFeatures = [...next];
+  state.lightweightMode = state.lightweightDisabledFeatures.length > 0;
   updateLightweightModeControl();
   try {
     const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
-      method: 'POST',
-      body: {
+      method: 'POST', body: {
         lightweight_mode: state.lightweightMode,
+        lightweight_disabled_features: state.lightweightDisabledFeatures,
       },
     });
+    state.lightweightDisabledFeatures = updated.lightweight_disabled_features || state.lightweightDisabledFeatures;
+    state.lightweightMode = state.lightweightDisabledFeatures.length > 0;
     const index = state.conversations.findIndex((item) => item.id === state.conversationId);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    toast(state.lightweightMode ? '轻量对话已开启（本对话）' : '轻量对话已关闭（本对话）');
   } catch (error) {
-    state.lightweightMode = previous;
+    state.lightweightDisabledFeatures = previous;
+    state.lightweightMode = previousMode;
     updateLightweightModeControl();
-    toast(`轻量对话设置保存失败：${error.message}`);
+    toast(`轻量对话选项保存失败：${error.message}`);
   }
 }
 
@@ -5313,7 +5443,9 @@ function setBusy(busy) {
   sendBtn.title = state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送');
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
   sendBtn.setAttribute('aria-label', state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送'));
-  $('#messageInput').disabled = false;
+  const messageInput = $('#messageInput');
+  messageInput.disabled = false;
+  messageInput.placeholder = busy ? '输入内容后按 Enter 插话' : '输入消息';
   updateContextComposerLock(busy);
   updateLightweightModeControl();
   updateUnloadModelButton();
@@ -5655,6 +5787,271 @@ function resizeTextarea() {
   input.style.height = `${Math.min(input.scrollHeight, 180)}px`;
 }
 
+// ---- 右侧文件面板（消息末尾“修改文件”摘要 → 查看 / 富文本编辑）----
+const filePanelState = { open: false, activeKey: '', tabs: [] };
+const FILE_MD_NAME_RE = /\.(md|markdown|mdown)$/i;
+
+function filePanelTabKey(raw) {
+  return String(raw || '').replace(/\\/g, '/').toLowerCase();
+}
+
+function filePanelUsable() {
+  return window.innerWidth > 760 && !!$('#filePanel');
+}
+
+function filePanelWidthPx() {
+  return Math.max(300, Math.min(430, Math.round(window.innerWidth * 0.36)));
+}
+
+function applyFilePanelOpenClass() {
+  const shell = $('#appShell');
+  if (!shell) return;
+  shell.classList.toggle('file-panel-open', filePanelState.open);
+  if (filePanelState.open) shell.style.setProperty('--file-panel-w', `${filePanelWidthPx()}px`);
+}
+
+function openFilePanel(rawPath) {
+  if (!filePanelUsable()) return false; // 手机端仅展示总结，不打开面板
+  if (!rawPath) return false;
+  if (!state.conversationId) {
+    toast('请先打开一个会话');
+    return false;
+  }
+  filePanelState.open = true;
+  applyFilePanelOpenClass();
+  const tab = ensureFileTab(rawPath, true);
+  renderFilePanel();
+  if (tab && !tab.info && !tab.loading) loadFileTab(tab);
+  return true;
+}
+
+function closeFilePanel(clearTabs = false) {
+  filePanelState.open = false;
+  filePanelState.activeKey = '';
+  if (clearTabs) filePanelState.tabs = [];
+  applyFilePanelOpenClass();
+  renderFilePanel();
+}
+
+function ensureFileTab(rawPath, activate = false) {
+  const key = filePanelTabKey(rawPath);
+  let tab = filePanelState.tabs.find((item) => item.key === key);
+  if (!tab) {
+    const name = String(rawPath).replace(/\\/g, '/').split('/').pop() || rawPath;
+    tab = { key, raw: String(rawPath), name, info: null, loading: false, error: '', editing: false, draft: null };
+    filePanelState.tabs.push(tab);
+  }
+  if (activate) filePanelState.activeKey = key;
+  return tab;
+}
+
+function activeFileTab() {
+  return filePanelState.tabs.find((item) => item.key === filePanelState.activeKey) || null;
+}
+
+async function loadFileTab(tab) {
+  if (!tab || tab.loading || tab.info) return;
+  tab.loading = true;
+  tab.error = '';
+  renderFilePanel();
+  try {
+    const info = await api(`/api/conversations/${encodeURIComponent(state.conversationId)}/file/open?path=${encodeURIComponent(tab.raw)}`);
+    tab.info = info;
+    tab.draft = null;
+    tab.editing = false;
+  } catch (error) {
+    tab.error = error.message || '读取文件失败';
+  } finally {
+    tab.loading = false;
+    renderFilePanel();
+  }
+}
+
+function activateFileTab(key) {
+  const tab = filePanelState.tabs.find((item) => item.key === key);
+  if (!tab) return;
+  filePanelState.activeKey = key;
+  renderFilePanel();
+  if (!tab.info && !tab.loading && !tab.error) loadFileTab(tab);
+}
+
+function removeFileTab(key) {
+  const index = filePanelState.tabs.findIndex((item) => item.key === key);
+  if (index < 0) return;
+  filePanelState.tabs.splice(index, 1);
+  if (filePanelState.activeKey === key) {
+    const next = filePanelState.tabs[index] || filePanelState.tabs[index - 1] || null;
+    filePanelState.activeKey = next ? next.key : '';
+  }
+  if (!filePanelState.tabs.length) filePanelState.open = false;
+  renderFilePanel();
+}
+
+function renderFilePanel() {
+  const panel = $('#filePanel');
+  if (!panel) return;
+  applyFilePanelOpenClass();
+  renderFilePanelTabs();
+  renderFilePanelBody();
+  updateFileTabsButton();
+}
+
+function renderFilePanelTabs() {
+  const tabsEl = $('#fileTabs');
+  if (!tabsEl) return;
+  if (!filePanelState.tabs.length) {
+    tabsEl.innerHTML = '';
+    return;
+  }
+  tabsEl.innerHTML = filePanelState.tabs.map((tab) => {
+    const dirty = tab.editing && tab.draft !== null && tab.draft !== tab.info?.content;
+    const active = tab.key === filePanelState.activeKey;
+    return `<span class="file-tab${active ? ' active' : ''}${dirty ? ' file-tab-dirty' : ''}" role="tab" aria-selected="${active}" data-file-tab="${escapeHtml(tab.key)}" title="${escapeHtml(tab.raw)}"><span class="file-tab-name">${escapeHtml(tab.name)}</span><button type="button" class="file-tab-x" data-file-tab-close="${escapeHtml(tab.key)}" aria-label="关闭 ${escapeHtml(tab.name)}" tabindex="-1">×</button></span>`;
+  }).join('');
+  const activeEl = tabsEl.querySelector('[data-file-tab].active');
+  if (activeEl && typeof activeEl.scrollIntoView === 'function') activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
+function fileToolbarMeta(tab) {
+  const info = tab.info || {};
+  const parts = [];
+  if (info.kind === 'image') parts.push('图片');
+  else if (info.kind === 'binary') parts.push('二进制');
+  else if (tab.editing) parts.push('编辑中');
+  else parts.push(FILE_MD_NAME_RE.test(info.name || '') ? 'Markdown' : '文本');
+  if (info.size != null) parts.push(formatFileSize(info.size));
+  if (info.truncated) parts.push('仅预览前 2MB');
+  return parts.join(' · ');
+}
+
+function renderFilePanelBody() {
+  const body = $('#filePanelBody');
+  if (!body) return;
+  if (!filePanelState.open) {
+    body.innerHTML = '';
+    return;
+  }
+  const tab = activeFileTab();
+  if (!tab) {
+    body.innerHTML = '<div class="file-panel-hint">点击消息末尾「本轮修改文件」中的文件名，在右侧查看文件内容。<br>Markdown / 文本可手动编辑并保存回磁盘。</div>';
+    return;
+  }
+  const info = tab.info;
+  if (tab.loading) {
+    body.innerHTML = '<div class="file-panel-hint"><div class="file-loading">正在读取文件…</div></div>';
+    return;
+  }
+  if (tab.error) {
+    body.innerHTML = `<div class="file-panel-hint">无法读取文件：${escapeHtml(tab.error)}</div>`;
+    return;
+  }
+  if (!info) {
+    body.innerHTML = '<div class="file-panel-hint">文件尚未加载。</div>';
+    return;
+  }
+  const savableText = info.kind === 'text' && info.savable && !info.truncated && !tab.editing;
+  const actionHtml = savableText
+    ? '<button type="button" class="control-button" data-file-edit>编辑</button>'
+    : tab.editing
+      ? '<button type="button" class="control-button" data-file-edit-cancel>取消</button><button type="button" class="primary-button" data-file-save>保存</button>'
+      : '';
+  const truncNote = info.truncated ? '<small>（截断）</small>' : '';
+  body.innerHTML = `
+    <div class="file-view">
+      <div class="file-view-toolbar">
+        <div class="file-view-title">
+          <b title="${escapeHtml(info.path || tab.raw)}">${escapeHtml(info.name || tab.name)}${truncNote}</b>
+          <small>${escapeHtml(fileToolbarMeta(tab))}${info.path ? ` · ${escapeHtml(info.path)}` : ''}</small>
+        </div>
+        <div class="file-view-actions">${actionHtml}</div>
+      </div>
+      ${fileContentViewHtml(tab)}
+    </div>`;
+  if (tab.editing) {
+    const textarea = body.querySelector('.file-edit-textarea');
+    if (textarea) {
+      textarea.focus();
+      textarea.addEventListener('input', () => { tab.draft = textarea.value; });
+      textarea.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); cancelFileEdit(tab.key); }
+        else if ((event.ctrlKey || event.metaKey) && (event.key === 's' || event.key === 'S')) { event.preventDefault(); saveFileTab(tab.key); }
+        else if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); saveFileTab(tab.key); }
+      });
+    }
+  }
+}
+
+function fileContentViewHtml(tab) {
+  const info = tab.info || {};
+  if (tab.editing) {
+    const value = tab.draft !== null && tab.draft !== undefined ? tab.draft : (info.content || '');
+    return `<div class="file-edit-area"><textarea class="file-edit-textarea" spellcheck="false" aria-label="编辑 ${escapeHtml(info.name || '')}">${escapeHtml(value)}</textarea><div class="file-edit-foot"><span>Ctrl/⌘ + S 或 Ctrl/⌘ + Enter 保存 · Esc 取消</span></div></div>`;
+  }
+  if (info.kind === 'image') {
+    const url = convFileRawUrl(info.path || tab.raw);
+    return `<div class="file-image-wrap"><img src="${escapeHtml(url)}" alt="${escapeHtml(info.name || '')}" data-large-url="${escapeHtml(url)}"></div>`;
+  }
+  if (info.kind === 'binary') {
+    return `<div class="file-binary-note"><p>这是二进制文件，无法在此预览。</p><p>大小：${escapeHtml(formatFileSize(info.size))}${info.path ? ` · <code>${escapeHtml(info.path)}</code>` : ''}</p></div>`;
+  }
+  const text = String(info.content || '');
+  if (FILE_MD_NAME_RE.test(info.name || '') && !info.truncated) {
+    return `<div class="file-preview-md message-body answer-content">${markdown(text)}</div>`;
+  }
+  return `<pre class="file-preview-text">${escapeHtml(text)}</pre>`;
+}
+
+function convFileRawUrl(path) {
+  return `/api/conversations/${encodeURIComponent(state.conversationId)}/file/raw?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(String(path || ''))}`;
+}
+
+function startFileEdit(key) {
+  const tab = filePanelState.tabs.find((item) => item.key === key);
+  if (!tab || !tab.info || tab.info.kind !== 'text' || !tab.info.savable || tab.info.truncated) {
+    toast('该文件不可编辑（仅支持编辑本会话改动过、工作区内且未截断的文本文件）');
+    return;
+  }
+  tab.editing = true;
+  tab.draft = tab.info.content || '';
+  renderFilePanel();
+}
+
+function cancelFileEdit(key) {
+  const tab = filePanelState.tabs.find((item) => item.key === key);
+  if (!tab) return;
+  tab.editing = false;
+  tab.draft = null;
+  renderFilePanel();
+}
+
+async function saveFileTab(key) {
+  const tab = filePanelState.tabs.find((item) => item.key === key);
+  if (!tab || !tab.info) return;
+  const textarea = $('#filePanelBody .file-edit-textarea');
+  const content = textarea ? textarea.value : (tab.draft !== null ? tab.draft : tab.info.content);
+  const targetPath = tab.raw;
+  try {
+    await api(`/api/conversations/${encodeURIComponent(state.conversationId)}/file/save`, {
+      method: 'POST',
+      body: { path: targetPath, content },
+    });
+    toast(`已保存 ${tab.name}`);
+    tab.draft = null;
+    tab.editing = false;
+    tab.info = null; // 重新读取以刷新 content/mtime
+    loadFileTab(tab);
+  } catch (error) {
+    toast(`保存失败：${error.message}`);
+  }
+}
+
+function formatFileSize(bytes) {
+  const size = Number(bytes || 0);
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function openSidebar() {
   $('#sidebar').classList.add('open');
   $('#sidebarBackdrop').classList.add('open');
@@ -5663,6 +6060,54 @@ function openSidebar() {
 function closeSidebar() {
   $('#sidebar').classList.remove('open');
   $('#sidebarBackdrop').classList.remove('open');
+}
+
+// ---- 左右侧栏折叠 / 展开（桌面端；手机端侧栏保持抽屉式开关）----
+function sidebarDesktop() {
+  return window.innerWidth > 760;
+}
+
+function setLeftSidebarCollapsed(collapsed) {
+  const shell = $('#appShell');
+  if (!shell) return;
+  if (collapsed && !sidebarDesktop()) return; // 手机抽屉由 openSidebar/closeSidebar 管理
+  shell.classList.toggle('sidebar-collapsed', Boolean(collapsed));
+  if (collapsed) localStorage.setItem('naibaChatSidebarCollapsed', '1');
+  else localStorage.removeItem('naibaChatSidebarCollapsed');
+  renderSidebar();
+}
+
+function restoreLeftSidebarCollapse() {
+  const shell = $('#appShell');
+  if (!shell) return;
+  const collapsed = sidebarDesktop() && localStorage.getItem('naibaChatSidebarCollapsed') === '1';
+  shell.classList.toggle('sidebar-collapsed', Boolean(collapsed));
+}
+
+// 文件面板重开：右侧栏收起但标签还在时，从顶栏「文件 N」重新展开
+function reopenFilePanel() {
+  if (!filePanelUsable()) return;
+  // 仅当已点开过文件（存在保留的标签）时顶栏按钮才出现；空会话不展示入口
+  if (!filePanelState.tabs.length) return;
+  filePanelState.open = true;
+  applyFilePanelOpenClass();
+  renderFilePanel();
+}
+
+function updateFileTabsButton() {
+  const button = $('#openFileTabs');
+  if (!button) return;
+  const hasTabs = filePanelState.tabs.length > 0;
+  // 旧逻辑：顶栏「文件 N」是"面板收起后的重开入口"——点过文件 chip 才有按钮
+  const show = filePanelUsable() && !filePanelState.open && hasTabs;
+  button.hidden = !show;
+  button.classList.toggle('has-tabs', hasTabs);
+  button.title = '重新打开文件面板（保留已打开的文件标签）';
+  const count = $('#fileTabsCount');
+  if (count) {
+    count.textContent = hasTabs ? String(filePanelState.tabs.length) : '';
+    count.hidden = !hasTabs;
+  }
 }
 
 function bindEvents() {
@@ -5845,7 +6290,8 @@ function bindEvents() {
     $('#messageInput').focus();
   });
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
-  $('#lightweightModeToggle').addEventListener('change', toggleLightweightMode);
+  $('#lightweightToolsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('tools', event.target.checked));
+  $('#lightweightSkillsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('skills', event.target.checked));
   $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
   const composerWrap = document.querySelector('.composer-wrap');
   if (composerWrap) {
@@ -5982,6 +6428,11 @@ function bindEvents() {
       }
       return;
     }
+    const openFileButton = event.target.closest('[data-open-file]');
+    if (openFileButton) {
+      openFilePanel(openFileButton.dataset.openFile);
+      return;
+    }
     const branchButton = event.target.closest('[data-branch-message]');
     if (branchButton) {
       branchMessage(branchButton.closest('.message-row'));
@@ -6040,6 +6491,61 @@ function bindEvents() {
       if (tree && sidebarRowCache.length) renderSidebarWindow(tree.scrollTop);
     });
   }, { passive: true });
+  // 右侧文件面板：标签页 / 正文操作 / 关闭 / Esc / 窗口宽度
+  $('#fileTabs').addEventListener('click', (event) => {
+    const closeBtn = event.target.closest('[data-file-tab-close]');
+    if (closeBtn) { removeFileTab(closeBtn.dataset.fileTabClose); return; }
+    const tabEl = event.target.closest('[data-file-tab]');
+    if (tabEl) activateFileTab(tabEl.dataset.fileTab);
+  });
+  $('#filePanelBody').addEventListener('click', async (event) => {
+    if (event.target.closest('[data-file-edit]')) { startFileEdit(filePanelState.activeKey); return; }
+    if (event.target.closest('[data-file-edit-cancel]')) { cancelFileEdit(filePanelState.activeKey); return; }
+    if (event.target.closest('[data-file-save]')) { saveFileTab(filePanelState.activeKey); return; }
+    const codeButton = event.target.closest('[data-copy-code]');
+    if (codeButton) {
+      const code = codeButton.closest('.code-block')?.querySelector('code');
+      if (!code) return;
+      try {
+        await copyText(code.textContent);
+        codeButton.textContent = '已复制';
+        clearTimeout(codeButton.copyResetTimer);
+        codeButton.copyResetTimer = setTimeout(() => {
+          if (codeButton.isConnected) codeButton.textContent = '复制';
+        }, 1500);
+        toast('已复制代码');
+      } catch (error) {
+        toast(`复制失败：${error.message}`);
+      }
+      return;
+    }
+    const previewImage = event.target.closest('.file-image-wrap img[data-large-url]');
+    if (previewImage) openImageLightbox(previewImage.dataset.largeUrl);
+  });
+  const closeFilePanelButton = $('#closeFilePanel');
+  if (closeFilePanelButton) closeFilePanelButton.addEventListener('click', () => closeFilePanel());
+  const collapseSidebarButton = $('#collapseSidebar');
+  if (collapseSidebarButton) collapseSidebarButton.addEventListener('click', () => setLeftSidebarCollapsed(true));
+  const expandSidebarButton = $('#expandSidebar');
+  if (expandSidebarButton) expandSidebarButton.addEventListener('click', () => setLeftSidebarCollapsed(false));
+  const openFileTabsButton = $('#openFileTabs');
+  if (openFileTabsButton) openFileTabsButton.addEventListener('click', reopenFilePanel);
+  window.addEventListener('resize', () => {
+    if (filePanelUsable()) {
+      if (filePanelState.open) applyFilePanelOpenClass();
+    } else if (filePanelState.open) {
+      closeFilePanel(); // 窄屏收起右侧栏；保留标签，回到宽屏可用顶栏「文件 N」重开
+    }
+    if (!sidebarDesktop()) $('#appShell')?.classList.remove('sidebar-collapsed');
+    updateFileTabsButton();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !filePanelState.open || !filePanelUsable()) return;
+    if (document.querySelector('dialog[open]')) return;
+    const tab = activeFileTab();
+    if (tab && tab.editing) { event.preventDefault(); cancelFileEdit(tab.key); return; }
+    closeFilePanel();
+  });
   // 侧栏宽度可调：拖动 resizer，限制在 [170, 窗口30%]，并持久化
   const sidebarResizer = $('#sidebarResizer');
   if (sidebarResizer) {
@@ -6525,3 +7031,5 @@ function switchSettingsTab(name) {
 
 bindEvents();
 initialize();
+restoreLeftSidebarCollapse();
+updateFileTabsButton();

@@ -2396,6 +2396,198 @@ def extract_attachments(runs: list[dict[str, Any]], allow_enumerated_media: bool
     return final
 
 
+# 会实际改动磁盘文件的工具：只有这些成功调用会被记录到 assistant 消息的
+# metadata.files（消息末尾"修改文件"总结 + 右侧文件面板的数据来源）。
+FILE_MODIFY_TOOLS = frozenset({"write_file", "edit_file"})
+
+# 多媒体产物（图片/视频/音频）走"原来那套"消息内产物卡片预览
+# （extract_attachments → metadata.attachments → mediaMarkup），不列入
+# "修改文件"总结，避免同一产物出现两套入口。名单与 extract_attachments 对齐。
+MEDIA_PRODUCT_EXTS = frozenset({
+    ".png", ".jpg", ".jpeg", ".webp", ".gif",
+    ".mp4", ".webm", ".mov", ".m4v", ".ogv",
+    ".wav", ".mp3", ".m4a", ".ogg", ".flac",
+})
+
+
+def _is_media_product_path(raw: str) -> bool:
+    """按扩展名判断文件是否属于多媒体产物（图片/视频/音频）。"""
+    lower = str(raw or "").lower()
+    if "?" in lower:
+        lower = lower.split("?", 1)[0]
+    dot = lower.rfind(".")
+    return dot > 0 and lower[dot:] in MEDIA_PRODUCT_EXTS
+
+
+def file_changes_from_runs(runs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """从一轮工具调用里汇总"本轮修改过的文件"。
+
+    规则：
+    - 只统计 FILE_MODIFY_TOOLS 且 success 的调用；
+    - 参数里取 path（write_file/edit_file 的既有字段），相对路径保留原样，
+      由前端/读取接口按该会话工作区再解析；
+    - 同一路径多次写入只保留一条，操作类型以后一次为准（edit 覆盖 write）。
+
+    返回 [{path, name, op}]，op ∈ {write, edit}；无改动返回 []。
+    """
+    result: list[dict[str, str]] = []
+    index_by_key: dict[str, int] = {}
+    for run in runs or []:
+        if not isinstance(run, dict):
+            continue
+        tool = str(run.get("tool") or "")
+        if tool not in FILE_MODIFY_TOOLS or not run.get("success"):
+            continue
+        arguments = run.get("arguments")
+        if not isinstance(arguments, dict):
+            continue
+        raw = str(arguments.get("path") or "").strip()
+        if not raw or raw.startswith(("http://", "https://")):
+            continue
+        # 图片/视频/音频这类多媒体产物由消息附件预览负责（原逻辑），
+        # 不当作"修改过的文件"收进总结与右侧面板。
+        if _is_media_product_path(raw):
+            continue
+        op = "edit" if tool == "edit_file" else "write"
+        # Windows 路径大小写不敏感：统一小写斜杠作去重键，展示仍用原始路径。
+        key = raw.replace("\\", "/").rstrip("/").lower()
+        if key in index_by_key:
+            result[index_by_key[key]]["op"] = op
+            continue
+        name = raw.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1] or raw
+        index_by_key[key] = len(result)
+        result.append({"path": raw, "name": name, "op": op})
+    return result
+
+
+# ---- 会话文件查看/编辑保存（右侧文件面板后端）----
+# 面板只允许两类文件：本会话消息 metadata.files 里记录过（AI 本轮改动成功）的文件，
+# 以及位于该会话工作区内的文件；"保存写回"则必须同时满足两者（限工作区 + 改动过）。
+_CONV_FILE_SNIFF_BYTES = 4096          # 二进制嗅探长度
+_CONV_FILE_READ_CAP = 2 * 1024 * 1024  # 单次读取/预览上限
+_CONV_FILE_SAVE_CAP = 8 * 1024 * 1024  # 单次写回上限
+_CONV_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
+
+
+def _conv_touched_files(conversation: dict[str, Any] | None) -> list[str]:
+    """该会话所有 assistant 消息 metadata.files 里的原始路径（去重）。"""
+    result: list[str] = []
+    seen: set[str] = set()
+    for message in (conversation or {}).get("messages") or []:
+        meta = (message or {}).get("metadata") or {}
+        files = meta.get("files") if isinstance(meta, dict) else None
+        if not isinstance(files, list):
+            continue
+        for item in files:
+            raw = str((item if isinstance(item, dict) else {}).get("path") or "").strip()
+            if not raw:
+                continue
+            key = raw.replace("\\", "/").rstrip("/").lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(raw)
+    return result
+
+
+def _conv_workspace_root(conversation: dict[str, Any] | None, config: Any) -> Path | None:
+    """会话生效的工作区根：优先会话 workspace_dir，否则配置默认工作区。"""
+    raw = str((conversation or {}).get("workspace_dir") or "").strip()
+    try:
+        return config.resolve_workspace_dir(raw or None).resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def _conv_file_target(raw_path: Any, root: Path | None) -> Path | None:
+    """把消息记录里的路径解析成磁盘绝对路径；相对路径按工作区根补全。"""
+    raw = str(raw_path or "").strip()
+    if not raw or "\x00" in raw or raw.startswith(("http://", "https://", "\\\\")):
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        if root is None:
+            return None
+        path = root / path
+    return path.resolve()
+
+
+def _conv_file_allow(conversation: dict[str, Any] | None, config: Any, raw_path: Any) -> tuple[Path | None, bool, bool, Path | None]:
+    """返回 (目标文件, listed, within_root, root)。listed=本会话改动过；within_root=在工作区内。"""
+    raw = str(raw_path or "").strip()
+    root = _conv_workspace_root(conversation, config)
+    target = _conv_file_target(raw, root)
+    touched_lower = {item.replace("\\", "/").rstrip("/").lower() for item in _conv_touched_files(conversation)}
+    raw_key = raw.replace("\\", "/").rstrip("/").lower()
+    listed = bool(target and str(target).replace("\\", "/").rstrip("/").lower() in touched_lower) or raw_key in touched_lower
+    within_root = bool(target and root and path_within(target, root))
+    return target, listed, within_root, root
+
+
+def _conv_file_open(conversation: dict[str, Any] | None, config: Any, raw_path: Any) -> dict[str, Any]:
+    """读取会话文件的预览信息（文本带内容；图片/二进制只给元数据）。"""
+    target, listed, within_root, _root = _conv_file_allow(conversation, config, raw_path)
+    if target is None or not (listed or within_root):
+        raise ValueError("无权访问该文件：不在本会话改动记录中，也不在会话工作区内")
+    if not target.is_file():
+        raise FileNotFoundError(str(target))
+    stat = target.stat()
+    suffix = target.suffix.lower()
+    name = target.name
+    info: dict[str, Any] = {
+        "path": str(target),
+        "name": name,
+        "size": stat.st_size,
+        "mtime": round(stat.st_mtime * 1000),
+        "savable": False,
+        "kind": "binary",
+        "truncated": False,
+    }
+    if suffix in _CONV_IMAGE_EXTS:
+        info["kind"] = "image"
+        return info
+    with target.open("rb") as handle:
+        head = handle.read(_CONV_FILE_SNIFF_BYTES)
+    if b"\x00" in head:
+        info["kind"] = "binary"
+        return info
+    info["kind"] = "text"
+    info["savable"] = bool(listed and within_root)
+    with target.open("rb") as handle:
+        payload = handle.read(_CONV_FILE_READ_CAP + 1)
+    info["truncated"] = len(payload) > _CONV_FILE_READ_CAP
+    info["content"] = payload[:_CONV_FILE_READ_CAP].decode("utf-8", errors="replace")
+    return info
+
+
+def _conv_file_save(conversation: dict[str, Any] | None, config: Any, raw_path: Any, content: Any) -> dict[str, Any]:
+    """把右侧面板的编辑内容写回磁盘。
+
+    安全门槛：目标必须同时在"本会话改动记录"与"会话工作区"内；拒绝其他任何路径。
+    """
+    target, listed, within_root, _root = _conv_file_allow(conversation, config, raw_path)
+    if target is None or not (listed and within_root):
+        raise ValueError("无权保存该文件：只允许保存本会话改动过且位于会话工作区内的文件")
+    text = str(content if content is not None else "")
+    if len(text.encode("utf-8", errors="replace")) > _CONV_FILE_SAVE_CAP:
+        raise ValueError("保存内容过大，已超过上限")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp = target.with_name(f".{target.name}.naiba-tmp")
+    try:
+        with temp.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, target)
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+    stat = target.stat()
+    return {"path": str(target), "name": target.name, "size": stat.st_size, "mtime": round(stat.st_mtime * 1000)}
+
+
 def _infer_supports_images(provider: dict[str, Any]) -> bool:
     """推断模型是否支持图片输入（supports_images 能力字段）。
 
@@ -3251,6 +3443,53 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"workspaces": APP.config.data.get("workspaces", [])})
         elif path == "/api/starter-prompts":
             self._json({"prompts": APP.config.get_starter_prompts()})
+        elif path.startswith("/api/conversations/") and path.endswith("/file/open"):
+            conversation_id = path.split("/")[-3]
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation = APP.storage.get_conversation(conversation_id)
+            if not conversation:
+                self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(_conv_file_open(conversation, APP.config, query.get("path", [""])[0]))
+            except FileNotFoundError as exc:
+                self._json({"error": f"文件不存在或已被移动：{exc}"}, HTTPStatus.NOT_FOUND)
+            except (OSError, ValueError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path.startswith("/api/conversations/") and path.endswith("/file/raw"):
+            conversation_id = path.split("/")[-3]
+            query = urllib.parse.parse_qs(parsed.query)
+            conversation = APP.storage.get_conversation(conversation_id)
+            if not conversation:
+                self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
+                return
+            try:
+                raw_path = query.get("path", [""])[0]
+                target, listed, within_root, _root = _conv_file_allow(conversation, APP.config, raw_path)
+                if target is None or not (listed or within_root):
+                    raise ValueError("无权访问该文件：不在本会话改动记录中，也不在会话工作区内")
+                if not target.is_file():
+                    raise FileNotFoundError(str(target))
+                data = target.read_bytes()
+                if len(data) > 32 * 1024 * 1024:
+                    raise ValueError("文件过大，无法预览")
+                content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+                if content_type == "application/octet-stream":
+                    content_type = _MEDIA_MIME_FALLBACK.get(target.suffix.lower(), content_type)
+                self.send_response(HTTPStatus.OK)
+                self.send_header(
+                    "Content-Type",
+                    f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type,
+                )
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.send_header("Cache-Control", "private, max-age=3600")
+                self.end_headers()
+                self.wfile.write(data)
+            except FileNotFoundError as exc:
+                self._json({"error": f"文件不存在或已被移动：{exc}"}, HTTPStatus.NOT_FOUND)
+            except (OSError, ValueError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path.startswith("/api/conversations/"):
             conversation_id = path.rsplit("/", 1)[-1]
             conversation = APP.storage.get_conversation(conversation_id)
@@ -3408,6 +3647,21 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             self._json(result, HTTPStatus.OK)
+        elif path.startswith("/api/conversations/") and path.endswith("/file/save"):
+            conversation_id = path.split("/")[-3]
+            raw_path = body.get("path")
+            content = body.get("content")
+            if not isinstance(raw_path, str) or not str(raw_path).strip():
+                self._json({"error": "path 不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            conversation = APP.storage.get_conversation(conversation_id)
+            if not conversation:
+                self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
+                return
+            try:
+                self._json(_conv_file_save(conversation, APP.config, raw_path, content))
+            except (OSError, ValueError) as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path.startswith("/api/conversations/") and path.endswith("/settings"):
             conversation_id = path.split("/")[-2]
             title = body.get("title")

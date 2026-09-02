@@ -8,10 +8,13 @@
   <link rel="stylesheet" href="/styles.css?v=__ASSET_VERSION__">
 </head>
 <body>
-  <div class="app-shell">
+  <div class="app-shell" id="appShell">
     <aside class="sidebar" id="sidebar" aria-label="对话导航">
       <div class="sidebar-top">
         <button class="new-chat" id="newChatButton"><span>＋</span> 新会话</button>
+        <button class="icon-button sidebar-collapse-btn" id="collapseSidebar" type="button" title="收起侧栏" aria-label="收起侧栏">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6l-6 6 6 6"></path><path d="M19 6l-6 6 6 6"></path></svg>
+        </button>
         <button class="icon-button mobile-only" id="closeSidebar" title="关闭导航" aria-label="关闭导航">×</button>
       </div>
 
@@ -48,6 +51,9 @@
 
     <main class="chat-main">
       <header class="topbar">
+        <button class="icon-button sidebar-expand-btn" id="expandSidebar" type="button" title="展开侧栏" aria-label="展开侧栏">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6l6 6-6 6"></path><path d="M5 6l6 6-6 6"></path></svg>
+        </button>
         <button class="icon-button mobile-only" id="openSidebar" title="打开导航" aria-label="打开导航">☰</button>
         <label class="model-control">
           <span>模型</span>
@@ -61,6 +67,11 @@
           <button class="control-button unload-model-button" id="unloadModel" type="button" hidden title="卸载当前本地模型">
             <span aria-hidden="true">↓</span><span class="button-label">卸载模型</span>
           </button>
+          <button class="control-button file-reopen-button" id="openFileTabs" type="button" hidden title="重新打开文件面板（保留已打开的文件标签）">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8.5L19 7.5V21H6z"></path><path d="M14.5 3v4.5H19"></path></svg>
+            <span id="fileTabsCount">0</span>
+            <span class="button-label">文件</span>
+          </button>
           <button class="control-button task-button" id="openTasks" title="查看异步任务"><span id="taskCount">0</span> <span class="button-label">任务</span></button>
           <button class="control-button" id="openSkills" title="查看当前会话已选择的 Skill"><span id="skillCount">已选 0</span> <span class="button-label">Skill</span></button>
           <button class="mcp-button" id="mcpStatus" title="查看 MCP 状态"><i></i><span>MCP</span></button>
@@ -73,8 +84,8 @@
           <div class="empty-mark">S</div>
           <h1>开始新对话</h1>
           <div class="starter-grid">
-            <button data-prompt="确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。确认接口可用后，等待用户指令，后续只允许通过 mcp 工具调用 ComfyUI 进行生成任务。将当前工作区目录下的所有工作流 json 文件加上 “_backup” 后缀复制一份，直接覆盖可能已经存在的带 “_backup” 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 “_backup” 后缀的所有工作流。">通过 mcp 调用 ComfyUI（请先连接 ComfyUI mcp 服务器）</button>
-            <button data-prompt="先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；若未启动，提示用户启动 ComfyUI。确认接口可用后，等待用户指令，后续通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。将当前工作区目录下的所有工作流 json 文件加上 “_backup” 后缀复制一份，直接覆盖可能已经存在的带 “_backup” 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 “_backup” 后缀的所有工作流。">通过 http 调用 ComfyUI（请先启动 ComfyUI）</button>
+            <button data-prompt="确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。确认接口可用后，等待用户指令，后续只允许通过 mcp 工具调用 ComfyUI 进行生成任务。将当前工作区目录下的所有工作流 json 文件加上 "_backup" 后缀复制一份，直接覆盖可能已经存在的带 "_backup" 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 "_backup" 后缀的所有工作流。">通过 mcp 调用 ComfyUI（请先连接 ComfyUI mcp 服务器）</button>
+            <button data-prompt="先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；若未启动，提示用户启动 ComfyUI。确认接口可用后，等待用户指令，后续通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。将当前工作区目录下的所有工作流 json 文件加上 "_backup" 后缀复制一份，直接覆盖可能已经存在的带 "_backup" 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 "_backup" 后缀的所有工作流。">通过 http 调用 ComfyUI（请先启动 ComfyUI）</button>
             <button data-prompt="帮我设置本地 Comfy MCP 连接，按照 https://docs.comfy.org/agent-tools/mcp.md#local-comfy-mcp-connection 的设置指南操作。优先使用本地 Comfyui 的 python 环境。当发现不止一个的时候，优先寻找正在运行的 Comfyui 对应的环境。当发现没有已运行的 Comfyui 但本地存在多个 Comfyui 环境时，停止行动并向用户发出询问。安装完成 mcp 服务后，记得提醒用户在 mcp 相关的 agent 设置页面内手动开启由 mcp 服务所引入的新的 comfy mcp tools。">帮我设置本地 Comfy MCP 连接</button>
             <button data-prompt="列出你当前所有可用工具。">列出所有可用工具</button>
             <button data-prompt="列出当前文件夹下的所有文件。">列出所有文件</button>
@@ -141,15 +152,23 @@
               <button type="button" data-permission-mode="full" role="radio" title="工具无需逐次确认">完全</button>
             </div>
           </div>
-          <label class="lightweight-mode-toggle" id="lightweightModeControl" title="按对话设置中选定的项目降低负载">
-            <input id="lightweightModeToggle" type="checkbox">
-            <span>轻量对话</span>
-            <small>按设置关闭选定能力</small>
-          </label>
+          <div class="lightweight-feature-inline" aria-label="轻量选项" title="勾选任一选项即开启轻量对话（关闭对应能力）；都不勾选时本对话为普通模式">
+            <span class="lightweight-feature-label">轻量选项</span>
+            <label title="勾选后关闭本对话的工具调用（不勾选即普通模式）"><input id="lightweightToolsToggle" type="checkbox"> 工具</label>
+            <label title="勾选后关闭本对话的 Skill 能力（不勾选即普通模式）"><input id="lightweightSkillsToggle" type="checkbox"> Skill</label>
+          </div>
           <span id="runtimeStatus">就绪</span>
         </div>
       </section>
     </main>
+
+    <aside class="file-panel" id="filePanel" aria-label="文件面板">
+      <header class="file-panel-top">
+        <div class="file-tabs" id="fileTabs" role="tablist" aria-label="打开的文件"></div>
+        <button class="icon-button file-panel-close" id="closeFilePanel" type="button" title="收起文件面板（Esc）" aria-label="收起文件面板">×</button>
+      </header>
+      <div class="file-panel-body" id="filePanelBody" aria-live="polite"></div>
+    </aside>
   </div>
 
   <dialog id="authDialog" class="auth-dialog">
@@ -194,7 +213,7 @@
       <button class="icon-button" data-close="skillsDialog" title="关闭" aria-label="关闭">×</button>
     </div>
     <label class="skill-policy-row">
-      <span><b>Skill 引用</b><small id="skillPolicyHint">点击某项即在输入框光标处插入 /技能 引用；发送后按“首轮注入 / 后续追加”注入</small></span>
+      <span><b>Skill 引用</b><small id="skillPolicyHint">点击某项即在输入框光标处插入 /技能 引用；发送后按"首轮注入 / 后续追加"注入</small></span>
     </label>
     <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
     <div class="skill-list" id="skillList"></div>
@@ -254,11 +273,6 @@
         <span><b>流式输出</b><small>模型生成内容时实时显示文本</small></span>
         <input id="conversationStreamEnabled" type="checkbox">
       </label>
-      <fieldset class="lightweight-feature-options">
-        <legend>轻量模式关闭项</legend>
-        <label><input type="checkbox" name="lightweightFeature" value="tools"> 工具</label>
-        <label><input type="checkbox" name="lightweightFeature" value="skills"> Skills</label>
-      </fieldset>
       <div class="form-actions">
         <button class="danger-button" id="clearConversationMessages" type="button">清空对话</button>
         <button class="control-button" type="button" data-close="conversationSettingsDialog">取消</button>

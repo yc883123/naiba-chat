@@ -1,10 +1,16 @@
-# Naiba Chat 1.6.8 Beta
+# Naiba Chat 1.6.9 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.8 Beta 修复检查更新偶发 HTTP 403 失败的问题：增加版本列表磁盘缓存与 GitHub 静态直连兜底，接口限流/网络异常时自动回退，不再因一次接口失败就报错。
+1.6.9 Beta 在对话消息中新增「本轮修改文件」摘要与右侧文件面板：AI 用工具写过的文件可一键回看、编辑并保存回磁盘；同时支持左右侧栏折叠，轻量模式改为更清晰的独立开关。
 
-## 1.6.8 Beta 主要能力
+## 1.6.9 Beta 主要能力
+
+- **本轮修改文件**：AI 每轮用 `write_file`/`edit_file` 成功写入的文件会在消息末尾按「新建/编辑」列出摘要（图片/视频/音频等多媒体产物仍走原附件卡片预览），点文件名在右侧文件面板打开，随时回看 AI 改过什么；中止/失败轮次已写入的文件同样留痕。
+- **右侧文件面板**：多标签页管理打开的文件；Markdown 直接渲染预览，文本文件可手动编辑并保存回磁盘（Ctrl/⌘+S 或 Ctrl/⌘+Enter 保存、Esc 取消）；图片直接预览并可点开大图，二进制文件给出明确提示。
+- **文件访问边界**：面板只允许查看本会话改动过或位于会话工作区内的文件，「保存写回」要求同时满足两者，路径越界一律拒绝，不能当作任意文件读写入口。
+- **侧栏折叠**：左侧会话栏支持折叠与展开（桌面端记忆状态、腾出聊天区）；右侧文件面板收起后可从顶栏「文件 N」按钮一键重新打开已保留的标签。
+- **轻量模式重构**：输入区下方改为「轻量选项：工具 / Skill」两个独立勾选，勾选任一即开启轻量对话并关闭对应能力，都不勾选即为普通模式；新建会话默认不再自动关闭工具与 Skill。
 
 - **检查更新更稳**：启动时复用 6 小时内的版本列表缓存，减少对 GitHub API 配额的无谓消耗；列表接口失败（403/限流/网络异常）时自动回退读取本地缓存，不再因一次接口失败就报错。
 - **latest 静态直连兜底**：列表接口不可用或所选版本清单拉取失败时，自动改用 GitHub `releases/latest/download` 静态清单判断是否有新版本（不占 API 配额），并合成可安装条目，兜底场景下仍可一键安装。
@@ -52,7 +58,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.8-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.9-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -140,13 +146,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.8-beta-windows-x64.zip`
+- `naiba-chat-1.6.9-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.8 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.9 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -159,7 +165,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.8-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.9-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 

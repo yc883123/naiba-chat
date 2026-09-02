@@ -849,7 +849,13 @@ class ConversationRunManager:
             event({"type": "status", "message": "任务开始执行"})
             if cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
-            from server import _detect_choice_groups, build_model_history, extract_attachments, _image_intent
+            from server import (
+                _detect_choice_groups,
+                build_model_history,
+                extract_attachments,
+                file_changes_from_runs,
+                _image_intent,
+            )
 
             message = str(run.get("message") or "")
             uploads = snapshot.get("attachments") or []
@@ -1187,6 +1193,7 @@ class ConversationRunManager:
                 response, plan = self.app.plans.process_response(plan_id, response)
                 plan_status = str((plan or {}).get("status") or "")
             choice_groups = _detect_choice_groups(response)
+            changed_files = file_changes_from_runs(runs)
             metadata = {
                 "skills": skills,
                 "tool_runs": runs,
@@ -1212,6 +1219,9 @@ class ConversationRunManager:
                 "trace": (run_context or {}).get("trace_messages") or [],
                 **({"error": sink.failure_message} if sink.failure_message else {}),
             }
+            # 消息末尾"修改文件"总结：仅在本轮确实有文件落盘时携带，避免空数组刷屏。
+            if changed_files:
+                metadata["files"] = changed_files
             with self._submit_lock:
                 current = self.app.storage.get_background_task(run_id)
                 if (cancel_event.is_set() or not current or current.get("cancel_requested")
@@ -1526,9 +1536,11 @@ class ConversationRunManager:
                     return None
         except Exception:
             pass
+        from server import extract_attachments, file_changes_from_runs
         reasoning, tool_runs, content, activity = self._rebuild_partial_run(run_id, events)
         if not content:
             content = "（已中止）"
+        changed_files = file_changes_from_runs(tool_runs)
         metadata: dict[str, Any] = {
             "aborted": True,
             "reasoning": reasoning,
@@ -1540,6 +1552,8 @@ class ConversationRunManager:
             # 中止/取消的轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
             "attachments": extract_attachments(tool_runs),
         }
+        if changed_files:
+            metadata["files"] = changed_files
         try:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
         except Exception:
@@ -1622,9 +1636,11 @@ class ConversationRunManager:
                     return None
         except Exception:
             pass
+        from server import extract_attachments, file_changes_from_runs
         reasoning, tool_runs, content, activity = self._rebuild_partial_run(run_id, events)
         if not content:
             content = "（本次回答未完成）"
+        changed_files = file_changes_from_runs(tool_runs)
         metadata: dict[str, Any] = {
             "partial": True,
             "reasoning": reasoning,
@@ -1634,9 +1650,11 @@ class ConversationRunManager:
             "activity": activity,
             "trace": trace or [],
             "error": error,
-            # 失败轮次也要把已生成的图片/媒体作为附件展示，避免"生成过但历史里看不到缩略图"。
+            # 失败轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
             "attachments": extract_attachments(tool_runs),
         }
+        if changed_files:
+            metadata["files"] = changed_files
         try:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
         except Exception:
