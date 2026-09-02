@@ -2740,11 +2740,14 @@ async function deleteConversation(id) {
   const conversation = state.conversations.find((item) => item.id === id);
   if (!confirm(`删除对话"${conversation?.title || '新对话'}"？`)) return;
   await api(`/api/conversations/${id}`, { method: 'DELETE' });
+  const wasCurrent = state.conversationId === id;
   state.conversations = state.conversations.filter((item) => item.id !== id);
-  if (state.conversationId === id) {
-    state.conversationId = '';
-  }
+  if (wasCurrent) state.conversationId = '';
   renderSidebar();
+  // 删除非当前会话：只刷新侧栏。绝不能重新加载当前会话视图，否则会把正在流式
+  // 输出的消息行挤出 DOM（renderMessages 重建列表），导致流式输出消失、要等 run
+  // 结束重新渲染才重现。当前会话的流式输出必须保持原样继续。
+  if (!wasCurrent) return;
   if (state.conversations.length) await openConversation(state.conversations[0].id);
   else {
     renderMessages([]);

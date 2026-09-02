@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.6.6-beta
-  RELEASE_TAG: v1.6.6-beta
-  PACKAGE_NAME: naiba-chat-1.6.6-beta-windows-x64
+  RELEASE_VERSION: 1.6.7-beta
+  RELEASE_TAG: v1.6.7-beta
+  PACKAGE_NAME: naiba-chat-1.6.7-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.6.6 Beta release
+      - name: Publish 1.6.7 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.6.6 Beta
+          name: Naiba Chat 1.6.7 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,14 +99,11 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.6.6 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.6.7 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 意图识别收紧：只认明确的「请选择/选一个/choose from」等完整意图，正文或代码里的裸 select/choose/pick 不再误判成选项。
-            - 意图必须紧跟选项：意图行与选项组之间最多允许少量空行/单行间隔，长距离的「选择」字样不再触发按钮；选项文本过长（整段话）也不算交互选项。
-            - 紧凑选项正确拆分：「请选择语言：1. 中文 2. 英文」这类同一行紧凑选项可正确拆分为多个选项按钮。
-            - 编号残留剥离：选项中的「- 1. 安装依赖」会剥离编号残留，只保留「安装依赖」；孤立的 bullet 符号不再打断选项组。
-            - 点击选项只发选项文本：点选按钮发送时只发送该选项本身，不再拼接「请选择…」前缀，避免把问题重复带进下一条消息。
+            - 删除会话不中断当前输出：删除非当前会话时只刷新侧栏列表，不再重载当前会话视图，正在流式输出的消息行保持原样继续渲染。
+            - 修复之前删除任意会话后自动重载当前会话，导致进行中的流式消息行被挤出 DOM、输出看似消失的问题；现在只有删除当前会话才切换到下一个会话。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

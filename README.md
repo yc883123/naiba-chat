@@ -1,10 +1,13 @@
-# Naiba Chat 1.6.6 Beta
+# Naiba Chat 1.6.7 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.6 Beta 收紧 AI 交互选项识别：只认明确的「请选择/选一个/choose from」等完整意图，正文或代码里的裸 select/choose/pick 不再误弹选项按钮；意图行必须紧跟选项组才触发，选项文本过长不算交互选项，点选按钮时只发送选项文本。
+1.6.7 Beta 修复删除会话时的交互问题：删除非当前会话只刷新侧栏、不重载当前视图，正在流式输出的回答保持原样继续渲染，不再因删除操作而中断消失。
 
-## 1.6.6 Beta 主要能力
+## 1.6.7 Beta 主要能力
+
+- **删除会话不中断当前输出**：删除非当前会话时只刷新侧栏列表，不再自动重载当前会话视图，正在流式输出的消息行保持原样继续渲染。
+- **流式输出稳定**：修复之前删除任意会话后自动重载当前会话，导致进行中的流式消息行被挤出 DOM、输出看似消失、要等 run 结束重新渲染才重现的问题；现在只有删除当前会话才切换到下一个会话。
 
 - **选项识别收紧**：只认明确的「请选择/选一个/choose from」等完整意图，正文或代码里的裸 `select`/`choose`/`pick` 不再误判成选项按钮；英文只保留完整词组（`pick one`/`choose one`/`select one`/`which one`/`which of`/`choose from`/`select from`）。
 - **意图必须紧跟选项**：意图行与选项组之间最多允许少量空行/单行间隔，长距离的「选择」字样不再触发按钮；选项文本过长（整段话）不算交互选项，意图行过长（长句里恰好含「选择」）也不算意图。
@@ -45,7 +48,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.6-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.7-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -133,13 +136,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.6-beta-windows-x64.zip`
+- `naiba-chat-1.6.7-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.6 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.7 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -152,7 +155,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.6-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.7-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
