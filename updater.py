@@ -17,6 +17,10 @@ from typing import Any, Callable
 REPOSITORY = "yc883123/naiba-chat"
 MANIFEST_ASSET = "naiba-chat-update.json"
 EXECUTABLE_ASSET = "naiba-chat.exe"
+# 内存/磁盘发布列表在此时长内视为新鲜，命中即复用，减少对 GitHub API 配额的无谓消耗。
+CACHE_TTL_SECONDS = 6 * 3600
+# 合成发布条目的 tag；安装该条目时始终走 releases/latest/download 静态直连，不占 API 配额。
+LATEST_TAG = "latest"
 DEFAULT_RELEASE_NOTES = [
     "修复 Windows 10053/10054/10061 瞬时连接错误，并在失败时显示供应商主机和排查提示。",
     "修复推理模型只返回 reasoning 时测试连接被误判失败的问题。",
@@ -53,6 +57,8 @@ class UpdateManager:
         self.phase = "idle"
         self.error = ""
         self.checked_at = 0
+        # True 表示 self.releases 来自磁盘缓存回退（非实时 API），更新决策须以直连清单为准。
+        self._releases_from_cache = False
         self.build = self._read_build_info()
         self.pending_verification = self.verify_pending()
 
@@ -186,6 +192,32 @@ class UpdateManager:
             }
 
     @staticmethod
+    def _is_rate_limited(exc: urllib.error.HTTPError) -> bool:
+        """识别 GitHub API 限流：剩余配额为 0、携带 Retry-After 或响应体提及 rate limit。"""
+        if exc.code not in (403, 429):
+            return False
+        headers = getattr(exc, "headers", None) or getattr(exc, "hdrs", None) or {}
+        try:
+            if str(headers.get("X-RateLimit-Remaining", "")).strip() == "0":
+                return True
+            if headers.get("Retry-After") is not None:
+                return True
+            body = exc.read(4096).decode("utf-8", errors="ignore")
+            return "rate limit" in body.lower()
+        except Exception:
+            return False
+
+    @staticmethod
+    def _http_error_message(exc: urllib.error.HTTPError) -> str:
+        if exc.code == 404:
+            return "尚无可用的自动更新版本"
+        if UpdateManager._is_rate_limited(exc):
+            return "GitHub 接口访问频率受限，请稍后重试"
+        if exc.code == 403:
+            return "GitHub 拒绝了请求（HTTP 403），请检查网络或代理设置"
+        return f"检查更新失败：HTTP {exc.code}"
+
+    @staticmethod
     def _request_json(url: str, timeout: int = 20) -> dict[str, Any] | list[Any]:
         request = urllib.request.Request(
             url,
@@ -230,12 +262,81 @@ class UpdateManager:
             "release_notes": release_notes,
         }
 
+    def _load_cached_releases(self, cache: Path) -> list[dict[str, Any]] | None:
+        """读取并结构校验磁盘发布列表缓存；缺失、损坏、空或字段异常的缓存视为不存在。"""
+        try:
+            if not cache.is_file():
+                return None
+            value = json.loads(cache.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(value, list) or not value:
+            return None
+        releases: list[dict[str, Any]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                return None
+            tag = str(item.get("tag") or "")
+            version = str(item.get("version") or "")
+            installable = item.get("installable")
+            if not tag or not version or not isinstance(installable, bool):
+                return None
+            raw_notes = item.get("release_notes")
+            if isinstance(raw_notes, str):
+                release_notes = [line.strip() for line in raw_notes.splitlines() if line.strip()]
+            elif isinstance(raw_notes, list):
+                release_notes = [str(note).strip() for note in raw_notes if str(note).strip()]
+            else:
+                release_notes = []
+            releases.append(
+                {
+                    "tag": tag,
+                    "version": version,
+                    "published_at": str(item.get("published_at") or ""),
+                    "release_url": str(item.get("release_url") or ""),
+                    "release_notes": release_notes[:50],
+                    "installable": installable,
+                    "current": False,
+                }
+            )
+        return releases or None
+
+    def _mark_current(self, releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        current_version = self.build.get("version", "")
+        for release in releases:
+            release["current"] = release.get("version") == current_version
+        return releases
+
     def _fetch_releases(self, force: bool = False) -> list[dict[str, Any]]:
+        """返回发布列表。优先复用 6 小时内的内存/磁盘缓存；API 失败时回退读取缓存。"""
         cache = self.data_dir / "update" / "releases.json"
-        if not force and self.releases_loaded_at and time.time() - self.releases_loaded_at < 6 * 3600:
+        if not force and self.releases_loaded_at and time.time() - self.releases_loaded_at < CACHE_TTL_SECONDS:
             return self.releases
-        url = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=100"
-        data = self._request_json(url)
+        if not force and not self.releases_loaded_at:
+            # 启动场景：磁盘缓存较新则直接复用，避免无谓请求 API 消耗配额。
+            try:
+                cache_fresh = cache.is_file() and time.time() - cache.stat().st_mtime < CACHE_TTL_SECONDS
+            except OSError:
+                cache_fresh = False
+            if cache_fresh:
+                cached = self._load_cached_releases(cache)
+                if cached is not None:
+                    self.releases = self._mark_current(cached)
+                    self.releases_loaded_at = int(time.time())
+                    self._releases_from_cache = True
+                    return self.releases
+        try:
+            url = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=100"
+            data = self._request_json(url)
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError, ValueError):
+            # API 限流/网络抖动时回退读缓存，保留历史版本下拉项。
+            cached = self._load_cached_releases(cache)
+            if cached is not None:
+                self.releases = self._mark_current(cached)
+                self.releases_loaded_at = int(time.time())
+                self._releases_from_cache = True
+                return self.releases
+            raise
         if not isinstance(data, list):
             raise RuntimeError("更新服务器返回了无效数据")
         releases: list[dict[str, Any]] = []
@@ -256,10 +357,7 @@ class UpdateManager:
                     "current": False,
                 }
             )
-        current_version = self.build.get("version", "")
-        for release in releases:
-            if release["version"] == current_version:
-                release["current"] = True
+        self._mark_current(releases)
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
             cache.write_text(json.dumps(releases, ensure_ascii=False), encoding="utf-8")
@@ -267,17 +365,42 @@ class UpdateManager:
             pass
         self.releases = releases
         self.releases_loaded_at = int(time.time())
+        self._releases_from_cache = False
         return releases
 
+    def _release_from_manifest(self, manifest: dict[str, Any]) -> dict[str, Any]:
+        """依据已校验的 latest 清单生成合成的可安装发布条目，供下拉框一键安装。"""
+        version = str(manifest.get("version") or "")
+        return {
+            "tag": LATEST_TAG,
+            "version": version,
+            "published_at": str(manifest.get("published_at") or ""),
+            "release_url": str(manifest.get("release_url") or ""),
+            "release_notes": manifest.get("release_notes", []),
+            "installable": True,
+            "current": version == self.build.get("version", ""),
+        }
+
+    def _manifest_base(self, tag: str) -> str:
+        """版本下载基址；latest（或空）映射到 releases/latest 静态直连，不消耗 API 配额。"""
+        if not tag or tag == LATEST_TAG:
+            return f"https://github.com/{REPOSITORY}/releases/latest/download"
+        return f"https://github.com/{REPOSITORY}/releases/download/{tag}"
+
     def _fetch_manifest_for_tag(self, tag: str) -> dict[str, Any]:
-        base = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
+        base = self._manifest_base(tag)
         manifest = self._validate_manifest(self._request_json(f"{base}/{MANIFEST_ASSET}"))
+        is_latest = not tag or tag == LATEST_TAG
         manifest.update(
             {
                 "download_url": f"{base}/{EXECUTABLE_ASSET}",
                 "published_at": "",
-                "release_url": f"https://github.com/{REPOSITORY}/releases/tag/{tag}",
-                "tag": tag,
+                "release_url": (
+                    f"https://github.com/{REPOSITORY}/releases/latest"
+                    if is_latest
+                    else f"https://github.com/{REPOSITORY}/releases/tag/{tag}"
+                ),
+                "tag": LATEST_TAG if is_latest else tag,
             }
         )
         return manifest
@@ -359,14 +482,27 @@ class UpdateManager:
                         self.phase = "available" if update_available else "current"
                     self.checked_at = int(time.time())
                 return self.status()
-            releases = self._fetch_releases(force=force)
+            try:
+                releases = self._fetch_releases(force=force)
+            except (urllib.error.HTTPError, urllib.error.URLError, OSError, ValueError):
+                # 列表接口不可用（含网关返回非 JSON 等）且无缓存可回退：以 latest 静态入口为准继续判断。
+                releases = []
+            list_from_api = not self._releases_from_cache
             installable = [release for release in releases if release["installable"]]
-            if not installable:
-                raise RuntimeError("没有可安装的发布版本")
-            latest_meta = installable[0]
-            manifest = self._fetch_manifest_for_tag(latest_meta["tag"])
-            manifest["published_at"] = latest_meta["published_at"]
-            manifest["release_url"] = latest_meta["release_url"]
+            manifest = None
+            if list_from_api and installable:
+                latest_meta = installable[0]
+                try:
+                    manifest = self._fetch_manifest_for_tag(latest_meta["tag"])
+                    manifest["published_at"] = latest_meta["published_at"]
+                    manifest["release_url"] = latest_meta["release_url"]
+                except (urllib.error.HTTPError, urllib.error.URLError, OSError, ValueError):
+                    # 所选版本资产获取失败（网络类错误/内容异常）：改用 latest 静态直连清单兜底。
+                    manifest = None
+            if manifest is None:
+                # 列表缺失/不可信，或首选版本清单拉取失败：以 /releases/latest/download 静态
+                # 直连清单作为本次更新判断与默认安装的唯一权威来源（该入口不消耗 API 配额）。
+                manifest = self._fetch_manifest_for_tag(LATEST_TAG)
             current_number = self._build_number(self.build.get("version", ""))
             latest_number = self._build_number(manifest.get("version", ""))
             current_release = self._release_version_key(self.build.get("version", ""))
@@ -395,13 +531,24 @@ class UpdateManager:
             manifest["update_available"] = update_available
             with self.lock:
                 self.latest = manifest
+                if manifest.get("tag") == LATEST_TAG and not any(
+                    release.get("installable") and release.get("version") == manifest.get("version")
+                    for release in self.releases
+                ):
+                    # 列表来自回退缓存或整体缺失：合成一条可安装的 latest 条目置于顶部，
+                    # 保证下拉框仍能一键安装最新版；下次 API 成功后以真实列表整体替换。
+                    self.releases = [self._release_from_manifest(manifest), *self.releases]
                 self.phase = "available" if update_available else "current"
                 self.checked_at = int(time.time())
         except urllib.error.HTTPError as exc:
-            message = "尚无可用的自动更新版本" if exc.code == 404 else f"检查更新失败：HTTP {exc.code}"
             with self.lock:
                 self.phase = "error"
-                self.error = message
+                self.error = self._http_error_message(exc)
+                self.checked_at = int(time.time())
+        except urllib.error.URLError:
+            with self.lock:
+                self.phase = "error"
+                self.error = "无法连接更新服务器，请检查网络后重试"
                 self.checked_at = int(time.time())
         except Exception as exc:
             with self.lock:
@@ -519,6 +666,8 @@ Remove-Item -LiteralPath $Downloaded -Force -ErrorAction SilentlyContinue
             meta = next((release for release in self.releases if release["tag"] == target_tag), None)
             if not meta:
                 raise RuntimeError("目标版本不存在")
+            # target_tag 为合成条目 LATEST_TAG 时，_fetch_manifest_for_tag 会自动改走
+            # releases/latest/download 静态直连（不访问 api.github.com），与 check() 兜底同入口。
             latest = self._fetch_manifest_for_tag(target_tag)
             latest["published_at"] = meta["published_at"]
             latest["release_url"] = meta["release_url"]

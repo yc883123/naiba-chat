@@ -1,10 +1,14 @@
-# Naiba Chat 1.6.7 Beta
+# Naiba Chat 1.6.8 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.7 Beta 修复删除会话时的交互问题：删除非当前会话只刷新侧栏、不重载当前视图，正在流式输出的回答保持原样继续渲染，不再因删除操作而中断消失。
+1.6.8 Beta 修复检查更新偶发 HTTP 403 失败的问题：增加版本列表磁盘缓存与 GitHub 静态直连兜底，接口限流/网络异常时自动回退，不再因一次接口失败就报错。
 
-## 1.6.7 Beta 主要能力
+## 1.6.8 Beta 主要能力
+
+- **检查更新更稳**：启动时复用 6 小时内的版本列表缓存，减少对 GitHub API 配额的无谓消耗；列表接口失败（403/限流/网络异常）时自动回退读取本地缓存，不再因一次接口失败就报错。
+- **latest 静态直连兜底**：列表接口不可用或所选版本清单拉取失败时，自动改用 GitHub `releases/latest/download` 静态清单判断是否有新版本（不占 API 配额），并合成可安装条目，兜底场景下仍可一键安装。
+- **错误提示分级**：GitHub 接口限流（403/429）时提示「访问频率受限，请稍后重试」；其它 403 提示检查网络或代理；网络无法连接给出明确提示。
 
 - **删除会话不中断当前输出**：删除非当前会话时只刷新侧栏列表，不再自动重载当前会话视图，正在流式输出的消息行保持原样继续渲染。
 - **流式输出稳定**：修复之前删除任意会话后自动重载当前会话，导致进行中的流式消息行被挤出 DOM、输出看似消失、要等 run 结束重新渲染才重现的问题；现在只有删除当前会话才切换到下一个会话。
@@ -48,7 +52,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.7-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.6.8-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -136,13 +140,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.7-beta-windows-x64.zip`
+- `naiba-chat-1.6.8-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.7 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.6.8 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -155,7 +159,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.7-beta"
+$env:NAIBA_BUILD_VERSION = "1.6.8-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
