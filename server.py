@@ -757,7 +757,7 @@ def default_config() -> dict[str, Any]:
 _BUILT_IN_SCOPE_ALL = (
     "read_file", "list_directory", "search_files", "glob_files",
     "write_file", "edit_file", "pwsh", "run_skill_script",
-    "http_request", "web_search", "fetch_page", "register_mcp", "call_mcp",
+    "http_request", "web_search", "register_mcp", "call_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
     "todo_write", "artifact_report", "recall_history",
     "comfyui_prepare_workflow", "comfyui_batch",
@@ -835,7 +835,7 @@ _TOOL_GROUP = {
     "write_file": "文件写入/编辑", "edit_file": "文件写入/编辑",
     "pwsh": "命令执行",
     "run_skill_script": "Skill 脚本",
-    "http_request": "网络", "web_search": "网络", "fetch_page": "网络",
+    "http_request": "网络", "web_search": "网络",
     "register_mcp": "MCP", "call_mcp": "MCP",
     "run_in_background": "后台/Job/子任务", "job_output": "后台/Job/子任务", "job_status": "后台/Job/子任务",
     "job_wait": "后台/Job/子任务", "job_kill": "后台/Job/子任务", "subagent": "后台/Job/子任务",
@@ -882,7 +882,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # 端到端顺序：把前端呈现顺序稳定化，避免逐轮随机
     order = (
         "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
-        "pwsh", "run_skill_script", "http_request", "web_search", "fetch_page",
+        "pwsh", "run_skill_script", "http_request", "web_search",
         "register_mcp", "call_mcp",
         "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
         "todo_write", "artifact_report", "recall_history",

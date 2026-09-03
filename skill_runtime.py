@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import html.parser
 import concurrent.futures
 import json
 import logging
@@ -387,7 +386,6 @@ class ToolExecutor:
         "write_file": "写入文件",
         "run_skill_script": "运行技能脚本",
         "http_request": "发送HTTP请求",
-        "fetch_page": "抓取并提炼网页正文",
         "call_mcp": "调用MCP工具",
         "register_mcp": "注册MCP服务",
     }
@@ -1048,60 +1046,6 @@ class ToolExecutor:
         except urllib.error.HTTPError as exc:
             return f"HTTP {exc.code}\n{exc.read(max_bytes).decode('utf-8', errors='replace')}"
 
-    def _tool_fetch_page(self, args: dict[str, Any]) -> str:
-        """抓取网页并提炼为正文 Markdown（标题 + 正文段落 + 少量链接来源）。
-
-        仅 http/https；纯 stdlib（urllib + html.parser），不引入 bs4。
-        """
-        url = str(args.get("url") or "").strip()
-        max_chars = min(max(int(args.get("max_chars", 20000)), 500), 200000)
-        timeout = min(max(int(args.get("timeout", 30)), 5), 120)
-        if not url:
-            raise ValueError("url 不能为空")
-        if not url.lower().startswith(("http://", "https://")):
-            raise ValueError("仅支持 http/https 地址")
-        request = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36 NaibaChat/1.6"
-                ),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "zh-CN,zh;q=0.9",
-            },
-        )
-        # 按 max_chars 自适应读取上限（留出 HTML 标签冗余），封顶 3MB 防爆
-        read_limit = min(max(max_chars * 6, 64 * 1024), 3 * 1024 * 1024)
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                ctype = (response.headers.get("Content-Type") or "").lower()
-                body = response.read(read_limit).decode("utf-8", errors="replace")
-                status = response.status
-                final_url = str(response.geturl())
-        except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-            # HTTP 状态错误与网络层错误：给出可读原因
-            if isinstance(exc, urllib.error.HTTPError):
-                return f"抓取失败：HTTP {exc.code} {exc.reason}"
-            return f"抓取失败：{exc.reason}"
-        except Exception as exc:  # noqa: BLE001 - 网络兜底，保证失败信息可读
-            return f"抓取失败：{type(exc).__name__}: {exc}"
-        if "html" not in ctype:
-            # 非 HTML（JSON/纯文本/feed 等）：直接返回前段原文
-            return f"HTTP {status}（{ctype.split(';')[0] or '未知类型'}，非 HTML 原文）\n{body[:max_chars]}"
-        extracted = _extract_page_markdown(body, max_chars=max_chars)
-        head = [f"页面标题：{extracted['title'] or '（无标题）'}", f"来源：{final_url}"]
-        if not extracted["text"]:
-            head.append("（未能提炼出正文：可能为动态渲染页面，建议改用 playwright MCP 抓取）")
-        else:
-            head.append(extracted["text"])
-            if extracted["truncated"]:
-                head.append(f"…（正文已截断至 {max_chars} 字符）")
-        if extracted["links"]:
-            link_rows = [f"- {text}：{href}" for text, href in extracted["links"][:15]]
-            head.append("页面主要链接：\n" + "\n".join(link_rows))
-        return "\n\n".join(head)
-
     def _tool_call_mcp(
         self, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None,
     ) -> tuple[bool, str]:
@@ -1158,113 +1102,6 @@ class ToolExecutor:
         return "\n".join(rows)
 
 
-class _HtmlArticleExtractor(html.parser.HTMLParser):
-    """极简 HTML→正文提取器：块级标签分段、忽略脚本/样式、保留标题与少量链接来源。
-
-    纯标准库实现（html.parser），刻意不引入 bs4，避免 PyInstaller 打包增重。
-    """
-
-    _BLOCK_TAGS = {
-        "p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6",
-        "section", "article", "header", "blockquote", "pre", "hr",
-        "ul", "ol", "form", "fieldset", "address", "figure", "figcaption",
-        "main", "table",
-    }
-    _IGNORE_TAGS = {
-        "script", "style", "noscript", "template", "head", "select", "textarea",
-        "svg", "math", "iframe", "canvas", "link", "meta", "audio", "video",
-        "nav", "footer",
-    }
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.title = ""
-        self._in_title = 0
-        self._ignore_depth = 0
-        self._title_buf: list[str] = []
-        self._buf: list[str] = []
-        self._blocks: list[str] = []
-        self.links: list[tuple[str, str]] = []
-        self._seen_links: set[str] = set()
-        self._link_href: str | None = None
-        self._link_text: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        tag = tag.lower()
-        if tag == "title":
-            # <title> 位于 <head> 内，必须先于忽略判断收集（head 本身不产出正文）
-            self._in_title += 1
-            return
-        if tag in self._IGNORE_TAGS:
-            self._ignore_depth += 1
-            return
-        if tag == "a":
-            href = dict(attrs).get("href") or ""
-            if str(href).startswith(("http://", "https://")):
-                self._link_href = str(href)
-                self._link_text = []
-
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if tag == "title":
-            if self._in_title > 0:
-                self._in_title -= 1
-                if self._in_title == 0 and not self.title:
-                    self.title = " ".join("".join(self._title_buf).split())
-            return
-        if tag in self._IGNORE_TAGS:
-            self._ignore_depth = max(0, self._ignore_depth - 1)
-            return
-        if tag == "a":
-            if self._link_href is not None:
-                text = " ".join("".join(self._link_text).split()).strip()
-                if text and self._link_href not in self._seen_links and len(self.links) < 20:
-                    self._seen_links.add(self._link_href)
-                    self.links.append((text[:60], self._link_href))
-            self._link_href = None
-            self._link_text = []
-            return
-        if tag in self._BLOCK_TAGS:
-            self._flush_block()
-
-    def handle_data(self, data: str) -> None:
-        if self._in_title:
-            self._title_buf.append(data)
-            return
-        if self._ignore_depth:
-            return
-        if self._link_href is not None:
-            self._link_text.append(data)
-        self._buf.append(data)
-
-    def _flush_block(self) -> None:
-        text = " ".join("".join(self._buf).split())
-        self._buf = []
-        if text:
-            self._blocks.append(text)
-
-
-def _extract_page_markdown(html: str, max_chars: int = 20000) -> dict[str, Any]:
-    """HTML → {title, text, links, truncated}：优先段落化正文并去噪。
-
-    不追求完整 markdown 还原，目标是把页面正文读给模型听；动态渲染页面
-    （正文为空）由调用方提示走 playwright MCP。
-    """
-    parser = _HtmlArticleExtractor()
-    try:
-        parser.feed(html)
-        parser.close()
-    except Exception:  # noqa: BLE001 - 容错：任何解析异常都不阻断正文提取
-        pass
-    text = "\n".join(parser._blocks) if parser._blocks else ""
-    text = re.sub(r"[ \t]+\n", "\n", text)
-    text = re.sub(r"\n{3,}", "\n\n", text).strip()
-    return {
-        "title": parser.title,
-        "text": text[:max_chars],
-        "links": parser.links,
-        "truncated": len(text) > max_chars,
-    }
 
 
 def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -> list[dict[str, Any]]:

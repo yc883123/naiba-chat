@@ -107,6 +107,7 @@ jobs:
             - 顶栏「更多」菜单：卸载模型、刷新页面等低频操作收进顶栏 ⋯ 溢出菜单，主操作区更简洁；点击菜单外部自动关闭。
             - 快捷指令卡片化：空状态快捷指令改为「图标+标题+说明」卡片布局，按钮标题精简，说明行补充用途，并适配窄屏。
             - 聊天布局调整：AI 消息外层新增消息卡片结构，与代码高亮配色统一。
+            - 移除 fetch_page 工具：已从工具集中彻底删除「抓取并提炼网页正文」的 fetch_page 工具（含实现、注册与分组），内置 Agent 全量工具范围、Agent 编辑页工具目录与权限确认清单同步移除；需要读取网页内容时改用 http_request 或已配置的 MCP 抓取能力。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.
