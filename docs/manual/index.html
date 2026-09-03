@@ -240,7 +240,7 @@
 <ol>
 <li><strong>填一个模型</strong> → 右上角 ⚙ 设置 → 「API 供应商」→ 添加或选一个现成供应商 → 点「检查」测连通。</li>
 </ol>
-<p><img alt="API 供应商" src="images/05-settings-models.webp"></p>
+<p><img alt="API 供应商" src="images/05-settings-models.png"></p>
 <ol start="2">
 <li>
 <p><strong>选一个 Agent</strong> → 顶栏「Agent」下拉里选「通用 Agent」/「编程」/「短剧」等。</p>
@@ -250,10 +250,14 @@
 </li>
 </ol>
 <blockquote>
-<p><strong>没配过模型？</strong> 主界面空态里已经放了 8 个常用指令按钮（点一下就发），新手按顺序点「列出所有可用工具」试试水。</p>
+<p><strong>没配过模型？</strong> 主界面空态里已经放了 8 张常用指令卡片（点一下就发），新手按顺序点「列出可用工具」试试水；左下角「自定义指令」能把你常用的话存成卡片。</p>
+<p>主界面长这样（紫色主题 · 顶栏右侧 ⋯ 里藏着「刷新」「卸载模型」）：</p>
+<p><img alt="主界面" src="images/01-main-empty.png"></p>
 </blockquote>
 <h2 id="14-30">1.4 界面 30 秒认识</h2>
-<p><img alt="主界面" src="images/01-main-empty.webp"></p>
+<p>顶栏右侧收不下的按钮折叠进 <strong>⋯ 更多</strong>菜单（里面是「刷新」「卸载模型」）：</p>
+<p><img alt="顶栏更多菜单" src="images/19b-topbar-overflow.png"></p>
+<p><img alt="主界面" src="images/01-main-empty.png"></p>
 <table>
 <thead>
 <tr>
@@ -272,7 +276,7 @@
 </tr>
 <tr>
 <td><strong>顶栏右</strong></td>
-<td>任务 / Skill / MCP / 刷新 4 个按钮</td>
+<td>文件 / 任务 / Skill / MCP + <strong>⋯ 更多</strong>（里面是「刷新」「卸载模型」）</td>
 </tr>
 <tr>
 <td><strong>左侧栏</strong></td>
@@ -292,21 +296,22 @@
 </tr>
 <tr>
 <td><strong>底部状态栏</strong></td>
-<td>审批档位、轻量选项（工具 / Skill 独立勾选）、就绪状态</td>
+<td>工作区、审批档位、「轻量」按钮（点开是工具 / Skill 勾选面板）、就绪状态</td>
 </tr>
 </tbody>
 </table>
 <h2 id="15">1.5 你必须知道的三个开关</h2>
 <h3 id="1_1">① 审批三档</h3>
-<p><img alt="对话设置 / 轻量选项" src="images/20-conversation-settings.webp"></p>
-<p>底部「审批」切到哪一档，决定 AI 跑工具要不要你点头：</p>
+<p>底部「审批」切到哪一档，决定 AI 跑工具要不要你点头。工作区外写操作时，AI 会停下弹出确认卡：</p>
+<p><img alt="工具审批确认卡（示意）" src="images/24-tool-approval.png"></p>
 <ul>
 <li><strong>确认</strong>（默认）：每次工具调用都弹「需要确认」卡片 → 你点「允许执行」才跑（<strong>最安全</strong>）。</li>
 <li><strong>自动</strong>：工作区内的操作不用问；工作区外的写操作才问。</li>
 <li><strong>完全</strong>：工具无需逐次确认（<strong>最省事，但写错可能毁文件</strong>）。</li>
 </ul>
 <h3 id="2-169">② 轻量选项（1.6.9 重构）</h3>
-<p>底部「轻量选项」两个独立勾选：</p>
+<p>底部点「轻量」按钮，弹出两个独立勾选：</p>
+<p><img alt="轻量选项面板" src="images/19c-lightweight-panel.png"></p>
 <ul>
 <li>勾选 <strong>工具</strong> → 关闭本对话的工具调用</li>
 <li>勾选 <strong>Skill</strong> → 关闭本对话的 Skill 能力</li>
@@ -315,7 +320,7 @@
 </ul>
 <p>适用场景：纯聊天不写代码就勾工具；只想问 Skill 内容但不想让 AI 注入就勾 Skill。</p>
 <h3 id="3">③ 深度思考</h3>
-<p><img alt="深度思考菜单" src="images/18-reasoning-menu.webp"></p>
+<p><img alt="深度思考菜单" src="images/18-reasoning-menu.png"></p>
 <p>输入区右侧球形按钮，点开有 5 档：</p>
 <ul>
 <li><strong>跟随 API（自动）</strong>——按模型自身行为</li>
@@ -329,7 +334,8 @@
 <p><strong>读完这章你能</strong>：让 AI 读你的文件、改你的代码、跑你的命令、出你的图，而且知道每一步在背后发生了什么。</p>
 </blockquote>
 <h2 id="21">2.1 普通问答</h2>
-<p>直接在输入框打字发就行。AI 拿到的是你<strong>当前会话的完整上下文</strong>（含系统提示词 + 历史消息 + Skill + 工具结果）。</p>
+<p>直接在输入框打字发就行。AI 拿到的是你<strong>当前会话的完整上下文</strong>（含系统提示词 + 历史消息 + Skill + 工具结果）。一条典型的「思考 → 工具 → 正文」交错长这样：</p>
+<p><img alt="流式渲染（示意）" src="images/22-chat-streaming.png"></p>
 <h2 id="22">2.2 让它读 / 写 / 搜文件</h2>
 <table>
 <thead>
@@ -373,7 +379,7 @@
 <li><strong>让它看文件夹里所有 png</strong> → 「列出 png」「按顺序看」</li>
 </ul>
 <p>视觉模型可设：在「设置 → 视觉」里挑供应商，可留空走 OVH 免费链兜底。</p>
-<p><img alt="视觉设置" src="images/09-settings-vision.webp"></p>
+<p><img alt="视觉设置" src="images/09-settings-vision.png"></p>
 <h2 id="24">2.4 让它执行命令</h2>
 <p>Naiba Chat <strong>只用一个工具</strong>：<code>pwsh</code>（PowerShell 7+）。所有系统操作都走它。</p>
 <pre><code>&quot;在 D:\naiba-chat 下跑 pytest，失败的话把 trace 给我看&quot;
@@ -391,9 +397,9 @@
 <h2 id="27">2.7 长任务放后台</h2>
 <p>对耗时任务（出图、出视频、跑大命令）AI 会自动用 <code>run_in_background</code> 启动后台 Job，按 <code>job_output</code> 轮询。</p>
 <blockquote>
-<p>顶栏「任务」按钮随时能看所有后台任务的历史和状态。</p>
+<p>顶栏「任务」按钮随时能看所有后台任务的历史和状态：</p>
+<p><img alt="异步任务面板" src="images/15-tasks-dialog.png"></p>
 </blockquote>
-<p><img alt="异步任务面板" src="images/15-tasks-dialog.webp"></p>
 <p><code>run_in_background</code> / <code>job_output</code> / <code>job_status</code> / <code>job_wait</code> / <code>job_kill</code> 五个工具覆盖完整生命周期。</p>
 <h2 id="28">2.8 中途插话、暂停、取消</h2>
 <ul>
@@ -403,7 +409,7 @@
 <li><strong>停止级联子任务</strong>：取消父任务会自动 kill 所有子任务。</li>
 </ul>
 <h2 id="29-token">2.9 上下文用量 &amp; Token</h2>
-<p><img alt="上下文用量" src="images/19-context-usage.webp"></p>
+<p><img alt="上下文用量" src="images/19-context-usage.png"></p>
 <ul>
 <li><strong>彩色环</strong>（输入区右）：上下文用满的百分比，越满越红。</li>
 <li><strong>点开看详情</strong>：本轮消耗（输入 / 输出 / 缓存命中率 / 请求数）。</li>
@@ -411,7 +417,7 @@
 </ul>
 <h2 id="210-169">2.10 本轮修改文件（1.6.9 新）</h2>
 <p>每轮结束后，AI 用 <code>write_file</code> / <code>edit_file</code> 改过的文件会在消息末尾列出来：</p>
-<p><img alt="本轮修改文件" src="images/21-chat-filechanges.webp"></p>
+<p><img alt="本轮修改文件" src="images/21-chat-filechanges.png"></p>
 <blockquote>
 <p>「本轮修改文件（新建 1 · 编辑 1）」下面两个 chip：<code>新 _demo-产品说明.md</code>、<code>改 build_html.py</code></p>
 </blockquote>
@@ -424,7 +430,7 @@
 </ul>
 <h2 id="211-169">2.11 右侧文件面板（1.6.9 新）</h2>
 <p>点 chip 或顶栏「文件 N」按钮 → 右侧文件面板打开，多标签管理：</p>
-<p><img alt="右侧文件面板" src="images/03-file-panel.webp"></p>
+<p><img alt="右侧文件面板" src="images/03-file-panel.png"></p>
 <table>
 <thead>
 <tr>
@@ -453,7 +459,7 @@
 </table>
 <p><strong>安全边界</strong>：面板只允许看<strong>本会话改动过</strong>或<strong>位于会话工作区内</strong>的文件，「保存写回」要求同时满足两者。路径越界一律拒绝（不能当任意文件读写入口用）。</p>
 <p>收起面板后顶栏出现「文件 N」按钮，记录仍在：</p>
-<p><img alt="文件面板收起后" src="images/04-file-panel-closed.webp"></p>
+<p><img alt="文件面板收起后" src="images/04-file-panel-closed.png"></p>
 <h2 id="212">2.12 消息编辑重发 / 分支到新会话</h2>
 <ul>
 <li><strong>点自己的消息</strong> → 编辑文本 → 回车 → 从这条消息重开（<strong>保留之前的附件和上下文</strong>）。</li>
@@ -468,24 +474,24 @@
 <h2 id="31">3.1 一个不够就接一堆模型</h2>
 <p><strong>痛点</strong>：单一模型又慢又贵还偏科。能不能 A 写代码 / B 写文案 / C 出图？</p>
 <p><strong>30 秒试</strong>：设置 → API 供应商 → 添加（在线 / 本地 8 种格式任选）→ 选供应商 → 顶栏「模型」切着用。</p>
-<p><img alt="API 供应商" src="images/05-settings-models.webp"></p>
+<p><img alt="API 供应商" src="images/05-settings-models.png"></p>
 <p><strong>能玩到什么程度</strong>：
 - <strong>在线 8 种格式</strong>：OpenAI 兼容（OpenAI / DeepSeek / Grok）、Codex、Claude、Gemini、LM Studio、Ollama、llama.cpp、Unsloth。
-- <strong>本地模型一键连</strong>：LM Studio / Ollama / llama.cpp 都可，<strong>侧栏 / 顶栏出现「卸载模型」按钮</strong>可把本地显存腾出来。
+- <strong>本地模型一键连</strong>：LM Studio / Ollama / llama.cpp 都可；连上本地模型后，<strong>顶栏 ⋯ 菜单里出现「卸载模型」按钮</strong>，用完一键把显存腾出来。
 - 「<strong>检查</strong>」按钮秒测连通 + 图片能力 + 工具调用能力。
 - 每个供应商独立设置温度、上下文、max_output。</p>
 <p><strong>注意</strong>：切换模型不影响会话历史，但<strong>切 Agent 会改首条消息的工具集</strong>（首轮注入、不可改）。</p>
 <h2 id="32-skill-ai">3.2 Skill：给 AI 装"行业操作手册"</h2>
 <p><strong>痛点</strong>：通用 AI 不懂你的行业术语、不熟你常用的工作流。</p>
 <p><strong>30 秒试</strong>：输入 <code>/</code> 弹窗 → 选「cangjie」（拆书 Skill）→ 直接对话「把这段小说拆成 12 集」。</p>
-<p><img alt="Skill 快速引用" src="images/14-skill-refs.webp"></p>
+<p><img alt="Skill 快速引用" src="images/14-skill-refs.png"></p>
 <p><strong>能玩到什么程度</strong>：
 - <strong>输入 <code>/</code> 弹窗</strong>选已装 Skill 注入；<strong><code>↑↓</code> 选、<code>Enter</code> 确认</strong>。
 - <strong>首轮注入</strong>（system prompt）/ <strong>后续追加</strong>（末尾消息）智能切换，保持 DeepSeek 前缀缓存稳定。
 - <strong>安装 Skill</strong>（点空态「安装 Skill」按钮）→ 支持 .zip / .md / 整个文件夹。
 - <strong>编辑 Skill</strong>（点空态「编辑 Skill」按钮）→ AI 会用 <code>inspect_installed_skill</code> 定位并修改。
 - <strong>隐藏 / 恢复</strong>：在「设置 → Skills 管理」里。</p>
-<p><img alt="Skills 管理" src="images/11-settings-skills.webp"></p>
+<p><img alt="Skills 管理" src="images/11-settings-skills.png"></p>
 <p><strong>重要概念</strong>：</p>
 <blockquote>
 <p><strong>Skill 只是说明书，不是开关。</strong> 缺 Skill 时，已授权的通用 Tool / MCP 仍可用；Skill 只指导调用方式，<strong>不注册服务、不扩展权限、不决定 NaibaChat 能力</strong>。</p>
@@ -493,7 +499,7 @@
 <h2 id="33-mcp-ai">3.3 MCP：给 AI 插外设</h2>
 <p><strong>痛点</strong>：AI 不能直接调 ComfyUI、数据库、第三方 API。</p>
 <p><strong>30 秒试</strong>：安装 ComfyUI 的 MCP 服务器（<code>npx -y @comfyorg/comfy-mcp</code>）→ 设置 → 连接状态里看到「comfy-mcp」就绪 → 直接对话「用 comfy 出 6 张封面」。</p>
-<p><img alt="连接状态" src="images/08-settings-connections.webp"></p>
+<p><img alt="连接状态" src="images/08-settings-connections.png"></p>
 <p><strong>能玩到什么程度</strong>：
 - <strong>自动连接</strong> + <strong>周期重试</strong>，挂了自动重连。
 - <strong>手机/局域网访问地址 + 口令</strong> 也在这一页。
@@ -521,7 +527,11 @@
 <p><strong>30 秒试</strong>：装 <code>runninghub</code> Skill → 对话「用 runninghub 的文生图出 6 张古风封面」。</p>
 <p><strong>能玩到什么程度</strong>：
 - 不用显卡，420+ 端点：文生图、图生视频、TTS、音乐、3D、图片放大、跑任意 AI 应用。
-- 切换站点（国内 / 海外）在「设置 → Skills 管理」里。</p>
+- 产物在聊天里直接以缩略图网格预览，每张右下角 ↩ 一键发回输入框复用：</p>
+<p><img alt="产物卡片（示意）" src="images/23-chat-artifacts.png"></p>
+<ul>
+<li>切换站点（国内 / 海外）在「设置 → Skills 管理」里。</li>
+</ul>
 <p><strong>注意</strong>：需要你自己的 RunningHub 账号和额度。</p>
 <h2 id="36">3.6 并行与分身</h2>
 <ul>
@@ -532,7 +542,9 @@
 <h2 id="37">3.7 手机/局域网远程访问</h2>
 <p><strong>痛点</strong>：在沙发上不想开电脑，但想让家里的 Naiba Chat 跑点啥。</p>
 <p><strong>30 秒试</strong>：底部状态栏 / 侧栏底部「手机访问」按钮 → 复制带口令和 IP 的链接 → 同一 WiFi 的手机浏览器打开。</p>
-<p><img alt="移动端主界面" src="images/25-mobile-main.webp"></p>
+<p><img alt="移动端主界面" src="images/25-mobile-main.png"></p>
+<p>设置页在手机上同样完整可用：</p>
+<p><img alt="移动端设置" src="images/26-mobile-settings.png"></p>
 <p><strong>能玩到什么程度</strong>：
 - 手机浏览器完整功能（聊天、设置、产物预览）。
 - 移动端布局自动单列、输入区自适应。
@@ -545,7 +557,7 @@
 <li>局域网访问必须口令；仅本机访问时不要口令。</li>
 <li><strong>API Key 不出机器</strong>——所有在线模型调用都从你的电脑直接发到供应商，不经中转。</li>
 </ul>
-<p><img alt="连接状态" src="images/08-settings-connections.webp"></p>
+<p><img alt="连接状态" src="images/08-settings-connections.png"></p>
 <h2 id="39">3.9 稳如老狗</h2>
 <ul>
 <li><strong>断线重连</strong>不重复回放：网络抖一下，不会把同一段响应重发两次。</li>
@@ -555,10 +567,10 @@
 <li><strong>更新带 SHA-256 校验</strong>：下载完先校哈希再替换，损坏直接拒绝。</li>
 <li><strong>可版本回退</strong>：更新面板支持「选历史版本 → 一键回退」。</li>
 </ul>
-<p><img alt="软件更新" src="images/13-settings-updates.webp"></p>
+<p><img alt="软件更新" src="images/13-settings-updates.png"></p>
 <h2 id="310-169">3.10 侧栏折叠与文件面板（1.6.9 新）</h2>
 <h3 id="_2">侧栏折叠</h3>
-<p><img alt="侧栏折叠" src="images/02-sidebar-collapsed.webp"></p>
+<p><img alt="侧栏折叠" src="images/02-sidebar-collapsed.png"></p>
 <ul>
 <li>桌面端：侧栏顶部的 ◀ 按钮折叠 / 聊天区左上角的 ▶ 按钮展开，<strong>状态记忆</strong>。</li>
 <li>移动端：左上角 ☰ 按钮从左侧滑出抽屉。</li>
@@ -617,7 +629,7 @@
 <p><strong>每个 tab 一节，按页面顺序排</strong>。</p>
 </blockquote>
 <h2 id="51-api">5.1 API 供应商</h2>
-<p><img alt="API 供应商" src="images/05-settings-models.webp"></p>
+<p><img alt="API 供应商" src="images/05-settings-models.png"></p>
 <p><strong>左侧两个子 tab</strong>：在线 API / 本地 API。</p>
 <ul>
 <li><strong>添加</strong>：点「添加」→ 填「供应商名称」「API URL」「API Key」（<strong>留空保留原值</strong>）→ 选「请求格式」。</li>
@@ -627,7 +639,7 @@
 <li><strong>删除</strong>：红色「删除」按钮（<strong>不可恢复</strong>）。</li>
 </ul>
 <h2 id="52-agent">5.2 Agent</h2>
-<p><img alt="Agent 设置" src="images/06-settings-agent.webp"></p>
+<p><img alt="Agent 设置" src="images/06-settings-agent.png"></p>
 <ul>
 <li><strong>6 个实例</strong>：通用 / 编程 / 短剧 + 自建的几个。</li>
 <li><strong>新建 Agent</strong>：填名 + 系统提示词 + 工具集。</li>
@@ -635,51 +647,51 @@
 <li>切换 Agent 顶栏会自动追加预设 Skill 的 <code>/ref</code> 引用（去重）。</li>
 </ul>
 <h2 id="53">5.3 运行设置</h2>
-<p><img alt="运行设置" src="images/07-settings-runtime.webp"></p>
+<p><img alt="运行设置" src="images/07-settings-runtime.png"></p>
 <ul>
 <li><strong>命令超时</strong>（仅管工具/命令，不管模型响应）</li>
 <li><strong>原图上传</strong>（关闭则压缩后传）</li>
 <li><strong>上传最大像素 / 缩略图尺寸 / 缓存清理</strong>（128MB 触发）</li>
 </ul>
 <h2 id="54">5.4 连接状态</h2>
-<p><img alt="连接状态" src="images/08-settings-connections.webp"></p>
+<p><img alt="连接状态" src="images/08-settings-connections.png"></p>
 <p>上半：MCP 列表（绿点已就绪 / 红色错误 / 灰色未启用）。下半：手机访问地址 + 访问口令 + 局域网 URL。</p>
 <h2 id="55">5.5 视觉</h2>
-<p><img alt="视觉" src="images/09-settings-vision.webp"></p>
+<p><img alt="视觉" src="images/09-settings-vision.png"></p>
 <ul>
 <li><strong>视觉供应商</strong>：留空 = 走 OVH 免费链兜底</li>
 <li><strong>自动路由</strong>：开了之后根据用户上传自动选视觉模型</li>
 <li><strong>超时 / 最大图片数</strong>：8 张默认</li>
 </ul>
 <h2 id="56">5.6 联网搜索</h2>
-<p><img alt="联网搜索" src="images/10-settings-search.webp"></p>
+<p><img alt="联网搜索" src="images/10-settings-search.png"></p>
 <ul>
 <li>搜索 API profile（多个可配）</li>
 <li>搜索结果当素材引用，<strong>别当真理</strong></li>
 </ul>
 <h2 id="57-skills">5.7 Skills 管理</h2>
-<p><img alt="Skills 管理" src="images/11-settings-skills.webp"></p>
+<p><img alt="Skills 管理" src="images/11-settings-skills.png"></p>
 <ul>
 <li>左侧：已装 Skill 列表 + 启用/隐藏切换。</li>
 <li>右侧：「已隐藏 Skill」分区。</li>
 <li>装新 Skill → 点「安装 Skill」按钮或拖 .zip / .md。</li>
 </ul>
-<p><img alt="导入 Skill" src="images/16-skill-import.webp"></p>
+<p><img alt="导入 Skill" src="images/16-skill-import.png"></p>
 <h2 id="58">5.8 数据与迁移</h2>
-<p><img alt="数据与迁移" src="images/12-settings-datamigration.webp"></p>
+<p><img alt="数据与迁移" src="images/12-settings-datamigration.png"></p>
 <ul>
 <li>数据库版本 / 数据目录 / 当前 Skills 目录 / 健康状态 / 已应用迁移 / 备份位置。</li>
 <li>「备份」一键压缩 <code>data/</code> 到 <code>backups/</code>，迁移前必做。</li>
 </ul>
 <h2 id="59">5.9 软件更新</h2>
-<p><img alt="软件更新" src="images/13-settings-updates.webp"></p>
+<p><img alt="软件更新" src="images/13-settings-updates.png"></p>
 <ul>
 <li><strong>EXE 模式</strong>：自动检查 → 下载 → SHA-256 校验 → 提示重启。</li>
 <li><strong>源码模式</strong>（你现在用的）：<strong>不支持一键更新</strong>，需 <code>git pull --ff-only</code> 然后重启服务。</li>
 <li>目标版本下拉可选历史版本 + 回退。</li>
 </ul>
 <h2 id="510">5.10 对话级设置</h2>
-<p><img alt="对话设置" src="images/20-conversation-settings.webp"></p>
+<p><img alt="对话设置" src="images/20-conversation-settings.png"></p>
 <p>侧栏会话行 hover 出 ⚙ 按钮 → 点开：</p>
 <ul>
 <li><strong>对话名称</strong>（留空自动用首条消息命名）</li>
@@ -688,7 +700,7 @@
 <li><strong>清空对话</strong>（红按钮，<strong>不可恢复</strong>）</li>
 </ul>
 <h2 id="511">5.11 工作区</h2>
-<p><img alt="工作区选择" src="images/17-workspace-dialog.webp"></p>
+<p><img alt="工作区选择" src="images/17-workspace-dialog.png"></p>
 <ul>
 <li>工作区 = AI 可读写的根目录（<strong>安全边界</strong>）。</li>
 <li>在设置 → API 供应商下方的「工作区」或底部「未分组」下拉添加。</li>
@@ -727,7 +739,7 @@
 <li><strong>大图右键复制到剪贴板</strong>（CF_DIB 失败回退到系统剪贴板）。</li>
 <li><strong>消息分支</strong>（点自己消息「分支」按钮）→ 新会话接着干。</li>
 <li><strong>Token 环判断缓存命中</strong>：掉到 0% 提示「可能改了系统提示词」。</li>
-<li><strong>自定义指令按钮</strong>：空态左下角 <code>+</code> 添加常用指令（保存到本地）。</li>
+<li><strong>自定义指令卡片</strong>：空态右下角「自定义指令」把你常用的话存成卡片，以后点一下就发。</li>
 <li><strong>数据目录备份再升级</strong>：设置 → 数据与迁移 → 备份。</li>
 <li><strong>Skill 引用后改输入框</strong>（<code>/ref</code> 在框内）→ 引用会随编辑保留。</li>
 <li><strong>手机扫码直连</strong>：侧栏底部点「手机访问」按钮复制 URL。</li>
@@ -798,6 +810,10 @@ D:\skills\                      ← 用户级 Skill（可选）
 </thead>
 <tbody>
 <tr>
+<td>文件 N</td>
+<td>重新打开文件面板（有已打开的文件标签时出现）</td>
+</tr>
+<tr>
 <td>任务</td>
 <td>看所有后台 Job</td>
 </tr>
@@ -810,12 +826,8 @@ D:\skills\                      ← 用户级 Skill（可选）
 <td>MCP 状态</td>
 </tr>
 <tr>
-<td>文件 N</td>
-<td>重新打开文件面板</td>
-</tr>
-<tr>
-<td>刷新</td>
-<td>整页 reload（内嵌窗口 F5 失效时用）</td>
+<td>⋯ 更多</td>
+<td>里面是「刷新」（整页 reload）和「卸载模型」（连本地模型时出现）</td>
 </tr>
 </tbody>
 </table>
@@ -845,14 +857,9 @@ D:\skills\                      ← 用户级 Skill（可选）
 <td>工具不确认</td>
 </tr>
 <tr>
-<td>轻量 工具</td>
-<td>☐</td>
-<td>勾选关闭工具能力</td>
-</tr>
-<tr>
-<td>轻量 Skill</td>
-<td>☐</td>
-<td>勾选关闭 Skill 能力</td>
+<td>轻量（点开）</td>
+<td>☐ 工具 ☐ Skill</td>
+<td>点「轻量」弹面板，勾选任一即开启轻量对话并关闭对应能力</td>
 </tr>
 </tbody>
 </table>

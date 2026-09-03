@@ -15,18 +15,24 @@
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
     font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
     line-height: 1.65; font-size: 15px; }
-  a { color: var(--accent); text-decoration: none; }
+  a { color: var(--accent); text-decoration: none; word-break: break-all; }
   code { font-family: Consolas, "Courier New", monospace; background: var(--code-bg);
-    padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+    padding: 1px 5px; border-radius: 3px; font-size: 0.9em; word-break: break-word; }
   pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px;
-    padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+    padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+    word-break: break-word; }
   pre code { background: transparent; padding: 0; font-size: 13px; }
-  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13.5px; }
-  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 13.5px;
+    table-layout: fixed; }
+  th, td { border: 1px solid var(--line); padding: 6px 9px; text-align: left; vertical-align: top;
+    word-break: break-word; overflow-wrap: anywhere; }
   th { background: #f1ede2; font-weight: 600; }
   tr:nth-child(even) td { background: #faf8f3; }
   blockquote { border-left: 3px solid var(--accent-soft); background: #f3f8f5;
     margin: 12px 0; padding: 8px 14px; color: #355246; }
+  .final-box { border: 2px solid #e0a23a; background: #fff7e9; color: #6a4a08;
+    border-radius: 8px; padding: 12px 16px; margin: 14px 0; font-weight: 600; }
+  .final-box code { background: #f6e8c8; }
   hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
   ul, ol { padding-left: 1.5em; }
   li { margin: 4px 0; }
@@ -51,14 +57,21 @@
   main h4 { font-size: 15px; margin-top: 18px; }
 
   @media print {
+    @page { margin: 14mm; }
+    .layout { display: block; }
     nav.toc-nav { display: none !important; }
-    main { max-width: none; padding: 0; }
+    main { display: block; max-width: none; padding: 0; }
     body { background: #fff; font-size: 12.5px; }
-    h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 16px; } h3 { font-size: 14px; }
-    table { font-size: 11.5px; }
-    pre { font-size: 11px; padding: 8px 10px; }
-    blockquote { margin: 8px 0; padding: 5px 10px; }
+    h1 { font-size: 20px; } h2 { font-size: 16px; margin-top: 16px; page-break-after: avoid; }
+    h3 { font-size: 14px; page-break-after: avoid; }
+    h4 { page-break-after: avoid; }
+    table { font-size: 11.5px; table-layout: fixed; }
+    tr { page-break-inside: avoid; }
+    pre { font-size: 11px; padding: 8px 10px; page-break-inside: avoid; }
+    blockquote { margin: 8px 0; padding: 5px 10px; page-break-inside: avoid; }
+    .final-box { page-break-inside: avoid; }
     a { color: var(--text); text-decoration: none; }
+    img, svg { page-break-inside: avoid; }
   }
 </style>
 </head>
@@ -70,12 +83,12 @@
 </ul><ul class="toc toc-l1">
 <li><a href="#naiba-chat-agent">Naiba Chat 工具补齐与 Agent 预设增强 · 变更说明</a></li>
 <li><a href="#_1">一、改动总览</a></li>
-<li><a href="#codebuddy-codex-deepseek-harness">二、工具补齐四项（对照 CodeBuddy / Codex / DeepSeek Harness 缺口）</a></li>
-<li><a href="#21-fetch_page">2.1 fetch_page —— 抓取并提炼网页正文（新增，归「网络」组）</a></li>
+<li><a href="#codebuddy-codex-deepseek-harness">二、工具补齐：三项保留改动 + 一项撤回评估</a></li>
+<li><a href="#21-fetch_page">2.1 fetch_page —— 已实现并评估，因安全风险撤回（未发布）</a></li>
 <li><a href="#22-search_files">2.2 search_files —— 正则搜索增强（扩展，仍归「文件读取/搜索」组）</a></li>
 <li><a href="#23-recall_history">2.3 recall_history —— 跨会话记忆检索（新增，归「会话与记忆」组）</a></li>
 <li><a href="#24-edit_file-diff">2.4 edit_file —— 返回改动 diff（增强，仍归「文件写入/编辑」组）</a></li>
-<li><a href="#35-12">三、工具目录全览（35 个系统工具 / 12 个分组）</a></li>
+<li><a href="#34-12">三、工具目录全览（34 个系统工具 / 12 个分组）</a></li>
 <li><a href="#agent">四、Agent 预设工具集：下拉框 + 自定义模板</a></li>
 <li><a href="#41">4.1 交互重构（卡片 → 下拉框）</a></li>
 <li><a href="#42-localstorage">4.2 存为模板 / 一键复刻（纯前端，localStorage 持久化）</a></li>
@@ -86,19 +99,20 @@
 <li><a href="#_3">根因</a></li>
 <li><a href="#_4">修复</a></li>
 <li><a href="#_5">验证</a></li>
-<li><a href="#169-beta-agent">六、1.6.9-beta 旧 Agent / 旧预设兼容性验证结论</a></li>
+<li><a href="#169-beta-agent">六、旧 Agent / 旧预设兼容性验证结论</a></li>
 <li><a href="#_6">七、验证记录</a></li>
-<li><a href="#6-1069-61">八、改动文件清单（6 个文件，约 +1069 / −61 行）</a></li>
+<li><a href="#6-1069-61">八、改动文件清单（6 个文件）</a></li>
 <li><a href="#_7">九、上线前提醒</a></li>
 </ul>
   </nav>
   <main class="doc"><h1 id="naiba-chat-agent">Naiba Chat 工具补齐与 Agent 预设增强 · 变更说明</h1>
-<p><strong>版本目标：</strong> 1.6.9-beta（源码模式工作区）
+<p><strong>版本目标：</strong> 1.7.0-beta（源码模式工作区）
 <strong>日期：</strong> 2026-09-03
-<strong>范围：</strong> 服务端工具补齐 4 项、Agent 预设工具集交互重构、ComfyUI 预设去 MCP、1 个新建会话回归 Bug 修复，以及对 1.6.9-beta 旧 Agent / 旧预设的兼容性验证。</p>
+<strong>范围：</strong> 服务端工具补齐三项保留改动 + 一项评估撤回、Agent 预设工具集交互重构、ComfyUI 预设去 MCP、1 个新建会话回归 Bug 修复，以及对旧 Agent / 旧预设的兼容性验证。</p>
 <blockquote>
 <p>本文所有工具清单、分组与预设展开数据均由当前工作区代码静态展开得出（<code>tool_catalog_entries</code> / <code>resolve_tool_preset</code>），验证记录来自隔离实例真实启动与真实 UI 交互。</p>
 </blockquote>
+<div class="final-box">⚠️ <strong>最终状态：<code>fetch_page</code> 已撤回，未随 1.7.0-beta 发布。</strong> 该工具已完成实现与评估，但因安全风险（SSRF / 内网访问、重定向校验、网页提示词注入、正文解析可靠性不足）决定撤回，不纳入本次发布。涉及新增的三项工具（<code>search_files</code> 增强、<code>recall_history</code>、<code>edit_file</code> diff）正常保留。</div>
 <hr>
 <h2 id="_1">一、改动总览</h2>
 <table>
@@ -114,26 +128,26 @@
 <tr>
 <td>1</td>
 <td>工具补齐</td>
-<td>新增 <code>fetch_page</code>（网页正文抓取提炼）</td>
-<td><code>skill_runtime.py</code> <code>tool_registry.py</code> <code>server.py</code></td>
-</tr>
-<tr>
-<td>2</td>
-<td>工具补齐</td>
 <td>增强 <code>search_files</code>：正则 / 忽略大小写 / 上下文行 / 多行匹配</td>
 <td><code>skill_runtime.py</code> <code>tool_registry.py</code></td>
 </tr>
 <tr>
-<td>3</td>
+<td>2</td>
 <td>工具补齐</td>
 <td>新增 <code>recall_history</code>（跨会话记忆检索）</td>
 <td><code>server.py</code> <code>tool_registry.py</code></td>
 </tr>
 <tr>
-<td>4</td>
+<td>3</td>
 <td>工具补齐</td>
 <td>增强 <code>edit_file</code>：成功返回改动 diff 供审阅</td>
 <td><code>skill_runtime.py</code> <code>tool_registry.py</code></td>
+</tr>
+<tr>
+<td>4</td>
+<td>工具补齐（评估撤回）</td>
+<td>评估 <code>fetch_page</code>（网页正文抓取提炼）后因安全风险撤回，未纳入发布</td>
+<td><code>skill_runtime.py</code> <code>tool_registry.py</code> <code>server.py</code>（已实现后移除）</td>
 </tr>
 <tr>
 <td>5</td>
@@ -162,17 +176,23 @@
 </tbody>
 </table>
 <hr>
-<h2 id="codebuddy-codex-deepseek-harness">二、工具补齐四项（对照 CodeBuddy / Codex / DeepSeek Harness 缺口）</h2>
-<p>依据 <code>docs/工具补齐方案-2026-09.md</code> 落地实施，四项全部为<strong>纯标准库实现</strong>（<code>urllib</code> / <code>html.parser</code> / <code>difflib</code> / <code>sqlite3</code>），不新增第三方依赖，避免 PyInstaller 打包膨胀。</p>
-<h3 id="21-fetch_page">2.1 fetch_page —— 抓取并提炼网页正文（新增，归「网络」组）</h3>
-<p>抓取 http/https 页面，剔除导航、页脚等噪音后提炼为 Markdown 正文，返回：页面标题 / 来源 URL / 正文要点 / 页面内链接清单。</p>
+<h2 id="codebuddy-codex-deepseek-harness">二、工具补齐：三项保留改动 + 一项撤回评估</h2>
+<p>依据 <code>docs/工具补齐方案-2026-09.md</code> 落地实施，四项中三项保留改动均为<strong>纯标准库实现</strong>（<code>re</code> / <code>difflib</code> / <code>sqlite3</code>），不新增第三方依赖，避免 PyInstaller 打包膨胀；<code>fetch_page</code> 已实现并评估，因安全风险撤回。</p>
+<h3 id="21-fetch_page">2.1 fetch_page —— 已实现并评估，因安全风险撤回（未发布）</h3>
+<p><code>fetch_page</code> 已完成实现（纯标准库 <code>urllib</code> + <code>html.parser</code> 的 <code>_HtmlArticleExtractor</code> / <code>_extract_page_markdown</code>），可抓取 http/https 页面、剔除导航页脚噪音、提炼为 Markdown 正文（标题 / 来源 URL / 正文 / 链接清单）。<strong>但最终决定撤回，不随 1.7.0-beta 发布。</strong></p>
+<p>撤回原因：</p>
 <ul>
-<li>实现：<code>html.parser.HTMLParser</code> 子类 <code>_HtmlArticleExtractor</code>，收集 <code>&lt;title&gt;</code>（先于忽略检查，保证 <code>&lt;head&gt;</code> 内的标题不丢失），忽略 <code>nav</code> / <code>footer</code> / <code>head</code> / <code>script</code> / <code>style</code> 等噪音块，块级标签换行，链接提取为 <code>[文字](url)</code>。</li>
-<li>读取上限：<code>min(max(max_chars * 6, 64KB), 3MB)</code>，防超大页面拖垮上下文。</li>
-<li>非 HTML（如纯文本、图片）与需 JS 渲染的动态页分别给出降级提示。</li>
-<li>默认需要权限确认（与 <code>web_search</code> 同级，属 <code>DANGEROUS_TOOLS</code>：<code>"fetch_page": "抓取并提炼网页正文"</code>）。</li>
+<li><strong>SSRF / 内网访问风险</strong>：工具可请求任意 http/https 地址，攻击者可借其访问内网服务（如 <code>127.0.0.1</code>、云元数据 <code>169.254.169.254</code>），当前架构下无网络层出口约束。</li>
+<li><strong>重定向校验缺失</strong>：<code>urllib</code> 默认跟随 30x 重定向，跨协议 / 跨主机跳转（http→https、公网→内网、禁用 Host 跳转）缺少白名单校验，易被诱导到内网或恶意目标。</li>
+<li><strong>网页提示词注入</strong>：页面正文与链接文本会原样进入模型上下文，恶意页面可嵌入「忽略上级指令 / 调用额外工具」等内容，构成提示词注入面。</li>
+<li><strong>正文解析可靠性不足</strong>：纯 <code>html.parser</code> 提取对复杂 / 动态渲染页面噪音剔除不稳定，正文可用性无法保证，收益不足以覆盖上述风险。</li>
 </ul>
-<p><strong>为什么不用第三方解析库：</strong> 避免 <code>bs4</code> / <code>readability</code> 进入打包产物；本次采用纯标准库方案，能力足够覆盖正文提炼场景。</p>
+<p><strong>替代路径：</strong></p>
+<ul>
+<li>需要读取网页内容时，使用已有的 <code>http_request</code>（通用 HTTP 客户端，仍属需权限确认的「网络」工具，会原样返回响应体 / HTML，由调用方自行处理）。</li>
+<li>复杂场景（动态渲染页面、结构化提取）建议通过已配置且受信任的 <strong>MCP</strong> 抓取能力完成，而非在宿主进程内直接发起任意网页抓取。</li>
+<li>注意：<code>http_request</code> 仍是需权限确认的通用网络工具，<strong>并非无风险替代</strong>；同样不应被用于访问内网或不可信地址。</li>
+</ul>
 <h3 id="22-search_files">2.2 search_files —— 正则搜索增强（扩展，仍归「文件读取/搜索」组）</h3>
 <p>在原有子串搜索基础上新增 4 个参数：</p>
 <table>
@@ -203,7 +223,7 @@
 </table>
 <p>实现要点：单文件走 <code>_search_one_file</code>——子串模式输出旧格式 <code>path:line: content</code>；正则模式按行匹配带上下文；多行模式用 <code>re.DOTALL</code> 全文匹配后以 <code>bisect</code> 反查命中块跨过的行区间。命中上限 100 处，防止失控。</p>
 <blockquote>
-<p>兼容性：不传新参数时行为与 1.6.9 旧版完全一致（子串搜索 + <code>path:line:</code> 格式），旧会话调用不受影响。</p>
+<p>兼容性：不传新参数时行为与旧版完全一致（子串搜索 + <code>path:line:</code> 格式），旧会话调用不受影响。</p>
 </blockquote>
 <h3 id="23-recall_history">2.3 recall_history —— 跨会话记忆检索（新增，归「会话与记忆」组）</h3>
 <p>在<strong>全部历史会话</strong>中按关键词检索消息内容，返回命中消息所属会话、角色、内容与时间，用于让 AI 回想起"之前讨论过的那件事"。</p>
@@ -233,7 +253,7 @@ def _render_unified_diff(path, old_text, new_text):
     # 超过 60 行截断并标注“… 后续 N 行省略”
 </code></pre>
 <hr>
-<h2 id="35-12">三、工具目录全览（35 个系统工具 / 12 个分组）</h2>
+<h2 id="34-12">三、工具目录全览（34 个系统工具 / 12 个分组）</h2>
 <blockquote>
 <p>以下由当前代码 <code>tool_catalog_entries</code> 静态展开。另有 5 个别名（<code>read</code>/<code>write</code>/<code>edit</code>/<code>glob</code>/<code>grep</code>）指向主工具，不单独计数。</p>
 </blockquote>
@@ -268,8 +288,8 @@ def _render_unified_diff(path, old_text, new_text):
 </tr>
 <tr>
 <td>网络</td>
-<td>3</td>
-<td><code>http_request</code> <code>web_search</code> <code>fetch_page</code> ★</td>
+<td>2</td>
+<td><code>http_request</code> <code>web_search</code></td>
 </tr>
 <tr>
 <td>会话与记忆</td>
@@ -308,7 +328,7 @@ def _render_unified_diff(path, old_text, new_text):
 </tr>
 </tbody>
 </table>
-<p>★ 为本轮新增。<strong>MCP 服务器连接后</strong>会动态追加 <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> 工具进「MCP」组（数量取决于各 server 暴露的工具数，不包含在 35 之内）。</p>
+<p>★ 为本轮新增（保留项）。<strong>MCP 服务器连接后</strong>会动态追加 <code>mcp__&lt;server&gt;__&lt;tool&gt;</code> 工具进「MCP」组（数量取决于各 server 暴露的工具数，不包含在 34 之内）。</p>
 <p><strong>分组归属规则：</strong> <code>mcp__</code> 前缀 → 「MCP」组；其余按 <code>_TOOL_GROUP</code> 映射，未映射的兜底「其他」。（本轮将 MCP 动态工具从兜底「其他」修正为显式「MCP」组。）</p>
 <hr>
 <h2 id="agent">四、Agent 预设工具集：下拉框 + 自定义模板</h2>
@@ -352,25 +372,25 @@ def _render_unified_diff(path, old_text, new_text):
 <tr>
 <td>research</td>
 <td>联网研究</td>
-<td>14</td>
-<td>读写 + Skill + 网络全套（含 <code>fetch_page</code>）+ <code>todo_write</code> <code>artifact_report</code> <code>recall_history</code> + <code>vision_read_folder</code>（无 pwsh）</td>
+<td>13</td>
+<td>读写 + Skill + 网络全套 + <code>todo_write</code> <code>artifact_report</code> <code>recall_history</code> + <code>vision_read_folder</code>（无 pwsh）</td>
 </tr>
 <tr>
 <td>batch</td>
 <td>批量后台</td>
-<td>20</td>
+<td>19</td>
 <td>读写 + 命令 + Skill + 网络 + 后台/Job/子任务 8 个 + <code>vision_read_folder</code></td>
 </tr>
 <tr>
 <td>comfyui</td>
 <td>ComfyUI 联动</td>
 <td>21</td>
-<td>同 batch 去掉 <code>fetch_page</code>，加 ComfyUI 2（HTTP 通道），<strong>零 MCP</strong></td>
+<td>同 batch 去掉即满 19 项，加 ComfyUI 2（HTTP 通道），<strong>零 MCP</strong></td>
 </tr>
 <tr>
 <td>full</td>
 <td>全能模式</td>
-<td>35</td>
+<td>34</td>
 <td>全部系统工具（含 MCP 网关与视觉全套）</td>
 </tr>
 </tbody>
@@ -379,10 +399,10 @@ def _render_unified_diff(path, old_text, new_text):
 <ul>
 <li><strong>极简（5）：</strong> read_file, list_directory, search_files, glob_files, vision_read_folder</li>
 <li><strong>标准（11）：</strong> read_file, write_file, list_directory, search_files, glob_files, edit_file, pwsh, run_skill_script, http_request, web_search, vision_read_folder</li>
-<li><strong>联网研究（14）：</strong> read_file, write_file, list_directory, search_files, glob_files, edit_file, run_skill_script, http_request, web_search, fetch_page, todo_write, artifact_report, recall_history, vision_read_folder</li>
-<li><strong>批量后台（20）：</strong> read_file, write_file, list_directory, search_files, glob_files, edit_file, pwsh, run_skill_script, http_request, web_search, fetch_page, run_in_background, job_output, job_status, job_wait, job_kill, subagent, todo_write, artifact_report, vision_read_folder</li>
+<li><strong>联网研究（13）：</strong> read_file, write_file, list_directory, search_files, glob_files, edit_file, run_skill_script, http_request, web_search, todo_write, artifact_report, recall_history, vision_read_folder</li>
+<li><strong>批量后台（19）：</strong> read_file, write_file, list_directory, search_files, glob_files, edit_file, pwsh, run_skill_script, http_request, web_search, run_in_background, job_output, job_status, job_wait, job_kill, subagent, todo_write, artifact_report, vision_read_folder</li>
 <li><strong>ComfyUI 联动（21）：</strong> read_file, write_file, list_directory, search_files, glob_files, edit_file, pwsh, run_skill_script, http_request, web_search, run_in_background, job_output, job_status, job_wait, job_kill, subagent, todo_write, artifact_report, comfyui_prepare_workflow, comfyui_batch, vision_read_folder</li>
-<li><strong>全能（35）：</strong> 上表 12 组全部工具。</li>
+<li><strong>全能（34）：</strong> 上表 12 组全部工具。</li>
 </ul>
 <h3 id="44-comfyui-http-mcp">4.4 ComfyUI 预设只走 HTTP、不启 MCP（本轮关键调整）</h3>
 <p>现状：连 ComfyUI 有两条通道——<strong>HTTP 原生</strong>（<code>comfyui_prepare_workflow</code> / <code>comfyui_batch</code>，直连本机 8188）与 <strong>MCP</strong>（config 中 <code>comfy-mcp</code> server 动态注册 <code>mcp__comfy-mcp__*</code>）。</p>
@@ -394,7 +414,7 @@ def _render_unified_diff(path, old_text, new_text):
     }
 </code></pre>
 <p>即：预设声明 <code>exclude_mcp: True</code> 后，无论 include 将来怎么展开、MCP 服务将来怎么增加，都会强制剔除 <code>mcp__*</code> 与 MCP 网关入口。<code>comfyui</code> 预设已声明 <code>"exclude_mcp": True</code>，描述同步注明「走 HTTP 通道直连本机 ComfyUI，不启用任何 MCP 连接」。</p>
-<p><strong>验证</strong>（模拟 <code>comfy-mcp</code> 注册 run_workflow / get_progress 两个动态工具后展开）：minimal=5、standard=11、research=14、batch=20、comfyui=<strong>21（mcp_contained=False）</strong>、full=35→<strong>37（mcp_contained=True，含 2 个 mcp__ 工具）</strong>；<code>mcp__</code> 工具组归属 = <code>['MCP', 'MCP']</code>。</p>
+<p><strong>验证</strong>（模拟 <code>comfy-mcp</code> 注册 run_workflow / get_progress 两个动态工具后展开）：minimal=5、standard=11、research=13、batch=19、comfyui=<strong>21（mcp_contained=False）</strong>、full=34→<strong>36（mcp_contained=True，含 2 个 mcp__ 工具）</strong>；<code>mcp__</code> 工具组归属 = <code>['MCP', 'MCP']</code>。</p>
 <hr>
 <h2 id="bug-agent-agent">五、Bug 修复：删除 Agent 后新建会话报「Agent 不存在」</h2>
 <h3 id="_2">现象</h3>
@@ -413,7 +433,7 @@ def _render_unified_diff(path, old_text, new_text):
 <li><strong>CDP UI 级 8/8</strong>：模拟当前会话指向已删 Agent → 点「新会话」→ 请求体正确回退 <code>general</code>、无报错、顶栏 Agent 下拉正常。</li>
 </ul>
 <hr>
-<h2 id="169-beta-agent">六、1.6.9-beta 旧 Agent / 旧预设兼容性验证结论</h2>
+<h2 id="169-beta-agent">六、旧 Agent / 旧预设兼容性验证结论</h2>
 <table>
 <thead>
 <tr>
@@ -425,12 +445,12 @@ def _render_unified_diff(path, old_text, new_text):
 <tbody>
 <tr>
 <td>旧 Agent <code>tool_scope</code> 为空（未限制）</td>
-<td>运行时按「未限制」放行全部工具（含新增 fetch_page / recall_history），<code>_bake_session_tool_ids</code> 对旧会话回退全量工具名</td>
+<td>运行时按「未限制」放行全部工具（含 <code>recall_history</code> 等本轮新增项），<code>_bake_session_tool_ids</code> 对旧会话回退全量工具名</td>
 <td>✅ 新工具自动包含，无需改动旧配置</td>
 </tr>
 <tr>
 <td>内置 Agent</td>
-<td>静态 <code>_BUILT_IN_SCOPE_ALL</code> 元组已追加 <code>fetch_page</code> / <code>recall_history</code> 与 3 个 Skill 管理工具</td>
+<td>静态 <code>_BUILT_IN_SCOPE_ALL</code> 元组已追加 <code>recall_history</code> 与 3 个 Skill 管理工具（<code>fetch_page</code> 已撤回，不在此列）</td>
 <td>✅ 已同步，内置 Agent 自动获得新能力</td>
 </tr>
 <tr>
@@ -450,12 +470,15 @@ def _render_unified_diff(path, old_text, new_text):
 </tr>
 <tr>
 <td>会话级工具烘焙</td>
-<td>空 tool_scope 全放行；显式列表按 id 过滤</td>
+<td>空 <code>tool_scope</code> 全放行；显式列表按 id 过滤</td>
 <td>✅ 新增工具对老会话直接可用</td>
 </tr>
 </tbody>
 </table>
-<p><strong>结论：1.6.9-beta 既有 Agent 预设与新功能完全兼容，无需迁移或手工改配置。</strong></p>
+<blockquote>
+<p>注意：空 <code>tool_scope</code> 表示「未限制」，会获得<strong>当前</strong>全部工具——这是旧版本兼容语义，不是新预设的强制要求；新预设以显式 <code>include</code> 列表定义可用工具集。</p>
+</blockquote>
+<p><strong>结论：既有 Agent 预设与新功能完全兼容，无需迁移或手工改配置。</strong></p>
 <hr>
 <h2 id="_6">七、验证记录</h2>
 <table>
@@ -468,9 +491,9 @@ def _render_unified_diff(path, old_text, new_text):
 </thead>
 <tbody>
 <tr>
-<td>工具补齐核心逻辑（fetch_page 端到端 / search 四种模式 / edit diff / recall 检索）</td>
+<td>工具补齐核心逻辑（search 四种模式 / edit diff / recall 检索）</td>
 <td>本地逻辑测试</td>
-<td><strong>15/15 通过</strong></td>
+<td>✅ 通过</td>
 </tr>
 <tr>
 <td>预设下拉 / 自定义模板真实 UI 交互（含 localStorage 持久化、复刻、删除）</td>
@@ -485,7 +508,7 @@ def _render_unified_diff(path, old_text, new_text):
 <tr>
 <td>工具目录 / 分组 / 预设运行时输出</td>
 <td>隔离实例 <code>/api/tool_catalog</code></td>
-<td>35 工具 / 12 组 / 6 预设齐全</td>
+<td>34 工具 / 12 组 / 6 预设齐全</td>
 </tr>
 <tr>
 <td>comfyui 预设零 MCP / full 保留 MCP</td>
@@ -497,13 +520,18 @@ def _render_unified_diff(path, old_text, new_text):
 <td><code>py_compile</code> 14 核心模块 + <code>import server</code></td>
 <td>✅ 无回归</td>
 </tr>
+<tr>
+<td>核心代码 / 工具目录 / 预设 / 权限清单不含 <code>fetch_page</code></td>
+<td>静态检索</td>
+<td>✅ 已确认移除</td>
+</tr>
 </tbody>
 </table>
 <blockquote>
 <p>隔离实例均拷贝当前代码到临时目录、data_dir 指向临时目录运行，未触碰真实数据；验证完毕已停服并清理。</p>
 </blockquote>
 <hr>
-<h2 id="6-1069-61">八、改动文件清单（6 个文件，约 +1069 / −61 行）</h2>
+<h2 id="6-1069-61">八、改动文件清单（6 个文件）</h2>
 <table>
 <thead>
 <tr>
@@ -514,15 +542,15 @@ def _render_unified_diff(path, old_text, new_text):
 <tbody>
 <tr>
 <td><code>server.py</code></td>
-<td>注册 <code>fetch_page</code> / <code>recall_history</code> 系统工具；<code>_BUILT_IN_SCOPE_ALL</code> 扩展；<code>_TOOL_GROUP</code> / <code>TOOL_GROUP_INFO</code> / <code>tool_catalog_entries</code> 扩展；<code>TOOL_PRESETS</code> research 预设加「会话与记忆」组、comfyui 预设 <code>exclude_mcp</code>；<code>resolve_tool_preset</code> 支持 <code>exclude_mcp</code>；mcp__ 工具归「MCP」组；<code>_recall_history_handler</code>；新建会话 agent_id 回退修复</td>
+<td>注册 <code>recall_history</code> 系统工具；<code>_BUILT_IN_SCOPE_ALL</code> 扩展（不含 fetch_page）；<code>_TOOL_GROUP</code> / <code>TOOL_GROUP_INFO</code> / <code>tool_catalog_entries</code> 扩展；<code>TOOL_PRESETS</code> research 预设加「会话与记忆」组、comfyui 预设 <code>exclude_mcp</code>；<code>resolve_tool_preset</code> 支持 <code>exclude_mcp</code>；mcp__ 工具归「MCP」组；<code>_recall_history_handler</code>；新建会话 agent_id 回退修复；<code>fetch_page</code> 评估后已从各注册点移除</td>
 </tr>
 <tr>
 <td><code>skill_runtime.py</code></td>
-<td><code>_tool_fetch_page</code> + <code>_HtmlArticleExtractor</code> + <code>_extract_page_markdown</code>；<code>_tool_search_files</code> 正则/上下文/多行；<code>_tool_edit_file</code> 返回 <code>_render_unified_diff</code> diff；<code>DANGEROUS_TOOLS</code> 加 fetch_page</td>
+<td><code>_tool_search_files</code> 正则/上下文/多行；<code>_tool_edit_file</code> 返回 <code>_render_unified_diff</code> diff；<code>DANGEROUS_TOOLS</code> 不含 fetch_page；<code>_tool_fetch_page</code> / <code>_HtmlArticleExtractor</code> / <code>_extract_page_markdown</code> 评估后已删除</td>
 </tr>
 <tr>
 <td><code>tool_registry.py</code></td>
-<td><code>search_files</code> / <code>edit_file</code> ToolSpec 描述与参数更新；<code>build_web_tool_specs()</code>（fetch_page）、<code>build_recall_tool_specs()</code>（recall_history）并入 <code>build_tool_registry()</code></td>
+<td><code>search_files</code> / <code>edit_file</code> ToolSpec 描述与参数更新；<code>build_recall_tool_specs()</code>（recall_history）并入 <code>build_tool_registry()</code>；<code>build_web_tool_specs()</code>（fetch_page）评估后已移除</td>
 </tr>
 <tr>
 <td><code>public/index.html</code></td>
@@ -542,7 +570,7 @@ def _render_unified_diff(path, old_text, new_text):
 <h2 id="_7">九、上线前提醒</h2>
 <ul>
 <li>6 个内置预设、工具目录、<code>comfyui</code> 预设剔除 MCP 与后端 Bug 修复均在 <code>server.py</code>，<strong>需重启后端进程</strong>生效；前端 <code>public/</code> 静态文件热更新，重启后刷新页面即可。</li>
-<li>代码改动尚未提交；按 <code>.codebuddy</code> 规则走「版本更新说明 / git 与打包」流程后再发布。</li>
+<li><code>fetch_page</code> 已评估并撤回，不随 1.7.0-beta 发布；其余工具补齐与预设改动已随 1.7.0-beta 发布，按「版本更新说明 / git 与打包」流程完成。</li>
 </ul></main>
 </div>
 </body>

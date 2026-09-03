@@ -156,3 +156,23 @@ exe-icon-preview.png
 使用说明.txt
 本地模型运行端推荐.md
 本地模型运行端推荐新版.md
+
+# Dev/test scratch artifacts that leaked into the repository before. Keep them out.
+_agent_tool_shots/
+_iso_test/
+_iso_test2/
+_iso_test3/
+_pdf_page_*.png
+_hl_test.js
+.prep_pdf.py
+.pdftest.html
+.pdftest_out.pdf
+.pdfdoc.html
+.chrome-print/
+.chrome-print2/
+.cp4/
+.cp5/
+.cp6/
+.playwright-cli/
+deepseek-harness/
+dsh-vision-router/
