@@ -1,10 +1,16 @@
-# Naiba Chat 1.6.9 Beta
+# Naiba Chat 1.7.0 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.6.9 Beta 在对话消息中新增「本轮修改文件」摘要与右侧文件面板：AI 用工具写过的文件可一键回看、编辑并保存回磁盘；同时支持左右侧栏折叠，轻量模式改为更清晰的独立开关。
+1.7.0 Beta 为聊天代码块加入多语言语法高亮（随流式实时着色），并把界面图标全面换成内联 SVG：顶栏低频操作收进「更多」菜单、空状态快捷指令改为「图标+标题+说明」卡片，界面更清晰、渲染跨端一致。
 
-## 1.6.9 Beta 主要能力
+## 1.7.0 Beta 主要能力
+
+- **代码块语法高亮**：聊天中的代码块按语言实时着色（支持 JS/TS、Python、JSON、Bash/Shell、YAML、CSS、HTML，语言别名自动归一化，如 `js`/`javascript`/`jsx`、`py`/`python`、`sh`/`bash`/`ps1`），关键字/字符串/数字/函数名/注释分色渲染；流式输出随内容增长实时高亮，不再等整段结束才着色。
+- **UI 图标 SVG 化**：设置、发送/停止、刷新、卸载模型、删除/编辑/关闭、对话设置、快捷指令等按钮图标从 emoji/字符替换为内联 SVG，手机与桌面渲染一致清晰，不再出现 emoji 字体缺失导致的方块或乱码。
+- **顶栏「更多」菜单**：卸载模型、刷新页面等低频操作收进顶栏 ⋯ 溢出菜单，主操作区更简洁；菜单带 aria 支持，点击菜单外部自动关闭。
+- **快捷指令卡片化**：空状态快捷指令改为「图标+标题+说明」卡片布局（通过 MCP/HTTP 调用 ComfyUI、设置本地 Comfy MCP、列出工具/文件等），按钮标题精简、说明行补充用途，并适配窄屏。
+- **聊天布局调整**：AI 消息外层新增消息卡片结构，样式与代码高亮配色统一。
 
 - **本轮修改文件**：AI 每轮用 `write_file`/`edit_file` 成功写入的文件会在消息末尾按「新建/编辑」列出摘要（图片/视频/音频等多媒体产物仍走原附件卡片预览），点文件名在右侧文件面板打开，随时回看 AI 改过什么；中止/失败轮次已写入的文件同样留痕。
 - **右侧文件面板**：多标签页管理打开的文件；Markdown 直接渲染预览，文本文件可手动编辑并保存回磁盘（Ctrl/⌘+S 或 Ctrl/⌘+Enter 保存、Esc 取消）；图片直接预览并可点开大图，二进制文件给出明确提示。
@@ -58,7 +64,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.6.9-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.7.0-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -146,13 +152,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.6.9-beta-windows-x64.zip`
+- `naiba-chat-1.7.0-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.6.9 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.7.0 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -165,7 +171,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.6.9-beta"
+$env:NAIBA_BUILD_VERSION = "1.7.0-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 

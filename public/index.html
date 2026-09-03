@@ -11,11 +11,16 @@
   <div class="app-shell" id="appShell">
     <aside class="sidebar" id="sidebar" aria-label="对话导航">
       <div class="sidebar-top">
-        <button class="new-chat" id="newChatButton"><span>＋</span> 新会话</button>
+        <button class="new-chat" id="newChatButton">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+          新会话
+        </button>
         <button class="icon-button sidebar-collapse-btn" id="collapseSidebar" type="button" title="收起侧栏" aria-label="收起侧栏">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 6l-6 6 6 6"></path><path d="M19 6l-6 6 6 6"></path></svg>
         </button>
-        <button class="icon-button mobile-only" id="closeSidebar" title="关闭导航" aria-label="关闭导航">×</button>
+        <button class="icon-button mobile-only" id="closeSidebar" title="关闭导航" aria-label="关闭导航">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </button>
       </div>
 
       <div class="workspace-header">
@@ -42,7 +47,9 @@
           <span class="status-mark"></span>
           <span><small>手机访问</small><b id="lanAddress">正在获取地址</b></span>
         </button>
-        <button class="icon-button" id="openSettings" title="设置" aria-label="设置">⚙</button>
+        <button class="icon-button" id="openSettings" title="设置" aria-label="设置">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>
+        </button>
       </div>
       <div class="sidebar-resizer" id="sidebarResizer" title="拖动调整边栏宽度" aria-hidden="true"></div>
     </aside>
@@ -54,7 +61,9 @@
         <button class="icon-button sidebar-expand-btn" id="expandSidebar" type="button" title="展开侧栏" aria-label="展开侧栏">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6l6 6-6 6"></path><path d="M5 6l6 6-6 6"></path></svg>
         </button>
-        <button class="icon-button mobile-only" id="openSidebar" title="打开导航" aria-label="打开导航">☰</button>
+        <button class="icon-button mobile-only" id="openSidebar" title="打开导航" aria-label="打开导航">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
+        </button>
         <label class="model-control">
           <span>模型</span>
           <select id="modelSelect" aria-label="当前模型"></select>
@@ -64,9 +73,6 @@
           <select id="agentSelect" aria-label="当前 Agent"></select>
         </label>
         <div class="topbar-actions">
-          <button class="control-button unload-model-button" id="unloadModel" type="button" hidden title="卸载当前本地模型">
-            <span aria-hidden="true">↓</span><span class="button-label">卸载模型</span>
-          </button>
           <button class="control-button file-reopen-button" id="openFileTabs" type="button" hidden title="重新打开文件面板（保留已打开的文件标签）">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8.5L19 7.5V21H6z"></path><path d="M14.5 3v4.5H19"></path></svg>
             <span id="fileTabsCount">0</span>
@@ -75,24 +81,44 @@
           <button class="control-button task-button" id="openTasks" title="查看异步任务"><span id="taskCount">0</span> <span class="button-label">任务</span></button>
           <button class="control-button" id="openSkills" title="查看当前会话已选择的 Skill"><span id="skillCount">已选 0</span> <span class="button-label">Skill</span></button>
           <button class="mcp-button" id="mcpStatus" title="查看 MCP 状态"><i></i><span>MCP</span></button>
-          <button class="control-button" id="reloadPage" type="button" title="刷新页面（内嵌窗口无法使用 F5 时点击）"><span aria-hidden="true">↻</span><span class="button-label">刷新</span></button>
+          <div class="topbar-overflow">
+            <button class="icon-button topbar-more-button" id="topbarMoreButton" type="button" title="更多操作" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"></circle><circle cx="12" cy="12" r="1.6"></circle><circle cx="12" cy="19" r="1.6"></circle></svg>
+            </button>
+            <div class="topbar-overflow-menu" id="topbarOverflowMenu" role="menu" hidden>
+              <button class="control-button unload-model-button" id="unloadModel" type="button" hidden title="卸载当前本地模型" role="menuitem">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v10M7 9l5 5 5-5M4 17v3h16v-3"></path></svg>
+                <span class="button-label">卸载模型</span>
+              </button>
+              <button class="control-button" id="reloadPage" type="button" title="刷新页面（内嵌窗口无法使用 F5 时点击）" role="menuitem">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>
+                <span class="button-label">刷新</span>
+              </button>
+            </div>
+          </div>
         </div>
       </header>
 
       <section class="messages" id="messages" aria-live="polite">
         <div class="empty-state" id="emptyState">
-          <div class="empty-mark">S</div>
+          <div class="empty-mark">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.2 0-2.3-.25-3.3-.69L4 21l1.7-5.2A8.5 8.5 0 1 1 21 11.5Z"></path><path d="M8.5 11.5h7M8.5 8.5h4"></path></svg>
+          </div>
           <h1>开始新对话</h1>
           <div class="starter-grid">
-            <button data-prompt="确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。确认接口可用后，等待用户指令，后续只允许通过 mcp 工具调用 ComfyUI 进行生成任务。将当前工作区目录下的所有工作流 json 文件加上 "_backup" 后缀复制一份，直接覆盖可能已经存在的带 "_backup" 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 "_backup" 后缀的所有工作流。">通过 mcp 调用 ComfyUI（请先连接 ComfyUI mcp 服务器）</button>
-            <button data-prompt="先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；若未启动，提示用户启动 ComfyUI。确认接口可用后，等待用户指令，后续通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。将当前工作区目录下的所有工作流 json 文件加上 "_backup" 后缀复制一份，直接覆盖可能已经存在的带 "_backup" 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 "_backup" 后缀的所有工作流。">通过 http 调用 ComfyUI（请先启动 ComfyUI）</button>
-            <button data-prompt="帮我设置本地 Comfy MCP 连接，按照 https://docs.comfy.org/agent-tools/mcp.md#local-comfy-mcp-connection 的设置指南操作。优先使用本地 Comfyui 的 python 环境。当发现不止一个的时候，优先寻找正在运行的 Comfyui 对应的环境。当发现没有已运行的 Comfyui 但本地存在多个 Comfyui 环境时，停止行动并向用户发出询问。安装完成 mcp 服务后，记得提醒用户在 mcp 相关的 agent 设置页面内手动开启由 mcp 服务所引入的新的 comfy mcp tools。">帮我设置本地 Comfy MCP 连接</button>
-            <button data-prompt="列出你当前所有可用工具。">列出所有可用工具</button>
-            <button data-prompt="列出当前文件夹下的所有文件。">列出所有文件</button>
-            <button data-prompt="不进行任何操作，先理解你已接收到的系统指令，然后等待后续命令。">等待用户指令</button>
-            <button data-install-skill="1">安装 Skill</button>
-            <button data-edit-skill="1">编辑 Skill</button>
-            <button class="starter-add" id="starterAddBtn" title="添加自定义指令" aria-label="添加自定义指令">＋</button>
+            <button data-prompt="确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。确认接口可用后，等待用户指令，后续只允许通过 mcp 工具调用 ComfyUI 进行生成任务。将当前工作区目录下的所有工作流 json 文件加上 "_backup" 后缀复制一份，直接覆盖可能已经存在的带 "_backup" 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 "_backup" 后缀的所有工作流。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><span class="starter-title">通过 MCP 调用 ComfyUI</span><span class="starter-desc">连接 ComfyUI MCP 服务</span></button>
+            <button data-prompt="先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；若未启动，提示用户启动 ComfyUI。确认接口可用后，等待用户指令，后续通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。将当前工作区目录下的所有工作流 json 文件加上 "_backup" 后缀复制一份，直接覆盖可能已经存在的带 "_backup" 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 "_backup" 后缀的所有工作流。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path></svg></span><span class="starter-title">通过 HTTP 调用 ComfyUI</span><span class="starter-desc">启动 ComfyUI 后使用</span></button>
+            <button data-prompt="帮我设置本地 Comfy MCP 连接，按照 https://docs.comfy.org/agent-tools/mcp.md#local-comfy-mcp-connection 的设置指南操作。优先使用本地 Comfyui 的 python 环境。当发现不止一个的时候，优先寻找正在运行的 Comfyui 对应的环境。当发现没有已运行的 Comfyui 但本地存在多个 Comfyui 环境时，停止行动并向用户发出询问。安装完成 mcp 服务后，记得提醒用户在 mcp 相关的 agent 设置页面内手动开启由 mcp 服务所引入的新的 comfy mcp tools。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"></path></svg></span><span class="starter-title">设置本地 Comfy MCP</span><span class="starter-desc">配置连接与工具</span></button>
+            <button data-prompt="列出你当前所有可用工具。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-2.4 2.6-2.6Z"></path></svg></span><span class="starter-title">列出可用工具</span><span class="starter-desc">查看当前能力</span></button>
+            <button data-prompt="列出当前文件夹下的所有文件。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"></path></svg></span><span class="starter-title">列出所有文件</span><span class="starter-desc">浏览当前目录</span></button>
+            <button data-prompt="不进行任何操作，先理解你已接收到的系统指令，然后等待后续命令。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg></span><span class="starter-title">等待用户指令</span><span class="starter-desc">先理解系统指令</span></button>
+            <button data-install-skill="1"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg></span><span class="starter-title">安装 Skill</span><span class="starter-desc">导入新技能</span></button>
+            <button data-edit-skill="1"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg></span><span class="starter-title">编辑 Skill</span><span class="starter-desc">修改已有技能</span></button>
+            <button class="starter-add" id="starterAddBtn" title="添加自定义指令" aria-label="添加自定义指令">
+              <span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span>
+              <span class="starter-title">自定义指令</span>
+              <span class="starter-desc">添加常用提示词</span>
+            </button>
           </div>
         </div>
       </section>
@@ -103,7 +129,9 @@
         <div class="run-guidance-list" id="runGuidanceList" hidden aria-live="polite"></div>
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
-          <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">＋</button>
+          <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9"></path><path d="M12 7v10M7 12h10"></path></svg>
+          </button>
           <div class="composer-input">
             <div class="skill-popup" id="skillPopup" role="listbox" hidden></div>
             <div class="input-mirror" id="inputMirror" aria-hidden="true"></div>
@@ -133,7 +161,9 @@
               <small id="lastTurnUsageSummary">完成一次回复后显示本轮消耗</small>
             </div>
           </div>
-          <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">↑</button>
+          <button class="send-button" id="sendButton" type="submit" title="发送" aria-label="发送">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>
+          </button>
         </form>
         <div class="composer-meta">
           <div class="composer-meta-left">
@@ -151,11 +181,16 @@
               <button type="button" data-permission-mode="auto" role="radio" title="自动批准工作区内操作">自动</button>
               <button type="button" data-permission-mode="full" role="radio" title="工具无需逐次确认">完全</button>
             </div>
-          </div>
-          <div class="lightweight-feature-inline" aria-label="轻量选项" title="勾选任一选项即开启轻量对话（关闭对应能力）；都不勾选时本对话为普通模式">
-            <span class="lightweight-feature-label">轻量选项</span>
-            <label title="勾选后关闭本对话的工具调用（不勾选即普通模式）"><input id="lightweightToolsToggle" type="checkbox"> 工具</label>
-            <label title="勾选后关闭本对话的 Skill 能力（不勾选即普通模式）"><input id="lightweightSkillsToggle" type="checkbox"> Skill</label>
+            <div class="composer-meta-more">
+              <button type="button" class="composer-meta-more-button" id="composerMetaMoreButton" aria-haspopup="menu" aria-expanded="false" title="轻量选项">轻量</button>
+              <div class="composer-meta-panel" id="composerMetaPanel" hidden>
+                <div class="lightweight-feature-inline" aria-label="轻量选项">
+                  <span class="lightweight-feature-label">轻量选项</span>
+                  <label title="勾选后关闭本对话的工具调用（不勾选即普通模式）"><input id="lightweightToolsToggle" type="checkbox"> 工具</label>
+                  <label title="勾选后关闭本对话的 Skill 能力（不勾选即普通模式）"><input id="lightweightSkillsToggle" type="checkbox"> Skill</label>
+                </div>
+              </div>
+            </div>
           </div>
           <span id="runtimeStatus">就绪</span>
         </div>
@@ -165,7 +200,9 @@
     <aside class="file-panel" id="filePanel" aria-label="文件面板">
       <header class="file-panel-top">
         <div class="file-tabs" id="fileTabs" role="tablist" aria-label="打开的文件"></div>
-        <button class="icon-button file-panel-close" id="closeFilePanel" type="button" title="收起文件面板（Esc）" aria-label="收起文件面板">×</button>
+        <button class="icon-button file-panel-close" id="closeFilePanel" type="button" title="收起文件面板（Esc）" aria-label="收起文件面板">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+        </button>
       </header>
       <div class="file-panel-body" id="filePanelBody" aria-live="polite"></div>
     </aside>
@@ -186,7 +223,7 @@
   <dialog id="workspaceDialog" class="panel-dialog workspace-dialog">
     <div class="dialog-toolbar">
       <div><h2>选择目录</h2><p id="workspaceDialogResolved">-</p></div>
-      <button class="icon-button" data-close="workspaceDialog" type="button" title="关闭" aria-label="关闭">×</button>
+      <button class="icon-button" data-close="workspaceDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
     <div class="workspace-dialog-body">
       <div class="workspace-location-bar">
@@ -210,19 +247,19 @@
   <dialog id="skillsDialog" class="panel-dialog">
     <div class="dialog-toolbar">
       <div><h2>Skill 快速引用</h2><p id="skillsSummary"></p></div>
-      <button class="icon-button" data-close="skillsDialog" title="关闭" aria-label="关闭">×</button>
+      <button class="icon-button" data-close="skillsDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
     <label class="skill-policy-row">
       <span><b>Skill 引用</b><small id="skillPolicyHint">点击某项即在输入框光标处插入 /技能 引用；发送后按"首轮注入 / 后续追加"注入</small></span>
     </label>
-    <label class="search-field"><span>⌕</span><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
+    <label class="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg><input id="skillSearch" type="search" placeholder="搜索 Skill"></label>
     <div class="skill-list" id="skillList"></div>
   </dialog>
 
   <dialog id="starterPromptDialog" class="panel-dialog">
     <div class="dialog-toolbar">
       <div><h2>添加自定义指令</h2><p>保存后可在「开始新对话」页快速复用</p></div>
-      <button class="icon-button" data-close="starterPromptDialog" type="button" title="关闭" aria-label="关闭">×</button>
+      <button class="icon-button" data-close="starterPromptDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
     <div class="starter-prompt-body">
       <label class="field-wide">指令标题<input id="starterPromptTitle" type="text" maxlength="40" placeholder="例如：整理工作流"></label>
@@ -237,7 +274,7 @@
   <dialog id="skillImportDialog" class="panel-dialog skill-import-dialog">
     <div class="dialog-toolbar">
       <div><h2>导入 Skill</h2><p>上传包含 SKILL.md 的文件夹、.zip 或单个 .md</p></div>
-      <button class="icon-button" data-close="skillImportDialog" type="button" title="关闭" aria-label="关闭">×</button>
+      <button class="icon-button" data-close="skillImportDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
     <div class="skill-import-body">
       <div class="drop-zone" id="skillDropZone">
@@ -259,7 +296,7 @@
     <form id="conversationSettingsForm" method="dialog">
       <div class="dialog-toolbar">
         <div><h2>对话设置</h2><p id="conversationSettingsTitle">当前对话</p></div>
-        <button class="icon-button" type="button" data-close="conversationSettingsDialog" title="关闭" aria-label="关闭">×</button>
+        <button class="icon-button" type="button" data-close="conversationSettingsDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
       </div>
       <label class="field-wide conversation-title-field">
         对话名称
@@ -286,7 +323,7 @@
   <dialog id="settingsDialog" class="settings-dialog">
     <div class="dialog-toolbar">
       <div><h2>设置</h2><p>模型与运行参数</p></div>
-      <button class="icon-button" data-close="settingsDialog" title="关闭" aria-label="关闭">×</button>
+      <button class="icon-button" data-close="settingsDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
     <div class="settings-layout">
       <nav class="settings-nav">
@@ -598,7 +635,7 @@
       <div><h2>异步任务</h2></div>
       <div class="dialog-toolbar-actions">
         <button class="danger-button task-clear-button" id="clearTerminalTasks" type="button">清理已结束</button>
-        <button class="icon-button" data-close="tasksDialog" title="关闭" aria-label="关闭">×</button>
+        <button class="icon-button" data-close="tasksDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
       </div>
     </div>
     <div class="task-list" id="taskList"></div>
@@ -606,7 +643,7 @@
 
   <dialog class="toast" id="toast" role="status"></dialog>
   <div class="image-lightbox" id="imageLightbox" hidden aria-hidden="true">
-    <button class="lightbox-close" id="imageLightboxClose" type="button" title="关闭" aria-label="关闭大图">×</button>
+    <button class="lightbox-close" id="imageLightboxClose" type="button" title="关闭" aria-label="关闭大图"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     <img id="imageLightboxImg" alt="大图预览" draggable="false">
   </div>
   <div class="image-context-menu" id="imageContextMenu" hidden role="menu" aria-label="图片操作">

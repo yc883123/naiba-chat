@@ -8,7 +8,46 @@ import path from 'node:path';
 const OUT = 'd:/naiba-chat/docs/manual/images';
 const DEMO_DIR = 'D:\\naiba-chat\\docs\\manual';
 const DEMO_TITLE = '说明书演示';
+const DEMO_FILE = path.join(OUT, '..', '_demo-产品说明.md');
 fs.mkdirSync(OUT, { recursive: true });
+
+// 演示用的 Markdown（文件面板需要真实文件才能渲染）；截图结束自动删除
+const DEMO_MD = `> 这是说明书的**演示文件**，用于展示右侧文件面板的 Markdown 渲染效果。
+
+# 短剧封面规范 v2
+
+## 一、画幅与尺寸
+
+| 用途 | 尺寸 | 比例 |
+|---|---|---|
+| 竖版封面 | 1080 × 1440 | 3:4 |
+| 横版海报 | 1920 × 1080 | 16:9 |
+| 分镜草图 | 768 × 768 | 1:1 |
+
+## 二、提示词结构
+
+按 \`主体 → 环境 → 光位 → 镜头 → 风格\` 五段式写：
+
+\`\`\`text
+秦西西, 红衣, 立于雪中石阶
+远景, 古建飞檐, 雪
+侧逆光, 冷调
+85mm, 浅景深
+电影感, 胶片颗粒
+\`\`\`
+
+## 三、命名规则
+
+- 单元号 + 镜号 + 版本：\`05_012_v3.png\`
+- 备份文件加 \`_backup\` 后缀，批量出图前自动复制。
+
+## 四、交付检查
+
+1. [x] 尺寸符合画幅要求
+2. [x] 人物面部无畸变
+3. [ ] 完成终版调色
+`;
+fs.writeFileSync(DEMO_FILE, DEMO_MD, 'utf-8');
 
 const res = await fetch('http://127.0.0.1:9222/json');
 const targets = await res.json();
@@ -74,7 +113,8 @@ async function shot(file) {
 async function clean() {
   await ev(`(() => {
     document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch(_){} });
-    ['#imageLightbox','#imageContextMenu','#skillPopup','#reasoningMenu','#contextUsagePopover'].forEach(sel => {
+    ['#imageLightbox','#imageContextMenu','#skillPopup','#reasoningMenu','#contextUsagePopover',
+     '#topbarOverflowMenu','#composerMetaPanel'].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.hidden = true;
     });
   })()`);
@@ -211,6 +251,23 @@ await shot('14-skill-refs.png');
 await clean();
 
 await openDialog('#tasksDialog');
+// 任务历史通常为空，注入 3 条示例行（真实 DOM 结构，状态样式齐全）
+await ev(`(() => {
+  const list = document.querySelector('#taskList');
+  if (!list) return;
+  const item = (title, meta, status, cls) => \`
+    <div class="task-item">
+      <div class="task-title">\${title}</div>
+      <div class="task-meta">\${meta}</div>
+      <div class="task-actions"><span class="task-status \${cls}">\${status}</span></div>
+    </div>\`;
+  list.innerHTML = [
+    item('批量生成 12 张 1080×1440 竖版封面（RunningHub 文生图）', '后台 · 通用 Agent · 短剧封面批量 · 已运行 4 分 12 秒', '运行中', 'running'),
+    item('用 cover_v2.json 跑 ComfyUI 工作流（12 个 seed）', '后台 · 短剧 Agent · 说明书演示 · 用时 2 分 08 秒', '已完成', 'completed'),
+    item('整理 D:\\\\素材4 下的工作流并加 _backup 备份', '前台 · 通用 Agent · 说明书演示 · 用时 36 秒', '失败：ComfyUI 未启动（127.0.0.1:8188 连接被拒）', 'failed'),
+  ].join('');
+})()`);
+await sleep(500);
 await shot('15-tasks-dialog.png');
 await clean();
 
@@ -232,6 +289,18 @@ await clean();
 await ev(`document.querySelector('#contextUsageButton')?.click()`);
 await sleep(600);
 await shot('19-context-usage.png');
+await clean();
+
+// 顶栏 ⋯ 溢出菜单（卸载模型 / 刷新）
+await ev(`(() => { const m = document.querySelector('#topbarOverflowMenu'); if (m) m.hidden = false; })()`);
+await sleep(400);
+await shot('19b-topbar-overflow.png');
+await clean();
+
+// 底部「轻量」面板（工具 / Skill 双勾选）
+await ev(`(() => { const m = document.querySelector('#composerMetaPanel'); if (m) m.hidden = false; })()`);
+await sleep(400);
+await shot('19c-lightweight-panel.png');
 await clean();
 
 // 对话设置（侧栏会话行 ⚙）
@@ -403,12 +472,13 @@ await shot('26-mobile-settings.png');
 await clean();
 
 // ---------- 7. 清理 ----------
-console.log('[7] 清理演示会话');
+console.log('[7] 清理演示会话与演示文件');
 await metrics(1600, 1000);
 if (demoConv) {
   const del = await ev(`fetch('/api/conversations/${demoConv}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err')`);
   console.log('  delete demo conversation ->', del);
 }
+try { fs.unlinkSync(DEMO_FILE); console.log('  removed demo markdown'); } catch (_) {}
 
 console.log('DONE');
 process.exit(0);

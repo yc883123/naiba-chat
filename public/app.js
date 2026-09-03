@@ -363,6 +363,137 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+// 语言别名归一化：把常见标识归到同一套规则。
+function normalizeLanguage(language) {
+  const lang = String(language || '').toLowerCase().trim();
+  if (/^(js|javascript|jsx|mjs|cjs)$/.test(lang)) return 'js';
+  if (/^(ts|typescript|tsx)$/.test(lang)) return 'ts';
+  if (/^(py|python|python3)$/.test(lang)) return 'py';
+  if (/^(json|json5|jsonc)$/.test(lang)) return 'json';
+  if (/^(sh|bash|shell|zsh|powershell|ps1|cmd|bat)$/.test(lang)) return 'bash';
+  if (/^(html|htm|xml|svg)$/.test(lang)) return 'html';
+  if (/^(css|scss|less)$/.test(lang)) return 'css';
+  if (/^(ya?ml)$/.test(lang)) return 'yaml';
+  if (/^(java|c|cpp|csharp|cs|go|rust|rs|php|rb|ruby|swift|kt|kotlin|scala|sql)$/.test(lang)) return 'js';
+  return '';
+}
+
+// 单条组合正则 + 线性扫描：token 先 escape 再包 span，输出安全的 HTML。
+function highlightCode(rawCode, language) {
+  const code = String(rawCode ?? '');
+  const lang = normalizeLanguage(language);
+  const esc = escapeHtml;
+  const wrap = (text, cls) => `<span class="tok-${cls}">${esc(text)}</span>`;
+
+  // HTML：先整体把标签与注释挑出来，其余按纯文本。
+  if (lang === 'html') {
+    const parts = [];
+    const re = /<!--[\s\S]*?-->|<\/?[A-Za-z][^>]*>|&/g;
+    let last = 0;
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      parts.push(esc(code.slice(last, m.index)));
+      const chunk = m[0];
+      if (chunk.startsWith('<!--')) {
+        parts.push(wrap(chunk, 'comment'));
+      } else if (chunk === '&') {
+        parts.push(wrap(chunk, 'number'));
+      } else {
+        const m2 = chunk.match(/^(<\/?)([A-Za-z][\w-]*)([\s\S]*)$/);
+        if (!m2) {
+          parts.push(esc(chunk));
+        } else {
+          const open = `<span class="tok-tag">${esc(m2[1] + m2[2])}</span>`;
+          const rest = m2[3];
+          // 在「原始」属性区上一次性交替匹配属性名与字符串值，逐 token 转义后包 span，
+          // 避免对已生成的 span 二次替换。
+          let restHtml = '';
+          let rlast = 0;
+          const are = /[A-Za-z_:][\w:.-]*(?==)|"[^"]*"|'[^']*'/g;
+          let am;
+          while ((am = are.exec(rest)) !== null) {
+            if (am.index > rlast) restHtml += esc(rest.slice(rlast, am.index));
+            const tok = am[0];
+            if (tok[0] === '"' || tok[0] === "'") restHtml += wrap(tok, 'string');
+            else restHtml += `<span class="tok-attr">${esc(tok)}</span>`;
+            rlast = am.index + tok.length;
+          }
+          if (rlast < rest.length) restHtml += esc(rest.slice(rlast));
+          parts.push(open + restHtml);
+        }
+      }
+      last = m.index + chunk.length;
+    }
+    parts.push(esc(code.slice(last)));
+    return parts.join('');
+  }
+
+  const rules = [];
+  if (lang === 'py' || lang === 'bash' || lang === 'yaml') {
+    if (lang === 'bash') rules.push([/(^|\n)(\s*#[^\n]*)/g, 'comment']);
+    else rules.push([/(#[^\n]*)/g, 'comment']);
+  } else {
+    rules.push([/(\/\/[^\n]*|\/\*[\s\S]*?\*\/|#[^\n]*)/g, 'comment']);
+  }
+
+  if (lang === 'py') {
+    rules.push([/([rfbu]{0,2}"""[\s\S]*?"""|[rfbu]{0,2}'''[\s\S]*?'''|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, 'string']);
+    rules.push([/(\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?j?\b)/g, 'number']);
+    rules.push([/(\b(?:def|class|return|if|elif|else|for|while|in|not|and|or|is|None|True|False|import|from|as|with|try|except|finally|raise|lambda|pass|break|continue|global|nonlocal|yield|assert|del|async|await|match|case|self|cls)\b)/g, 'keyword']);
+    rules.push([/(\b[A-Za-z_]\w*(?=\s*\())/g, 'func']);
+  } else if (lang === 'json') {
+    rules.push([/("[^"\n]*")(\s*:)/g, 'key']);
+    rules.push([/("(?:\\.|[^"\\])*")/g, 'string']);
+    rules.push([/(\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)/g, 'number']);
+    rules.push([/(\b(?:true|false|null)\b)/g, 'keyword']);
+  } else if (lang === 'bash') {
+    rules.push([/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, 'string']);
+    rules.push([/(\b\d+(?:\.\d+)?\b)/g, 'number']);
+    rules.push([/(\b(?:if|then|else|elif|fi|for|while|do|done|in|case|esac|function|return|exit|local|export|echo|cd|source|set|unset|shift)\b)/g, 'keyword']);
+  } else if (lang === 'css') {
+    rules.push([/("[^"]*"|'[^']*')/g, 'string']);
+    rules.push([/(#[0-9a-fA-F]{3,8}\b|\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms|deg|fr|pt)?\b)/g, 'number']);
+    rules.push([/(@[\w-]+)/g, 'keyword']);
+    rules.push([/([A-Za-z-]+)(?=\s*:)/g, 'attr']);
+    rules.push([/(\.[A-Za-z_-][\w-]*|#[A-Za-z_-][\w-]*)/g, 'func']);
+  } else if (lang === 'yaml') {
+    rules.push([/("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/g, 'string']);
+    rules.push([/(\b\d+(?:\.\d+)?\b|\btrue\b|\bfalse\b|\bnull\b)/g, 'number']);
+    rules.push([(/(^[ \t]*[-:]?\s*)([A-Za-z_][\w-]*)(?=\s*:)/gm), 'key']);
+  } else {
+    // js / ts 及退化的类 C 语言
+    rules.push([new RegExp('`(?:\\\\.|[^`\\\\])*`|"(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\'', 'g'), 'string']);
+    rules.push([/(\b\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?n?\b)/g, 'number']);
+    rules.push([/(\b(?:const|let|var|function|return|if|else|for|while|do|switch|case|break|continue|new|typeof|instanceof|in|of|class|extends|super|import|export|from|default|try|catch|finally|throw|async|await|yield|delete|void|this|static|get|set|interface|type|enum|implements|public|private|protected|readonly|namespace|declare|as|is|satisfies)\b)/g, 'keyword']);
+    rules.push([/(\b(?:true|false|null|undefined|NaN|Infinity)\b)/g, 'number']);
+    rules.push([/(\b[A-Za-z_$][\w$]*(?=\s*\())/g, 'func']);
+  }
+
+  // 用命名捕获组把每条规则合并进一个组合正则，匹配时直接得知 token 类别，
+  // 避免对单个 token 重复 test() 受 lastIndex 影响导致的归属错误。
+  let re;
+  try {
+    re = new RegExp(rules.map((r, i) => `(?<g${i}>${r[0].source})`).join('|'), 'g');
+  } catch (_) {
+    return esc(code);
+  }
+  const out = [];
+  let last = 0;
+  let mm;
+  while ((mm = re.exec(code)) !== null) {
+    if (mm.index > last) out.push(esc(code.slice(last, mm.index)));
+    const token = mm[0];
+    let cls = null;
+    for (let i = 0; i < rules.length; i++) {
+      if (mm.groups[`g${i}`] !== undefined) { cls = rules[i][1]; break; }
+    }
+    out.push(cls ? wrap(token, cls) : esc(token));
+    last = mm.index + token.length;
+  }
+  if (last < code.length) out.push(esc(code.slice(last)));
+  return out.join('');
+}
+
 // ---- Markdown 内联处理：逐段 / 逐单元格执行，避免加粗/代码/链接跨行、跨段落或跨表格行泄漏 ----
 function markdownInline(s) {
   return String(s || '')
@@ -462,25 +593,24 @@ function renderMarkdownTable(rows) {
 
 function markdown(text) {
   const codeBlocks = [];
-  const addCodeBlock = (language, code) => {
+  const addCodeBlock = (language, rawCode) => {
     const index = codeBlocks.length;
     const lang = escapeHtml(String(language || '').trim());
+    const highlighted = highlightCode(rawCode, String(language || '').trim());
     codeBlocks.push(
       `<div class="code-block"><div class="code-block-bar">` +
       `<span class="code-lang">${lang}</span>` +
       `<button type="button" class="code-copy" data-copy-code>复制</button>` +
-      `</div><pre><code data-language="${lang}">${code}</code></pre></div>`
+      `</div><pre><code data-language="${lang}">${highlighted}</code></pre></div>`
     );
     return index;
   };
-  let safe = escapeHtml(text)
-    // 完整（已配对 ```...````）围栏代码块先提取，避免其内容被后续行内替换误伤。
+  // 先在「未转义原文」上提取围栏代码块，把原始代码交给 highlightCode 着色，
+  // 其余文本统一 escape；@CODE_x@ 占位符不含 HTML 特殊字符，escape 不受影响。
+  let safe = String(text ?? '')
     .replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@\n`)
-    // 流式输出时常见“未封闭的尾部围栏”：只有开栏 ```，尚未等到对应 ```。
-    // 之前这种块会被当作普通文本显示（露出 ``` ... 原始标记），导致代码区看起来
-    // “流式中断”，要等整个回复结束（done 全量渲染）才突然变成代码框。
-    // 这里把它也提取成代码框，随内容增长实时渲染在框内，不再中断。
     .replace(/```([^\n]*)\n([\s\S]*)$/, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@`);
+  safe = escapeHtml(safe);
   const blocks = [];
   let paragraph = [];
   let listType = '';
@@ -1093,17 +1223,19 @@ function messageElement(message, temporary = false) {
     const hideBottomContent = activityHasProse && !temporary;
     row.innerHTML = `
       <div class="message-avatar">AI</div>
-      <div class="message-body">
-        ${skillMarkup(metadata.skills)}
-        ${hideBottomContent ? abortedBadge : ''}
-        ${reasoningToolHtml}
-        ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
-        <div class="answer-content" data-raw="" ${hideBottomContent ? 'style="display:none"' : ''}>${temporary ? '' : abortedBadge + markdown(message.content)}</div>
-        ${temporary ? '' : sourcesMarkup(metadata.sources)}
-        ${mediaMarkup(metadata.attachments)}
-        ${temporary ? '' : fileChangesSummaryMarkup(metadata.files)}
-        ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance })}
-        ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
+      <div class="message-card">
+        <div class="message-body">
+          ${skillMarkup(metadata.skills)}
+          ${hideBottomContent ? abortedBadge : ''}
+          ${reasoningToolHtml}
+          ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
+          <div class="answer-content" data-raw="" ${hideBottomContent ? 'style="display:none"' : ''}>${temporary ? '' : abortedBadge + markdown(message.content)}</div>
+          ${temporary ? '' : sourcesMarkup(metadata.sources)}
+          ${mediaMarkup(metadata.attachments)}
+          ${temporary ? '' : fileChangesSummaryMarkup(metadata.files)}
+          ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance })}
+          ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
+        </div>
       </div>`;
   }
   return row;
@@ -1136,9 +1268,9 @@ function runGuidanceElement(message) {
   row.dataset.rawContent = message.content || '';
   row.innerHTML = `<div class="message-body"><span class="run-guidance-icon" aria-hidden="true">≡</span><div class="run-guidance-preview">${escapeHtml(message.content)}</div>
     <div class="run-guidance-actions">
-      <button type="button" data-edit-message title="编辑排队消息" aria-label="编辑排队消息">✎</button>
-      <button type="button" data-delete-message title="删除排队消息" aria-label="删除排队消息">×</button>
-      <button type="button" data-guide-message title="立即发送此消息" aria-label="立即发送此消息">↑</button>
+      <button type="button" data-edit-message title="编辑排队消息" aria-label="编辑排队消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg></button>
+      <button type="button" data-delete-message title="删除排队消息" aria-label="删除排队消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+      <button type="button" data-guide-message title="立即发送此消息" aria-label="立即发送此消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
     </div>
   </div>`;
   return row;
@@ -2347,7 +2479,7 @@ function sidebarRowHtml(row) {
   }
   const c = row.c;
   return `<div class="conversation-item ${c.id === state.conversationId ? 'active' : ''}" data-conversation-id="${c.id}">
-    <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(c.title)} 的设置">⚙</button>
+    <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(c.title)} 的设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg></button>
     <button class="conversation-open" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</button>
     <span class="conversation-time">${escapeHtml(formatRelativeTime(c.updated_at))}</span>
     <button class="delete-conversation" title="删除对话" aria-label="删除对话">删除</button>
@@ -4402,7 +4534,7 @@ function renderPendingFiles() {
     const image = isImage
       ? `<img class="thumbnail" src="${escapeHtml(thumbUrl)}" alt="" draggable="false" data-large-url="${escapeHtml(fileUrl(file.path))}">`
       : '';
-    return `<span class="file-chip">${file.uploading ? '上传中 · ' : ''}${image}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除">×</button></span>`;
+    return `<span class="file-chip">${file.uploading ? '上传中 · ' : ''}${image}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除" aria-label="移除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span>`;
   }).join('');
 }
 
@@ -5064,19 +5196,19 @@ function renderStarterPrompts() {
     const main = document.createElement('button');
     main.type = 'button';
     main.title = `点击复用：${p.title || '自定义指令'}`;
-    main.textContent = p.title || '自定义指令';
+    main.innerHTML = `<span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span><span class="starter-title">${escapeHtml(p.title || '自定义指令')}</span><span class="starter-desc">自定义指令</span>`;
     main.addEventListener('click', () => sendMessage(p.text));
     const edit = document.createElement('button');
     edit.type = 'button';
     edit.className = 'starter-edit';
     edit.title = '编辑此指令';
-    edit.textContent = '✎';
+    edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg>';
     edit.addEventListener('click', (e) => { e.stopPropagation(); openStarterPromptDialog(i); });
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'starter-del';
     del.title = '删除此指令';
-    del.textContent = '×';
+    del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
     del.addEventListener('click', (e) => { e.stopPropagation(); removeStarterPrompt(i); });
     wrap.appendChild(main);
     wrap.appendChild(edit);
@@ -5766,7 +5898,11 @@ function setBusy(busy) {
   const sendBtn = $('#sendButton');
   sendBtn.disabled = Boolean(state.cancelRequested);
   sendBtn.classList.toggle('is-stop', busy);
-  sendBtn.textContent = state.cancelRequested ? '…' : (busy ? '■' : '↑');
+  sendBtn.innerHTML = state.cancelRequested
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>'
+    : (busy
+      ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>'
+      : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>');
   sendBtn.title = state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送');
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
   sendBtn.setAttribute('aria-label', state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送'));
@@ -6233,7 +6369,7 @@ function renderFilePanelTabs() {
   tabsEl.innerHTML = filePanelState.tabs.map((tab) => {
     const dirty = tab.editing && tab.draft !== null && tab.draft !== tab.info?.content;
     const active = tab.key === filePanelState.activeKey;
-    return `<span class="file-tab${active ? ' active' : ''}${dirty ? ' file-tab-dirty' : ''}" role="tab" aria-selected="${active}" data-file-tab="${escapeHtml(tab.key)}" title="${escapeHtml(tab.raw)}"><span class="file-tab-name">${escapeHtml(tab.name)}</span><button type="button" class="file-tab-x" data-file-tab-close="${escapeHtml(tab.key)}" aria-label="关闭 ${escapeHtml(tab.name)}" tabindex="-1">×</button></span>`;
+    return `<span class="file-tab${active ? ' active' : ''}${dirty ? ' file-tab-dirty' : ''}" role="tab" aria-selected="${active}" data-file-tab="${escapeHtml(tab.key)}" title="${escapeHtml(tab.raw)}"><span class="file-tab-name">${escapeHtml(tab.name)}</span><button type="button" class="file-tab-x" data-file-tab-close="${escapeHtml(tab.key)}" aria-label="关闭 ${escapeHtml(tab.name)}" tabindex="-1"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span>`;
   }).join('');
   const activeEl = tabsEl.querySelector('[data-file-tab].active');
   if (activeEl && typeof activeEl.scrollIntoView === 'function') activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
@@ -6548,6 +6684,22 @@ function bindEvents() {
     $('#settingsDialog').showModal();
     switchSettingsTab('connections');
   });
+  // 顶栏「更多」溢出菜单：切换开合，点击外部关闭。
+  $('#topbarMoreButton')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = $('#topbarOverflowMenu');
+    if (!menu) return;
+    menu.hidden = !menu.hidden;
+    $('#topbarMoreButton').setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  document.addEventListener('click', (event) => {
+    const wrap = $('#topbarOverflowMenu');
+    if (!wrap || wrap.hidden) return;
+    if (wrap.contains(event.target)) return;
+    if (event.target.closest?.('#topbarMoreButton')) return;
+    wrap.hidden = true;
+    $('#topbarMoreButton')?.setAttribute('aria-expanded', 'false');
+  });
   $('#saveMcpServer')?.addEventListener('click', saveMcpServer);
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
@@ -6619,6 +6771,22 @@ function bindEvents() {
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
   $('#lightweightToolsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('tools', event.target.checked));
   $('#lightweightSkillsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('skills', event.target.checked));
+  // composer-meta「轻量」折叠面板开合
+  $('#composerMetaMoreButton')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const panel = $('#composerMetaPanel');
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    $('#composerMetaMoreButton').setAttribute('aria-expanded', String(!panel.hidden));
+  });
+  document.addEventListener('click', (event) => {
+    const panel = $('#composerMetaPanel');
+    if (!panel || panel.hidden) return;
+    if (panel.contains(event.target)) return;
+    if (event.target.closest?.('#composerMetaMoreButton')) return;
+    panel.hidden = true;
+    $('#composerMetaMoreButton')?.setAttribute('aria-expanded', 'false');
+  });
   $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
   const composerWrap = document.querySelector('.composer-wrap');
   if (composerWrap) {
