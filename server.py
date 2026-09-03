@@ -757,11 +757,11 @@ def default_config() -> dict[str, Any]:
 _BUILT_IN_SCOPE_ALL = (
     "read_file", "list_directory", "search_files", "glob_files",
     "write_file", "edit_file", "pwsh", "run_skill_script",
-    "http_request", "web_search", "register_mcp", "call_mcp",
+    "http_request", "web_search", "fetch_page", "register_mcp", "call_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
-    "todo_write", "artifact_report",
+    "todo_write", "artifact_report", "recall_history",
     "comfyui_prepare_workflow", "comfyui_batch",
-    "install_skill",
+    "install_skill", "unpack_skill_archive", "inspect_installed_skill",
     "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
     "vision_crop", "vision_pixel_diff", "vision_read_folder",
 )
@@ -835,11 +835,12 @@ _TOOL_GROUP = {
     "write_file": "文件写入/编辑", "edit_file": "文件写入/编辑",
     "pwsh": "命令执行",
     "run_skill_script": "Skill 脚本",
-    "http_request": "网络", "web_search": "网络",
+    "http_request": "网络", "web_search": "网络", "fetch_page": "网络",
     "register_mcp": "MCP", "call_mcp": "MCP",
     "run_in_background": "后台/Job/子任务", "job_output": "后台/Job/子任务", "job_status": "后台/Job/子任务",
     "job_wait": "后台/Job/子任务", "job_kill": "后台/Job/子任务", "subagent": "后台/Job/子任务",
     "todo_write": "后台/Job/子任务", "artifact_report": "后台/Job/子任务",
+    "recall_history": "会话与记忆",
     "comfyui_prepare_workflow": "ComfyUI", "comfyui_batch": "ComfyUI",
     "install_skill": "能力/Skill 管理", "unpack_skill_archive": "能力/Skill 管理", "inspect_installed_skill": "能力/Skill 管理",
     "vision_describe": "视觉（文本模型）", "vision_ground": "视觉（文本模型）", "vision_detect": "视觉（文本模型）",
@@ -873,7 +874,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         entries.append({
             "name": name,
             "description": first_line[:120],
-            "group": _TOOL_GROUP.get(name, "其他"),
+            "group": "MCP" if name.startswith("mcp__") else _TOOL_GROUP.get(name, "其他"),
             "model_target": _MODEL_TARGET.get(name, "any"),
             "default_selected": name in _DEFAULT_SELECTED_TOOLS,
             "alias_of": _ALIAS_MAIN.get(name),
@@ -881,10 +882,10 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # 端到端顺序：把前端呈现顺序稳定化，避免逐轮随机
     order = (
         "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
-        "pwsh", "run_skill_script", "http_request", "web_search",
+        "pwsh", "run_skill_script", "http_request", "web_search", "fetch_page",
         "register_mcp", "call_mcp",
         "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
-        "todo_write", "artifact_report",
+        "todo_write", "artifact_report", "recall_history",
         "comfyui_prepare_workflow", "comfyui_batch",
         "install_skill", "unpack_skill_archive", "inspect_installed_skill",
         "vision_read_folder", "vision_describe", "vision_ground", "vision_detect", "vision_ocr",
@@ -893,6 +894,157 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     index = {name: i for i, name in enumerate(order)}
     entries.sort(key=lambda item: (index.get(item["name"], 999), item["name"]))
     return entries
+
+
+# ---- 工具分类说明（Agent 编辑页：给小白看的分类级解释）----
+# (分类名, 一句话说明)。顺序即前端展示顺序；未列出的分组自动追加到末尾。
+TOOL_GROUP_INFO: tuple[tuple[str, str], ...] = (
+    ("文件读取/搜索", "查看、搜索你电脑里的文件。只读，不会改动任何内容"),
+    ("文件写入/编辑", "新建文件、修改已有文件。会产生真实改动"),
+    ("命令执行", "在本机运行命令（PowerShell）。能力最强，也最需要留意"),
+    ("Skill 脚本", "运行 Skill 自带的脚本，用现成流程干活"),
+    ("网络", "联网搜索、请求接口、抓取网页，获取训练数据之外的信息"),
+    ("会话与记忆", "检索自己过去与用户的对话记录。只读，帮你回忆此前讨论过的内容"),
+    ("MCP", "连接并调用 MCP 服务器提供的外部能力（含各服务动态注册的 mcp__ 工具）"),
+    ("后台/Job/子任务", "后台长任务、子 Agent、任务清单与报告。适合批量、耗时的活"),
+    ("ComfyUI", "联动本机 ComfyUI：准备工作流、批量出图"),
+    ("能力/Skill 管理", "安装、解包、查看 Skill，让 Agent 自己扩展能力"),
+    ("视觉（文本模型）", "文本模型通过视觉车道解读图片：描述、定位、检测、OCR、取色、裁剪、对比"),
+    ("视觉（视觉模型）", "多模态模型直接看图。用支持图片的模型时优先开这个"),
+    ("其他", "未归类工具"),
+)
+
+
+def tool_group_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """按 TOOL_GROUP_INFO 的顺序输出分类（含说明与该分类下的工具名）。"""
+    by_group: dict[str, list[str]] = {}
+    for item in entries:
+        by_group.setdefault(str(item.get("group") or "其他"), []).append(str(item.get("name") or ""))
+    known_desc = {name: desc for name, desc in TOOL_GROUP_INFO}
+    groups: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for name, desc in TOOL_GROUP_INFO:
+        if name not in by_group:
+            continue
+        seen.add(name)
+        groups.append({"name": name, "desc": desc, "tools": by_group[name]})
+    # 兜底：工具目录里出现了未登记的新分组时追加到末尾，不至于丢工具。
+    for name in sorted(by_group):
+        if name in seen:
+            continue
+        groups.append({"name": name, "desc": known_desc.get(name, ""), "tools": by_group[name]})
+    return groups
+
+
+# ---- 工具集预设（Agent 编辑页：一键选中一批工具）----
+# include 支持两种写法：具体工具名，或 "group:分类名"（"group:*" 表示所有分类）。
+# exclude 用于从已包含的分类里再剔除个别工具。新增工具只要落进已有分类，
+# 就会自动被对应预设收进去，不需要逐个维护工具名。
+TOOL_PRESETS: tuple[dict[str, Any], ...] = (
+    {
+        "id": "minimal",
+        "name": "极简模式",
+        "tagline": "只读不改",
+        "desc": "只能查看和搜索文件、看图片。不写文件、不跑命令、不联网，最省心。",
+        "include": ["read_file", "list_directory", "search_files", "glob_files", "vision_read_folder"],
+    },
+    {
+        "id": "standard",
+        "name": "标准模式",
+        "tagline": "日常推荐",
+        "desc": "读写文件 + 搜索 + 跑命令 + 联网 + 看图，覆盖绝大多数日常任务。",
+        "include": [
+            "read_file", "write_file", "list_directory", "search_files", "glob_files",
+            "edit_file", "pwsh", "run_skill_script", "http_request", "web_search",
+            "vision_read_folder",
+        ],
+    },
+    {
+        "id": "research",
+        "name": "联网研究",
+        "tagline": "查资料出报告",
+        "desc": "标准能力 + 联网全套 + 任务清单与报告产出，适合查资料、做调研、写文档。",
+        "include": [
+            "group:文件读取/搜索", "group:文件写入/编辑", "group:Skill 脚本", "group:网络",
+            "group:会话与记忆",
+            "todo_write", "artifact_report", "vision_read_folder",
+        ],
+    },
+    {
+        "id": "batch",
+        "name": "批量后台",
+        "tagline": "长任务并行",
+        "desc": "标准能力 + 后台任务/子 Agent 全套，适合一次跑很多、跑很久的活。",
+        "include": [
+            "group:文件读取/搜索", "group:文件写入/编辑", "group:命令执行", "group:Skill 脚本",
+            "group:网络", "group:后台/Job/子任务", "vision_read_folder",
+        ],
+    },
+    {
+        "id": "comfyui",
+        "name": "ComfyUI 联动",
+        "tagline": "批量出图",
+        "desc": "标准能力 + ComfyUI 工作流与批量出图 + 后台任务，适合批量生成图片/视频素材。走 HTTP 通道直连本机 ComfyUI，不启用任何 MCP 连接。",
+        "include": [
+            "group:文件读取/搜索", "group:文件写入/编辑", "group:命令执行", "group:Skill 脚本",
+            "group:ComfyUI", "group:后台/Job/子任务", "vision_read_folder", "http_request",
+            "web_search",
+        ],
+        "exclude_mcp": True,
+    },
+    {
+        "id": "full",
+        "name": "全能模式",
+        "tagline": "全部工具",
+        "desc": "开启所有已注册工具（含 MCP、ComfyUI、能力管理、视觉全套）。能力最强，误操作风险也最高。",
+        "include": ["group:*"],
+    },
+)
+
+
+def resolve_tool_preset(preset: dict[str, Any], entries: list[dict[str, Any]]) -> list[str]:
+    """把一个预设展开成具体工具名列表（按工具目录顺序返回）。"""
+    by_group: dict[str, list[str]] = {}
+    for item in entries:
+        by_group.setdefault(str(item.get("group") or "其他"), []).append(str(item.get("name") or ""))
+    selected: set[str] = set()
+    for raw in preset.get("include") or []:
+        item = str(raw)
+        if item.startswith("group:"):
+            group = item[len("group:"):]
+            if group == "*":
+                for names in by_group.values():
+                    selected.update(names)
+            else:
+                selected.update(by_group.get(group, []))
+        else:
+            selected.add(item)
+    for raw in preset.get("exclude") or []:
+        selected.discard(str(raw))
+    # exclude_mcp：预设声明“不启用 MCP 通道”时，无论 include 怎么展开，都剔除
+    # 动态 MCP 工具（mcp__<server>__<tool>）与 MCP 网关入口（register_mcp/call_mcp），
+    # 防止将来新增 MCP 服务/分类后自动污染本预设。
+    if preset.get("exclude_mcp"):
+        selected = {
+            n for n in selected
+            if not n.startswith("mcp__") and n not in ("register_mcp", "call_mcp")
+        }
+    order = {str(item.get("name")): i for i, item in enumerate(entries)}
+    return sorted(selected, key=lambda name: order.get(name, 999))
+
+
+def tool_preset_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """输出给前端的预设清单（工具名已解析好，前端无需再算）。"""
+    return [
+        {
+            "id": str(preset["id"]),
+            "name": str(preset["name"]),
+            "tagline": str(preset.get("tagline") or ""),
+            "desc": str(preset.get("desc") or ""),
+            "tools": resolve_tool_preset(preset, entries),
+        }
+        for preset in TOOL_PRESETS
+    ]
 
 
 # 在线请求协议集合；llama.cpp 提供 OpenAI 兼容接口，但服务进程仍在本机。
@@ -2780,6 +2932,7 @@ class NaibaChatApp:
 
         self.web_search = WebSearchRuntime(self)
         self.tool_registry.register_system_handler("web_search", self._web_search_handler)
+        self.tool_registry.register_system_handler("recall_history", self._recall_history_handler)
         # Storage marks in-flight runs as interrupted on startup. Deterministic
         # jobs that explicitly opted into resume are safely re-created from
         # their durable checkpoint and persisted parameters.
@@ -2800,6 +2953,61 @@ class NaibaChatApp:
         query = str(args.get("query") or args.get("q") or "")
         max_results = args.get("max_results")
         return self.web_search.search(query, int(max_results) if isinstance(max_results, (int, float)) else None)
+
+    def _recall_history_handler(
+        self, args: dict[str, Any], _skills: Any, _ctx: Any,
+    ) -> tuple[bool, str]:
+        """历史会话检索：只读本机会话库，按关键词匹配会话标题与消息文本。"""
+        query = str(args.get("query") or "").strip()
+        raw_max = args.get("max_results")
+        max_results = min(max(int(raw_max) if isinstance(raw_max, (int, float)) else 5, 1), 20)
+        if not query:
+            return False, "query 不能为空"
+        try:
+            with self.storage._connect() as db:
+                rows = db.execute(
+                    "SELECT c.id AS cid, c.title AS title, "
+                    "       c.updated_at AS conv_updated, "
+                    "       m.role AS role, m.content AS content, "
+                    "       m.created_at AS msg_created "
+                    "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+                    "WHERE instr(lower(m.content), lower(?)) > 0 "
+                    "ORDER BY m.created_at DESC LIMIT 400",
+                    (query,),
+                ).fetchall()
+        except Exception as exc:  # noqa: BLE001
+            return False, f"检索失败：{type(exc).__name__}: {exc}"
+        if not rows:
+            return True, f"未在历史会话中找到与「{query}」相关的内容"
+        # 按会话聚合：每个会话取时间最新的前 3 条命中消息
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            cid = str(row["cid"])
+            bucket = grouped.setdefault(
+                cid,
+                {"title": str(row["title"] or "（无标题）"),
+                 "updated": int(row["conv_updated"] or 0),
+                 "hits": []},
+            )
+            if len(bucket["hits"]) < 3:
+                bucket["hits"].append(
+                    {"role": str(row["role"] or ""), "content": str(row["content"] or ""),
+                     "created": int(row["msg_created"] or 0)}
+                )
+        ordered = sorted(grouped.values(), key=lambda item: item["updated"], reverse=True)[:max_results]
+        now_ms = int(time.time() * 1000)
+        output = [f"在历史会话中找到 {len(ordered)} 个相关会话（关键词「{query}」，仅本机检索）："]
+        for index, bucket in enumerate(ordered, 1):
+            age_days = max(0, (now_ms - bucket["updated"]) / 86400000)
+            when = f"{age_days:.1f} 天前" if age_days >= 1 else "今天"
+            output.append(f"{index}. 《{bucket['title']}》（{when} 更新）")
+            for hit in bucket["hits"]:
+                role_label = "用户" if hit["role"] == "user" else "助手"
+                snippet = " ".join(hit["content"].split())[:200]
+                output.append(f"   - [{role_label}] {snippet}{'…' if len(hit['content']) > 200 else ''}")
+            output.append("")
+        output.append("如需确认是哪一次对话，请把上面的标题与时间给用户核对；内容仅作回忆上下文，引用前应回到对应会话复核。")
+        return True, "\n".join(output).strip()
 
     def _todo_write_handler(
         self,
@@ -3426,7 +3634,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/tools":
             self._json({"tools": APP.tool_registry.schemas()})
         elif path == "/api/tool_catalog":
-            self._json({"tools": tool_catalog_entries(APP.tool_registry.schemas())})
+            catalog = tool_catalog_entries(APP.tool_registry.schemas())
+            self._json({
+                "tools": catalog,
+                "groups": tool_group_entries(catalog),
+                "presets": tool_preset_entries(catalog),
+            })
         elif path == "/api/mcp":
             self._json({"servers": APP.mcp.states()})
         elif path.startswith("/api/jobs/"):
@@ -3567,8 +3780,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             raw_agent_id = body.get("agent_id")
             agent_id = str(raw_agent_id or APP.config.default_agent_id())
             if raw_agent_id is not None and not APP.config.get_agent(agent_id):
-                self._json({"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST)
-                return
+                # 前端「新建会话」会沿用上一个会话的 agent_id；若该 Agent 已被删除，
+                # 这里回退到默认 Agent 而不是 400 拒绝，避免新建会话整条链路报错。
+                # default_agent_id() 恒返回有效 id（优先配置值，其次现存自定义/内置）。
+                agent_id = APP.config.default_agent_id()
             interaction_mode = "craft"
             permission_mode = str(body.get("permission_mode") or "auto")
             web_search_enabled = body.get("web_search_enabled", False)

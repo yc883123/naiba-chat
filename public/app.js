@@ -59,6 +59,18 @@ const state = {
   agentFormSkillIds: [],
   agentFormToolScope: [],
   agentFormIsNew: false,
+  // 旧配置兼容用：当前工具目录里已不存在的工具名（如已移除的 activate_skill、
+  // 临时掉线的 MCP 工具）。原样保留、单独展示，不参与勾选/计数/预设匹配，
+  // 保存时随已知工具一起写回，避免用户重配。
+  agentFormUnknownTools: [],
+  // 旧 Agent 的 tool_scope 为空 = 不限制（运行时全放行，且新工具自动纳入）。
+  // 界面上按“全选”展示，但只要用户没动过就仍以空数组保存，避免被固化成死列表。
+  agentFormUnrestricted: false,
+  agentFormScopeTouched: false,
+  // 自定义工具模板：把某个自定义组合存成命名模板（localStorage 全局持久化），
+  // 之后在任意 Agent 表单里点一下模板芯片即可一键复刻。
+  toolTemplates: [],
+  toolTemplatesLoaded: false,
   toolCatalog: null,
   tasks: [],
   taskTimer: null,
@@ -2566,6 +2578,15 @@ async function deleteWorkspace(name) {
 async function createConversation(workspaceGroup = '', workspaceDir = '', prefillSkills = false) {
   detachRunSubscription();
   hideChoiceButtons();
+  const knownAgentIds = new Set((state.bootstrap?.agents || []).map((a) => String(a.id)));
+  const prevAgentId = state.conversations.find((c) => String(c.id) === state.conversationId)?.agent_id;
+  const defaultAgentId = String(state.bootstrap?.default_agent_id || '');
+  // 新建会话默认沿用上一个会话使用的 Agent；若其已被删除则回退默认/首个，避免把失效 id 发给后端。
+  const nextAgentId = String(
+    (prevAgentId && knownAgentIds.has(String(prevAgentId)) && String(prevAgentId))
+    || (knownAgentIds.has(defaultAgentId) && defaultAgentId)
+    || (state.bootstrap?.agents?.[0]?.id) || ''
+  );
   const conversation = await api('/api/conversations', {
     method: 'POST',
     body: {
@@ -2573,9 +2594,7 @@ async function createConversation(workspaceGroup = '', workspaceDir = '', prefil
       permission_mode: 'auto',
       web_search_enabled: false,
       deep_reasoning_enabled: false,
-      // 新建会话默认沿用上一个会话使用的 Agent；无上一个会话时回退默认 Agent。
-      agent_id: (state.conversations.find((c) => String(c.id) === state.conversationId)?.agent_id)
-        || state.bootstrap?.default_agent_id || '',
+      agent_id: nextAgentId,
       // 新建对话继承当前全局工作区目录；若在某工作区内新建则覆盖为该工作区目录并绑定分组。
       workspace_dir: workspaceDir || state.bootstrap?.settings?.workspace_dir || '',
       workspace_group: workspaceGroup || '',
@@ -3585,6 +3604,13 @@ function showAgentForm(agent = null) {
   state.agentFormSkillIds = agent?.skill_ids ? [...agent.skill_ids] : [];
   state.agentFormIsNew = !agent;
   state.agentFormToolScope = agent?.tool_scope ? [...agent.tool_scope] : [];
+  state.agentFormUnknownTools = [];
+  // 旧 Agent 的 tool_scope 为空 = 不限制（运行时全放行，且以后新增的工具自动纳入）。
+  // 界面上按“全选”展示，但只要用户没动过勾选就仍以空数组保存，避免被固化成死列表。
+  state.agentFormUnrestricted = Boolean(agent) && !state.agentFormToolScope.length;
+  state.agentFormScopeTouched = false;
+  // 表单每次打开由 renderAgentToolPicker 重建预设下拉框与模板行；
+  // 「存为模板」控件随下方勾选实时显隐（自定义组合时出现）。
   renderAgentSkillPicker();
   renderAgentToolPicker();
   $('#agentError').textContent = '';
@@ -3619,6 +3645,253 @@ function applyAgentToolDependency(scope, changedTool, checked) {
   return [...result];
 }
 
+// 把工具集补齐依赖闭包：选中创建者工具时自动带上它依赖的查询工具。
+// 与后端依赖闭包保持一致，保证这里勾选的状态就是运行时会放行的 allowed_tools。
+function normalizeToolScope(scope) {
+  const result = new Set(scope || []);
+  for (const [creator, deps] of Object.entries(AGENT_TOOL_DEP_RULES)) {
+    if (result.has(creator)) deps.forEach((dep) => result.add(dep));
+  }
+  return [...result];
+}
+
+// 当前工具集是否恰好等于某个预设（用于高亮）；都不匹配则为「自定义」。
+function matchToolPreset() {
+  const presets = state.toolCatalog?.presets || [];
+  const current = new Set(state.agentFormToolScope);
+  return presets.find(
+    (preset) => preset.tools.length === current.size && preset.tools.every((t) => current.has(t)),
+  ) || null;
+}
+
+// 预设/模板相关 UI 全量刷新：头部状态标签 + 下拉框当前值 + 「存为模板」控件显隐。
+// 任何勾选变化（syncAgentToolCheckboxes）都会走到这里。
+function updateToolPresetUI() {
+  const matched = matchToolPreset();
+  const unrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
+  const label = $('#agentToolPresetState');
+  if (label) {
+    if (unrestricted) {
+      label.textContent = '当前：未限制（等同全能，以后新增的工具自动包含）';
+      label.classList.remove('custom');
+    } else if (matched) {
+      label.textContent = `当前：${matched.name}`;
+      label.classList.remove('custom');
+    } else {
+      label.textContent = '当前：自定义';
+      label.classList.add('custom');
+    }
+  }
+  const select = $('#agentToolPresetSelect');
+  if (select) select.value = unrestricted ? '__custom__' : (matched ? matched.id : '__custom__');
+  // 「存为模板」只服务自定义组合：未限制旧配置、恰好等于某预设、或没勾任何工具时都不出现。
+  const canSaveTemplate = !unrestricted && !matched && state.agentFormToolScope.length > 0;
+  const saveButton = $('#agentToolTemplateSave');
+  const nameInput = $('#agentToolTemplateName');
+  if (saveButton) saveButton.hidden = !canSaveTemplate;
+  if (nameInput) nameInput.hidden = !canSaveTemplate;
+}
+
+function updateToolCounter() {
+  const total = (state.toolCatalog?.tools || []).length;
+  const counter = $('#agentToolCount');
+  if (counter) {
+    const unrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
+    counter.textContent = unrestricted
+      ? `全部 ${total} 个（未限制）`
+      : `已选 ${state.agentFormToolScope.length} / ${total} 个工具`;
+  }
+}
+
+// 预设下拉框：选项 = 各内置预设 + 「自定义」。选预设=整组套用（仍走依赖闭包）；
+// 手动勾选下方工具后不再精确匹配任何预设，即进入「自定义」模式。
+function renderToolPresetSelect() {
+  const select = $('#agentToolPresetSelect');
+  if (!select) return;
+  const presets = state.toolCatalog?.presets || [];
+  select.innerHTML = '';
+  const presetGroup = document.createElement('optgroup');
+  presetGroup.label = '预设 · 一键套用';
+  for (const preset of presets) {
+    const opt = document.createElement('option');
+    opt.value = preset.id;
+    opt.textContent = `${preset.name} · ${(preset.tools || []).length} 个工具`;
+    presetGroup.append(opt);
+  }
+  const customGroup = document.createElement('optgroup');
+  customGroup.label = '手动组合';
+  const customOpt = document.createElement('option');
+  customOpt.value = '__custom__';
+  customOpt.textContent = '自定义（勾选下方工具组成）';
+  customGroup.append(customOpt);
+  select.append(presetGroup, customGroup);
+  updateToolPresetUI();
+}
+
+// —— 自定义工具模板：把任意自定义组合存成命名模板（localStorage 全局保存），
+// 之后在别的 Agent 表单里点一下模板芯片即可一键复刻。——
+
+const TOOL_TEMPLATE_STORE = 'naiba.agentToolTemplates';
+
+function loadToolTemplates() {
+  if (state.toolTemplatesLoaded) return state.toolTemplates;
+  try {
+    const raw = JSON.parse(localStorage.getItem(TOOL_TEMPLATE_STORE) || '[]');
+    state.toolTemplates = Array.isArray(raw) ? raw : [];
+  } catch (_error) {
+    state.toolTemplates = [];
+  }
+  state.toolTemplatesLoaded = true;
+  return state.toolTemplates;
+}
+
+function persistToolTemplates() {
+  try {
+    localStorage.setItem(TOOL_TEMPLATE_STORE, JSON.stringify(state.toolTemplates));
+  } catch (_error) { /* localStorage 禁用/写满等异常：忽略，不打断表单操作 */ }
+}
+
+function knownToolNames() {
+  return new Set((state.toolCatalog?.tools || []).map((tool) => tool.name));
+}
+
+// 模板里可能存过已被移除的工具名：复刻时只应用当前目录里还存在的。
+function usableTemplateTools(template) {
+  const known = knownToolNames();
+  return (template.tools || []).filter((name) => known.has(name));
+}
+
+// 一键复刻：把模板里的工具组合套用到当前表单（仍走依赖闭包 + 复选框同步）。
+function applyToolTemplate(templateId) {
+  const template = loadToolTemplates().find((item) => item.id === templateId);
+  if (!template) return;
+  const tools = usableTemplateTools(template);
+  if (!tools.length) {
+    toast('该模板里的工具当前都已不存在，未应用');
+    return;
+  }
+  setAgentToolScope(normalizeToolScope(tools));
+  syncAgentToolCheckboxes($('#agentToolScope'));
+  toast(`已复刻模板「${template.name}」（${tools.length} 个工具）`);
+}
+
+function deleteToolTemplate(templateId) {
+  state.toolTemplates = loadToolTemplates().filter((item) => item.id !== templateId);
+  persistToolTemplates();
+  renderToolTemplates();
+  toast('模板已删除');
+}
+
+// 把当前勾选收集为一条模板；模板名可先在输入框里填，留空则自动命名。
+function collectTemplateFromCurrent() {
+  const nameInput = $('#agentToolTemplateName');
+  const rawName = (nameInput?.value || '').trim();
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const name = rawName || `自定义组合 ${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const known = knownToolNames();
+  const tools = state.agentFormToolScope.filter((tool) => known.has(tool));
+  const template = { id: String(Date.now()), name, tools, created: now.toISOString() };
+  loadToolTemplates().unshift(template);
+  if (state.toolTemplates.length > 30) state.toolTemplates.length = 30;
+  persistToolTemplates();
+  if (nameInput) nameInput.value = '';
+  renderToolTemplates();
+  return template;
+}
+
+// 「我的模板」芯片行：点芯片=复刻，点 ✕=删除。事件在 bindEvents 里委托处理。
+function renderToolTemplates() {
+  const row = $('#agentToolTemplateRow');
+  const box = $('#agentToolTemplates');
+  if (!row || !box) return;
+  const templates = loadToolTemplates();
+  box.innerHTML = '';
+  row.hidden = templates.length === 0;
+  for (const template of templates) {
+    const chip = document.createElement('span');
+    chip.className = 'tool-template-chip';
+    chip.dataset.templateApply = template.id;
+    chip.title = `一键复刻「${template.name}」的工具组合`;
+    const name = document.createElement('b');
+    name.textContent = template.name;
+    const count = document.createElement('em');
+    count.textContent = `${(template.tools || []).length} 个工具`;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'tool-template-del';
+    del.textContent = '✕';
+    del.title = `删除模板「${template.name}」`;
+    del.dataset.templateDel = template.id;
+    chip.append(name, count, del);
+    box.append(chip);
+  }
+}
+
+// 下拉框选择回调：内置预设 → 整组套用；「自定义」→ 若还是未限制旧配置，
+// 先把当前“全选”展示固化成显式列表（退出旧版未限制语义），方便手动删减。
+function onToolPresetSelect(value) {
+  const preset = (state.toolCatalog?.presets || []).find((item) => item.id === value);
+  if (preset) {
+    setAgentToolScope(normalizeToolScope(preset.tools || []));
+    syncAgentToolCheckboxes($('#agentToolScope'));
+    return;
+  }
+  if (state.agentFormUnrestricted && !state.agentFormScopeTouched) {
+    const catalog = state.toolCatalog?.tools || [];
+    setAgentToolScope(catalog.map((tool) => tool.name));
+    syncAgentToolCheckboxes($('#agentToolScope'));
+    return;
+  }
+  updateToolPresetUI();
+}
+
+// 用户主动改动工具集时才走这里：标记 touched，并结束“不限制”状态
+// （一旦手动选过，就按显式列表保存，不再退回空数组语义）。
+function setAgentToolScope(next) {
+  state.agentFormToolScope = next;
+  state.agentFormScopeTouched = true;
+  state.agentFormUnrestricted = false;
+}
+
+// 旧配置里“当前未注册”的工具：保留并告知用户，可一键清除。
+function renderUnknownToolsHint() {
+  const box = $('#agentToolUnknownHint');
+  if (!box) return;
+  const unknown = state.agentFormUnknownTools || [];
+  if (!unknown.length) {
+    box.hidden = true;
+    box.textContent = '';
+    return;
+  }
+  box.hidden = false;
+  box.textContent = `旧配置里有 ${unknown.length} 个当前未注册的工具（${unknown.join('、')}），已原样保留，不影响使用。`;
+  let btn = box.querySelector('button');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'control-button tiny';
+    btn.textContent = '清除';
+    btn.addEventListener('click', () => {
+      state.agentFormUnknownTools = [];
+      state.agentFormScopeTouched = true;
+      renderUnknownToolsHint();
+    });
+    box.append(btn);
+  }
+}
+
+function setToolGroupCollapsed(groupEl, collapsed) {
+  if (!groupEl) return;
+  groupEl.classList.toggle('collapsed', collapsed);
+  const grid = groupEl.querySelector('.permission-grid');
+  if (grid) grid.hidden = collapsed;
+}
+
+function toggleToolGroup(groupEl) {
+  setToolGroupCollapsed(groupEl, !groupEl.classList.contains('collapsed'));
+}
+
 function updateGroupSelectAll(groupEl) {
   if (!groupEl) return;
   const all = groupEl.querySelector('input.group-select-all');
@@ -3628,6 +3901,8 @@ function updateGroupSelectAll(groupEl) {
   all.checked = toolCbs.length > 0 && selected.length === toolCbs.length;
   // 半选态：该分类下只有部分工具被勾选。
   all.indeterminate = toolCbs.length > 0 && selected.length > 0 && selected.length < toolCbs.length;
+  const count = groupEl.querySelector('.group-count');
+  if (count) count.textContent = `${selected.length}/${toolCbs.length}`;
 }
 
 function syncAgentToolCheckboxes(list) {
@@ -3635,8 +3910,10 @@ function syncAgentToolCheckboxes(list) {
   list.querySelectorAll('.permission-grid input[type="checkbox"]').forEach((cb) => {
     cb.checked = state.agentFormToolScope.includes(cb.value);
   });
-  // 同步各分类的“全选”框状态（含半选）。
+  // 同步各分类的“全选”框状态（含半选）与计数。
   list.querySelectorAll('.agent-tool-group').forEach(updateGroupSelectAll);
+  updateToolCounter();
+  updateToolPresetUI();
 }
 
 async function renderAgentToolPicker() {
@@ -3644,59 +3921,93 @@ async function renderAgentToolPicker() {
   if (!list) return;
   if (!state.toolCatalog) {
     try {
-      const data = await api('/api/tool_catalog', { method: 'GET' });
-      state.toolCatalog = data.tools || [];
+      state.toolCatalog = await api('/api/tool_catalog', { method: 'GET' });
     } catch (error) {
-      state.toolCatalog = [];
+      state.toolCatalog = {};
     }
   }
-  const catalog = state.toolCatalog || [];
-  // 仍未选择时：新 Agent 用后端默认选中集；旧 Agent（无 tool_scope=不限制）默认全选。
+  const catalog = state.toolCatalog?.tools || [];
+  const groups = state.toolCatalog?.groups || [];
+  // 兼容旧配置：挑出当前工具目录里已不存在的名字（老版本移除的工具、临时掉线的
+  // MCP 工具等）单独保留。它们不参与勾选、计数与预设匹配，但保存时原样写回，
+  // 这样旧 Agent 打开就能看到原本的勾选，不用重新配一遍。
+  if (state.agentFormToolScope.length) {
+    const knownNames = new Set(catalog.map((tool) => tool.name));
+    state.agentFormUnknownTools = [...new Set(
+      state.agentFormToolScope.filter((name) => !knownNames.has(name)),
+    )];
+    state.agentFormToolScope = state.agentFormToolScope.filter((name) => knownNames.has(name));
+  }
+  // 仍未选择时：新 Agent 用后端默认选中集（=标准模式）；旧 Agent（空 tool_scope=不限制）按全选展示。
   if (!state.agentFormToolScope.length) {
     state.agentFormToolScope = state.agentFormIsNew
       ? catalog.filter((t) => t.default_selected).map((t) => t.name)
       : catalog.map((t) => t.name);
   }
-  // 初始加载也应用依赖联动：创建者被选中时自动带上其查询工具，
-  // 保证显示的勾选状态与运行时会实际放行的 allowed_tools 一致（后端也有同款依赖闭包）。
-  const depAdds = new Set();
-  for (const [creator, deps] of Object.entries(AGENT_TOOL_DEP_RULES)) {
-    if (state.agentFormToolScope.includes(creator)) deps.forEach((dep) => depAdds.add(dep));
-  }
-  if (depAdds.size) {
-    state.agentFormToolScope = [...new Set([...state.agentFormToolScope, ...depAdds])];
-  }
+  // 初始加载也应用依赖联动，让显示状态与运行时放行的 allowed_tools 一致。
+  // 这里不置 touched：自动补依赖不算用户改配置，未限制的旧 Agent 仍按“不限制”保存。
+  state.agentFormToolScope = normalizeToolScope(state.agentFormToolScope);
+  renderToolPresetSelect();
+  renderToolTemplates();
+  renderUnknownToolsHint();
+  const toolMap = new Map(catalog.map((tool) => [tool.name, tool]));
   list.innerHTML = '';
-  const groups = {};
-  for (const tool of catalog) {
-    (groups[tool.group] = groups[tool.group] || []).push(tool);
-  }
-  for (const [group, tools] of Object.entries(groups)) {
+  for (const group of groups) {
+    const tools = (group.tools || []).map((name) => toolMap.get(name)).filter(Boolean);
+    if (!tools.length) continue;
     const groupEl = document.createElement('div');
-    groupEl.className = 'agent-tool-group';
+    groupEl.className = 'agent-tool-group collapsed';
+    groupEl.dataset.group = group.name;
+
     const head = document.createElement('div');
     head.className = 'agent-tool-group-head';
-    const headTitle = document.createElement('span');
-    headTitle.textContent = group;
-    head.append(headTitle);
-    // 分类级“全选”勾选框：紧跟分类名右侧，点击一次勾选/取消该分类所有工具（沿用依赖联动）。
+    head.setAttribute('role', 'button');
+    head.tabIndex = 0;
+    head.title = '点击展开/收起，展开后可逐个勾选';
+
+    const caret = document.createElement('span');
+    caret.className = 'group-caret';
+    caret.textContent = '▸';
+
+    // 分类级“全选”：点击一次勾选/取消该分类所有工具（沿用依赖联动）。
     const allCb = document.createElement('input');
     allCb.type = 'checkbox';
     allCb.className = 'group-select-all';
-    allCb.setAttribute('data-group', group);
-    allCb.title = `全选/取消全选「${group}」分类下的所有工具`;
-    head.append(allCb);
+    allCb.setAttribute('data-group', group.name);
+    allCb.title = `全选/取消全选「${group.name}」分类下的所有工具`;
+    allCb.addEventListener('click', (e) => e.stopPropagation());
     allCb.addEventListener('change', () => {
       let scope = state.agentFormToolScope;
       for (const tool of tools) {
         scope = applyAgentToolDependency(scope, tool.name, allCb.checked);
       }
-      state.agentFormToolScope = scope;
+      setAgentToolScope(scope);
+      // 勾上分类时自动展开，让用户看到自己到底开了什么。
+      if (allCb.checked) setToolGroupCollapsed(groupEl, false);
       syncAgentToolCheckboxes(list);
     });
+
+    const title = document.createElement('span');
+    title.className = 'group-title';
+    title.textContent = group.name;
+    const count = document.createElement('span');
+    count.className = 'group-count';
+    const desc = document.createElement('small');
+    desc.className = 'group-desc';
+    desc.textContent = group.desc || '';
+    head.append(caret, allCb, title, count, desc);
+    head.addEventListener('click', () => toggleToolGroup(groupEl));
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleToolGroup(groupEl);
+      }
+    });
     groupEl.append(head);
+
     const grid = document.createElement('div');
     grid.className = 'permission-grid';
+    grid.hidden = true;
     for (const tool of tools) {
       const label = document.createElement('label');
       const cb = document.createElement('input');
@@ -3709,9 +4020,9 @@ async function renderAgentToolPicker() {
         cb.title = '针对文本模型：通过视觉车道解读图片。';
       }
       cb.addEventListener('change', (e) => {
-        state.agentFormToolScope = applyAgentToolDependency(
+        setAgentToolScope(applyAgentToolDependency(
           state.agentFormToolScope, tool.name, e.target.checked,
-        );
+        ));
         syncAgentToolCheckboxes(list);
       });
       const span = document.createElement('span');
@@ -3733,6 +4044,17 @@ async function renderAgentToolPicker() {
   syncAgentToolCheckboxes(list);
 }
 
+// 「展开全部 / 收起全部」：一键切换所有分类。
+function toggleAllToolGroups() {
+  const list = $('#agentToolScope');
+  if (!list) return;
+  const groupEls = [...list.querySelectorAll('.agent-tool-group')];
+  const expand = groupEls.some((el) => el.classList.contains('collapsed'));
+  groupEls.forEach((el) => setToolGroupCollapsed(el, !expand));
+  const btn = $('#toggleAllToolGroups');
+  if (btn) btn.textContent = expand ? '收起全部' : '展开全部';
+}
+
 function hideAgentForm() {
   $('#agentForm').hidden = true;
   $('#addAgent').hidden = false;
@@ -3740,12 +4062,17 @@ function hideAgentForm() {
 }
 
 async function saveAgentForm() {
+  // 旧 Agent 若原本是空 tool_scope（=不限制）且用户没动过勾选，就继续以空数组保存，
+  // 保留“以后新增工具自动纳入”的语义，不要在这里被固化成一份死的工具名单。
+  const keepUnrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
   const payload = {
     id: $('#agentId').value.trim(),
     name: $('#agentName').value.trim(),
     system_prompt: $('#agentSystemPromptEdit').value,
     skill_ids: state.agentFormSkillIds,
-    tool_scope: state.agentFormToolScope,
+    tool_scope: keepUnrestricted
+      ? []
+      : [...new Set([...state.agentFormToolScope, ...state.agentFormUnknownTools])],
   };
   try {
     await api('/api/agents', { method: 'POST', body: payload });
@@ -6671,6 +6998,28 @@ function bindEvents() {
   });
   $('#cancelAgent').addEventListener('click', hideAgentForm);
   $('#saveAgentForm').addEventListener('click', saveAgentForm);
+  $('#toggleAllToolGroups')?.addEventListener('click', toggleAllToolGroups);
+  // 工具预设下拉框 / 自定义模板（芯片行事件委托，✕ 删除、点芯片复刻）。
+  $('#agentToolPresetSelect')?.addEventListener('change', (event) => onToolPresetSelect(event.target.value));
+  $('#agentToolTemplateSave')?.addEventListener('click', () => {
+    const template = collectTemplateFromCurrent();
+    toast(`已存为模板「${template.name}」，点上方模板芯片即可一键复刻`);
+  });
+  $('#agentToolTemplateName')?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      $('#agentToolTemplateSave')?.click();
+    }
+  });
+  $('#agentToolTemplates')?.addEventListener('click', (event) => {
+    const del = event.target.closest('[data-template-del]');
+    if (del) {
+      deleteToolTemplate(del.dataset.templateDel);
+      return;
+    }
+    const apply = event.target.closest('[data-template-apply]');
+    if (apply) applyToolTemplate(apply.dataset.templateApply);
+  });
   $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
   $('#cleanImageCache')?.addEventListener('click', cleanImageCache);
   $('#imageUploadOriginal')?.addEventListener('change', renderImageCompressRow);

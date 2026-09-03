@@ -1,0 +1,544 @@
+{
+  "14": {
+    "inputs": {
+      "audio": "于闻闻.flac"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "載入音訊"
+    }
+  },
+  "36": {
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "載入 VAE"
+    }
+  },
+  "37": {
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "載入 VAE"
+    }
+  },
+  "38": {
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "載入 CLIP"
+    }
+  },
+  "43": {
+    "inputs": {
+      "image": "S2_哥特式城堡（夜）.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "48": {
+    "inputs": {
+      "audio": "顾昊.wav"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "載入音訊"
+    }
+  },
+  "49": {
+    "inputs": {
+      "image": "于闻闻（第一套）.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "50": {
+    "inputs": {
+      "image": "顾昊（第一套）.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "51": {
+    "inputs": {
+      "image": "秦西西（第一套）.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "53": {
+    "inputs": {
+      "lora_name": "minimax\\minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+      "strength_model": 1.0000000000000002,
+      "model": [
+        "128",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "58": {
+    "inputs": {
+      "model": [
+        "322",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3MemoryEfficientSageAttentionPatch",
+    "_meta": {
+      "title": "MiniMax H3 Mem Eff Sage Attention Patch"
+    }
+  },
+  "115": {
+    "inputs": {
+      "samples": [
+        "144",
+        1
+      ],
+      "vae": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE 解碼音訊"
+    }
+  },
+  "116": {
+    "inputs": {
+      "samples": [
+        "144",
+        1
+      ],
+      "vae": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE 解碼"
+    }
+  },
+  "128": {
+    "inputs": {
+      "lora_name": "minimax\\MysticXXX_MMH3-V1.safetensors",
+      "strength_model": 0.5000000000000001,
+      "model": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "LoraLoaderModelOnly"
+    }
+  },
+  "139": {
+    "inputs": {
+      "av_latent": [
+        "324",
+        0
+      ]
+    },
+    "class_type": "LTXVSeparateAVLatent",
+    "_meta": {
+      "title": "LTXVSeparateAVLatent"
+    }
+  },
+  "140": {
+    "inputs": {
+      "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+      "mode": "scale by multiplier",
+      "mode.scale": [
+        "283",
+        0
+      ],
+      "align": 32,
+      "enable_chunking": "cuda",
+      "device": "cuda",
+      "precision": "fp16",
+      "latent": [
+        "139",
+        0
+      ]
+    },
+    "class_type": "MinimaxH3LatentUpscaler3D",
+    "_meta": {
+      "title": "Minimax H3 Latent Upscaler (3D)"
+    }
+  },
+  "142": {
+    "inputs": {
+      "video_latent": [
+        "140",
+        0
+      ],
+      "audio_latent": [
+        "139",
+        1
+      ]
+    },
+    "class_type": "LTXVConcatAVLatent",
+    "_meta": {
+      "title": "LTXVConcatAVLatent"
+    }
+  },
+  "144": {
+    "inputs": {
+      "noise": [
+        "256",
+        0
+      ],
+      "guider": [
+        "223",
+        0
+      ],
+      "sampler": [
+        "255",
+        0
+      ],
+      "sigmas": [
+        "289",
+        1
+      ],
+      "latent_image": [
+        "142",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "192": {
+    "inputs": {
+      "unet_name": "minimax\\minimax_h3_hybrid_fl2va_ref2va_b30-49-int8.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "載入擴散模型"
+    }
+  },
+  "214": {
+    "inputs": {
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "YZ_H3_二采",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": true,
+      "images": [
+        "116",
+        0
+      ],
+      "audio": [
+        "115",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "223": {
+    "inputs": {
+      "model": [
+        "53",
+        0
+      ],
+      "conditioning": [
+        "265",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "基礎引導器"
+    }
+  },
+  "226": {
+    "inputs": {
+      "noise": [
+        "256",
+        0
+      ],
+      "guider": [
+        "223",
+        0
+      ],
+      "sampler": [
+        "255",
+        0
+      ],
+      "sigmas": [
+        "289",
+        0
+      ],
+      "latent_image": [
+        "265",
+        1
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "250": {
+    "inputs": {
+      "expression": "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
+      "values.a": [
+        "259",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "數學運算式"
+    }
+  },
+  "252": {
+    "inputs": {
+      "aspect_ratio": "16:9 (Widescreen)",
+      "megapixels": 0.5,
+      "multiple": 32
+    },
+    "class_type": "ResolutionSelector",
+    "_meta": {
+      "title": "解析度選擇器"
+    }
+  },
+  "253": {
+    "inputs": {
+      "samples": [
+        "226",
+        1
+      ],
+      "vae": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE 解碼"
+    }
+  },
+  "254": {
+    "inputs": {
+      "samples": [
+        "226",
+        1
+      ],
+      "vae": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "VAEDecodeAudio",
+    "_meta": {
+      "title": "VAE 解碼音訊"
+    }
+  },
+  "255": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "K採樣器選擇"
+    }
+  },
+  "256": {
+    "inputs": {
+      "noise_seed": 1098392585301190
+    },
+    "class_type": "RandomNoise",
+    "_meta": {
+      "title": "隨機雜訊"
+    }
+  },
+  "259": {
+    "inputs": {
+      "value": 12
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "视频时长（秒）"
+    }
+  },
+  "261": {
+    "inputs": {
+      "scheduler": "beta",
+      "steps": 10,
+      "denoise": 1,
+      "model": [
+        "53",
+        0
+      ]
+    },
+    "class_type": "BasicScheduler",
+    "_meta": {
+      "title": "BasicScheduler"
+    }
+  },
+  "264": {
+    "inputs": {
+      "frame_rate": 24,
+      "loop_count": 0,
+      "filename_prefix": "YZ_H3_一采",
+      "format": "video/h264-mp4",
+      "pix_fmt": "yuv420p",
+      "crf": 19,
+      "save_metadata": true,
+      "trim_to_audio": false,
+      "pingpong": false,
+      "save_output": false,
+      "images": [
+        "253",
+        0
+      ],
+      "audio": [
+        "254",
+        0
+      ]
+    },
+    "class_type": "VHS_VideoCombine",
+    "_meta": {
+      "title": "Video Combine 🎥🅥🅗🅢"
+    }
+  },
+  "265": {
+    "inputs": {
+      "prompt": "subject_definitions:\n<Subject 1> 是秦西西，在 <Picture 1>，穿淡紫色无袖荷叶边连衣裙、黑色长直发的年轻女子，手腕新出现白色圆手环。\n<Subject 2> 是于闻闻，在 <Picture 2>，穿黑色短款机车皮夹克、白色短背心、黑色皮短裤、黑色长靴、戴choker、黑色波浪卷发的女子。\n<Subject 3> 是顾昊，在 <Picture 3>，穿黑色皮夹克、黑衬衫黑领带、黑色西裤、戴金丝眼镜、黑色短发的清瘦男子。\n<Subject 4> 是哥特式城堡外景（夜），在 <Picture 4>，有巨型拱形城门、黑色石塔、月夜云层、青蓝幽雾与门内微弱暖光，无缝承接 P01。\n<Subject 5> 是抽象冷蓝色手环投影，由不可读光块与变动符号构成，表达等级、资产、道具均为零以及直播选择，不生成可读UI。\n<Audio 1> 是 <Subject 3>（S2）顾昊的声线参考。\n<Audio 2> 是 <Subject 2>（S3）于闻闻的声线参考。\nsummary:\n[参考生成 + 音频参考 + 镜头连续性] 在 <Subject 4> 的城堡门前，<Subject 1> 发现手环并拒绝系统的直播询问。<Subject 3> 警示她要活下去就必须通关；<Subject 2> 看见她的名字后主动介绍自己，邀请她一起找线索，<Subject 1> 安静点头。\nretention_analysis:\n<Subject 1>（全程出现）：fully_preserved——新人茫然状态、白色手环、拒绝与迟疑点头均保留。\n<Subject 2>（出现在 [Shot 3]）：fully_preserved——身份、造型、温和主动与邀请均保留。\n<Subject 3>（出现在 [Shot 2]）：fully_preserved——身份、造型与克制警示均保留。\n<Subject 4>（全程出现）：fully_preserved——与月夜哥特式城堡门口的直接连续性均保留。\n<Subject 5>（出现在 [Shot 1]）：fully_preserved——抽象、不可读的零状态投影均保留。\n<Audio 1>：reference——引导 <Subject 3> 音色，不复制原始信号。\n<Audio 2>：reference——引导 <Subject 2> 音色，不复制原始信号。\ndetailed_description:\n不生成可读界面、字幕、Logo或水印；手环信息只用抽象光线表达。\n[Shot 1] 第一帧无缝承接 P01 中 <Subject 4> 的城堡门前。<Subject 1> 抬起手腕上的白色圆环，<Subject 5> 展开为黯淡冷蓝光块，光块逐一归零后形成询问般的脉冲。看不见来源的中性机械音（S1）问：<d>[中文] 玩家是否开启直播？打赏将百分之百计入玩家资产，可用于购买物资。</d> <Subject 1> 注视光线，随后轻轻而坚定地摇头；投影伴随一声柔和的拒绝提示音收拢。\n[Shot 2] At 00:03.500，<Subject 3> 微皱眉看向 <Subject 1>。<Subject 3>（S2）以冷静低沉的声音说：<d>[中文] 你是新人，想活下去就通过副本吧。</d>\n[Shot 3] At 00:07.000，<Subject 2> 带着温和安抚的表情走到 <Subject 1> 身边。<Subject 2>（S3）说：<d>[中文] 我叫于闻闻。我们名字都是叠字，挺有缘分的；等游戏开始，一起找线索吧。</d> <Subject 1> 怔了怔，随后点头一次。两人的细微动作始终置于同一片昏暗拱门背景中，延续至 00:12.000。\noverall_soundscape:\n低沉石质回响、幽风、手环轻微电流嗡鸣、稀疏脚步声和远处乌鸦振翅；每个交互音只在对应动作发生时出现。\nnon_diegetic_music:\nN/A",
+      "width": [
+        "252",
+        0
+      ],
+      "height": [
+        "252",
+        1
+      ],
+      "length": [
+        "250",
+        1
+      ],
+      "ref_image_size": "max",
+      "clip": [
+        "38",
+        0
+      ],
+      "vae": [
+        "36",
+        0
+      ],
+      "audio_vae": [
+        "37",
+        0
+      ],
+      "ref_images.ref_image_0": [
+        "51",
+        0
+      ],
+      "ref_images.ref_image_1": [
+        "49",
+        0
+      ],
+      "ref_images.ref_image_2": [
+        "50",
+        0
+      ],
+      "ref_images.ref_image_3": [
+        "43",
+        0
+      ],
+      "ref_audios.ref_audio_0": [
+        "48",
+        0
+      ],
+      "ref_audios.ref_audio_1": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3ReferenceToVideo",
+    "_meta": {
+      "title": "MiniMax H3 Reference to Video"
+    }
+  },
+  "283": {
+    "inputs": {
+      "value": 1.3
+    },
+    "class_type": "easy float",
+    "_meta": {
+      "title": "二采倍数"
+    }
+  },
+  "289": {
+    "inputs": {
+      "step": 6,
+      "sigmas": [
+        "261",
+        0
+      ]
+    },
+    "class_type": "SplitSigmas",
+    "_meta": {
+      "title": "分割 Sigmas"
+    }
+  },
+  "322": {
+    "inputs": {
+      "attention": "comfy kitchen attention",
+      "model": [
+        "192",
+        0
+      ]
+    },
+    "class_type": "ModelAttentionBackend",
+    "_meta": {
+      "title": "ModelAttentionBackend"
+    }
+  },
+  "324": {
+    "inputs": {
+      "anything": [
+        "226",
+        1
+      ]
+    },
+    "class_type": "easy cleanGpuUsed",
+    "_meta": {
+      "title": "清理GPU占用"
+    }
+  }
+}

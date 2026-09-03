@@ -689,10 +689,6 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .permission-grid b { font-size: 13px; }
 .permission-grid small { color: var(--muted); line-height: 1.35; }
 .agent-display { display: inline-block; max-width: min(220px, 20vw); height: 34px; line-height: 34px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
-.agent-tool-group { margin: 0 0 12px; }
-.agent-tool-group-head { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; }
-.agent-tool-group-head > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-tool-group-head .group-select-all { width: 17px; height: 17px; margin: 0; padding: 0; border: 0; flex: none; accent-color: #3b82f6; cursor: pointer; }
 #agentToolScope { max-height: 320px; overflow: auto; padding: 4px 2px; }
 .skill-dir-add, .skill-install { display: flex; gap: 9px; margin-bottom: 18px; }
 .skill-dir-add input, .skill-install input[type="file"] { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }
@@ -934,4 +930,78 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   #composerWorkspaceSelect { max-width: min(150px, 55vw); }
   .lightweight-mode-toggle { justify-self: start; }
   #runtimeStatus { justify-self: start; }
+}
+
+/* ---- Agent 工具集：预设卡片 + 分类折叠选择 ---- */
+.tool-scope-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.tool-scope-meta { display: flex; align-items: center; gap: 8px; flex: none; }
+.tool-scope-meta em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--green); }
+.tool-scope-meta em.custom { color: var(--amber); }
+.tool-scope-meta code { font-size: 11px; color: var(--muted); }
+.control-button.tiny { min-height: 24px; padding: 2px 9px; font-size: 11px; border-radius: 4px; }
+
+.tool-preset-wrap { padding: 10px 10px 4px; border-bottom: 1px solid var(--line); }
+.tool-preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.tool-preset-row [hidden] { display: none; }
+.tool-preset-label { font-size: 12px; color: var(--muted); flex: none; }
+.tool-preset-select {
+  flex: 1 1 190px; min-width: 190px; max-width: 320px; height: 30px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  padding: 0 26px 0 10px; font-size: 12px;
+}
+.tool-preset-select:hover { border-color: var(--line-strong); }
+.tool-template-name {
+  flex: 1 1 150px; min-width: 150px; max-width: 200px; height: 30px;
+  padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--bg); color: var(--text); font-size: 12px;
+}
+.tool-template-name::placeholder { color: var(--muted); }
+.tool-preset-tip { margin-left: 2px; font-size: 11px; color: var(--muted); flex: none; }
+.tool-template-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.tool-template-row[hidden] { display: none; }
+.tool-template-label { font-size: 11px; color: var(--muted); flex: none; }
+.tool-template-chips { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.tool-template-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 3px 9px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface-2); color: var(--text); cursor: pointer;
+}
+.tool-template-chip:hover { border-color: var(--green); background: var(--surface); }
+.tool-template-chip b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.tool-template-chip em { font-style: normal; font-size: 10px; color: var(--muted); flex: none; }
+.tool-template-chip .tool-template-del {
+  flex: none; width: 16px; height: 16px; line-height: 1; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: var(--muted);
+  font-size: 10px; cursor: pointer;
+}
+.tool-template-chip .tool-template-del:hover { color: var(--red); background: var(--surface); }
+
+.tool-unknown-hint {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin: 0; padding: 8px 10px; border-bottom: 1px solid var(--line);
+  background: var(--amber-soft); color: var(--amber); font-size: 11px; line-height: 1.45;
+}
+.tool-unknown-hint[hidden] { display: none; }
+
+.agent-tool-scope { padding: 10px; display: grid; gap: 7px; }
+.agent-tool-group { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.agent-tool-group-head {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto;
+  align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; user-select: none;
+}
+.agent-tool-group-head:hover { background: var(--surface-2); }
+.agent-tool-group-head:focus-visible { outline: 2px solid var(--green); outline-offset: -2px; }
+.agent-tool-group-head .group-select-all { width: 16px; height: 16px; margin: 0; padding: 0; border: 0; flex: none; accent-color: #3b82f6; cursor: pointer; }
+.group-caret { display: inline-block; color: var(--muted); font-size: 10px; transition: transform .15s ease; }
+.agent-tool-group:not(.collapsed) .group-caret { transform: rotate(90deg); }
+.group-title { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-count { flex: none; font-size: 11px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; }
+.group-desc { grid-column: 2 / -1; font-size: 11px; font-weight: 400; color: var(--muted); line-height: 1.4; }
+.agent-tool-group .permission-grid { padding: 4px 10px 11px; border-top: 1px solid var(--line); }
+.agent-tool-group.collapsed .permission-grid { display: none; }
+
+@media (max-width: 520px) {
+  .tool-preset-select, .tool-template-name { flex-basis: 100%; max-width: none; }
+  .agent-tool-group-head { grid-template-columns: auto auto minmax(0, 1fr) auto; }
 }

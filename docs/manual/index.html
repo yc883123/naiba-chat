@@ -1,0 +1,943 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Naiba Chat 应用说明书 · 1.6.9 Beta</title>
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --surface: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b6b6b;
+    --line: #e6e3dc;
+    --line-strong: #cdc8bb;
+    --accent: #15815b;
+    --accent-soft: #d4ebe0;
+    --amber: #b3791a;
+    --code-bg: #f4f1ea;
+    --kbd-bg: #eee8d9;
+    --shadow: 0 1px 3px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.04);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+    line-height: 1.65; font-size: 15px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: "JetBrains Mono", "Cascadia Code", "Source Code Pro", Consolas, "Courier New", monospace;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 3px; font-size: 0.9em; }
+  pre { background: var(--code-bg); border: 1px solid var(--line); border-radius: 6px;
+    padding: 12px 14px; overflow-x: auto; font-size: 13px; line-height: 1.5; }
+  pre code { background: transparent; padding: 0; font-size: 13px; }
+  table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 14px; }
+  th, td { border: 1px solid var(--line); padding: 7px 10px; text-align: left; vertical-align: top; }
+  th { background: #f1ede2; font-weight: 600; }
+  tr:nth-child(even) td { background: #faf8f3; }
+  blockquote { border-left: 3px solid var(--accent-soft); background: #f3f8f5;
+    margin: 12px 0; padding: 8px 14px; color: #355246; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 24px 0; }
+  img { max-width: 100%; height: auto; border-radius: 4px; cursor: zoom-in; display: block; margin: 12px auto; }
+  kbd { font-family: "JetBrains Mono", Consolas, monospace; background: var(--kbd-bg);
+    border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 3px;
+    padding: 1px 6px; font-size: 12px; }
+  ul, ol { padding-left: 1.5em; }
+  li { margin: 4px 0; }
+
+  .layout { display: flex; min-height: 100vh; }
+
+  /* 侧边目录 */
+  nav.toc-nav {
+    position: sticky; top: 0; align-self: flex-start;
+    width: 260px; flex: 0 0 260px; height: 100vh; overflow-y: auto;
+    background: var(--surface); border-right: 1px solid var(--line);
+    padding: 20px 16px; font-size: 13px;
+  }
+  nav.toc-nav .brand { font-weight: 700; font-size: 15px; color: var(--accent);
+    margin-bottom: 4px; line-height: 1.3; }
+  nav.toc-nav .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  nav.toc-nav .toc { list-style: none; padding-left: 0; margin: 6px 0; }
+  nav.toc-nav .toc.toc-l1 { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
+  nav.toc-nav .toc li { margin: 2px 0; }
+  nav.toc-nav .toc a { display: block; padding: 4px 8px; color: var(--text);
+    border-left: 2px solid transparent; line-height: 1.4; }
+  nav.toc-nav .toc a:hover { background: #f1ede2; border-left-color: var(--accent-soft); text-decoration: none; }
+  nav.toc-nav .toc .toc-l1 a { font-weight: 600; color: var(--accent); }
+  nav.toc-nav .search { margin-top: 14px; }
+  nav.toc-nav .search input { width: 100%; padding: 5px 8px; font-size: 12px;
+    border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+
+  /* 主区 */
+  main { flex: 1; padding: 32px 48px 80px; max-width: 980px; }
+  main h1 { font-size: 30px; border-bottom: 2px solid var(--line); padding-bottom: 12px; margin-top: 0; }
+  main h2 { font-size: 22px; border-bottom: 1px solid var(--line); padding-bottom: 6px; margin-top: 36px;
+    scroll-margin-top: 20px; }
+  main h3 { font-size: 17px; color: var(--accent); margin-top: 24px; scroll-margin-top: 20px; }
+  main h4 { font-size: 15px; margin-top: 18px; }
+
+  /* 提示 */
+  blockquote > p:first-child { margin-top: 0; }
+  blockquote > p:last-child { margin-bottom: 0; }
+
+  /* 灯箱 */
+  .lightbox { position: fixed; inset: 0; background: rgba(20,20,20,.88); z-index: 1000;
+    display: none; align-items: center; justify-content: center; padding: 20px; }
+  .lightbox.open { display: flex; }
+  .lightbox img { max-width: 95vw; max-height: 95vh; margin: 0; cursor: zoom-out; }
+  .lightbox-close { position: fixed; top: 14px; right: 18px; background: rgba(255,255,255,.15);
+    color: #fff; border: 0; border-radius: 50%; width: 36px; height: 36px;
+    font-size: 22px; cursor: pointer; }
+
+  /* 下载 PDF 浮动按钮 */
+  a.dl-pdf {
+    position: fixed; right: 22px; bottom: 22px; z-index: 900;
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 14px;
+    padding: 10px 18px; border-radius: 999px; box-shadow: 0 4px 14px rgba(21,129,91,.35);
+  }
+  a.dl-pdf:hover { background: #126440; text-decoration: none; }
+
+  /* 响应 */
+  @media (max-width: 900px) {
+    .layout { flex-direction: column; }
+    nav.toc-nav { width: 100%; height: auto; max-height: 50vh; position: relative; }
+    main { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav class="toc-nav">
+    <div class="brand">Naiba Chat<br>应用说明书</div>
+    <div class="sub">1.6.5 Beta · Windows</div>
+    <input class="search" type="search" placeholder="搜索标题（Ctrl+F）" onfocus="this.select()">
+    <ul class="toc">
+</ul><ul class="toc toc-l1">
+<li><a href="#naiba-chat-169-beta">Naiba Chat 应用说明书（1.6.9 Beta）</a></li>
+<li><a href="#_1">阅读路径</a></li>
+<li><a href="#30-naiba-chat">十大亮点（用 30 秒了解 Naiba Chat 能干什么）</a></li>
+</ul><ul class="toc toc-l1">
+<li><a href="#1">第 1 章　三分钟跑起来</a></li>
+<li><a href="#11">1.1 它到底是什么</a></li>
+<li><a href="#12">1.2 下载、解压、双击</a></li>
+<li><a href="#13">1.3 第一次打开要做的三件事</a></li>
+<li><a href="#14-30">1.4 界面 30 秒认识</a></li>
+<li><a href="#15">1.5 你必须知道的三个开关</a></li>
+<li><a href="#1_1">① 审批三档</a></li>
+<li><a href="#2-169">② 轻量选项（1.6.9 重构）</a></li>
+<li><a href="#3">③ 深度思考</a></li>
+</ul><ul class="toc toc-l1">
+<li><a href="#2">第 2 章　一次对话能干什么</a></li>
+<li><a href="#21">2.1 普通问答</a></li>
+<li><a href="#22">2.2 让它读 / 写 / 搜文件</a></li>
+<li><a href="#23">2.3 让它看图</a></li>
+<li><a href="#24">2.4 让它执行命令</a></li>
+<li><a href="#25-http">2.5 让它发 HTTP 请求</a></li>
+<li><a href="#26">2.6 让它联网搜</a></li>
+<li><a href="#27">2.7 长任务放后台</a></li>
+<li><a href="#28">2.8 中途插话、暂停、取消</a></li>
+<li><a href="#29-token">2.9 上下文用量 &amp;amp; Token</a></li>
+<li><a href="#210-169">2.10 本轮修改文件（1.6.9 新）</a></li>
+<li><a href="#211-169">2.11 右侧文件面板（1.6.9 新）</a></li>
+<li><a href="#212">2.12 消息编辑重发 / 分支到新会话</a></li>
+</ul><ul class="toc toc-l1">
+<li><a href="#3_1">第 3 章　特色功能（重点章）</a></li>
+<li><a href="#31">3.1 一个不够就接一堆模型</a></li>
+<li><a href="#32-skill-ai">3.2 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
+<li><a href="#33-mcp-ai">3.3 MCP：给 AI 插外设</a></li>
+<li><a href="#34-comfyui">3.4 ComfyUI 自动流水线</a></li>
+<li><a href="#35-runninghub">3.5 RunningHub 云端生成</a></li>
+<li><a href="#36">3.6 并行与分身</a></li>
+<li><a href="#37">3.7 手机/局域网远程访问</a></li>
+<li><a href="#38">3.8 权限三档与安全</a></li>
+<li><a href="#39">3.9 稳如老狗</a></li>
+<li><a href="#310-169">3.10 侧栏折叠与文件面板（1.6.9 新）</a></li>
+<li><a href="#_2">侧栏折叠</a></li>
+<li><a href="#211">文件面板（在 2.11 详述）</a></li>
+</ul><ul class="toc toc-l1">
+<li><a href="#4">第 4 章　场景实战</a></li>
+<li><a href="#41">4.1 短剧/漫画批量出图</a></li>
+<li><a href="#42">4.2 读懂并改造一个代码项目</a></li>
+<li><a href="#43">4.3 批量整理资料</a></li>
+<li><a href="#44">4.4 一句话跑一条流水线</a></li>
+<li><a href="#45-skill-ai">4.5 用 Skill 把 AI 调教成领域专家</a></li>
+</ul><ul class="toc toc-l1">
+<li><a href="#5">第 5 章　设置全解</a></li>
+<li><a href="#51-api">5.1 API 供应商</a></li>
+<li><a href="#52-agent">5.2 Agent</a></li>
+<li><a href="#53">5.3 运行设置</a></li>
+<li><a href="#54">5.4 连接状态</a></li>
+<li><a href="#55">5.5 视觉</a></li>
+<li><a href="#56">5.6 联网搜索</a></li>
+<li><a href="#57-skills">5.7 Skills 管理</a></li>
+<li><a href="#58">5.8 数据与迁移</a></li>
+<li><a href="#59">5.9 软件更新</a></li>
+<li><a href="#510">5.10 对话级设置</a></li>
+<li><a href="#511">5.11 工作区</a></li>
+</ul><ul class="toc toc-l1">
+<li><a href="#6">第 6 章　常见问题与高手技巧</a></li>
+<li><a href="#61-500">6.1 模型连不上 / 报 500 / 代理冲突</a></li>
+<li><a href="#62-comfyui">6.2 ComfyUI 工作流报错</a></li>
+<li><a href="#63-mcp">6.3 MCP 工具调不到</a></li>
+<li><a href="#64">6.4 权限一直弹窗</a></li>
+<li><a href="#65">6.5 卡住了怎么办</a></li>
+<li><a href="#66">6.6 十个高手技巧</a></li>
+</ul><ul class="toc toc-l1">
+<li><a href="#_3">附录</a></li>
+<li><a href="#a">A 文件都存哪儿</a></li>
+<li><a href="#b">B 速查卡</a></li>
+<li><a href="#_4">斜杠命令</a></li>
+<li><a href="#_5">顶栏按钮</a></li>
+<li><a href="#_6">底部状态栏</a></li>
+<li><a href="#c">C 术语表</a></li>
+</ul>
+    <a class="dl-pdf" href="Naiba-Chat-手册-1.6.5.pdf" download>下载 PDF</a>
+  </nav>
+  <main class="doc">
+    <h1 id="naiba-chat-169-beta">Naiba Chat 应用说明书（1.6.9 Beta）</h1>
+<blockquote>
+<p>本说明书面向「第一次打开 Naiba Chat」的小白读者，配图全部来自真实运行界面（1.6.9 Beta · 源码模式 · 截图 2026-09-03）。</p>
+</blockquote>
+<hr>
+<h2 id="_1">阅读路径</h2>
+<ul>
+<li><strong>只想聊天</strong> → 看第 1～2 章</li>
+<li><strong>想玩花的</strong> → 重点看第 3 章</li>
+<li><strong>想查设置</strong> → 直接翻第 5 章</li>
+<li><strong>出问题</strong> → 第 6 章</li>
+</ul>
+<hr>
+<h2 id="30-naiba-chat">十大亮点（用 30 秒了解 Naiba Chat 能干什么）</h2>
+<ol>
+<li><strong>一个不够就接一堆模型</strong>：在线 8 种格式（OpenAI 兼容 / Claude / Gemini / Codex / LM Studio / Ollama / llama.cpp / Unsloth）+ 本地模型一键连。</li>
+<li><strong>Skill：给 AI 装"行业操作手册"</strong>：写小说、跑 ComfyUI、写视频提示词……用 <code>/</code> 一键把领域知识塞进对话。</li>
+<li><strong>MCP：给 AI 插外设</strong>：ComfyUI、文件、网页……只要 MCP 服务器在跑，AI 就能直接调用。</li>
+<li><strong>ComfyUI 自动流水线</strong>：批改工作流 → 批量提交 → 自动收图 → 缩略图预览 → 一句话复用到下一轮。</li>
+<li><strong>RunningHub 云端生成</strong>：没显卡也能出 420+ 类型的图、视频、音频、3D。</li>
+<li><strong>并行与分身</strong>：后台 Job + 子 Agent，任务互不阻塞，跑图的时候还能写稿。</li>
+<li><strong>手机/局域网远程访问</strong>：同 WiFi 扫码，躺床上也能用家里电脑。</li>
+<li><strong>权限三档</strong>：确认 / 自动 / 完全，按场景随时切。</li>
+<li><strong>稳如老狗</strong>：断线重连不重放、失败不丢已生成内容、SHA-256 校验更新、可版本回退。</li>
+<li><strong>🆕 1.6.9 文件面板</strong>：AI 改过的文件直接在右侧看、可编辑、可存回磁盘，<strong>改了什么一目了然</strong>。</li>
+</ol>
+<hr>
+<h1 id="1">第 1 章　三分钟跑起来</h1>
+<blockquote>
+<p><strong>读完这章你能</strong>：自己装好 Naiba Chat、配上一个能跑的模型、发第一句对话。</p>
+</blockquote>
+<h2 id="11">1.1 它到底是什么</h2>
+<p>Naiba Chat 不是聊天框，是装在你电脑上的 <strong>AI 工作台</strong>——它能跟你对话，更能直接动手：读你的文件、改你的代码、跑你的命令、上网搜资料、出图出视频。<strong>所有数据留在本地</strong>，API Key 不出机器。</p>
+<h2 id="12">1.2 下载、解压、双击</h2>
+<ol>
+<li>去 GitHub Releases 页面下载 <code>naiba-chat-1.6.9-beta-windows-x64.zip</code>。</li>
+<li><strong>解压到可写目录</strong>（桌面 / D 盘 / 工作盘都行，<strong>不要放 <code>C:\Program Files</code></strong>，需要写权限）。</li>
+<li>双击 <code>naiba-chat.exe</code>（或源码模式直接 <code>python server.py</code>）。</li>
+<li>浏览器自动打开 <code>http://127.0.0.1:8765</code>，看到主界面就成功了。</li>
+</ol>
+<h2 id="13">1.3 第一次打开要做的三件事</h2>
+<blockquote>
+<p><strong>本机访问免口令</strong>；手机/局域网访问要口令（在「连接状态」页查看）。</p>
+</blockquote>
+<ol>
+<li><strong>填一个模型</strong> → 右上角 ⚙ 设置 → 「API 供应商」→ 添加或选一个现成供应商 → 点「检查」测连通。</li>
+</ol>
+<p><img alt="API 供应商" src="images/05-settings-models.webp"></p>
+<ol start="2">
+<li>
+<p><strong>选一个 Agent</strong> → 顶栏「Agent」下拉里选「通用 Agent」/「编程」/「短剧」等。</p>
+</li>
+<li>
+<p><strong>发第一句话</strong> → 底部输入框打字 → 按 <code>Enter</code> 或点 ↑ 发送。</p>
+</li>
+</ol>
+<blockquote>
+<p><strong>没配过模型？</strong> 主界面空态里已经放了 8 个常用指令按钮（点一下就发），新手按顺序点「列出所有可用工具」试试水。</p>
+</blockquote>
+<h2 id="14-30">1.4 界面 30 秒认识</h2>
+<p><img alt="主界面" src="images/01-main-empty.webp"></p>
+<table>
+<thead>
+<tr>
+<th>区域</th>
+<th>你能干什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>顶栏左</strong></td>
+<td>展开/收起侧栏（新版可折叠）</td>
+</tr>
+<tr>
+<td><strong>顶栏中</strong></td>
+<td>切模型、切 Agent</td>
+</tr>
+<tr>
+<td><strong>顶栏右</strong></td>
+<td>任务 / Skill / MCP / 刷新 4 个按钮</td>
+</tr>
+<tr>
+<td><strong>左侧栏</strong></td>
+<td>工作区、会话、设置入口、局域网手机访问地址</td>
+</tr>
+<tr>
+<td><strong>中间聊天区</strong></td>
+<td>对话、思考块、工具块、产物、本轮修改文件、Token 用量</td>
+</tr>
+<tr>
+<td><strong>右侧文件面板</strong></td>
+<td>1.6.9 新增：AI 改过的文件在这里多标签预览/编辑</td>
+</tr>
+<tr>
+<td><strong>底部输入区</strong></td>
+<td>附件 / 深度思考 / 上下文用量环 / 发送按钮</td>
+</tr>
+<tr>
+<td><strong>底部状态栏</strong></td>
+<td>审批档位、轻量选项（工具 / Skill 独立勾选）、就绪状态</td>
+</tr>
+</tbody>
+</table>
+<h2 id="15">1.5 你必须知道的三个开关</h2>
+<h3 id="1_1">① 审批三档</h3>
+<p><img alt="对话设置 / 轻量选项" src="images/20-conversation-settings.webp"></p>
+<p>底部「审批」切到哪一档，决定 AI 跑工具要不要你点头：</p>
+<ul>
+<li><strong>确认</strong>（默认）：每次工具调用都弹「需要确认」卡片 → 你点「允许执行」才跑（<strong>最安全</strong>）。</li>
+<li><strong>自动</strong>：工作区内的操作不用问；工作区外的写操作才问。</li>
+<li><strong>完全</strong>：工具无需逐次确认（<strong>最省事，但写错可能毁文件</strong>）。</li>
+</ul>
+<h3 id="2-169">② 轻量选项（1.6.9 重构）</h3>
+<p>底部「轻量选项」两个独立勾选：</p>
+<ul>
+<li>勾选 <strong>工具</strong> → 关闭本对话的工具调用</li>
+<li>勾选 <strong>Skill</strong> → 关闭本对话的 Skill 能力</li>
+<li><strong>都不勾</strong> → 普通模式（默认）</li>
+<li>新建会话默认不自动勾（之前的「轻量对话」开关已废除）</li>
+</ul>
+<p>适用场景：纯聊天不写代码就勾工具；只想问 Skill 内容但不想让 AI 注入就勾 Skill。</p>
+<h3 id="3">③ 深度思考</h3>
+<p><img alt="深度思考菜单" src="images/18-reasoning-menu.webp"></p>
+<p>输入区右侧球形按钮，点开有 5 档：</p>
+<ul>
+<li><strong>跟随 API（自动）</strong>——按模型自身行为</li>
+<li><strong>关闭</strong>——直接答，不思考</li>
+<li><strong>低 / 中 / 高</strong>——强制思考强度</li>
+</ul>
+<p>模型支持时（DeepSeek-R1、Claude、o1/o3）才有效，否则忽略。</p>
+<hr>
+<h1 id="2">第 2 章　一次对话能干什么</h1>
+<blockquote>
+<p><strong>读完这章你能</strong>：让 AI 读你的文件、改你的代码、跑你的命令、出你的图，而且知道每一步在背后发生了什么。</p>
+</blockquote>
+<h2 id="21">2.1 普通问答</h2>
+<p>直接在输入框打字发就行。AI 拿到的是你<strong>当前会话的完整上下文</strong>（含系统提示词 + 历史消息 + Skill + 工具结果）。</p>
+<h2 id="22">2.2 让它读 / 写 / 搜文件</h2>
+<table>
+<thead>
+<tr>
+<th>你说的话</th>
+<th>AI 用什么</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>「读一下 README.md 头三行」</td>
+<td><code>read_file</code></td>
+</tr>
+<tr>
+<td>「把 build_info.json 的 version 改成 1.6.10」</td>
+<td><code>read_file</code> + <code>edit_file</code></td>
+</tr>
+<tr>
+<td>「在 docs/ 下搜包含 'TODO' 的 md」</td>
+<td><code>search_files</code> + <code>grep_files</code></td>
+</tr>
+<tr>
+<td>「列出工作区所有 png」</td>
+<td><code>list_directory</code></td>
+</tr>
+<tr>
+<td>「在 assets/ 下创建 cover.jpg 占位」</td>
+<td><code>write_file</code></td>
+</tr>
+<tr>
+<td>「把这两个文件合成一个」</td>
+<td><code>read_file</code> + <code>write_file</code></td>
+</tr>
+</tbody>
+</table>
+<p>所有写操作默认是「<strong>工作区内允许、工作区外询问</strong>」（取决于审批档位）。</p>
+<h2 id="23">2.3 让它看图</h2>
+<ul>
+<li><strong>直接拖到输入框</strong> → 自动作为本轮附件</li>
+<li><strong>让它看自己之前生成的图</strong> → 用 <code>/ref</code> 或缩略图右下角 ↩ 复用按钮</li>
+<li><strong>让它看文件夹里所有 png</strong> → 「列出 png」「按顺序看」</li>
+</ul>
+<p>视觉模型可设：在「设置 → 视觉」里挑供应商，可留空走 OVH 免费链兜底。</p>
+<p><img alt="视觉设置" src="images/09-settings-vision.webp"></p>
+<h2 id="24">2.4 让它执行命令</h2>
+<p>Naiba Chat <strong>只用一个工具</strong>：<code>pwsh</code>（PowerShell 7+）。所有系统操作都走它。</p>
+<pre><code>&quot;在 D:\naiba-chat 下跑 pytest，失败的话把 trace 给我看&quot;
+</code></pre>
+<p><strong>注意</strong>：1.6.5 之后不再有 <code>bash</code> 工具，跨平台需求请用 <code>pwsh</code> 或 <code>http_request</code>。</p>
+<h2 id="25-http">2.5 让它发 HTTP 请求</h2>
+<p><code>http_request</code> 工具，GET/POST/PUT/DELETE 都行，可设 header / body / 超时。</p>
+<pre><code>&quot;调 https://api.github.com/repos/anthropics/claude-code/releases/latest 拿最新 release 信息&quot;
+</code></pre>
+<h2 id="26">2.6 让它联网搜</h2>
+<p><code>web_search</code> 工具（需在「设置 → 联网搜索」配置 API profile）。</p>
+<pre><code>&quot;搜一下 RunningHub 最新支持的视频生成端点&quot;
+</code></pre>
+<p>搜索结果会作为「联网来源」折叠块附在消息末尾，<strong>当素材引用，别当真理</strong>。</p>
+<h2 id="27">2.7 长任务放后台</h2>
+<p>对耗时任务（出图、出视频、跑大命令）AI 会自动用 <code>run_in_background</code> 启动后台 Job，按 <code>job_output</code> 轮询。</p>
+<blockquote>
+<p>顶栏「任务」按钮随时能看所有后台任务的历史和状态。</p>
+</blockquote>
+<p><img alt="异步任务面板" src="images/15-tasks-dialog.webp"></p>
+<p><code>run_in_background</code> / <code>job_output</code> / <code>job_status</code> / <code>job_wait</code> / <code>job_kill</code> 五个工具覆盖完整生命周期。</p>
+<h2 id="28">2.8 中途插话、暂停、取消</h2>
+<ul>
+<li><strong>插话</strong>：AI 跑着时，你在输入框打字回车 → AI 接住你这条引导，把当前步骤合并（用于纠偏）。</li>
+<li><strong>暂停</strong>：消息下面的「暂停」按钮 → 停止当前轮，<strong>已生成内容保留</strong>。</li>
+<li><strong>取消</strong>：右上角 ✕ → 标记当前轮为「中止」，已生成内容同样保留。</li>
+<li><strong>停止级联子任务</strong>：取消父任务会自动 kill 所有子任务。</li>
+</ul>
+<h2 id="29-token">2.9 上下文用量 &amp; Token</h2>
+<p><img alt="上下文用量" src="images/19-context-usage.webp"></p>
+<ul>
+<li><strong>彩色环</strong>（输入区右）：上下文用满的百分比，越满越红。</li>
+<li><strong>点开看详情</strong>：本轮消耗（输入 / 输出 / 缓存命中率 / 请求数）。</li>
+<li><strong>缓存命中率</strong>：70% 以上是常态；突然掉到 0% 说明切了模型或改了系统提示词，DeepSeek 等支持前缀缓存的模型会贵一点。</li>
+</ul>
+<h2 id="210-169">2.10 本轮修改文件（1.6.9 新）</h2>
+<p>每轮结束后，AI 用 <code>write_file</code> / <code>edit_file</code> 改过的文件会在消息末尾列出来：</p>
+<p><img alt="本轮修改文件" src="images/21-chat-filechanges.webp"></p>
+<blockquote>
+<p>「本轮修改文件（新建 1 · 编辑 1）」下面两个 chip：<code>新 _demo-产品说明.md</code>、<code>改 build_html.py</code></p>
+</blockquote>
+<ul>
+<li><strong><code>新</code></strong> = <code>write_file</code> 创建</li>
+<li><strong><code>改</code></strong> = <code>edit_file</code> 改动</li>
+<li><strong>多媒体产物</strong>（图片 / 视频 / 音频）仍走原附件卡片，<strong>不进 chip</strong>（避免重复）</li>
+<li><strong>点文件名</strong> → 右侧文件面板打开（见 2.11）</li>
+<li><strong>中止/失败的轮次</strong>只要写盘成功也保留记录</li>
+</ul>
+<h2 id="211-169">2.11 右侧文件面板（1.6.9 新）</h2>
+<p>点 chip 或顶栏「文件 N」按钮 → 右侧文件面板打开，多标签管理：</p>
+<p><img alt="右侧文件面板" src="images/03-file-panel.webp"></p>
+<table>
+<thead>
+<tr>
+<th>文件类型</th>
+<th>行为</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Markdown</strong></td>
+<td>直接渲染（带 TOC / 表格 / 代码块）</td>
+</tr>
+<tr>
+<td><strong>文本</strong>（.py / .json / .txt 等）</td>
+<td>可手动编辑 → <code>Ctrl/⌘+S</code> 或 <code>Ctrl/⌘+Enter</code> 保存回磁盘，<code>Esc</code> 取消</td>
+</tr>
+<tr>
+<td><strong>图片</strong></td>
+<td>直接预览，点开是大图</td>
+</tr>
+<tr>
+<td><strong>二进制</strong>（.pdf / .zip 等）</td>
+<td>给出大小、路径、明确提示「无法预览」</td>
+</tr>
+</tbody>
+</table>
+<p><strong>安全边界</strong>：面板只允许看<strong>本会话改动过</strong>或<strong>位于会话工作区内</strong>的文件，「保存写回」要求同时满足两者。路径越界一律拒绝（不能当任意文件读写入口用）。</p>
+<p>收起面板后顶栏出现「文件 N」按钮，记录仍在：</p>
+<p><img alt="文件面板收起后" src="images/04-file-panel-closed.webp"></p>
+<h2 id="212">2.12 消息编辑重发 / 分支到新会话</h2>
+<ul>
+<li><strong>点自己的消息</strong> → 编辑文本 → 回车 → 从这条消息重开（<strong>保留之前的附件和上下文</strong>）。</li>
+<li><strong>消息右下角「分支」按钮</strong> → 从该点分叉到新会话，旧会话保留。</li>
+</ul>
+<hr>
+<h1 id="3_1">第 3 章　特色功能（重点章）</h1>
+<blockquote>
+<p><strong>读完这章你能</strong>：把 Naiba Chat 调成你顺手的样子，知道哪些功能可以替你省 1 小时/天。</p>
+</blockquote>
+<p>每节固定结构：<strong>痛点 → 30 秒试 → 能玩到什么程度 → 注意</strong>。</p>
+<h2 id="31">3.1 一个不够就接一堆模型</h2>
+<p><strong>痛点</strong>：单一模型又慢又贵还偏科。能不能 A 写代码 / B 写文案 / C 出图？</p>
+<p><strong>30 秒试</strong>：设置 → API 供应商 → 添加（在线 / 本地 8 种格式任选）→ 选供应商 → 顶栏「模型」切着用。</p>
+<p><img alt="API 供应商" src="images/05-settings-models.webp"></p>
+<p><strong>能玩到什么程度</strong>：
+- <strong>在线 8 种格式</strong>：OpenAI 兼容（OpenAI / DeepSeek / Grok）、Codex、Claude、Gemini、LM Studio、Ollama、llama.cpp、Unsloth。
+- <strong>本地模型一键连</strong>：LM Studio / Ollama / llama.cpp 都可，<strong>侧栏 / 顶栏出现「卸载模型」按钮</strong>可把本地显存腾出来。
+- 「<strong>检查</strong>」按钮秒测连通 + 图片能力 + 工具调用能力。
+- 每个供应商独立设置温度、上下文、max_output。</p>
+<p><strong>注意</strong>：切换模型不影响会话历史，但<strong>切 Agent 会改首条消息的工具集</strong>（首轮注入、不可改）。</p>
+<h2 id="32-skill-ai">3.2 Skill：给 AI 装"行业操作手册"</h2>
+<p><strong>痛点</strong>：通用 AI 不懂你的行业术语、不熟你常用的工作流。</p>
+<p><strong>30 秒试</strong>：输入 <code>/</code> 弹窗 → 选「cangjie」（拆书 Skill）→ 直接对话「把这段小说拆成 12 集」。</p>
+<p><img alt="Skill 快速引用" src="images/14-skill-refs.webp"></p>
+<p><strong>能玩到什么程度</strong>：
+- <strong>输入 <code>/</code> 弹窗</strong>选已装 Skill 注入；<strong><code>↑↓</code> 选、<code>Enter</code> 确认</strong>。
+- <strong>首轮注入</strong>（system prompt）/ <strong>后续追加</strong>（末尾消息）智能切换，保持 DeepSeek 前缀缓存稳定。
+- <strong>安装 Skill</strong>（点空态「安装 Skill」按钮）→ 支持 .zip / .md / 整个文件夹。
+- <strong>编辑 Skill</strong>（点空态「编辑 Skill」按钮）→ AI 会用 <code>inspect_installed_skill</code> 定位并修改。
+- <strong>隐藏 / 恢复</strong>：在「设置 → Skills 管理」里。</p>
+<p><img alt="Skills 管理" src="images/11-settings-skills.webp"></p>
+<p><strong>重要概念</strong>：</p>
+<blockquote>
+<p><strong>Skill 只是说明书，不是开关。</strong> 缺 Skill 时，已授权的通用 Tool / MCP 仍可用；Skill 只指导调用方式，<strong>不注册服务、不扩展权限、不决定 NaibaChat 能力</strong>。</p>
+</blockquote>
+<h2 id="33-mcp-ai">3.3 MCP：给 AI 插外设</h2>
+<p><strong>痛点</strong>：AI 不能直接调 ComfyUI、数据库、第三方 API。</p>
+<p><strong>30 秒试</strong>：安装 ComfyUI 的 MCP 服务器（<code>npx -y @comfyorg/comfy-mcp</code>）→ 设置 → 连接状态里看到「comfy-mcp」就绪 → 直接对话「用 comfy 出 6 张封面」。</p>
+<p><img alt="连接状态" src="images/08-settings-connections.webp"></p>
+<p><strong>能玩到什么程度</strong>：
+- <strong>自动连接</strong> + <strong>周期重试</strong>，挂了自动重连。
+- <strong>手机/局域网访问地址 + 口令</strong> 也在这一页。
+- 一个 MCP 服务器可挂载多个工具（如 comfy-mcp 提供工作流查询/出图/状态查询/历史等）。</p>
+<p><strong>注意</strong>（<strong>最常见踩坑</strong>）：</p>
+<blockquote>
+<p><strong>新加的 MCP 必须重开会话才生效</strong>。改完 MCP 配置 → 关掉当前会话 → 重新开 → MCP 工具才会进可用集。</p>
+<p>看到上图里「comfy-mcp」红色「错误」状态，先看是不是命令路径不对/服务没起。</p>
+</blockquote>
+<h2 id="34-comfyui">3.4 ComfyUI 自动流水线</h2>
+<p><strong>痛点</strong>：跑 ComfyUI 工作流要切窗口、改参数、收图、改名、传图……繁琐。</p>
+<p><strong>30 秒试</strong>（前提：装好 ComfyUI + comfy-mcp）：</p>
+<pre><code>&quot;用当前目录下的 cover_v2.json 出 12 张 1080x1440 封面，seed 1-12&quot;
+</code></pre>
+<p><strong>能玩到什么程度</strong>：
+- <strong>批改本地工作流再引用路径</strong>，别把大 JSON 贴进对话。
+- 产物自动 <code>data/generated/&lt;conversation&gt;/image_NNNNN.webp</code>，自动生成 500KB 缩略图。
+- 聊天里直接预览 → 点开大图 → 右键复制到剪贴板 → ↩ 复用按钮发到下一轮。
+- 后台任务面板实时显示提交 / 排队 / 完成进度。</p>
+<p><strong>注意</strong>：
+- <strong>UI JSON ≠ API JSON</strong>：UI 拖拽的连线图直接保存不能喂 API。导出时选「API 格式」。
+- ComfyUI 自身<strong>不传图</strong>给模型，AI 看的是产物缩略图（必要时调视觉模型）。</p>
+<h2 id="35-runninghub">3.5 RunningHub 云端生成</h2>
+<p><strong>痛点</strong>：本地没显卡，ComfyUI 跑不动。</p>
+<p><strong>30 秒试</strong>：装 <code>runninghub</code> Skill → 对话「用 runninghub 的文生图出 6 张古风封面」。</p>
+<p><strong>能玩到什么程度</strong>：
+- 不用显卡，420+ 端点：文生图、图生视频、TTS、音乐、3D、图片放大、跑任意 AI 应用。
+- 切换站点（国内 / 海外）在「设置 → Skills 管理」里。</p>
+<p><strong>注意</strong>：需要你自己的 RunningHub 账号和额度。</p>
+<h2 id="36">3.6 并行与分身</h2>
+<ul>
+<li><strong>后台 Job</strong>：<code>run_in_background</code> 跑长任务，不阻塞主对话。</li>
+<li><strong>子 Agent</strong>：<code>subagent</code> 工具起一个独立 Agent 干另一件事，结束后回报。</li>
+</ul>
+<p>适用：一边跑图、一边写文档；一边跑分析、一边查资料。</p>
+<h2 id="37">3.7 手机/局域网远程访问</h2>
+<p><strong>痛点</strong>：在沙发上不想开电脑，但想让家里的 Naiba Chat 跑点啥。</p>
+<p><strong>30 秒试</strong>：底部状态栏 / 侧栏底部「手机访问」按钮 → 复制带口令和 IP 的链接 → 同一 WiFi 的手机浏览器打开。</p>
+<p><img alt="移动端主界面" src="images/25-mobile-main.webp"></p>
+<p><strong>能玩到什么程度</strong>：
+- 手机浏览器完整功能（聊天、设置、产物预览）。
+- 移动端布局自动单列、输入区自适应。
+- 局域网 IP 段（一般是 <code>192.168.x.x</code>）+ 6 位访问口令。</p>
+<p><strong>注意</strong>：外网访问需要内网穿透（参考 <code>lighthouse-frp-tunnel</code> 技能）。</p>
+<h2 id="38">3.8 权限三档与安全</h2>
+<ul>
+<li>对话、设置、附件、任务状态<strong>全部存本地</strong>，不出你的机器。</li>
+<li>文件预览只允许工作区和受管理数据目录（<code>data/uploads</code>、<code>data/generated</code>）。</li>
+<li>局域网访问必须口令；仅本机访问时不要口令。</li>
+<li><strong>API Key 不出机器</strong>——所有在线模型调用都从你的电脑直接发到供应商，不经中转。</li>
+</ul>
+<p><img alt="连接状态" src="images/08-settings-connections.webp"></p>
+<h2 id="39">3.9 稳如老狗</h2>
+<ul>
+<li><strong>断线重连</strong>不重复回放：网络抖一下，不会把同一段响应重发两次。</li>
+<li><strong>失败不丢已生成内容</strong>：模型报错，已经写出的部分完整保留。</li>
+<li><strong>3 秒看门狗</strong>：超时自动停，资源不卡。</li>
+<li><strong>停止级联子任务</strong>：父任务停 → 子任务全部 kill。</li>
+<li><strong>更新带 SHA-256 校验</strong>：下载完先校哈希再替换，损坏直接拒绝。</li>
+<li><strong>可版本回退</strong>：更新面板支持「选历史版本 → 一键回退」。</li>
+</ul>
+<p><img alt="软件更新" src="images/13-settings-updates.webp"></p>
+<h2 id="310-169">3.10 侧栏折叠与文件面板（1.6.9 新）</h2>
+<h3 id="_2">侧栏折叠</h3>
+<p><img alt="侧栏折叠" src="images/02-sidebar-collapsed.webp"></p>
+<ul>
+<li>桌面端：侧栏顶部的 ◀ 按钮折叠 / 聊天区左上角的 ▶ 按钮展开，<strong>状态记忆</strong>。</li>
+<li>移动端：左上角 ☰ 按钮从左侧滑出抽屉。</li>
+<li>折叠后<strong>聊天区显著变宽</strong>，看长正文 / 大代码块舒服很多。</li>
+</ul>
+<h3 id="211">文件面板（在 2.11 详述）</h3>
+<blockquote>
+<p>1.6.9 最值钱的特性：AI 改了什么、改得对不对，<strong>一眼可查、随手可改</strong>。</p>
+</blockquote>
+<hr>
+<h1 id="4">第 4 章　场景实战</h1>
+<blockquote>
+<p><strong>读完这章你能</strong>：把第 3 章的能力翻译成「我今天就用的场景」。</p>
+</blockquote>
+<h2 id="41">4.1 短剧/漫画批量出图</h2>
+<p>两条路：
+- <strong>本地 ComfyUI</strong>（你有显卡）→ 3.4 节
+- <strong>云端 RunningHub</strong>（没显卡）→ 3.5 节</p>
+<p><strong>通用流程</strong>：
+1. 工作区建好，参考图、风格参考放进去。
+2. 提示词模板放 Skill 里（参考 <code>h3-prompt-writing</code>）。
+3. AI 改本地工作流（标记哪些是占位参数）→ 批改 → 提交。
+4. 产物自动进 <code>data/generated</code>，缩略图在聊天里。
+5. 看效果，AI 继续改 prompt，再批跑。</p>
+<p><strong>可直接复制的提示词</strong>：</p>
+<blockquote>
+<p>「用当前工作区的 cover_v2.json 出 12 张 1080x1440 古风竖构图封面，seed 1-12，人物参考用 reference_sheet.png。出完用「本轮修改」列表给我看哪些参数改过。」</p>
+</blockquote>
+<h2 id="42">4.2 读懂并改造一个代码项目</h2>
+<pre><code>&quot;读 D:\my-project 下 main.py 和 requirements.txt，
+告诉我这个项目在做什么、依赖什么、入口在哪。
+然后把 main.py 里的硬编码路径改成支持环境变量。&quot;
+</code></pre>
+<p>AI 会先 <code>read_file</code> 看 → <code>search_files</code> 查相关引用 → <code>edit_file</code> 改 → 文件面板里你能直接看 diff 改回。</p>
+<h2 id="43">4.3 批量整理资料</h2>
+<pre><code>&quot;把 D:\桌面\inbox 下所有 pdf 按年月重命名（YYYYMM_原名.pdf），
+建个 README.md 列出改名清单。&quot;
+</code></pre>
+<p>适合：下载文件夹归类、扫描件整理、合同/发票归档。</p>
+<h2 id="44">4.4 一句话跑一条流水线</h2>
+<pre><code>&quot;读 E:\reports 下的 50 份 csv，统计每个用户的总消费，
+按消费降序输出到 E:\reports\summary.csv，前 10 名加颜色标红。&quot;
+</code></pre>
+<p>AI 自己拆步骤：列文件 → 读 → 聚合 → 写。</p>
+<h2 id="45-skill-ai">4.5 用 Skill 把 AI 调教成领域专家</h2>
+<ul>
+<li><strong>cangjie</strong>：拆小说 → 短剧分集</li>
+<li><strong>h3-prompt-writing / h3-text-to-promptv2</strong>：把一段文本/剧情写成 MiniMax H3 视频提示词</li>
+<li><strong>comfyui-shortdrama</strong>：ComfyUI 短剧工作流专精</li>
+<li><strong>shortdramav2-rh</strong>：RunningHub 上的短剧工作流</li>
+</ul>
+<p>用 <code>/</code> 引用 Skill 后，AI 输出的就是该领域的标准格式，不用每次都交代。</p>
+<hr>
+<h1 id="5">第 5 章　设置全解</h1>
+<blockquote>
+<p><strong>每个 tab 一节，按页面顺序排</strong>。</p>
+</blockquote>
+<h2 id="51-api">5.1 API 供应商</h2>
+<p><img alt="API 供应商" src="images/05-settings-models.webp"></p>
+<p><strong>左侧两个子 tab</strong>：在线 API / 本地 API。</p>
+<ul>
+<li><strong>添加</strong>：点「添加」→ 填「供应商名称」「API URL」「API Key」（<strong>留空保留原值</strong>）→ 选「请求格式」。</li>
+<li><strong>请求格式 8 种</strong>：见 3.1 节。</li>
+<li><strong>「检查」按钮</strong>：测连通 + 测图片能力（多模态） + 测工具调用。</li>
+<li><strong>温度 / 上下文 / 最大输出</strong>：每个供应商独立。</li>
+<li><strong>删除</strong>：红色「删除」按钮（<strong>不可恢复</strong>）。</li>
+</ul>
+<h2 id="52-agent">5.2 Agent</h2>
+<p><img alt="Agent 设置" src="images/06-settings-agent.webp"></p>
+<ul>
+<li><strong>6 个实例</strong>：通用 / 编程 / 短剧 + 自建的几个。</li>
+<li><strong>新建 Agent</strong>：填名 + 系统提示词 + 工具集。</li>
+<li><strong>关键规则</strong>：<strong>工具集在首条消息固化，后续轮不可改</strong>。</li>
+<li>切换 Agent 顶栏会自动追加预设 Skill 的 <code>/ref</code> 引用（去重）。</li>
+</ul>
+<h2 id="53">5.3 运行设置</h2>
+<p><img alt="运行设置" src="images/07-settings-runtime.webp"></p>
+<ul>
+<li><strong>命令超时</strong>（仅管工具/命令，不管模型响应）</li>
+<li><strong>原图上传</strong>（关闭则压缩后传）</li>
+<li><strong>上传最大像素 / 缩略图尺寸 / 缓存清理</strong>（128MB 触发）</li>
+</ul>
+<h2 id="54">5.4 连接状态</h2>
+<p><img alt="连接状态" src="images/08-settings-connections.webp"></p>
+<p>上半：MCP 列表（绿点已就绪 / 红色错误 / 灰色未启用）。下半：手机访问地址 + 访问口令 + 局域网 URL。</p>
+<h2 id="55">5.5 视觉</h2>
+<p><img alt="视觉" src="images/09-settings-vision.webp"></p>
+<ul>
+<li><strong>视觉供应商</strong>：留空 = 走 OVH 免费链兜底</li>
+<li><strong>自动路由</strong>：开了之后根据用户上传自动选视觉模型</li>
+<li><strong>超时 / 最大图片数</strong>：8 张默认</li>
+</ul>
+<h2 id="56">5.6 联网搜索</h2>
+<p><img alt="联网搜索" src="images/10-settings-search.webp"></p>
+<ul>
+<li>搜索 API profile（多个可配）</li>
+<li>搜索结果当素材引用，<strong>别当真理</strong></li>
+</ul>
+<h2 id="57-skills">5.7 Skills 管理</h2>
+<p><img alt="Skills 管理" src="images/11-settings-skills.webp"></p>
+<ul>
+<li>左侧：已装 Skill 列表 + 启用/隐藏切换。</li>
+<li>右侧：「已隐藏 Skill」分区。</li>
+<li>装新 Skill → 点「安装 Skill」按钮或拖 .zip / .md。</li>
+</ul>
+<p><img alt="导入 Skill" src="images/16-skill-import.webp"></p>
+<h2 id="58">5.8 数据与迁移</h2>
+<p><img alt="数据与迁移" src="images/12-settings-datamigration.webp"></p>
+<ul>
+<li>数据库版本 / 数据目录 / 当前 Skills 目录 / 健康状态 / 已应用迁移 / 备份位置。</li>
+<li>「备份」一键压缩 <code>data/</code> 到 <code>backups/</code>，迁移前必做。</li>
+</ul>
+<h2 id="59">5.9 软件更新</h2>
+<p><img alt="软件更新" src="images/13-settings-updates.webp"></p>
+<ul>
+<li><strong>EXE 模式</strong>：自动检查 → 下载 → SHA-256 校验 → 提示重启。</li>
+<li><strong>源码模式</strong>（你现在用的）：<strong>不支持一键更新</strong>，需 <code>git pull --ff-only</code> 然后重启服务。</li>
+<li>目标版本下拉可选历史版本 + 回退。</li>
+</ul>
+<h2 id="510">5.10 对话级设置</h2>
+<p><img alt="对话设置" src="images/20-conversation-settings.webp"></p>
+<p>侧栏会话行 hover 出 ⚙ 按钮 → 点开：</p>
+<ul>
+<li><strong>对话名称</strong>（留空自动用首条消息命名）</li>
+<li><strong>系统提示词</strong>（只作用于本对话）</li>
+<li><strong>流式输出</strong>（关了就是一次性返回）</li>
+<li><strong>清空对话</strong>（红按钮，<strong>不可恢复</strong>）</li>
+</ul>
+<h2 id="511">5.11 工作区</h2>
+<p><img alt="工作区选择" src="images/17-workspace-dialog.webp"></p>
+<ul>
+<li>工作区 = AI 可读写的根目录（<strong>安全边界</strong>）。</li>
+<li>在设置 → API 供应商下方的「工作区」或底部「未分组」下拉添加。</li>
+<li>支持直接选目录 / 浏览 / 上级跳转。</li>
+</ul>
+<hr>
+<h1 id="6">第 6 章　常见问题与高手技巧</h1>
+<h2 id="61-500">6.1 模型连不上 / 报 500 / 代理冲突</h2>
+<ul>
+<li>「检查」按钮能告诉你<strong>网络层 vs API Key vs 路径</strong>是哪一层错。</li>
+<li>国内访问海外供应商常需开系统代理；Naiba Chat 不内置代理。</li>
+<li>DeepSeek 报 500 大概率是触发了速率限制，<strong>等 60 秒</strong>再试。</li>
+</ul>
+<h2 id="62-comfyui">6.2 ComfyUI 工作流报错</h2>
+<ul>
+<li><strong>UI JSON ≠ API JSON</strong>：UI 拖出来的图，导出时<strong>必须</strong>选「API 格式」再保存。</li>
+<li>报错 <code>Prompt outputs failed validation</code>：节点连线断了，重开 UI 检查。</li>
+<li>comfy-mcp 状态红色：见 3.3 节。</li>
+</ul>
+<h2 id="63-mcp">6.3 MCP 工具调不到</h2>
+<p><strong>新加的 MCP 必须重开会话才生效。</strong> 配完 → 关当前会话 → 重新开。</p>
+<h2 id="64">6.4 权限一直弹窗</h2>
+<p>审批档位从「确认」切到「自动」（工作区内免问）。完全不用问就用「完全」档（<strong>慎用</strong>）。</p>
+<h2 id="65">6.5 卡住了怎么办</h2>
+<ol>
+<li>消息下方「暂停」按钮。</li>
+<li>看「任务」面板有没有跑死的后台任务 → 杀掉。</li>
+<li>看上下文用量环是不是 100% → 让 AI 总结压缩。</li>
+<li>实在不行重开会话（<strong>会话内容会保留</strong>）。</li>
+</ol>
+<h2 id="66">6.6 十个高手技巧</h2>
+<ol>
+<li><strong><code>↑↓</code> 选 Skill</strong>、<strong><code>Enter</code> 发送</strong>、<strong><code>Shift+Enter</code> 换行</strong>。</li>
+<li><strong>运行中 <code>Enter</code> 插话</strong>（引导合并到当前轮）。</li>
+<li><strong><code>Ctrl+Enter</code> 全部引导</strong>（取消当前轮 + 把引导作为新轮发）。</li>
+<li><strong>大图右键复制到剪贴板</strong>（CF_DIB 失败回退到系统剪贴板）。</li>
+<li><strong>消息分支</strong>（点自己消息「分支」按钮）→ 新会话接着干。</li>
+<li><strong>Token 环判断缓存命中</strong>：掉到 0% 提示「可能改了系统提示词」。</li>
+<li><strong>自定义指令按钮</strong>：空态左下角 <code>+</code> 添加常用指令（保存到本地）。</li>
+<li><strong>数据目录备份再升级</strong>：设置 → 数据与迁移 → 备份。</li>
+<li><strong>Skill 引用后改输入框</strong>（<code>/ref</code> 在框内）→ 引用会随编辑保留。</li>
+<li><strong>手机扫码直连</strong>：侧栏底部点「手机访问」按钮复制 URL。</li>
+</ol>
+<hr>
+<h1 id="_3">附录</h1>
+<h2 id="a">A 文件都存哪儿</h2>
+<pre><code>D:\naibachatdata\               ← 数据根目录（在 config.json 配）
+├── config.json                 ← 主配置
+├── conversations.db            ← 会话数据库
+├── uploads\                    ← 你上传的附件
+├── generated\                  ← AI 生成的产物（缩略图 + 原图）
+│   └── &lt;conversation-id&gt;\
+│       ├── image_00000.webp    ← 原图
+│       ├── image_00000_thumb.webp ← 缩略图
+│       └── video_00000.mp4
+├── skill_history\              ← Skill 引用历史
+├── backups\                    ← 备份（zip）
+└── logs\                       ← 运行日志
+
+D:\naiba-chat\                  ← 项目根（可改）
+└── skills\                     ← 装在本项目的 Skill
+D:\skills\                      ← 用户级 Skill（可选）
+</code></pre>
+<h2 id="b">B 速查卡</h2>
+<h3 id="_4">斜杠命令</h3>
+<table>
+<thead>
+<tr>
+<th>命令</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/</code></td>
+<td>弹 Skill 列表</td>
+</tr>
+<tr>
+<td><code>/skill-name</code></td>
+<td>引用指定 Skill</td>
+</tr>
+<tr>
+<td><code>↑↓ + Enter</code></td>
+<td>选择 Skill</td>
+</tr>
+<tr>
+<td><code>Enter</code></td>
+<td>发送消息</td>
+</tr>
+<tr>
+<td><code>Shift+Enter</code></td>
+<td>换行</td>
+</tr>
+<tr>
+<td><code>Esc</code></td>
+<td>关闭弹窗 / 取消编辑 / 关文件面板</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_5">顶栏按钮</h3>
+<table>
+<thead>
+<tr>
+<th>按钮</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>任务</td>
+<td>看所有后台 Job</td>
+</tr>
+<tr>
+<td>Skill</td>
+<td>已选 Skill 列表</td>
+</tr>
+<tr>
+<td>MCP</td>
+<td>MCP 状态</td>
+</tr>
+<tr>
+<td>文件 N</td>
+<td>重新打开文件面板</td>
+</tr>
+<tr>
+<td>刷新</td>
+<td>整页 reload（内嵌窗口 F5 失效时用）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_6">底部状态栏</h3>
+<table>
+<thead>
+<tr>
+<th>控件</th>
+<th>默认</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>审批 确认</td>
+<td>✓</td>
+<td>每次工具调用都问</td>
+</tr>
+<tr>
+<td>审批 自动</td>
+<td></td>
+<td>工作区内自动</td>
+</tr>
+<tr>
+<td>审批 完全</td>
+<td></td>
+<td>工具不确认</td>
+</tr>
+<tr>
+<td>轻量 工具</td>
+<td>☐</td>
+<td>勾选关闭工具能力</td>
+</tr>
+<tr>
+<td>轻量 Skill</td>
+<td>☐</td>
+<td>勾选关闭 Skill 能力</td>
+</tr>
+</tbody>
+</table>
+<h2 id="c">C 术语表</h2>
+<table>
+<thead>
+<tr>
+<th>术语</th>
+<th>一句话 + 比喻</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Agent</strong></td>
+<td>角色设定 + 工具集 + 系统提示词。<strong>比喻</strong>：员工岗。</td>
+</tr>
+<tr>
+<td><strong>Skill</strong></td>
+<td>给 Agent 的"行业培训手册"。<strong>比喻</strong>：岗位操作手册。</td>
+</tr>
+<tr>
+<td><strong>MCP</strong></td>
+<td>Agent 能调用的外部服务接口。<strong>比喻</strong>：员工桌上的电话。</td>
+</tr>
+<tr>
+<td><strong>Tool</strong></td>
+<td>NaibaChat 内置的能力（读文件、跑命令等）。<strong>比喻</strong>：员工的手。</td>
+</tr>
+<tr>
+<td><strong>Job</strong></td>
+<td>后台跑着的任务。<strong>比喻</strong>：员工出去跑外勤。</td>
+</tr>
+<tr>
+<td><strong>工作区</strong></td>
+<td>AI 能读写的目录根，安全边界。<strong>比喻</strong>：员工能进的办公室。</td>
+</tr>
+<tr>
+<td><strong>审批档</strong></td>
+<td>AI 跑工具要不要你点头的开关。<strong>比喻</strong>：出门要不要老板签字。</td>
+</tr>
+<tr>
+<td><strong>本轮修改文件</strong></td>
+<td>一轮对话里 AI 写盘的所有文件。<strong>比喻</strong>：本轮会议纪要。</td>
+</tr>
+<tr>
+<td><strong>文件面板</strong></td>
+<td>右侧多标签的文件预览/编辑器。<strong>比喻</strong>：桌上放着的文件。</td>
+</tr>
+<tr>
+<td><strong>缓存命中率</strong></td>
+<td>DeepSeek 等模型前缀缓存的命中比例。<strong>比喻</strong>：省钱的程度。</td>
+</tr>
+<tr>
+<td><strong>视觉路由</strong></td>
+<td>根据图片自动挑视觉模型。<strong>比喻</strong>：分诊台。</td>
+</tr>
+<tr>
+<td><strong>上下文固化</strong></td>
+<td>Agent 工具集在首条消息固定。<strong>比喻</strong>：上岗后不能改工种。</td>
+</tr>
+</tbody>
+</table>
+<hr>
+<blockquote>
+<p><strong>版本</strong>：1.6.9 Beta · 截图 2026-09-03
+<strong>项目仓库</strong>：https://github.com/yourname/naiba-chat
+<strong>反馈</strong>：设置 → 数据与迁移页底部「问题反馈」入口</p>
+</blockquote>
+  </main>
+</div>
+<div class="lightbox" id="lb" onclick="document.getElementById('lb').classList.remove('open')">
+  <button class="lightbox-close" aria-label="关闭">×</button>
+  <img id="lb-img" alt="">
+</div>
+<script>
+  document.querySelectorAll('main img').forEach((img) => {
+    img.addEventListener('click', () => {
+      const lb = document.getElementById('lb');
+      document.getElementById('lb-img').src = img.src;
+      lb.classList.add('open');
+    });
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.getElementById('lb').classList.remove('open');
+  });
+</script>
+</body>
+</html>

@@ -408,7 +408,28 @@
                 <div class="skill-list" id="agentSkillList"></div>
               </div>
               <div class="agent-skills">
-                <div class="agent-skills-head"><span><b>工具集</b><small>该 Agent 启用的工具（会话启动时固化，不可中途更改）</small></span></div>
+                <div class="agent-skills-head tool-scope-head">
+                  <span><b>工具集</b><small>该 Agent 启用的工具（会话启动时固化，不可中途更改）</small></span>
+                  <span class="tool-scope-meta">
+                    <em id="agentToolPresetState">当前：自定义</em>
+                    <code id="agentToolCount">已选 0 / 0 个工具</code>
+                    <button type="button" class="control-button tiny" id="toggleAllToolGroups">展开全部</button>
+                  </span>
+                </div>
+                <div class="tool-preset-wrap">
+                  <div class="tool-preset-row">
+                    <span class="tool-preset-label">工具预设</span>
+                    <select id="agentToolPresetSelect" class="tool-preset-select" title="选一个预设立即套用；手动勾选下方工具后即变为「自定义」，可把组合存成模板，下次一键复刻"></select>
+                    <input id="agentToolTemplateName" type="text" maxlength="24" placeholder="模板名（留空自动命名）" hidden>
+                    <button type="button" class="control-button tiny" id="agentToolTemplateSave" hidden>存为模板</button>
+                    <span class="tool-preset-tip">预设一键套用 · 手动勾选即自定义，可存模板复刻</span>
+                  </div>
+                  <div class="tool-template-row" id="agentToolTemplateRow" hidden>
+                    <span class="tool-template-label">我的模板</span>
+                    <div class="tool-template-chips" id="agentToolTemplates"></div>
+                  </div>
+                </div>
+                <p class="hint tool-unknown-hint" id="agentToolUnknownHint" hidden></p>
                 <div class="agent-tool-scope" id="agentToolScope"></div>
               </div>
               <p class="form-error" id="agentError"></p>

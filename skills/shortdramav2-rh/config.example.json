@@ -1,0 +1,34 @@
+{
+  "site": "ai",
+  "rh_api_key": "",
+  "webapp_id": "2093984571330498561",
+  "instance_type": "default",
+  "asset_dir": "assets",
+  "output_prefix": "BOSS",
+  "unit_glob": "单元{unit:02d}_*.md",
+  "pictures": {
+    "1": "",
+    "2": "",
+    "3": "",
+    "4": "",
+    "5": "",
+    "6": "",
+    "7": "",
+    "8": "",
+    "9": ""
+  },
+  "audios": {
+    "1": "",
+    "2": "",
+    "3": ""
+  },
+  "segment_pictures": {},
+  "segment_audios": {},
+  "duration": null,
+  "runninghub": {
+    "prompt_node": "",
+    "duration_node": "",
+    "ref_images": {},
+    "ref_audios": {}
+  }
+}
