@@ -427,6 +427,40 @@ class ChatStorage:
         with self._connect() as db:
             db.execute("UPDATE conversations SET interaction_mode = 'craft' WHERE interaction_mode != 'craft'")
 
+    def synchronize_workspace_bindings(self, workspace_dirs: dict[str, str]) -> int:
+        """Repair conversations whose sidebar group and workspace directory disagree.
+
+        ``workspace_group`` is a presentation field, but for a registered
+        workspace it must always resolve to that workspace's directory.  This
+        repair intentionally leaves ungrouped and no-longer-registered groups
+        untouched: ungrouping a conversation must not move its files.
+        """
+        bindings = {
+            str(name).strip(): str(directory).strip()
+            for name, directory in workspace_dirs.items()
+            if str(name).strip() and str(directory).strip()
+        }
+        if not bindings:
+            return 0
+        now = int(time.time() * 1000)
+        changed = 0
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT id, workspace_group, workspace_dir FROM conversations "
+                "WHERE TRIM(workspace_group) != ''"
+            ).fetchall()
+            for row in rows:
+                group = str(row["workspace_group"] or "").strip()
+                directory = bindings.get(group)
+                if not directory or str(row["workspace_dir"] or "").strip() == directory:
+                    continue
+                db.execute(
+                    "UPDATE conversations SET workspace_dir = ?, updated_at = ? WHERE id = ?",
+                    (directory, now, row["id"]),
+                )
+                changed += 1
+        return changed
+
     def apply_pending_migrations(self) -> None:
         """依次应用尚未执行的迁移，直到 user_version == CURRENT_SCHEMA_VERSION。"""
         with self._connect() as db:

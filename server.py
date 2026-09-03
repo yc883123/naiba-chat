@@ -1301,6 +1301,44 @@ class ConfigStore:
             path = (EXE_DIR / path).resolve()
         return path.resolve()
 
+    def workspace_dir_for_group(self, workspace_group: str) -> str:
+        """Return the registered directory for a workspace name.
+
+        A conversation may only claim a non-empty workspace group when that
+        name is present in the registered workspace list.  Keeping this lookup
+        here makes the server, rather than the browser, the authority for the
+        name-to-directory binding.
+        """
+        name = str(workspace_group or "").strip()
+        if not name:
+            raise ValueError("工作区名称不能为空")
+        workspaces = self.data.get("workspaces", [])
+        if not isinstance(workspaces, list):
+            workspaces = []
+        for workspace in workspaces:
+            if not isinstance(workspace, dict):
+                continue
+            if str(workspace.get("name") or "").strip() != name:
+                continue
+            directory = str(workspace.get("dir") or "").strip()
+            if not directory:
+                break
+            return directory
+        raise ValueError(f"工作区不存在：{name}")
+
+    def workspace_bindings(self) -> dict[str, str]:
+        """Return the current registered workspace name-to-directory mapping."""
+        workspaces = self.data.get("workspaces", [])
+        if not isinstance(workspaces, list):
+            return {}
+        return {
+            str(workspace.get("name") or "").strip(): str(workspace.get("dir") or "").strip()
+            for workspace in workspaces
+            if isinstance(workspace, dict)
+            and str(workspace.get("name") or "").strip()
+            and str(workspace.get("dir") or "").strip()
+        }
+
     def resolve_data_dir(self, raw: str | None = None) -> Path:
         """Resolve persistent data storage; relative paths are relative to APP_DIR."""
         value = raw if raw is not None else self.data.get("data_dir", "data")
@@ -2826,6 +2864,11 @@ class NaibaChatApp:
             LOCK_PATH = DATA_DIR / "server.lock"
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.storage = ChatStorage(DATA_DIR / "chat.db")
+        repaired_bindings = self.storage.synchronize_workspace_bindings(
+            self.config.workspace_bindings()
+        )
+        if repaired_bindings:
+            print(f"Repaired {repaired_bindings} conversation workspace binding(s)")
         self.models = ModelRuntime()
         # Keep packaged Skills in the persistent managed directory as well.
         # A one-file executable extracts bundled assets to a temporary folder;
@@ -3810,6 +3853,17 @@ class RequestHandler(BaseHTTPRequestHandler):
             if workspace_group is not None and not isinstance(workspace_group, str):
                 self._json({"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
+            workspace_group = str(workspace_group or "").strip()
+            if workspace_group:
+                try:
+                    # Registered workspace bindings are authoritative.  Do
+                    # not trust a directory supplied alongside the group.
+                    workspace_dir = APP.config.workspace_dir_for_group(workspace_group)
+                    resolved_workspace = APP.config.resolve_workspace_dir(workspace_dir)
+                    APP.config.ensure_workspace_writable(resolved_workspace)
+                except (OSError, ValueError) as exc:
+                    self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                    return
             if workspace_dir is not None and str(workspace_dir).strip():
                 try:
                     resolved_workspace = APP.config.resolve_workspace_dir(str(workspace_dir).strip())
@@ -3826,7 +3880,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     deep_reasoning_enabled=deep_reasoning_enabled,
                     reasoning_effort=str(reasoning_effort or ("medium" if deep_reasoning_enabled else "auto")),
                     workspace_dir=str(workspace_dir or ""),
-                    workspace_group=str(workspace_group or ""),
+                    workspace_group=workspace_group,
                 ),
                 HTTPStatus.CREATED,
             )
@@ -3958,6 +4012,38 @@ class RequestHandler(BaseHTTPRequestHandler):
             if workspace_group is not None and not isinstance(workspace_group, str):
                 self._json({"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST)
                 return
+            if workspace_group is not None:
+                workspace_group = str(workspace_group).strip()
+                if workspace_group:
+                    try:
+                        # Switching a group also switches its filesystem
+                        # root; an inconsistent client-supplied path is never
+                        # persisted.
+                        workspace_dir = APP.config.workspace_dir_for_group(workspace_group)
+                        resolved_workspace = APP.config.resolve_workspace_dir(workspace_dir)
+                        APP.config.ensure_workspace_writable(resolved_workspace)
+                    except (OSError, ValueError) as exc:
+                        self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                        return
+                else:
+                    # "Ungrouped" changes only sidebar classification and
+                    # deliberately preserves the conversation's directory.
+                    workspace_dir = None
+            elif workspace_dir is not None:
+                # A legacy or third-party client may still try to edit only
+                # workspace_dir.  If the conversation is already in a
+                # registered group, keep the registered group binding intact.
+                current = APP.storage.get_conversation(conversation_id, include_messages=False)
+                current_group = str((current or {}).get("workspace_group") or "").strip()
+                if current_group:
+                    try:
+                        workspace_dir = APP.config.workspace_dir_for_group(current_group)
+                        resolved_workspace = APP.config.resolve_workspace_dir(workspace_dir)
+                        APP.config.ensure_workspace_writable(resolved_workspace)
+                    except (OSError, ValueError):
+                        # An old, removed group is intentionally left alone;
+                        # it is not a registered binding to enforce.
+                        pass
             lightweight_mode = body.get("lightweight_mode")
             if lightweight_mode is not None and not isinstance(lightweight_mode, bool):
                 self._json({"error": "lightweight_mode 必须是布尔值"}, HTTPStatus.BAD_REQUEST)

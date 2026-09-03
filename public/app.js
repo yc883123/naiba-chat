@@ -2614,6 +2614,7 @@ async function onComposerWorkspaceChange(event) {
     const updated = await api(`/api/conversations/${id}/settings`, { method: 'POST', body: { workspace_group: group } });
     const index = state.conversations.findIndex((c) => c.id === id);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    if (updated.workspace_dir) state.workspaceDir = updated.workspace_dir;
     renderSidebar();
     renderComposerWorkspace();
     toast(group ? `已切换到工作区「${group}」` : '已移至未分组');

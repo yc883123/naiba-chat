@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.7.0-beta
-  RELEASE_TAG: v1.7.0-beta
-  PACKAGE_NAME: naiba-chat-1.7.0-beta-windows-x64
+  RELEASE_VERSION: 1.7.1-beta
+  RELEASE_TAG: v1.7.1-beta
+  PACKAGE_NAME: naiba-chat-1.7.1-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.7.0 Beta release
+      - name: Publish 1.7.1 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.7.0 Beta
+          name: Naiba Chat 1.7.1 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,15 +99,13 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.7.0 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.7.1 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 代码块语法高亮：聊天中的代码块按语言实时着色（支持 JS/TS、Python、JSON、Bash/Shell、YAML、CSS、HTML，语言别名自动归一化），关键字/字符串/数字/函数名/注释分色渲染；流式输出随内容增长实时高亮，不再等整段结束才着色。
-            - UI 图标 SVG 化：设置、发送/停止、刷新、卸载模型、删除/编辑/关闭、对话设置、快捷指令等按钮图标从 emoji/字符替换为内联 SVG，手机与桌面渲染一致，不再出现 emoji 字体缺失导致的方块或乱码。
-            - 顶栏「更多」菜单：卸载模型、刷新页面等低频操作收进顶栏 ⋯ 溢出菜单，主操作区更简洁；点击菜单外部自动关闭。
-            - 快捷指令卡片化：空状态快捷指令改为「图标+标题+说明」卡片布局，按钮标题精简，说明行补充用途，并适配窄屏。
-            - 聊天布局调整：AI 消息外层新增消息卡片结构，与代码高亮配色统一。
-            - 移除 fetch_page 工具：已从工具集中彻底删除「抓取并提炼网页正文」的 fetch_page 工具（含实现、注册与分组），内置 Agent 全量工具范围、Agent 编辑页工具目录与权限确认清单同步移除；需要读取网页内容时改用 http_request 或已配置的 MCP 抓取能力。
+            - 工作区名称绑定：会话指定已注册工作区（workspace_group）时，目录一律取「设置→工作区」里的注册路径，不再信任客户端随分组提交的目录；分组名不存在时直接拒绝并给出明确提示。
+            - 切换分组即切换目录：把会话切换到某个工作区分组时，该会话的磁盘工作区同步指向该分组注册目录；「移至未分组」只改侧栏分类，保留原有目录、绝不移动文件。
+            - 启动自动修复：启动时逐条检查历史会话，分组指向已注册工作区而目录与注册值不一致的会自动改回注册目录；未分组会话与指向已删除分组的会话保持原样，防止误搬文件。
+            - 前端状态同步：底部工作区切换后立即以服务端返回的目录刷新会话状态，界面显示的工作区目录与磁盘始终一致。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.
