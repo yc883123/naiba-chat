@@ -127,6 +127,10 @@
         <div class="active-task-bar" id="activeTaskBar" hidden></div>
         <div class="pending-files" id="pendingFiles"></div>
         <div class="run-guidance-list" id="runGuidanceList" hidden aria-live="polite"></div>
+        <div class="conversation-rule-bar" id="conversationRuleBar" hidden>
+          <span class="conversation-rule-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v2H4zM4 9h16v2H4zM4 14h10v2H4z"></path></svg></span>
+          <span class="conversation-rule-text" id="conversationRuleText">本次对话规则：未设置</span>
+        </div>
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
           <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">
@@ -305,6 +309,10 @@
       <label class="field-wide conversation-prompt-field">
         系统提示词
         <textarea id="conversationSystemPrompt" rows="9" maxlength="20000" placeholder="只作用于这个对话的角色、规则和输出要求"></textarea>
+        <span class="character-card-import">
+          <button class="control-button" id="importCharacterCardBtn" type="button">导入角色卡 PNG</button>
+          <input id="characterCardFileInput" type="file" accept="image/png" hidden>
+        </span>
       </label>
       <label class="toggle-row conversation-stream-toggle">
         <span><b>流式输出</b><small>模型生成内容时实时显示文本</small></span>

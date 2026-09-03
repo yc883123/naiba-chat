@@ -492,6 +492,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .composer-wrap.dragover .composer { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(var(--brand-500-rgb), .14); }
 .run-guidance-list { display: grid; gap: 5px; margin: 0 0 8px; }
 .run-guidance-list[hidden] { display: none; }
+.conversation-rule-bar { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); color: var(--muted); font-size: 12px; line-height: 1.4; }
+.conversation-rule-bar[hidden] { display: none; }
+.conversation-rule-bar.has-rule { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
+.conversation-rule-icon { flex: none; display: inline-grid; place-items: center; color: var(--muted); }
+.conversation-rule-bar.has-rule .conversation-rule-icon { color: var(--accent); }
+.conversation-rule-icon svg { width: 14px; height: 14px; fill: currentColor; }
+.conversation-rule-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.character-card-import { display: flex; align-items: center; margin-top: 6px; }
 .run-guidance-card { width: 100%; }
 .run-guidance-card .message-body { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 6px 8px; border: 1px solid var(--line-strong); background: var(--surface); }
 .run-guidance-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -665,7 +673,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .conversation-prompt-field textarea { width: 100%; min-height: 180px; resize: vertical; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; background: var(--surface); color: var(--text); line-height: 1.55; }
 .conversation-prompt-field textarea:focus { outline: 2px solid rgba(var(--brand-500-rgb), .18); border-color: var(--accent); }
 .conversation-stream-toggle { border-top: 1px solid var(--line); }
-.conversation-settings { border: 0; background: transparent; color: var(--muted); width: 28px; height: 30px; padding: 0; flex: none; opacity: 0; display: grid; place-items: center; }
+.conversation-settings { border: 0; background: transparent; color: var(--muted); width: 28px; height: 30px; padding: 0; flex: none; opacity: 0.5; display: grid; place-items: center; transition: opacity .15s ease; }
 .conversation-settings svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .conversation-item:hover .conversation-settings, .conversation-item.active .conversation-settings { opacity: 1; }
 .conversation-settings:hover { color: var(--accent); }

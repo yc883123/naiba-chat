@@ -2753,6 +2753,7 @@ async function createConversation(workspaceGroup = '', workspaceDir = '', prefil
   renderPermissionModeSwitch();
   closeSidebar();
   if (prefillSkills) prefillPresetSkillsInComposer(conversation);
+  renderConversationRuleBar();
   $('#messageInput').focus();
 }
 
@@ -2794,6 +2795,7 @@ async function openConversation(id) {
   updateDeepReasoningButton();
   applyConversationLightweight(conversation);
   await resumeConversationRun(id);
+  renderConversationRuleBar();
   closeSidebar();
 }
 
@@ -2823,6 +2825,7 @@ async function syncCurrentConversation() {
     state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
     updateDeepReasoningButton();
     applyConversationLightweight(conversation);
+    renderConversationRuleBar();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
@@ -2897,6 +2900,59 @@ function renderRunTasks() {
   }).join('');
 }
 
+function renderConversationRuleBar() {
+  const bar = $('#conversationRuleBar');
+  const text = $('#conversationRuleText');
+  if (!bar || !text) return;
+  const conversation = state.conversations.find((item) => item.id === state.conversationId);
+  if (!state.conversationId || !conversation) {
+    bar.hidden = true;
+    return;
+  }
+  bar.hidden = false;
+  const prompt = String(conversation.system_prompt || '').trim();
+  if (!prompt) {
+    text.textContent = '本次对话规则：未设置';
+    bar.classList.remove('has-rule');
+    bar.title = '在「对话设置」中设置本次对话规则';
+  } else {
+    const compact = prompt.replace(/\s+/g, ' ');
+    const summary = compact.length > 40 ? `${compact.slice(0, 40)}…` : compact;
+    text.textContent = `本次对话规则：${summary}`;
+    bar.classList.add('has-rule');
+    bar.title = '在「对话设置」中查看或修改';
+  }
+}
+
+async function importCharacterCard(file) {
+  if (!file) return;
+  try {
+    const data = await readAsDataUrl(file);
+    const result = await api('/api/character-card/parse', {
+      method: 'POST',
+      body: { name: file.name, data },
+    });
+    const prompt = String(result.system_prompt || '').trim();
+    if (!prompt) {
+      toast('角色卡解析结果为空');
+      return;
+    }
+    $('#conversationSystemPrompt').value = prompt;
+    const conversation = state.conversations.find((item) => item.id === state.conversationSettingsId);
+    const agentId = String(conversation?.agent_id || '');
+    const agent = (state.bootstrap?.agents || []).find((item) => String(item.id) === agentId);
+    const agentPrompt = String(agent?.system_prompt || '').trim();
+    const cardName = result.meta?.name || '未知角色';
+    if (agentPrompt) {
+      toast(`已导入角色卡「${cardName}」。提示：当前 Agent 自带系统提示词，建议切换到提示词留空的 Agent 再扮演。`);
+    } else {
+      toast(`已导入角色卡「${cardName}」，确认后点保存`);
+    }
+  } catch (error) {
+    toast(`导入失败：${error.message}`);
+  }
+}
+
 function openConversationSettings(id) {
   const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation) return;
@@ -2930,6 +2986,7 @@ async function saveConversationSettings(event) {
     if (id === state.conversationId) {
       applyConversationLightweight(updated);
     }
+    renderConversationRuleBar();
     toast('对话设置已保存');
   } catch (error) {
     toast(`保存失败：${error.message}`);
@@ -5764,6 +5821,8 @@ function showChoiceButtons(choices, choiceGroups = []) {
   container.setAttribute('role', 'group');
   container.setAttribute('aria-label', '可选回复');
   composerWrap.insertBefore(container, composer);
+  const ruleBar = $('#conversationRuleBar');
+  if (ruleBar) ruleBar.hidden = true;
 
   const selected = [];
   let groupIndex = 0;
@@ -5847,6 +5906,7 @@ function showChoiceButtons(choices, choiceGroups = []) {
 function hideChoiceButtons() {
   const existing = $('#choiceButtons');
   if (existing) existing.remove();
+  renderConversationRuleBar();
 }
 
 function fillComposer(text) {
@@ -6705,6 +6765,12 @@ function bindEvents() {
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
+  $('#importCharacterCardBtn')?.addEventListener('click', () => $('#characterCardFileInput')?.click());
+  $('#characterCardFileInput')?.addEventListener('change', (event) => {
+    const file = event.target.files?.[0];
+    if (file) importCharacterCard(file);
+    event.target.value = '';
+  });
   $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
