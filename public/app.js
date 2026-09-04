@@ -3413,7 +3413,8 @@ async function testProvider() {
     };
     const vision = result.supports_images ? '支持图片' : '纯文本';
     const source = sourceLabels[result.capability_source] || result.capability_source || '未知';
-    $('#providerError').textContent = `推理连接成功：${result.response}；视觉：${vision}；来源：${source}`;
+    const proxyNote = result.proxy_state?.note ? `；${result.proxy_state.note}` : '';
+    $('#providerError').textContent = `推理连接成功：${result.response}；视觉：${vision}；来源：${source}${proxyNote}`;
   } catch (error) {
     $('#providerError').textContent = `模型目录可能可访问，但推理服务不可用：${error.message}`;
   }
@@ -3452,7 +3453,48 @@ function populateRuntimeSettings() {
   if ($('#thumbnailMaxPixels')) $('#thumbnailMaxPixels').value = Number(imaging.thumbnail_max_pixels || 500000);
   renderImageCompressRow();
   if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(Number(state.bootstrap.image_cache_bytes || 0));
+  renderProxySettings();
   renderWorkspaceControl();
+}
+
+/* ---------- 网络代理（出站请求） ---------- */
+function proxyStateFromConfig(proxy) {
+  if (!proxy) return { mode: 'system', url: '' };
+  const url = String(proxy.url || '').trim();
+  if (url) return { mode: 'manual', url };
+  if (!proxy.enabled) return { mode: 'direct', url: '' };
+  // 开启代理但未填地址：按 use_system_fallback 决定跟随系统代理或直连。
+  return proxy.use_system_fallback === false ? { mode: 'direct', url: '' } : { mode: 'system', url: '' };
+}
+
+function renderProxySettings() {
+  const settings = state.bootstrap.settings || {};
+  const st = proxyStateFromConfig(settings.proxy);
+  if ($('#proxySystem')) $('#proxySystem').checked = st.mode === 'system';
+  if ($('#proxyDirect')) $('#proxyDirect').checked = st.mode === 'direct';
+  if ($('#proxyManual')) $('#proxyManual').checked = st.mode === 'manual';
+  if ($('#proxyUrl')) $('#proxyUrl').value = st.url || '';
+  renderProxyRows();
+  renderProxyStateHint(null);
+}
+
+function renderProxyRows() {
+  const row = $('#proxyManualRow');
+  if (row) row.hidden = !Boolean($('#proxyManual')?.checked);
+}
+
+function renderProxyStateHint(result) {
+  const hint = $('#proxyStateHint');
+  if (!hint) return;
+  const stateInfo = (result && result.proxy_state) || state.bootstrap?.proxy_state || null;
+  if (stateInfo && stateInfo.note) {
+    hint.textContent = `当前生效：${stateInfo.note}`;
+    return;
+  }
+  const hasProxy = Boolean((state.bootstrap.settings || {}).proxy);
+  hint.textContent = hasProxy
+    ? ''
+    : '尚未保存过代理开关：外部请求默认跟随系统代理；保存下方选择后立即生效。';
 }
 
 function renderImageCompressRow() {
@@ -4300,6 +4342,20 @@ async function deleteAgent(agentId) {
 }
 
 async function saveRuntimeSettings() {
+  const mode = [...document.querySelectorAll('input[name="proxyMode"]')].find((el) => el.checked)?.value || 'system';
+  let proxy;
+  if (mode === 'manual') {
+    const url = String($('#proxyUrl')?.value || '').trim();
+    if (!url) {
+      toast('手动代理需要填写代理地址（如 http://127.0.0.1:7890）');
+      return;
+    }
+    proxy = { enabled: true, url, use_system_fallback: false };
+  } else if (mode === 'direct') {
+    proxy = { enabled: false, url: '', use_system_fallback: false };
+  } else {
+    proxy = { enabled: true, url: '', use_system_fallback: true };
+  }
   const payload = {
     command_timeout: Number($('#commandTimeout')?.value || 120),
     workspace_dir: $('#workspaceDir')?.value.trim() || '',
@@ -4308,6 +4364,7 @@ async function saveRuntimeSettings() {
       image_max_pixels: Number($('#imageMaxPixels')?.value || 2000000),
       thumbnail_max_pixels: Number($('#thumbnailMaxPixels')?.value || 500000),
     },
+    proxy,
   };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
@@ -4316,6 +4373,10 @@ async function saveRuntimeSettings() {
   if (result.image_cache_bytes !== undefined) {
     state.bootstrap.image_cache_bytes = result.image_cache_bytes;
     if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(Number(result.image_cache_bytes || 0));
+  }
+  if (result.proxy_state) {
+    state.bootstrap.proxy_state = result.proxy_state;
+    renderProxyStateHint(result);
   }
   renderWorkspaceControl();
   toast('运行参数已保存');
@@ -7263,6 +7324,9 @@ function bindEvents() {
     if (apply) applyToolTemplate(apply.dataset.templateApply);
   });
   $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
+  document.querySelectorAll('input[name="proxyMode"]').forEach((radio) => {
+    radio.addEventListener('change', renderProxyRows);
+  });
   $('#cleanImageCache')?.addEventListener('click', cleanImageCache);
   $('#imageUploadOriginal')?.addEventListener('change', renderImageCompressRow);
   $('#imageLightboxClose')?.addEventListener('click', closeImageLightbox);

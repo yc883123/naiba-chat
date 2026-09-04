@@ -13,6 +13,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
+import net_io
+
 logger = logging.getLogger("naiba.model_runtime")
 
 
@@ -225,42 +227,22 @@ def _network_error_code(error: BaseException) -> int | None:
     return int(value) if isinstance(value, int) else None
 
 
-# ``urllib.request`` builds its global opener lazily on the FIRST request and then
-# caches it for the whole process. On Windows it derives proxies from the registry
-# / environment at that moment. If proxy or VPN/TUN software is toggled mid-session
-# (or the proxy process restarts), the cached opener still points at a now-dead
-# proxy, so every later API call fails with a connection-level refusal/reset even
-# though the target host is reachable directly. We keep a direct (proxy-bypassed)
-# opener as a fallback for exactly this case.
-_NO_PROXY_OPENER: urllib.request.OpenerDirector | None = None
-
-
-def _no_proxy_opener() -> urllib.request.OpenerDirector:
-    """Return a process-wide opener that ignores system/environment proxies."""
-    global _NO_PROXY_OPENER
-    if _NO_PROXY_OPENER is None:
-        _NO_PROXY_OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    return _NO_PROXY_OPENER
-
-
+# 所有出站 HTTP/HTTPS 统一走 net_io 入口：外部请求按「运行设置 → 代理」策略路由
+# （关闭代理=强制直连；开启=使用手动代理地址；未填地址时按设置回退系统代理），
+# 本地服务（127.0.0.1/localhost/私有网段，覆盖 Ollama、LM Studio、ComfyUI 等）
+# 始终直连。代理设置保存后热生效，无需重启。
+# 旧版本在系统代理发生瞬时拒连/重置时会“偷偷”改用直连重试一次；该隐式行为已
+# 移除——若系统代理或 TUN 仍在接管流量，那次重试本就无效且违背用户配置意图。
 def _urlopen_proxy_resilient(
     request: urllib.request.Request,
     timeout: float,
 ) -> Any:
-    """Open ``request`` with the default opener (system proxy aware), and on a
-    connection-level refusal/reset (10053/10054/10061) retry once with a direct,
-    proxy-bypassed connection. If the direct attempt also fails, re-raise the
-    original error. Used by short-lived one-shot calls (e.g. the model list)."""
-    try:
-        return urllib.request.urlopen(request, timeout=timeout)
-    except (urllib.error.URLError, OSError) as exc:
-        code = _network_error_code(exc)
-        if code in FAST_RETRY_NETWORK_ERRORS:
-            try:
-                return _no_proxy_opener().open(request, timeout=timeout)
-            except Exception:
-                pass
-        raise
+    """Open ``request`` through the unified network policy (see net_io.py).
+
+    Kept under the historical name so existing call sites stay unchanged; it no
+    longer performs an implicit direct-connection fallback.
+    """
+    return net_io.open(request, timeout=timeout)
 
 
 class _NullLock:
@@ -482,12 +464,16 @@ class ModelRuntime:
         cancel_event: threading.Event | None = None,
         opener: urllib.request.OpenerDirector | None = None,
     ):
-        """Run urllib in a daemon worker so a cancelled vision call returns promptly.
+        """Run the network request in a daemon worker so a cancelled vision call returns promptly.
 
-        ``opener`` (optional) selects an explicit opener — used to retry with a
-        direct, proxy-bypassed connection when the system proxy has gone stale.
+        Requests always go through the unified net_io policy (proxy settings /
+        local direct connect). ``opener`` is retained for callers that need an
+        explicit opener override; when None the policy applies.
         """
-        open_function = opener.open if opener is not None else urllib.request.urlopen
+        if opener is not None:
+            open_function = opener.open
+        else:
+            open_function = lambda req, **kw: net_io.open(req, **kw)
         if cancel_event is None:
             return open_function(request, timeout=timeout)
         if cancel_event.is_set():
@@ -897,7 +883,7 @@ class ModelRuntime:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=15) as response:
+            with net_io.open(request, timeout=15) as response:
                 response.read()
         except urllib.error.HTTPError as exc:
             detail = _summarize_http_error(
@@ -1216,21 +1202,24 @@ class ModelRuntime:
         tool_fallback_used = False
         stream_options_fallback_used = False
         reasoning_fallback_used = False
-        request_opener: urllib.request.OpenerDirector | None = None
-        no_proxy_tried = False
         if diagnostics is not None:
             parsed = urllib.parse.urlsplit(endpoint)
+            try:
+                proxy_note = (net_io.proxy_state().get("note") or "").strip()
+            except Exception:  # noqa: BLE001
+                proxy_note = ""
             diagnostics.update({
                 "endpoint": f"{parsed.hostname or parsed.netloc}{parsed.path}",
                 "attempts": 0,
                 "http_ms": 0.0,
+                "proxy_mode": proxy_note or "跟随系统代理",
             })
         for attempt in range(attempts):
             request_started = time.perf_counter()
             if diagnostics is not None:
                 diagnostics["attempts"] = attempt + 1
             try:
-                with ModelRuntime._urlopen_cancelable(request, request_timeout, cancel_event, request_opener) as response:
+                with ModelRuntime._urlopen_cancelable(request, request_timeout, cancel_event) as response:
                     if stream_enabled and response_format == "ollama":
                         streamed = ModelRuntime._read_ollama_stream(response, status)
                         content = ModelRuntime._clean_content(streamed["content"])
@@ -1251,7 +1240,7 @@ class ModelRuntime:
                                     method="POST",
                                 )
                                 with ModelRuntime._urlopen_cancelable(
-                                    retry_request, request_timeout, cancel_event, request_opener
+                                    retry_request, request_timeout, cancel_event
                                 ) as retry_response:
                                     streamed = ModelRuntime._read_ollama_stream(retry_response, status)
                                 content = ModelRuntime._clean_content(streamed["content"])
@@ -1449,23 +1438,8 @@ class ModelRuntime:
                 # 响应读取中途被切断（IncompleteRead / RemoteDisconnected 等 HTTPException）
                 # 属于瞬时传输故障：与连接失败一样可重试，而不是让整个 run 直接报错。
                 is_http_exception = isinstance(exc, http.client.HTTPException)
-                # A connection-level refusal/reset for an ONLINE provider often
-                # follows a stale system proxy (proxy/TUN toggled mid-session, or
-                # the proxy process restarted). urllib caches the proxy in its
-                # opener at first use, so it will keep failing on the same dead
-                # proxy. Before giving up, retry once with a direct,
-                # proxy-bypassed connection.
-                if (
-                    not is_local
-                    and not connection_test
-                    and not no_proxy_tried
-                    and error_code in FAST_RETRY_NETWORK_ERRORS
-                ):
-                    no_proxy_tried = True
-                    request_opener = _no_proxy_opener()
-                    if status:
-                        status({"type": "status", "message": "检测到代理/TUN 连接异常，正在尝试直连重试"})
-                    continue
+                # 出站路由已由 net_io 统一决定（见其注释）：此处仅保留“连接瞬时
+                # 故障时按次数重试”的能力，不再隐式地直连/代理互切。
                 retryable_test_error = connection_test and error_code in FAST_RETRY_NETWORK_ERRORS
                 if (
                     not is_local

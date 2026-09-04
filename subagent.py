@@ -241,13 +241,13 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         return True, f"Job 已提交，Job ID：{job_id}（可用 job_wait 等待结果）"
 
     def job_output(arguments, active_skills, run_context=None):
-        owner = _owner(run_context)
+        # 只读操作：允许跨对话/跨会话查询 Job 输出（Job ID 由创建方告知或经 resume 记录）。
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
             return False, "缺少 job_id"
-        if not jobs.get(job_id, owner=owner):
+        if not jobs.get(job_id):
             return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
-        out = jobs.read(job_id, int((arguments or {}).get("cursor", 0) or 0), owner=owner)
+        out = jobs.read(job_id, int((arguments or {}).get("cursor", 0) or 0))
         events = out.get("events", [])
         text = "\n".join(
             str(e.get("line") or e.get("message") or e.get("content") or "") for e in events
@@ -255,11 +255,11 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         return True, text or "（暂无增量输出）"
 
     def job_status(arguments, active_skills, run_context=None):
-        owner = _owner(run_context)
+        # 只读操作：允许跨对话/跨会话查询 Job 状态。
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
             return False, "缺少 job_id"
-        job = jobs.get(job_id, owner=owner)
+        job = jobs.get(job_id)
         if not job:
             return False, "Job 不存在或无权访问"
         return True, (
@@ -268,15 +268,15 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         )
 
     def job_wait(arguments, active_skills, run_context=None):
-        owner = _owner(run_context)
+        # 只读操作：允许跨对话/跨会话等待 Job 结果。
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
             return False, "缺少 job_id"
-        if not jobs.get(job_id, owner=owner):
+        if not jobs.get(job_id):
             return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
         timeout = int((arguments or {}).get("timeout", 600) or 600)
         try:
-            job = jobs.wait(job_id, timeout, owner=owner)
+            job = jobs.wait(job_id, timeout)
         except LookupError:
             return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
         if not job:
@@ -286,10 +286,21 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         return False, f"Job 结束（{job['status']}）：{job.get('error', '')}"
 
     def job_kill(arguments, active_skills, run_context=None):
+        # 写操作：保留归属，只能取消发起该 Job 的会话（跨对话不可取消）。
         owner = _owner(run_context)
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
             return False, "缺少 job_id"
+        job = jobs.get(job_id)
+        if not job:
+            return False, "Job 不存在或无权访问"
+        stored_owner = str(job.get("owner_session_id") or "")
+        if owner and stored_owner and stored_owner != owner:
+            return (
+                False,
+                "无权取消该 Job：它由另一个会话创建。如需获取结果，请改用只读的 "
+                "job_output / job_status / job_wait（跨对话可用）；无需取消也不应猜测 Job ID。",
+            )
         job = jobs.cancel(job_id, owner=owner, reason=str((arguments or {}).get("reason") or "用户取消"))
         if not job:
             return False, "Job 不存在或无权访问"

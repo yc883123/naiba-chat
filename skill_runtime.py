@@ -19,6 +19,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Callable
 
+import net_io
 from mcp_runtime import MCPRegistry
 
 logger = logging.getLogger("naiba.skill_runtime")
@@ -1040,7 +1041,7 @@ class ToolExecutor:
                 encoded = str(data).encode("utf-8")
         request = urllib.request.Request(url, data=encoded, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=min(int(args.get("timeout", 60)), 180)) as response:
+            with net_io.open(request, timeout=min(int(args.get("timeout", 60)), 180)) as response:
                 body = response.read(max_bytes).decode("utf-8", errors="replace")
                 return f"HTTP {response.status}\n{body}"
         except urllib.error.HTTPError as exc:

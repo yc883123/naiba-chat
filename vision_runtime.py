@@ -26,6 +26,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+import net_io
 from model_runtime import ModelRuntime
 
 logger = logging.getLogger("naiba.vision_runtime")
@@ -334,7 +335,7 @@ class VisionRouter:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         request = urllib.request.Request(endpoint, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with net_io.open(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8", errors="replace"))
 
     @staticmethod

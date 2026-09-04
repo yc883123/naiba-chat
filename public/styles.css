@@ -837,6 +837,15 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .image-cache-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; color: var(--muted); font-size: 12px; }
 .image-cache-row .control-button { min-height: 26px; padding: 0 10px; font-size: 12px; }
 #imageCompressRow[hidden] { display: none; }
+.proxy-settings { display: grid; gap: 8px; padding: 10px 0 2px; border-top: 1px dashed var(--line); }
+.proxy-mode-row { display: flex; flex-direction: column; gap: 6px; }
+.proxy-option { display: flex; align-items: flex-start; gap: 8px; cursor: pointer; color: var(--text); }
+.proxy-option input[type="radio"] { width: 16px; height: 16px; margin: 2px 0 0; padding: 0; flex: none; accent-color: var(--accent); }
+.proxy-option span { display: grid; gap: 1px; min-width: 0; }
+.proxy-option b { font-size: 13px; font-weight: 600; color: var(--text); }
+.proxy-option .hint { margin: 0; color: var(--muted); font-weight: 400; }
+#proxyManualRow[hidden] { display: none; }
+#proxyStateHint { margin: 0; color: var(--muted); line-height: 1.4; }
 @media (max-width: 520px) {
   .imaging-grid { grid-template-columns: 1fr; }
 }

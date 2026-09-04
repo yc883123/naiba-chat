@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.7.3-beta
-  RELEASE_TAG: v1.7.3-beta
-  PACKAGE_NAME: naiba-chat-1.7.3-beta-windows-x64
+  RELEASE_VERSION: 1.7.4-beta
+  RELEASE_TAG: v1.7.4-beta
+  PACKAGE_NAME: naiba-chat-1.7.4-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.7.3 Beta release
+      - name: Publish 1.7.4 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.7.3 Beta
+          name: Naiba Chat 1.7.4 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,10 +99,12 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.7.3 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.7.4 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 规则提示条与选项按钮不再重叠：AI 弹出「可选回复」按钮期间，「本次对话规则」提示条保持隐藏让位；修复按钮展开中切换会话、保存设置等触发重渲染会把提示条重新顶出来、与按钮叠在一起的问题。按钮被移除后下一次渲染自动恢复提示条显示。
+            - 网络代理设置：设置页新增「网络代理」区块，统一所有外部请求（在线模型推理、视觉路由、联网搜索、更新检查与下载、模型测试）的出站策略——跟随系统代理 / 关闭（强制直连）/ 手动代理地址；本地服务（127.0.0.1 / localhost / 局域网，如 Ollama、LM Studio、ComfyUI）始终直连；保存后即时生效，无需重启。
+            - 移除隐藏直连回退：外部请求不再在系统代理瞬时拒连时自动「偷偷」改用直连重试，严格按你的代理设置路由；错误提示末尾附带当前实际生效的代理模式，便于排查。
+            - Job 只读边界与恢复血缘：job_status / job_output / job_wait 明确只读、可跨对话/会话凭 Job ID 查询；job_kill 只能取消发起会话自己的 Job；resume / retry 的新 Job 会记录来源并在输出中注明「本 Job 由 Job X 恢复/重试」。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

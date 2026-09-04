@@ -489,6 +489,19 @@
           <h3>运行设置</h3>
           <div class="field-grid">
             <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"><small class="hint">仅工具与命令执行有效；不控制在线或本地模型的响应超时。</small></label>
+            <div class="field-wide proxy-settings">
+              <span class="settings-label"><b>网络代理（出站请求）</b></span>
+              <div class="proxy-mode-row">
+                <label class="proxy-option"><input type="radio" name="proxyMode" value="system" id="proxySystem"><span><b>跟随系统代理</b><small class="hint">读取 Windows 系统代理与环境变量</small></span></label>
+                <label class="proxy-option"><input type="radio" name="proxyMode" value="direct" id="proxyDirect"><span><b>关闭代理（强制直连）</b><small class="hint">所有外部请求直连，忽略系统/TUN 代理</small></span></label>
+                <label class="proxy-option"><input type="radio" name="proxyMode" value="manual" id="proxyManual"><span><b>手动代理</b><small class="hint">只走下方填写的地址</small></span></label>
+              </div>
+              <div id="proxyManualRow" hidden>
+                <label class="field-wide">代理地址<input id="proxyUrl" type="text" placeholder="http://127.0.0.1:7890" autocomplete="off"><small class="hint">仅支持 http/https，需包含端口号。</small></label>
+              </div>
+              <small class="hint">覆盖在线模型、联网搜索、更新检查与更新下载等所有外部请求；本地服务（127.0.0.1 / localhost / 局域网地址，如 Ollama、LM Studio、ComfyUI）始终直连。保存后立即生效，无需重启。</small>
+              <p class="hint" id="proxyStateHint"></p>
+            </div>
             <div class="field-wide imaging-settings">
               <label class="checkbox-field">
                 <input id="imageUploadOriginal" type="checkbox">

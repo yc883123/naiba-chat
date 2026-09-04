@@ -48,6 +48,7 @@ if str(APP_DIR) not in sys.path:
 if str(EXE_DIR) not in sys.path and str(EXE_DIR) != str(APP_DIR):
     sys.path.insert(0, str(EXE_DIR))
 
+import net_io
 from mcp_runtime import MCPRegistry
 from model_runtime import ModelRuntime
 from plan_runtime import CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
@@ -1225,6 +1226,14 @@ class ConfigStore:
                 item for item in roots
                 if "comfyui-mcp" not in str(item).lower()
             ]
+        if not path.exists():
+            # 全新安装（尚无 config.json）：默认关闭代理（强制直连），
+            # 与旧配置升级保持「跟随系统代理」的兼容行为区分开。
+            defaults["proxy"] = {
+                "enabled": False,
+                "url": "",
+                "use_system_fallback": False,
+            }
         self.data = defaults
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
@@ -1585,6 +1594,7 @@ class ConfigStore:
             "imaging",
             "vision",
             "search",
+            "proxy",
             "workspaces",
         }
         with self.lock:
@@ -1647,6 +1657,29 @@ class ConfigStore:
                                 except (TypeError, ValueError):
                                     raise ValueError(f"{field} 必须是正整数") from None
                         self.data[key] = merged
+                    elif key == "proxy":
+                        incoming = values[key]
+                        if not isinstance(incoming, dict):
+                            raise ValueError("proxy 必须是对象")
+                        enabled = bool(incoming.get("enabled", False))
+                        url = str(incoming.get("url") or "").strip()
+                        if url and "://" not in url:
+                            url = f"http://{url}"
+                        if url:
+                            parts = urllib.parse.urlsplit(url)
+                            if parts.scheme not in {"http", "https"} or not parts.hostname:
+                                raise ValueError(
+                                    "代理地址格式不正确（仅支持 http/https，示例：http://127.0.0.1:7890）"
+                                )
+                            if not parts.port:
+                                raise ValueError(
+                                    f"代理地址缺少端口号：{url}（示例：http://127.0.0.1:7890）"
+                                )
+                        self.data[key] = {
+                            "enabled": enabled,
+                            "url": url,
+                            "use_system_fallback": bool(incoming.get("use_system_fallback", True)),
+                        }
                     else:
                         self.data[key] = values[key]
             self.save()
@@ -2639,7 +2672,7 @@ def extract_attachments(runs: list[dict[str, Any]], allow_enumerated_media: bool
                     destination = generated_dir / f"{digest}_{name}"
                     if not destination.is_file() or destination.stat().st_size <= 0:
                         if is_local_comfy:
-                            with urllib.request.urlopen(source, timeout=120) as response, destination.open("wb") as handle:
+                            with net_io.open(source, timeout=120) as response, destination.open("wb") as handle:
                                 shutil.copyfileobj(response, handle, length=1024 * 1024)
                         else:
                             shutil.copy2(local_path.resolve(), destination)
@@ -2954,6 +2987,9 @@ class NaibaChatApp:
         initial_data_dir = DATA_DIR.resolve()
         self.data_migration = migrate_legacy_data()
         self.config = ConfigStore(CONFIG_PATH)
+        # 统一网络代理策略：优先用 config 的 proxy 字段；旧配置未含该字段时
+        # 保持历史兼容行为（跟随系统代理），直到用户在运行设置中显式保存。
+        net_io.configure(self.config.data.get("proxy"))
         self.listener_host = str(self.config.data.get("host", "0.0.0.0"))
         # ConfigStore may reveal a custom data directory after the legacy
         # bootstrap migration has already run. Rebind all runtime globals and
@@ -3464,7 +3500,7 @@ class NaibaChatApp:
                 import urllib.request
 
                 req = urllib.request.Request(f"{address.rstrip('/')}/", method="HEAD")
-                with urllib.request.urlopen(req, timeout=3) as resp:
+                with net_io.open(req, timeout=3) as resp:
                     state["comfyui_reachable"] = 200 <= resp.status < 500
             except Exception as exc:
                 state["comfyui_reachable"] = False
@@ -3522,6 +3558,7 @@ class NaibaChatApp:
             },
             "data_migration": self.migration_health(),
             "resolved_workspace_dir": str(self.config.resolve_workspace_dir()),
+            "proxy_state": net_io.proxy_state(),
         }
 
     def list_skill_dirs(self) -> dict[str, Any]:
@@ -3781,12 +3818,11 @@ class RequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._json({"error": "after 必须是整数"}, HTTPStatus.BAD_REQUEST)
                 return
-            self._json(APP.jobs.read(job_id, after, owner=conversation_id or None))
+            # 只读：Job 输出跨对话/跨会话可查询（配合 resume 记录的原 Job ID）。
+            self._json(APP.jobs.read(job_id, after))
         elif path.startswith("/api/jobs/") and path.endswith("/status"):
             job_id = path.split("/")[-2]
-            query = urllib.parse.parse_qs(parsed.query)
-            conversation_id = query.get("conversation_id", [""])[0]
-            job = APP.jobs.get(job_id, owner=conversation_id or None)
+            job = APP.jobs.get(job_id)
             self._json(job or {"error": "Job 不存在"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
         elif path == "/api/tools":
             self._json({"tools": APP.tool_registry.schemas()})
@@ -3801,9 +3837,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"servers": APP.mcp.states()})
         elif path.startswith("/api/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
-            query = urllib.parse.parse_qs(parsed.query)
-            conversation_id = query.get("conversation_id", [""])[0]
-            job = APP.jobs.get(job_id, owner=conversation_id or None)
+            # 只读：Job 详情跨对话/跨会话可查询。
+            job = APP.jobs.get(job_id)
             self._json(job or {"error": "Job 不存在"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
         elif path == "/api/conversations":
             query = urllib.parse.parse_qs(parsed.query)
@@ -4286,6 +4321,8 @@ class RequestHandler(BaseHTTPRequestHandler):
                         self._json({"error": "存在活动任务，请先等待完成或取消后再切换数据目录"}, HTTPStatus.CONFLICT)
                         return
                 settings = APP.config.update_settings(body)
+                # 代理设置变更即时生效：重建统一网络入口的 opener，无需重启。
+                net_io.configure(APP.config.data.get("proxy"))
                 model_key = str(body.get("model_key") or body.get("default_model_key") or "").strip()
                 if model_key:
                     APP.config.set_default_model_key(model_key)
@@ -4310,6 +4347,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                             APP.listener_host,
                             int(APP.config.data.get("port", 8765)),
                         ),
+                        "proxy_state": net_io.proxy_state(),
                     }
                 )
             except (OSError, ValueError) as exc:
@@ -4729,10 +4767,8 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _serve_local_file(self, source: str) -> None:
         if source.startswith("http://127.0.0.1:8188/") or source.startswith("http://localhost:8188/"):
-            import urllib.request
-
             try:
-                with urllib.request.urlopen(source, timeout=60) as response:
+                with net_io.open(source, timeout=60) as response:
                     data = response.read()
                     content_type = response.headers.get_content_type()
             except Exception as exc:
@@ -5121,16 +5157,21 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "supports_images": bool(capability.get("supported")),
                 "capability_confirmed": bool(capability.get("confirmed")),
                 "capability_source": str(capability.get("source") or "model_name"),
+                "proxy_state": net_io.proxy_state(),
             })
         except Exception as exc:
-            self._json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            proxy_note = (net_io.proxy_state().get("note") or "").strip()
+            suffix = f"（外部请求：{proxy_note}）" if proxy_note else ""
+            self._json({"ok": False, "error": f"{exc}{suffix}"}, HTTPStatus.BAD_REQUEST)
 
     def _provider_models(self, body: dict[str, Any]) -> None:
         try:
             provider = self._resolve_model_profile(body)
             self._json({"models": APP.models.list_online_models(provider)})
         except Exception as exc:
-            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            proxy_note = (net_io.proxy_state().get("note") or "").strip()
+            suffix = f"（外部请求：{proxy_note}）" if proxy_note else ""
+            self._json({"error": f"{exc}{suffix}"}, HTTPStatus.BAD_REQUEST)
 
     def _unload_provider(self, body: dict[str, Any]) -> None:
         try:

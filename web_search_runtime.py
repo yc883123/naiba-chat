@@ -18,6 +18,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+import net_io
+
 logger = logging.getLogger("naiba.web_search")
 
 
@@ -91,7 +93,7 @@ class WebSearchRuntime:
         # 自定义端点统一使用 GET ?q=&limit=，返回 JSON 后尽力归一化。
         sep = "&" if "?" in endpoint else "?"
         req = urllib.request.Request(f"{endpoint}{sep}q={urllib.parse.quote(query)}&limit={limit}", headers=headers, method="GET")
-        with urllib.request.urlopen(req, timeout=20) as resp:
+        with net_io.open(req, timeout=20) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
         payload = json.loads(raw)
         return self._normalize(payload, limit)

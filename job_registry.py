@@ -32,6 +32,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+import net_io
+
 JOB_TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 JOB_ACTIVE = {"queued", "running", "waiting", "stopping"}
 
@@ -266,17 +268,31 @@ class JobRegistry:
             persisted_params = {}
         if not persisted_params:
             persisted_params = dict(job.get("result", {}).get("params", {})) if isinstance(job.get("result"), dict) else {}
+        persisted_params = dict(persisted_params)
+        # 记录来源 Job：resume/retry 产生的新 Job 可追溯“由谁恢复”，跨对话查询也能核对。
+        persisted_params["_resumed_from"] = job_id
+        label = job.get("current_step") or f"恢复 Job({job['kind']})"
         spec = JobSpec(
             kind=job["kind"],
             conversation_id=job["conversation_id"],
             params=persisted_params,
-            label=job.get("current_step") or f"恢复 Job({job['kind']})",
+            label=label,
             parent_job_id=job["parent_job_id"] or None,
             owner_session_id=job["owner_session_id"],
             resumable=True,
             checkpoint=checkpoint,
         )
-        return self.start(spec, owner=job["owner_session_id"])
+        new_id = self.start(spec, owner=job["owner_session_id"])
+        if new_id:
+            # 在新 Job 的增量输出里写入一条来源说明，UI 与 job_output 均可见。
+            try:
+                self.app.storage.append_run_event(
+                    new_id,
+                    {"type": "output", "line": f"（本 Job 由 Job {job_id} 恢复/重试）"},
+                )
+            except Exception:
+                traceback.print_exc()
+        return new_id
 
     def retry(self, job_id: str, owner: str | None = None) -> str | None:
         """用户确认后重试失败步骤（等价于从 checkpoint 恢复，但显式标记 retry_step）。
@@ -474,7 +490,7 @@ class JobRegistry:
                 encoded = json.dumps(data, ensure_ascii=False).encode("utf-8")
                 headers.setdefault("Content-Type", "application/json")
             req = urllib.request.Request(url, data=encoded, headers=headers, method=method)
-            with urllib.request.urlopen(req, timeout=min(int(submit.get("timeout", 60)), 180)) as resp:
+            with net_io.open(req, timeout=min(int(submit.get("timeout", 60)), 180)) as resp:
                 body = resp.read(100000).decode("utf-8", errors="replace")
             try:
                 return json.loads(body)
@@ -489,7 +505,7 @@ class JobRegistry:
         if not url:
             return "unknown"
         try:
-            with urllib.request.urlopen(url, timeout=min(int(poll.get("timeout", 30)), 120)) as resp:
+            with net_io.open(url, timeout=min(int(poll.get("timeout", 30)), 120)) as resp:
                 body = resp.read(100000).decode("utf-8", errors="replace")
             try:
                 data = json.loads(body)
@@ -659,7 +675,7 @@ class JobRegistry:
     def _comfyui_history_once(self, base: str, prompt_id: str) -> tuple[bool, list[str], str]:
         """Return (done, output files, reason); empty history means still running."""
         try:
-            with urllib.request.urlopen(f"{base}/history/{prompt_id}", timeout=30) as resp:
+            with net_io.open(f"{base}/history/{prompt_id}", timeout=30) as resp:
                 history = json.loads(resp.read(200000).decode("utf-8", errors="replace"))
             entry = history.get(prompt_id) if isinstance(history, dict) else None
             if not entry:
@@ -682,7 +698,7 @@ class JobRegistry:
 
     def _comfyui_reachable(self, base: str) -> bool:
         try:
-            with urllib.request.urlopen(f"{base}/system_stats", timeout=10) as resp:
+            with net_io.open(f"{base}/system_stats", timeout=10) as resp:
                 return resp.status == 200
         except Exception:
             return False
@@ -713,7 +729,7 @@ class JobRegistry:
             f"{base}/prompt", data=data, headers={"Content-Type": "application/json"}, method="POST"
         )
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with net_io.open(req, timeout=60) as resp:
                 body = json.loads(resp.read(100000).decode("utf-8", errors="replace"))
             return str(body.get("prompt_id") or "")
         except Exception as exc:
@@ -733,7 +749,7 @@ class JobRegistry:
             attempt += 1
             self.app.storage.update_job(job_id, attempt=attempt)
             try:
-                with urllib.request.urlopen(f"{base}/history/{prompt_id}", timeout=30) as resp:
+                with net_io.open(f"{base}/history/{prompt_id}", timeout=30) as resp:
                     history = json.loads(resp.read(200000).decode("utf-8", errors="replace"))
                 entry = history.get(prompt_id) if isinstance(history, dict) else None
                 if entry:
@@ -742,7 +758,7 @@ class JobRegistry:
                     ok_all = bool(files)
                     for url in files:
                         try:
-                            with urllib.request.urlopen(url, timeout=20) as r:
+                            with net_io.open(url, timeout=20) as r:
                                 if int(r.headers.get("Content-Length", "0")) == 0:
                                     ok_all = False
                         except Exception:

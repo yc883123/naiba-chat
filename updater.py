@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
+import net_io
+
 
 REPOSITORY = "yc883123/naiba-chat"
 MANIFEST_ASSET = "naiba-chat-update.json"
@@ -61,6 +63,17 @@ class UpdateManager:
         self._releases_from_cache = False
         self.build = self._read_build_info()
         self.pending_verification = self.verify_pending()
+
+    @staticmethod
+    def _with_proxy_context(message: str) -> str:
+        """在错误消息末尾附上当前实际生效的外部请求模式，便于用户定位网络问题。"""
+        try:
+            note = net_io.proxy_state().get("note") or ""
+        except Exception:  # noqa: BLE001 - 诊断信息失败不影响主流程
+            note = ""
+        if not note:
+            return message
+        return f"{message}（外部请求：{note}）"
 
     def _run_git(self, *args: str, timeout: int = 30) -> str:
         attempts = 2 if args and args[0] in {"fetch", "pull", "ls-remote"} else 1
@@ -227,7 +240,7 @@ class UpdateManager:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with net_io.open(request, timeout=timeout) as response:
             value = json.loads(response.read().decode("utf-8-sig"))
         if not isinstance(value, (dict, list)):
             raise RuntimeError("更新服务器返回了无效数据")
@@ -548,12 +561,12 @@ class UpdateManager:
         except urllib.error.URLError:
             with self.lock:
                 self.phase = "error"
-                self.error = "无法连接更新服务器，请检查网络后重试"
+                self.error = self._with_proxy_context("无法连接更新服务器，请检查网络后重试")
                 self.checked_at = int(time.time())
         except Exception as exc:
             with self.lock:
                 self.phase = "error"
-                self.error = f"检查更新失败：{exc}"
+                self.error = self._with_proxy_context(f"检查更新失败：{exc}")
                 self.checked_at = int(time.time())
         return self.status()
 
@@ -571,7 +584,7 @@ class UpdateManager:
             except Exception as exc:
                 with self.lock:
                     self.phase = "error"
-                    self.error = f"检查更新失败：{exc}"
+                    self.error = self._with_proxy_context(f"检查更新失败：{exc}")
                     self.checked_at = int(time.time())
 
         threading.Thread(target=run, name="naiba-update-check", daemon=True).start()
@@ -585,7 +598,7 @@ class UpdateManager:
             str(latest["download_url"]),
             headers={"Accept": "application/octet-stream", "User-Agent": "naiba-chat-updater"},
         )
-        with urllib.request.urlopen(request, timeout=120) as response, target.open("wb") as output:
+        with net_io.open(request, timeout=120) as response, target.open("wb") as output:
             while chunk := response.read(1024 * 1024):
                 output.write(chunk)
         if target.stat().st_size < 1024 * 1024 or target.read_bytes()[:2] != b"MZ":
@@ -695,7 +708,7 @@ Remove-Item -LiteralPath $Downloaded -Force -ErrorAction SilentlyContinue
             except Exception as exc:
                 with self.lock:
                     self.phase = "error"
-                    self.error = f"安装更新失败：{exc}"
+                    self.error = self._with_proxy_context(f"安装更新失败：{exc}")
 
         threading.Thread(target=install, name="naiba-update-install", daemon=True).start()
         return self.status()

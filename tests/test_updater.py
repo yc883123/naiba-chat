@@ -272,7 +272,9 @@ class ExecutableUpdateTests(unittest.TestCase):
         self.manager._request_json = self.stub.route(api=network_error, latest=network_error)
         status = self.manager.check(force=True)
         self.assertEqual(status["phase"], "error")
-        self.assertEqual(status["error"], "无法连接更新服务器，请检查网络后重试")
+        # 基础文案保持不变，仅在末尾附带当前实际生效的外部请求模式（用于定位代理问题）。
+        self.assertTrue(status["error"].startswith("无法连接更新服务器，请检查网络后重试"))
+        self.assertIn("外部请求：", status["error"])
 
     def test_check_normal_api_path_regression(self):
         self.set_build("1.6.6-beta")
