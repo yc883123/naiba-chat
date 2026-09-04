@@ -2909,6 +2909,13 @@ function renderConversationRuleBar() {
     bar.hidden = true;
     return;
   }
+  // 选项按钮（#choiceButtons）展开时让位，避免规则栏与按钮重叠。
+  // 按钮存在期间只维护 hidden 状态、绝不显示；按钮被 hideChoiceButtons() 移除后，
+  // 下一次渲染自然走 hidden=false 把规则栏还回来。
+  if ($('#choiceButtons')) {
+    bar.hidden = true;
+    return;
+  }
   bar.hidden = false;
   const prompt = String(conversation.system_prompt || '').trim();
   if (!prompt) {
