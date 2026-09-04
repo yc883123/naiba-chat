@@ -202,6 +202,22 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         ctx = ctx or {}
         return str(ctx.get("owner_session_id") or ctx.get("conversation_id") or "")
 
+    def _missing_message(job_id: str) -> str:
+        """区分「Job 记录已被清理」与「Job ID 从未存在」，避免含糊的“无权访问”。"""
+        try:
+            cleaned = app.storage.is_job_cleaned(job_id)
+        except Exception:  # noqa: BLE001 - 诊断失败不影响主流程
+            cleaned = False
+        if cleaned:
+            return (
+                f"Job {job_id} 的记录已被清理（历史任务被清理后无法再读取输出）。"
+                "如需恢复，请在新对话中说明意图，重新创建 Job。"
+            )
+        return (
+            f"Job {job_id} 不存在或无从访问：当前实例中没有该 Job 的真实记录。"
+            "不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job。"
+        )
+
     def run_in_background(arguments, active_skills, run_context=None):
         ctx = run_context or {}
         conversation_id = str(ctx.get("conversation_id") or "")
@@ -246,7 +262,7 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         if not job_id:
             return False, "缺少 job_id"
         if not jobs.get(job_id):
-            return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
+            return False, _missing_message(job_id)
         out = jobs.read(job_id, int((arguments or {}).get("cursor", 0) or 0))
         events = out.get("events", [])
         text = "\n".join(
@@ -261,10 +277,20 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
             return False, "缺少 job_id"
         job = jobs.get(job_id)
         if not job:
-            return False, "Job 不存在或无权访问"
+            return False, _missing_message(job_id)
+        if job["status"] == "completed":
+            note = "Job 已完成，可调用 job_output 读取最终结果"
+        elif job["status"] == "interrupted":
+            note = "Job 已中断（如服务曾重启），记录仍可查看，但不会自动续跑；可只读查看其输出"
+        elif job["status"] in ("failed", "cancelled"):
+            note = f"Job 已结束（{job['status']}），无法继续执行；{job.get('error') or ''}".strip()
+        elif job["status"] in ("queued", "running", "waiting", "stopping"):
+            note = "Job 正在运行，可调用 job_wait 等待完成"
+        else:
+            note = f"Job 状态：{job['status']}"
         return True, (
             f"Job {job_id}：status={job['status']}, progress={job['progress']:.0f}%, "
-            f"step={job['current_step']}, attempt={job['attempt']}"
+            f"step={job['current_step']}, attempt={job['attempt']}；{note}"
         )
 
     def job_wait(arguments, active_skills, run_context=None):
@@ -273,14 +299,14 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         if not job_id:
             return False, "缺少 job_id"
         if not jobs.get(job_id):
-            return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
+            return False, _missing_message(job_id)
         timeout = int((arguments or {}).get("timeout", 600) or 600)
         try:
             job = jobs.wait(job_id, timeout)
         except LookupError:
-            return False, "Job 不存在或无权访问；不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job"
+            return False, _missing_message(job_id)
         if not job:
-            return False, "Job 不存在或无权访问"
+            return False, _missing_message(job_id)
         if job["status"] == "completed":
             return True, f"Job 已完成：{json_dumps(job.get('result', {}))[:2000]}"
         return False, f"Job 结束（{job['status']}）：{job.get('error', '')}"

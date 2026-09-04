@@ -1,18 +1,18 @@
-# Naiba Chat 1.7.4 Beta
+# Naiba Chat 1.7.5 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.7.4 Beta 新增「设置→运行→网络代理」：统一所有外部请求（在线模型、联网搜索、更新检查/下载等）的出站策略，本地服务始终直连；同时明确后台 Job 的只读查询边界与恢复来源追溯。
+1.7.5 Beta 优化后台 Job 跨会话查询的错误区分与状态提示（清理痕迹可追溯、缺失提示分级、状态下一步指引、Job ID 验证规则收紧），并增强 SillyTavern 角色卡解析兼容性；1.7.4 Beta 已新增统一网络代理出站策略与 Job 只读查询边界。
 
-## 1.7.4 Beta 主要能力
+## 1.7.5 Beta 主要能力
 
-- **网络代理设置**：设置页新增「网络代理」区块，提供三种出站方式——跟随系统代理（兼容旧配置升级的默认行为）、关闭（强制直连并忽略系统代理/VPN 代理）、手动代理（http/https 地址且必须包含端口，保存时即时校验）。覆盖在线模型推理、视觉路由、联网搜索、模型连接测试与模型列表、更新检查与更新下载等所有外部请求；保存后立即生效，无需重启，设置页实时显示当前生效模式。
-- **本地服务始终直连**：127.0.0.1 / localhost / 局域网地址（如 Ollama、LM Studio、ComfyUI 等本机或内网服务）一律绕过代理直连，不受代理开关影响；外部请求失败时错误提示末尾附带当前实际生效的代理模式，便于排查代理或 VPN 问题。
-- **移除隐藏直连回退**：旧版本在系统代理/TUN 瞬时拒连时会自动改用直连悄悄重试一次，该隐式行为已移除——外部请求严格按你的代理设置路由，不再违背配置意图；全新安装默认「代理关闭（强制直连）」。
-- **Job 只读查询边界**：job_status / job_output / job_wait 明确为只读、可跨对话/跨会话凭 Job ID 查询后台任务；job_kill 只能取消发起该 Job 的会话自己所创建的 Job，避免误终止其它会话的后台任务。
-- **Job 恢复血缘可追溯**：resume / retry 产生的新 Job 会记录来源 Job ID，并在增量输出中写明「本 Job 由 Job X 恢复/重试」，UI 与 job_output 均可见。
+- **Job 清理痕迹可追溯**：终端清理已终结的 Job 记录前，先把 job_id 记入新的 cleaned_jobs 表；之后跨对话查询能区分「Job 记录已被清理」与「Job ID 从未存在」，不再含糊报「无权访问」。
+- **缺失 Job 提示分级**：job_status / job_output / job_wait 查询不到 Job 时，若记录曾被清理提示「记录已被清理（历史任务无法再读取输出）」，否则提示「Job 不存在或无从访问」，并明确要求不得猜测 Job ID。
+- **Job 状态下一步指引**：job_status 按当前状态给出明确建议——completed 提示用 job_output 读结果、interrupted 提示记录仍可查看但不会自动续跑、failed/cancelled 给出结束原因、运行中提示用 job_wait 等待，状态文案更易读。
+- **Job ID 验证规则收紧**：用户消息已明确给出 Job ID 时，recall 工具禁止先检索历史、应直接 job_status 验证真实状态；仅当用户未给 Job ID（如「继续昨天那个任务」）才检索历史文本，找到 Job ID 后必须紧接着 job_status 验证，不得把历史聊天里出现的 Job ID 当成任务已成功或仍在运行的证据。
+- **SillyTavern 角色卡解析增强**：parse_sillytavern_card 对 chara 负载先尝试 gzip 解码并兼容 data 字段包裹，支持更多角色卡导出格式，导入成功率更高。
 
-### 历史能力（1.7.3 及更早）
+### 历史能力（1.7.4 及更早）
 
 - **规则提示条让位选项按钮**：AI 弹出「可选回复」按钮期间，「本次对话规则」提示条保持隐藏，不再与选项按钮重叠；修复按钮展开过程中切换会话、保存对话设置等触发提示条重渲染、把它重新顶出来与按钮叠在一起的问题——按钮被移除后下一次渲染自动恢复提示条显示。
 
@@ -83,7 +83,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.7.4-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-1.7.5-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -171,13 +171,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.7.4-beta-windows-x64.zip`
+- `naiba-chat-1.7.5-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.7.4 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 1.7.5 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -190,7 +190,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.7.4-beta"
+$env:NAIBA_BUILD_VERSION = "1.7.5-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 

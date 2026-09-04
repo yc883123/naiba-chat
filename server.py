@@ -271,7 +271,9 @@ def parse_sillytavern_card(data: bytes) -> dict[str, Any]:
     if not card:
         chara_raw = text_chunks.get("chara")
         if chara_raw:
-            card = _decode_card_payload(chara_raw, try_gzip=False)
+            decoded = _decode_card_payload(chara_raw, try_gzip=True)
+            data_field = decoded.get("data")
+            card = data_field if isinstance(data_field, dict) else decoded
 
     if not isinstance(card, dict) or not card:
         raise ValueError("未能从 PNG 中解析出角色卡内容")

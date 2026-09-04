@@ -366,6 +366,14 @@ class ChatStorage:
                 );
                 CREATE INDEX IF NOT EXISTS idx_plans_conversation
                     ON plans(conversation_id, created_at DESC);
+                -- 已清理的 Job 痕迹：清理终结记录时保留 job_id，便于跨对话查询
+                -- 区分「从未创建」与「记录已被清理」，避免含糊的“无权访问”。
+                -- 独立于 background_tasks 存在（无外键），清理后仍可查询。
+                CREATE TABLE IF NOT EXISTS cleaned_jobs (
+                    job_id TEXT PRIMARY KEY,
+                    kind TEXT NOT NULL DEFAULT '',
+                    cleaned_at INTEGER NOT NULL
+                );
                 """
             )
             # 增量迁移（列新增 / 旧数据回填）由 apply_pending_migrations() 在重启清理之后统一执行。
@@ -1562,12 +1570,34 @@ class ChatStorage:
         return [self._task_dict(row) for row in rows]
 
     def clear_terminal_background_tasks(self) -> int:
-        """Remove completed task records and their cascaded run events, never active runs."""
+        """Remove completed task records and their cascaded run events, never active runs.
+
+        删除前把 job_id 记入 ``cleaned_jobs``，使跨对话查询能区分
+        「Job 记录已被清理」与「Job ID 从未存在」。
+        """
+        now = int(time.time() * 1000)
         with self._connect() as db:
+            rows = db.execute(
+                "SELECT id, kind FROM background_tasks "
+                "WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted')"
+            ).fetchall()
+            for row in rows:
+                db.execute(
+                    "INSERT OR REPLACE INTO cleaned_jobs(job_id, kind, cleaned_at) VALUES (?, ?, ?)",
+                    (str(row["id"]), str(row["kind"] or ""), now),
+                )
             cursor = db.execute(
                 "DELETE FROM background_tasks WHERE status IN ('completed', 'failed', 'cancelled', 'interrupted')"
             )
         return cursor.rowcount
+
+    def is_job_cleaned(self, job_id: str) -> bool:
+        """判断某个 Job ID 是否曾存在但记录已被清理（用于区分错误信息）。"""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM cleaned_jobs WHERE job_id = ?", (job_id,)
+            ).fetchone()
+        return row is not None
 
     # ---- 计划（Plan 模式） ----
     def create_plan(self, conversation_id: str, question: str) -> dict[str, Any]:

@@ -154,12 +154,49 @@ def test_agent_retry():
         state["n"], sum(1 for e in agent_events if e.get("type") == "retry")))
 
 
+def test_job_cleaned_lookup():
+    """清理后的 Job 应返回「记录已被清理」，未创建的 Job 返回「不存在」，均非含糊的“无权访问”。"""
+    from subagent import job_tool_handler_factory
+
+    app = FakeApp()
+    handlers = job_tool_handler_factory(app)
+    conv = app.storage.create_conversation()
+    cid = conv["id"]
+
+    spec = JobSpec(
+        kind="shell",
+        conversation_id=cid,
+        params={"command": "echo CLEANED_LOOKUP", "timeout": 30},
+        label="cleaned lookup",
+    )
+    job_id = app.jobs.start(spec, owner=cid)
+    app.jobs.wait(job_id, timeout=15, owner=cid)
+
+    # 跨对话（不同 owner）只读查询可用
+    ok, msg = handlers["job_status"]({"job_id": job_id}, [], {"conversation_id": "other-conv"})
+    assert ok and "completed" in msg, msg
+
+    # 未创建的 Job ID：提示不存在，而非“无权访问”
+    ok, msg = handlers["job_status"]({"job_id": "no-such-job"}, [], {"conversation_id": "other-conv"})
+    assert not ok and "不存在" in msg and "无权访问" not in msg, msg
+
+    # 清理后：提示“已被清理”
+    assert app.storage.clear_terminal_background_tasks() >= 1
+    assert app.storage.is_job_cleaned(job_id) is True
+    ok, msg = handlers["job_status"]({"job_id": job_id}, [], {"conversation_id": "other-conv"})
+    assert not ok and "已被清理" in msg, msg
+    ok, msg = handlers["job_output"]({"job_id": job_id}, [], {"conversation_id": "other-conv"})
+    assert not ok and "已被清理" in msg, msg
+    print("PASS test_job_cleaned_lookup")
+
+
 if __name__ == "__main__":
     try:
         test_tool_registry()
         test_job_shell()
         test_agent_final_and_maxsteps()
         test_agent_retry()
+        test_job_cleaned_lookup()
         print("\nALL SMOKE TESTS PASSED")
     except Exception:
         traceback.print_exc()
