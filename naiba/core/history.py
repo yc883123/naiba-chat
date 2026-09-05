@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from naiba.core.contracts import MetadataKeys
 from naiba.core.diagnostics import _cache_debug_enabled
 
 IMAGE_MEDIA_TYPES = {
@@ -209,7 +210,7 @@ def build_model_history(
         if item.get("role") not in {"user", "assistant"}:
             continue
         content = str(item.get("content") or "")
-        previous_uploads = (item.get("metadata") or {}).get("attachments") or []
+        previous_uploads = (item.get("metadata") or {}).get(MetadataKeys.ATTACHMENTS) or []
         if item.get("role") == "user" and previous_uploads:
             paths = [
                 f"[用户上传文件：{upload.get('path')}]"
@@ -240,7 +241,7 @@ def build_model_history(
         # Thinking-mode gateways require assistant reasoning_content on the
         # next request; it lives in persisted metadata, not visible content.
         if item.get("role") == "assistant":
-            raw_reasoning = (item.get("metadata") or {}).get("reasoning")
+            raw_reasoning = (item.get("metadata") or {}).get(MetadataKeys.REASONING)
             if isinstance(raw_reasoning, list):
                 raw_reasoning = "\n".join(str(value) for value in raw_reasoning if value)
             elif raw_reasoning is not None:
@@ -252,7 +253,7 @@ def build_model_history(
         # （trace 不含答复）做兜底：仅当 trace 末条不是本次答复（assistant 文本消息）时，
         # 才追加 message，保证存量会话不丢答复、也不重复。
         if item.get("role") == "assistant":
-            trace = (item.get("metadata") or {}).get("trace") or []
+            trace = (item.get("metadata") or {}).get(MetadataKeys.TRACE) or []
             if trace:
                 last_replayed: dict[str, Any] | None = None
                 for m in trace:
@@ -272,7 +273,7 @@ def build_model_history(
                 if not already_has_answer:
                     history.append(message)
             else:
-                tool_block = _content_read_tool_outputs((item.get("metadata") or {}).get("tool_runs"))
+                tool_block = _content_read_tool_outputs((item.get("metadata") or {}).get(MetadataKeys.TOOL_RUNS))
                 if tool_block:
                     history.append({"role": "user", "content": tool_block})
                 history.append(message)

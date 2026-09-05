@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from naiba.core.contracts import RunContext
+
 import argparse
 import base64
 import hashlib
@@ -2296,7 +2298,7 @@ class NaibaChatApp:
         self,
         args: dict[str, Any],
         _skills: Any,
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         run_id = str((run_context or {}).get("run_id") or (run_context or {}).get("job_id") or "")
         if not run_id:
@@ -2324,7 +2326,7 @@ class NaibaChatApp:
         self,
         args: dict[str, Any],
         _skills: Any,
-        _run_context: dict[str, Any] | None = None,
+        _run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         paths = (args or {}).get("paths")
         if not isinstance(paths, list) or not paths or len(paths) > 200:
@@ -2354,7 +2356,7 @@ class NaibaChatApp:
         self,
         args: dict[str, Any],
         _skills: Any,
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         """Submit a batch of API-format workflows through the durable JobRegistry."""
         from job_registry import JobSpec
@@ -2467,7 +2469,7 @@ class NaibaChatApp:
         self,
         args: dict[str, Any],
         _skills: Any,
-        _run_context: dict[str, Any] | None = None,
+        _run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         values = args or {}
         try:

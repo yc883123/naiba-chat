@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+from naiba.core.contracts import RunContext
+
 import traceback
 from typing import Any, Callable
 
@@ -97,7 +99,7 @@ def run_subagent_agent(
 
     emit({"type": "job_status", "status": "running", "current_step": "子 Agent 推理中"})
     worker = SkillAgent(app.catalog, CraftToolExecutor(app.executor), app.models.complete)
-    run_context = {
+    run_context: RunContext = {
         "run_id": job_id,
         "job_id": job_id,
         "conversation_id": conversation_id,
@@ -145,7 +147,7 @@ def subagent_handler_factory(app: Any) -> Callable[..., tuple[bool, str]]:
     def handler(
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         ctx = run_context or {}
         parent_depth = int(ctx.get("depth", 0) if isinstance(ctx.get("depth"), int) else 0)
@@ -218,7 +220,7 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
             "不得猜测 Job ID，请先调用 run_in_background、comfyui_batch 或 subagent 创建真实 Job。"
         )
 
-    def run_in_background(arguments, active_skills, run_context=None):
+    def run_in_background(arguments, active_skills, run_context: RunContext | None = None):
         ctx = run_context or {}
         conversation_id = str(ctx.get("conversation_id") or "")
         if not conversation_id:
@@ -256,7 +258,7 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         job_id = jobs.start(spec, owner=owner)
         return True, f"Job 已提交，Job ID：{job_id}（可用 job_wait 等待结果）"
 
-    def job_output(arguments, active_skills, run_context=None):
+    def job_output(arguments, active_skills, run_context: RunContext | None = None):
         # 只读操作：允许跨对话/跨会话查询 Job 输出（Job ID 由创建方告知或经 resume 记录）。
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
@@ -270,7 +272,7 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
         )
         return True, text or "（暂无增量输出）"
 
-    def job_status(arguments, active_skills, run_context=None):
+    def job_status(arguments, active_skills, run_context: RunContext | None = None):
         # 只读操作：允许跨对话/跨会话查询 Job 状态。
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
@@ -293,7 +295,7 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
             f"step={job['current_step']}, attempt={job['attempt']}；{note}"
         )
 
-    def job_wait(arguments, active_skills, run_context=None):
+    def job_wait(arguments, active_skills, run_context: RunContext | None = None):
         # 只读操作：允许跨对话/跨会话等待 Job 结果。
         job_id = str((arguments or {}).get("job_id") or "")
         if not job_id:
@@ -311,7 +313,7 @@ def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, st
             return True, f"Job 已完成：{json_dumps(job.get('result', {}))[:2000]}"
         return False, f"Job 结束（{job['status']}）：{job.get('error', '')}"
 
-    def job_kill(arguments, active_skills, run_context=None):
+    def job_kill(arguments, active_skills, run_context: RunContext | None = None):
         # 写操作：保留归属，只能取消发起该 Job 的会话（跨对话不可取消）。
         owner = _owner(run_context)
         job_id = str((arguments or {}).get("job_id") or "")

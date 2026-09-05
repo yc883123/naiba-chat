@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from naiba.core.contracts import RunContext
+
 import json
 import re
 import threading
@@ -813,7 +815,7 @@ class ConversationRunManager:
         sink = _RunEventSink(self, run_id, cancel_event)
         self._register_sink(run_id, sink)
         skills: list[dict[str, str]] = []
-        run_context: dict[str, Any] | None = None
+        run_context: RunContext | None = None
         search_sources: list[dict[str, str]] = []
         vision_trace: dict[str, Any] = {"requests": 0, "cache_hit": False}
         chat_diagnostics: dict[str, Any] = {}
@@ -1033,7 +1035,7 @@ class ConversationRunManager:
                 prompt = (prompt + "\n\n图片处理策略：当上下文中已包含图片证据时，不要为普通答复重复调用图像描述/视觉工具；"
                            "仅当用户明确要求裁剪、OCR、坐标、像素比较等新的图像操作时才调用视觉工具。").strip()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
-            run_context = {
+            run_context: RunContext = {
                 "run_id": run_id,
                 "conversation_id": conversation_id,
                 "owner_session_id": conversation_id,

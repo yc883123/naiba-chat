@@ -1,6 +1,8 @@
 """Generic capability tools: safe local Skill installation / unpack / inspection."""
 from __future__ import annotations
 
+from naiba.core.contracts import RunContext
+
 import json
 from pathlib import Path
 from typing import Any
@@ -18,7 +20,7 @@ class CapabilityRuntime:
         self,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         # 放宽：exclusive 模式下也允许安装（中途导入 Skill），供后续引用/使用。
         source = str(arguments.get("source_path") or "").strip()
@@ -74,7 +76,7 @@ class CapabilityRuntime:
         self,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         """校验并解压一个 Skill zip 到工作区专属子目录（由后端代码做强校验）。
 
@@ -97,7 +99,7 @@ class CapabilityRuntime:
         self,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         """定位一个已安装 Skill 的文件路径，供后续读取/编辑。仅返回精确命中的 Skill 信息。"""
         query = str(arguments.get("skill") or arguments.get("name") or "").strip()

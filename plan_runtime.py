@@ -9,6 +9,8 @@ SQLite 保存权威状态，同时把计划归档到配置工作区的 `.naiba-c
 """
 from __future__ import annotations
 
+from naiba.core.contracts import RunContext
+
 import json
 import re
 import threading

@@ -17,6 +17,8 @@ Agent Loop 仅通过它查询 ``side_effect`` / ``retryable`` / ``permission`` �
 """
 from __future__ import annotations
 
+from naiba.core.contracts import RunContext
+
 import json
 from dataclasses import dataclass, field
 from typing import Any, Callable
@@ -175,7 +177,7 @@ class ToolRegistry:
         tool: str,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         executor = self._executor
         if isinstance(run_context, dict) and run_context.get("executor") is not None:

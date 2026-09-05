@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from naiba.core.contracts import RunContext
+
 import hashlib
 import concurrent.futures
 import json
@@ -1133,7 +1135,7 @@ class SkillAgent:
         cancel_event: threading.Event | None = None,
         max_steps: int | None = None,
         tool_registry: Any = None,
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, Any]]:
         if cancel_event and cancel_event.is_set():
             raise TaskCancelled("任务已取消")
@@ -1219,7 +1221,7 @@ class SkillAgent:
         cancel_event: threading.Event | None = None,
         max_steps: int | None = None,
         tool_registry: Any = None,
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[str, list[dict[str, Any]], list[str], dict[str, Any]]:
 
         skill_prompts = []
@@ -2011,7 +2013,7 @@ class SkillAgent:
         return True
 
     @staticmethod
-    def _pending_background_jobs(run_context: dict[str, Any] | None) -> list[str]:
+    def _pending_background_jobs(run_context: RunContext | None) -> list[str]:
         ctx = run_context or {}
         registry = ctx.get("job_registry")
         run_id = str(ctx.get("run_id") or ctx.get("job_id") or "")
@@ -2040,7 +2042,7 @@ class SkillAgent:
         tool_registry: Any,
         cancel_event: threading.Event | None,
         event: EventCallback,
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
         """执行工具并处理权限确认与可重试失败（最多 2 次）。副作用工具不重试。
 
