@@ -1,8 +1,8 @@
-"""Run 执行引擎（原 async_tasks.py，阶段 2 第三步整体搬迁）。
+"""Run 主循环与消息重建（原 naiba/run/manager.py 的聊天执行区，阶段 2 第三步·小步②）。
 
-ConversationRunManager：每会话一轮 Run 的调度器与注册表——提交/快照固化（session.py）、
-事件流基建（stream.py）、取消/看门狗/插话/工具确认路由与主循环（_run_chat/_run_plan，
-后续在包内继续拆分）。模块级辅助：_search_sources/_merge_usage_summary。
+ConversationRunMixin：submit_chat/submit_plan（提交与快照固化）、_run_chat 主循环、
+_run_plan 计划执行包装、_all_run_events/_rebuild_partial_run/_persist_aborted_message/
+_persist_failed_message（事件重建与取消幂等持久化）。模块级辅助：_search_sources/_merge_usage_summary。
 """
 
 from __future__ import annotations
@@ -35,86 +35,74 @@ from naiba.run.session import (
     routing_message,
 )
 
-from naiba.run.chat import ConversationRunMixin, _search_sources, _merge_usage_summary
+def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Extract normalized, deduplicated citations from successful search calls."""
+    sources: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for run in tool_runs:
+        if run.get("tool") != "web_search" or not run.get("success"):
+            continue
+        try:
+            payload = json.loads(str(run.get("result") or "{}"))
+        except (json.JSONDecodeError, TypeError):
+            continue
+        items = payload.get("results") if isinstance(payload, dict) else None
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("url") or "").strip()
+            if not url.startswith(("http://", "https://")) or url in seen:
+                continue
+            seen.add(url)
+            sources.append({
+                "title": str(item.get("title") or url).strip(),
+                "url": url,
+                "snippet": str(item.get("snippet") or "").strip(),
+                "published_at": str(
+                    item.get("published_at") or item.get("published") or ""
+                ).strip(),
+            })
+    return sources[:20]
 
 
-class ActiveRunError(RuntimeError):
-    def __init__(self, run_id: str):
-        super().__init__("当前对话已有运行中的任务")
-        self.run_id = run_id
+def _merge_usage_summary(
+    summary: dict[str, Any], latest: dict[str, Any]
+) -> dict[str, Any]:
+    """展示口径采用最新一次 provider 响应的 per-request 用量，而非累计求和。
+
+    累计求和会把长 agent 轮次里多次调用的新增内容算进 input，导致缓存命中率被
+    稀释、跨轮不可比。``requests`` 仍累计，便于展示本轮一共调用了几次模型。
+    """
+    if not latest:
+        return dict(summary or {})
+    if not summary:
+        return SkillAgent._summarize_usage([latest])
+    merged = dict(summary)
+    merged["input_tokens"] = max(0, int(latest.get("input_tokens") or 0))
+    merged["output_tokens"] = max(0, int(latest.get("output_tokens") or 0))
+    merged["total_tokens"] = (
+        max(0, int(latest.get("total_tokens") or 0))
+        or merged["input_tokens"] + merged["output_tokens"]
+    )
+    merged["cached_tokens"] = max(0, int(latest.get("cached_tokens") or 0))
+    # 真正被重新计算（缓存未命中）的输入 token，用来避免只看命中率百分比被稀释。
+    merged["uncached_tokens"] = max(0, merged["input_tokens"] - merged["cached_tokens"])
+    merged["requests"] = max(0, int(summary.get("requests") or 0)) + 1
+    merged["last_input_tokens"] = merged["input_tokens"]
+    merged["last_output_tokens"] = merged["output_tokens"]
+    merged["context_tokens"] = merged["input_tokens"] + merged["output_tokens"]
+    merged["cache_hit_rate"] = (
+        round(merged["cached_tokens"] / merged["input_tokens"] * 100, 1)
+        if merged["input_tokens"] else 0.0
+    )
+    return merged
 
 
-class ConversationRunManager:
-    ACTIVE = {"queued", "running", "waiting", "cancelling"}
-    TERMINAL = {"completed", "failed", "cancelled"}
 
-    def __init__(self, app: Any):
-        self.app = app
-        self._lock = threading.RLock()
-        self._submit_lock = threading.RLock()
-        self._events: dict[str, threading.Event] = {}
-        self._threads: dict[str, threading.Thread] = {}
-        self._conditions: dict[str, threading.Condition] = {}
-        self._executors: dict[str, Any] = {}
-        self._sinks: dict[str, _RunEventSink] = {}
-        self._sinks_lock = threading.Lock()
 
-    def _resolve_allowed_tools(
-        self,
-        mode: str,
-        agent: dict[str, Any],
-        web_search_enabled: bool,
-        model_key: str = "",
-        enabled_tool_ids: list[str] | None = None,
-    ) -> list[str]:
-        """Freeze one run's tools（实现见 naiba/run/session.py）。"""
-        return resolve_allowed_tools(self.app, mode, agent, web_search_enabled, model_key, enabled_tool_ids)
-
-    def _all_tool_names(self) -> list[str]:
-        """全部可用工具 id（实现见 naiba/run/session.py）。"""
-        return all_tool_names(self.app)
-
-    def _bake_session_tool_ids(
-        self, conversation: dict[str, Any], agent: dict[str, Any]
-    ) -> list[str]:
-        """固化会话启用工具集（实现见 naiba/run/session.py）。"""
-        return bake_session_tool_ids(self.app, conversation, agent)
-
-    def enable_conversation_tools(
-        self, conversation_id: str, tool_ids: list[str]
-    ) -> dict[str, Any]:
-        """追加/保底注入工具（实现见 naiba/run/session.py）。"""
-        return enable_conversation_tools(self.app, conversation_id, tool_ids)
-
-    def _condition(self, run_id: str) -> threading.Condition:
-        with self._lock:
-            return self._conditions.setdefault(run_id, threading.Condition(self._lock))
-
-    @staticmethod
-    def _generation_options(config: Any, model_key: str = "") -> dict[str, Any]:
-        """Read provider-scoped options（实现见 naiba/run/session.py）。"""
-        return generation_options(config, model_key)
-
-    @staticmethod
-    def _attachments_have_images(attachments: list[Any]) -> bool:
-        """附件是否含图片（实现见 naiba/run/session.py）。"""
-        return attachments_have_images(attachments)
-
-    @staticmethod
-    def _routing_message(message: str, history: list[dict[str, Any]]) -> str:
-        """短跟进消息的保留路由上下文（实现见 naiba/run/session.py）。"""
-        return routing_message(message, history)
-
-    @staticmethod
-    def _active_error(exc: RuntimeError) -> ActiveRunError | None:
-        text = str(exc)
-        if text.startswith("ACTIVE_RUN:"):
-            return ActiveRunError(text.split(":", 1)[1])
-        return None
-
-    def submit(self, body: dict[str, Any]) -> dict[str, Any]:
-        return self.submit_chat(body)
-
+class ConversationRunMixin:
     def submit_chat(self, body: dict[str, Any]) -> dict[str, Any]:
         conversation_id = str(body.get("conversation_id") or "")
         message = str(body.get("message") or "").strip()
@@ -348,67 +336,6 @@ class ConversationRunManager:
                 raise
             self._start(run, self._run_plan)
             return self.app.storage.get_background_task(str(run["id"])) or run
-
-    def _start(self, run: dict[str, Any], target: Any) -> None:
-        run_id = str(run["id"])
-        cancel_event = threading.Event()
-        self.executor_for_run(run_id)
-        with self._lock:
-            self._events[run_id] = cancel_event
-            self._condition(run_id)
-        snapshot = self.app.storage.get_run_snapshot(run_id) or {}
-        self.emit(run_id, {
-            "type": "run_started",
-            "run_id": run_id,
-            "lightweight_mode": bool(snapshot.get("lightweight_mode", False)),
-        })
-        thread = threading.Thread(
-            target=target,
-            args=(run_id, cancel_event),
-            name=f"naiba-run-{run_id[:8]}",
-            daemon=True,
-        )
-        with self._lock:
-            self._threads[run_id] = thread
-        thread.start()
-
-    def emit(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        event = self.app.storage.append_run_event(run_id, payload)
-        kind = str(payload.get("type") or "")
-        detail: dict[str, Any] | None = None
-        status: str | None = None
-        if kind == "skills":
-            detail = {"message": "已启用 Skill", "skills": payload.get("skills") or []}
-        elif kind == "status":
-            detail = {"message": str(payload.get("message") or "正在执行")}
-            status = "running"
-        elif kind == "tool_start":
-            detail = {
-                "message": f"正在执行 {payload.get('tool') or '工具'}",
-                "tool": str(payload.get("tool") or ""),
-            }
-            status = "running"
-        elif kind == "tool_confirm":
-            detail = {
-                "message": "等待工具确认",
-                "tool": str(payload.get("tool_name") or ""),
-                "tool_desc": str(payload.get("tool_desc") or ""),
-                "arguments": payload.get("arguments") or {},
-                "confirm_id": str(payload.get("confirm_id") or ""),
-            }
-            status = "waiting"
-        elif kind == "tool_result":
-            detail = {"message": f"工具 {payload.get('tool') or ''} 执行完毕"}
-            status = "running"
-        current = self.app.storage.get_background_task(run_id)
-        if current and current.get("status") == "cancelling":
-            status = None
-        if detail is not None or status is not None:
-            self.app.storage.update_background_task(run_id, status=status, detail=detail)
-        condition = self._condition(run_id)
-        with condition:
-            condition.notify_all()
-        return event
 
     def _run_chat(self, run_id: str, cancel_event: threading.Event) -> None:
         run_started = time.perf_counter()
@@ -931,131 +858,6 @@ class ConversationRunManager:
         finally:
             self._finish(run_id)
 
-    def _finish(self, run_id: str) -> None:
-        condition = self._condition(run_id)
-        with condition:
-            condition.notify_all()
-        with self._lock:
-            self._events.pop(run_id, None)
-            self._threads.pop(run_id, None)
-            self._conditions.pop(run_id, None)
-            self._executors.pop(run_id, None)
-        self._unregister_sink(run_id)
-
-    def list(self, conversation_id: str = "", active_only: bool = False) -> list[dict[str, Any]]:
-        return self.app.storage.list_background_tasks(conversation_id, active_only)
-
-    def get(self, run_id: str) -> dict[str, Any] | None:
-        return self.app.storage.get_background_task(run_id)
-
-    def events_after(self, run_id: str, after: int = 0) -> list[dict[str, Any]]:
-        return self.app.storage.list_run_events(run_id, after)
-
-    def wait_for_events(self, run_id: str, after: int, timeout: float = 15.0) -> list[dict[str, Any]]:
-        events = self.events_after(run_id, after)
-        if events:
-            return events
-        run = self.get(run_id)
-        if not run or run.get("status") in self.TERMINAL:
-            return []
-        condition = self._condition(run_id)
-        with condition:
-            condition.wait(timeout=max(0.1, timeout))
-        return self.events_after(run_id, after)
-
-    def cancel(self, run_id: str) -> dict[str, Any] | None:
-        with self._submit_lock:
-            run = self.get(run_id)
-            if not run:
-                return None
-            is_active = run.get("status") in self.ACTIVE
-            children = [
-                job for job in self.app.storage.list_background_tasks("", active_only=True, limit=200)
-                if str(job.get("parent_job_id") or "") == run_id
-            ]
-            with self._lock:
-                event = self._events.get(run_id)
-                in_flight = run_id in self._threads
-            if not is_active and not in_flight and not children:
-                return run
-            if event:
-                event.set()
-            updated = self.app.storage.update_background_task(
-                run_id,
-                status="cancelling" if is_active else "cancelled",
-                cancel_requested=True,
-                detail={"message": "正在取消任务"} if is_active else {"message": "任务已取消"},
-                finished=not is_active,
-            )
-            conversation_id = str(run.get("conversation_id") or "")
-            for child in children:
-                child_id = str(child.get("id") or "")
-                if str(child.get("kind") or "") in {"chat", "plan_execute"}:
-                    self.cancel(child_id)
-                else:
-                    self.app.jobs.cancel(
-                        child_id,
-                        owner=conversation_id or None,
-                        reason="父任务取消",
-                    )
-            # Completion may have won the lock immediately before cancellation and
-            # created a follow-up.  Marking the terminal parent plus cascading its
-            # now-active child closes that race as well.
-            if is_active:
-                self._schedule_forced_cancel(run_id)
-            return updated
-
-    def _schedule_forced_cancel(self, run_id: str) -> None:
-        def watchdog() -> None:
-            try:
-                time.sleep(3.0)
-                current = self.get(run_id)
-                if current and current.get("status") == "cancelling":
-                    # 兜底：即便 run 线程没能及时重建“已中止”消息（模型流卡住/空闲），
-                    # 也在这里把已累积的内容持久化，避免中途输出丢失。
-                    aborted_message = None
-                    try:
-                        conversation_id = str(current.get("conversation_id") or "")
-                        skills = (current.get("detail") or {}).get("skills") or []
-                        if conversation_id:
-                            aborted_message = self._persist_aborted_message(
-                                run_id, conversation_id, skills
-                            )
-                    except Exception:
-                        aborted_message = None
-                    self.app.storage.update_background_task(
-                        run_id,
-                        status="cancelled",
-                        detail={"message": "任务已取消"},
-                        finished=True,
-                    )
-                    cancelled_payload: dict[str, Any] = {"type": "cancelled", "message": "任务已取消"}
-                    if aborted_message:
-                        cancelled_payload["aborted_message"] = aborted_message
-                    self.emit(run_id, cancelled_payload)
-            except Exception:
-                pass
-
-        threading.Thread(target=watchdog, daemon=True).start()
-
-    def _register_sink(self, run_id: str, sink: _RunEventSink) -> None:
-        with self._sinks_lock:
-            self._sinks[run_id] = sink
-
-    def _unregister_sink(self, run_id: str) -> None:
-        with self._sinks_lock:
-            self._sinks.pop(run_id, None)
-
-    def _flush_sink(self, run_id: str) -> None:
-        """Flush any pending delta buffered in this run's sink (thread-safe)."""
-        with self._sinks_lock:
-            sink = self._sinks.get(run_id)
-        if sink is not None:
-            try:
-                sink.flush()
-            except Exception:
-                pass
-
     def _all_run_events(self, run_id: str) -> list[dict[str, Any]]:
         """Read EVERY event for a run, paginating past the 500-row default limit.
 
@@ -1237,434 +1039,3 @@ class ConversationRunManager:
         except Exception:
             return None
 
-    def cancel_plan(self, plan_id: str) -> dict[str, Any] | None:
-        run = next(
-            (item for item in self.list(active_only=True) if str(item.get("plan_id") or "") == plan_id),
-            None,
-        )
-        return self.cancel(str(run["id"])) if run else None
-
-    def owns_confirmation(self, run_id: str, confirm_id: str) -> bool:
-        run = self.get(run_id)
-        if not run or str(run.get("status") or "") in {"completed", "failed", "cancelled", "cancelling"}:
-            return False
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None:
-            return False
-        # A run may hold SEVERAL pending confirmations at once (e.g. a parallel
-        # batch of out-of-workspace file reads). `run.detail.confirm_id` only
-        # tracks the LAST one emitted, so it cannot be the source of truth here —
-        # using it made clicking Confirm on any but the last request fail and hang
-        # the conversation. Ownership is correctly decided by whether this
-        # confirm_id is actually pending on the run's own executor.
-        return confirm_id in getattr(executor, "pending_confirmation", {})
-
-    def executor_for_run(self, run_id: str, snapshot: dict[str, Any] | None = None) -> Any:
-        """Return the isolated executor owned by one Run, creating it if needed."""
-        with self._lock:
-            existing = self._executors.get(run_id)
-            if existing is not None:
-                return existing
-        frozen = snapshot if snapshot is not None else (self.app.storage.get_run_snapshot(run_id) or {})
-        mode = str(frozen.get("permission_mode") or "confirm")
-        base = self.app.executor
-        executor = (
-            base.clone_for_permission(mode)
-            if callable(getattr(base, "clone_for_permission", None))
-            else base
-        )
-        workspace = str(frozen.get("workspace_dir") or "").strip()
-        if workspace and hasattr(executor, "workspace"):
-            executor.workspace = Path(workspace).resolve()
-        with self._lock:
-            return self._executors.setdefault(run_id, executor)
-
-    def confirm_tool(self, run_id: str, confirm_id: str) -> tuple[bool, str] | None:
-        if not self.owns_confirmation(run_id, confirm_id):
-            return None
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None or confirm_id not in getattr(executor, "pending_confirmation", {}):
-            return None
-        return executor.confirm_execute(confirm_id)
-
-    def confirm_tool_async(self, run_id: str, confirm_id: str) -> tuple[bool, str] | None:
-        if not self.owns_confirmation(run_id, confirm_id):
-            return None
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None or confirm_id not in getattr(executor, "pending_confirmation", {}):
-            return None
-        starter = getattr(executor, "confirm_execute_async", None)
-        return starter(confirm_id) if callable(starter) else executor.confirm_execute(confirm_id)
-
-    def reject_tool(self, run_id: str, confirm_id: str) -> tuple[bool, str] | None:
-        if not self.owns_confirmation(run_id, confirm_id):
-            return None
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None or confirm_id not in getattr(executor, "pending_confirmation", {}):
-            return None
-        return executor.reject_execute(confirm_id)
-
-    def shutdown(self, timeout: float = 10.0) -> None:
-        with self._lock:
-            events = list(self._events.values())
-            threads = list(self._threads.values())
-        for event in events:
-            event.set()
-        deadline = time.monotonic() + max(0.0, timeout)
-        for thread in threads:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            thread.join(remaining)
-
-
-# Compatibility for imports used by earlier builds and tests.
-BackgroundTaskManager = ConversationRunManager
-class ConversationRunManager(ConversationRunMixin):
-    ACTIVE = {"queued", "running", "waiting", "cancelling"}
-    TERMINAL = {"completed", "failed", "cancelled"}
-
-    def __init__(self, app: Any):
-        self.app = app
-        self._lock = threading.RLock()
-        self._submit_lock = threading.RLock()
-        self._events: dict[str, threading.Event] = {}
-        self._threads: dict[str, threading.Thread] = {}
-        self._conditions: dict[str, threading.Condition] = {}
-        self._executors: dict[str, Any] = {}
-        self._sinks: dict[str, _RunEventSink] = {}
-        self._sinks_lock = threading.Lock()
-
-    def _resolve_allowed_tools(
-        self,
-        mode: str,
-        agent: dict[str, Any],
-        web_search_enabled: bool,
-        model_key: str = "",
-        enabled_tool_ids: list[str] | None = None,
-    ) -> list[str]:
-        """Freeze one run's tools（实现见 naiba/run/session.py）。"""
-        return resolve_allowed_tools(self.app, mode, agent, web_search_enabled, model_key, enabled_tool_ids)
-
-    def _all_tool_names(self) -> list[str]:
-        """全部可用工具 id（实现见 naiba/run/session.py）。"""
-        return all_tool_names(self.app)
-
-    def _bake_session_tool_ids(
-        self, conversation: dict[str, Any], agent: dict[str, Any]
-    ) -> list[str]:
-        """固化会话启用工具集（实现见 naiba/run/session.py）。"""
-        return bake_session_tool_ids(self.app, conversation, agent)
-
-    def enable_conversation_tools(
-        self, conversation_id: str, tool_ids: list[str]
-    ) -> dict[str, Any]:
-        """追加/保底注入工具（实现见 naiba/run/session.py）。"""
-        return enable_conversation_tools(self.app, conversation_id, tool_ids)
-
-    def _condition(self, run_id: str) -> threading.Condition:
-        with self._lock:
-            return self._conditions.setdefault(run_id, threading.Condition(self._lock))
-
-    @staticmethod
-    def _generation_options(config: Any, model_key: str = "") -> dict[str, Any]:
-        """Read provider-scoped options（实现见 naiba/run/session.py）。"""
-        return generation_options(config, model_key)
-
-    @staticmethod
-    def _attachments_have_images(attachments: list[Any]) -> bool:
-        """附件是否含图片（实现见 naiba/run/session.py）。"""
-        return attachments_have_images(attachments)
-
-    @staticmethod
-    def _routing_message(message: str, history: list[dict[str, Any]]) -> str:
-        """短跟进消息的保留路由上下文（实现见 naiba/run/session.py）。"""
-        return routing_message(message, history)
-
-    @staticmethod
-    def _active_error(exc: RuntimeError) -> ActiveRunError | None:
-        text = str(exc)
-        if text.startswith("ACTIVE_RUN:"):
-            return ActiveRunError(text.split(":", 1)[1])
-        return None
-
-    def submit(self, body: dict[str, Any]) -> dict[str, Any]:
-        return self.submit_chat(body)
-
-    def _start(self, run: dict[str, Any], target: Any) -> None:
-        run_id = str(run["id"])
-        cancel_event = threading.Event()
-        self.executor_for_run(run_id)
-        with self._lock:
-            self._events[run_id] = cancel_event
-            self._condition(run_id)
-        snapshot = self.app.storage.get_run_snapshot(run_id) or {}
-        self.emit(run_id, {
-            "type": "run_started",
-            "run_id": run_id,
-            "lightweight_mode": bool(snapshot.get("lightweight_mode", False)),
-        })
-        thread = threading.Thread(
-            target=target,
-            args=(run_id, cancel_event),
-            name=f"naiba-run-{run_id[:8]}",
-            daemon=True,
-        )
-        with self._lock:
-            self._threads[run_id] = thread
-        thread.start()
-
-    def emit(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        event = self.app.storage.append_run_event(run_id, payload)
-        kind = str(payload.get("type") or "")
-        detail: dict[str, Any] | None = None
-        status: str | None = None
-        if kind == "skills":
-            detail = {"message": "已启用 Skill", "skills": payload.get("skills") or []}
-        elif kind == "status":
-            detail = {"message": str(payload.get("message") or "正在执行")}
-            status = "running"
-        elif kind == "tool_start":
-            detail = {
-                "message": f"正在执行 {payload.get('tool') or '工具'}",
-                "tool": str(payload.get("tool") or ""),
-            }
-            status = "running"
-        elif kind == "tool_confirm":
-            detail = {
-                "message": "等待工具确认",
-                "tool": str(payload.get("tool_name") or ""),
-                "tool_desc": str(payload.get("tool_desc") or ""),
-                "arguments": payload.get("arguments") or {},
-                "confirm_id": str(payload.get("confirm_id") or ""),
-            }
-            status = "waiting"
-        elif kind == "tool_result":
-            detail = {"message": f"工具 {payload.get('tool') or ''} 执行完毕"}
-            status = "running"
-        current = self.app.storage.get_background_task(run_id)
-        if current and current.get("status") == "cancelling":
-            status = None
-        if detail is not None or status is not None:
-            self.app.storage.update_background_task(run_id, status=status, detail=detail)
-        condition = self._condition(run_id)
-        with condition:
-            condition.notify_all()
-        return event
-
-    def _finish(self, run_id: str) -> None:
-        condition = self._condition(run_id)
-        with condition:
-            condition.notify_all()
-        with self._lock:
-            self._events.pop(run_id, None)
-            self._threads.pop(run_id, None)
-            self._conditions.pop(run_id, None)
-            self._executors.pop(run_id, None)
-        self._unregister_sink(run_id)
-
-    def list(self, conversation_id: str = "", active_only: bool = False) -> list[dict[str, Any]]:
-        return self.app.storage.list_background_tasks(conversation_id, active_only)
-
-    def get(self, run_id: str) -> dict[str, Any] | None:
-        return self.app.storage.get_background_task(run_id)
-
-    def events_after(self, run_id: str, after: int = 0) -> list[dict[str, Any]]:
-        return self.app.storage.list_run_events(run_id, after)
-
-    def wait_for_events(self, run_id: str, after: int, timeout: float = 15.0) -> list[dict[str, Any]]:
-        events = self.events_after(run_id, after)
-        if events:
-            return events
-        run = self.get(run_id)
-        if not run or run.get("status") in self.TERMINAL:
-            return []
-        condition = self._condition(run_id)
-        with condition:
-            condition.wait(timeout=max(0.1, timeout))
-        return self.events_after(run_id, after)
-
-    def cancel(self, run_id: str) -> dict[str, Any] | None:
-        with self._submit_lock:
-            run = self.get(run_id)
-            if not run:
-                return None
-            is_active = run.get("status") in self.ACTIVE
-            children = [
-                job for job in self.app.storage.list_background_tasks("", active_only=True, limit=200)
-                if str(job.get("parent_job_id") or "") == run_id
-            ]
-            with self._lock:
-                event = self._events.get(run_id)
-                in_flight = run_id in self._threads
-            if not is_active and not in_flight and not children:
-                return run
-            if event:
-                event.set()
-            updated = self.app.storage.update_background_task(
-                run_id,
-                status="cancelling" if is_active else "cancelled",
-                cancel_requested=True,
-                detail={"message": "正在取消任务"} if is_active else {"message": "任务已取消"},
-                finished=not is_active,
-            )
-            conversation_id = str(run.get("conversation_id") or "")
-            for child in children:
-                child_id = str(child.get("id") or "")
-                if str(child.get("kind") or "") in {"chat", "plan_execute"}:
-                    self.cancel(child_id)
-                else:
-                    self.app.jobs.cancel(
-                        child_id,
-                        owner=conversation_id or None,
-                        reason="父任务取消",
-                    )
-            # Completion may have won the lock immediately before cancellation and
-            # created a follow-up.  Marking the terminal parent plus cascading its
-            # now-active child closes that race as well.
-            if is_active:
-                self._schedule_forced_cancel(run_id)
-            return updated
-
-    def _schedule_forced_cancel(self, run_id: str) -> None:
-        def watchdog() -> None:
-            try:
-                time.sleep(3.0)
-                current = self.get(run_id)
-                if current and current.get("status") == "cancelling":
-                    # 兜底：即便 run 线程没能及时重建“已中止”消息（模型流卡住/空闲），
-                    # 也在这里把已累积的内容持久化，避免中途输出丢失。
-                    aborted_message = None
-                    try:
-                        conversation_id = str(current.get("conversation_id") or "")
-                        skills = (current.get("detail") or {}).get("skills") or []
-                        if conversation_id:
-                            aborted_message = self._persist_aborted_message(
-                                run_id, conversation_id, skills
-                            )
-                    except Exception:
-                        aborted_message = None
-                    self.app.storage.update_background_task(
-                        run_id,
-                        status="cancelled",
-                        detail={"message": "任务已取消"},
-                        finished=True,
-                    )
-                    cancelled_payload: dict[str, Any] = {"type": "cancelled", "message": "任务已取消"}
-                    if aborted_message:
-                        cancelled_payload["aborted_message"] = aborted_message
-                    self.emit(run_id, cancelled_payload)
-            except Exception:
-                pass
-
-        threading.Thread(target=watchdog, daemon=True).start()
-
-    def _register_sink(self, run_id: str, sink: _RunEventSink) -> None:
-        with self._sinks_lock:
-            self._sinks[run_id] = sink
-
-    def _unregister_sink(self, run_id: str) -> None:
-        with self._sinks_lock:
-            self._sinks.pop(run_id, None)
-
-    def _flush_sink(self, run_id: str) -> None:
-        """Flush any pending delta buffered in this run's sink (thread-safe)."""
-        with self._sinks_lock:
-            sink = self._sinks.get(run_id)
-        if sink is not None:
-            try:
-                sink.flush()
-            except Exception:
-                pass
-
-    def cancel_plan(self, plan_id: str) -> dict[str, Any] | None:
-        run = next(
-            (item for item in self.list(active_only=True) if str(item.get("plan_id") or "") == plan_id),
-            None,
-        )
-        return self.cancel(str(run["id"])) if run else None
-
-    def owns_confirmation(self, run_id: str, confirm_id: str) -> bool:
-        run = self.get(run_id)
-        if not run or str(run.get("status") or "") in {"completed", "failed", "cancelled", "cancelling"}:
-            return False
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None:
-            return False
-        # A run may hold SEVERAL pending confirmations at once (e.g. a parallel
-        # batch of out-of-workspace file reads). `run.detail.confirm_id` only
-        # tracks the LAST one emitted, so it cannot be the source of truth here —
-        # using it made clicking Confirm on any but the last request fail and hang
-        # the conversation. Ownership is correctly decided by whether this
-        # confirm_id is actually pending on the run's own executor.
-        return confirm_id in getattr(executor, "pending_confirmation", {})
-
-    def executor_for_run(self, run_id: str, snapshot: dict[str, Any] | None = None) -> Any:
-        """Return the isolated executor owned by one Run, creating it if needed."""
-        with self._lock:
-            existing = self._executors.get(run_id)
-            if existing is not None:
-                return existing
-        frozen = snapshot if snapshot is not None else (self.app.storage.get_run_snapshot(run_id) or {})
-        mode = str(frozen.get("permission_mode") or "confirm")
-        base = self.app.executor
-        executor = (
-            base.clone_for_permission(mode)
-            if callable(getattr(base, "clone_for_permission", None))
-            else base
-        )
-        workspace = str(frozen.get("workspace_dir") or "").strip()
-        if workspace and hasattr(executor, "workspace"):
-            executor.workspace = Path(workspace).resolve()
-        with self._lock:
-            return self._executors.setdefault(run_id, executor)
-
-    def confirm_tool(self, run_id: str, confirm_id: str) -> tuple[bool, str] | None:
-        if not self.owns_confirmation(run_id, confirm_id):
-            return None
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None or confirm_id not in getattr(executor, "pending_confirmation", {}):
-            return None
-        return executor.confirm_execute(confirm_id)
-
-    def confirm_tool_async(self, run_id: str, confirm_id: str) -> tuple[bool, str] | None:
-        if not self.owns_confirmation(run_id, confirm_id):
-            return None
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None or confirm_id not in getattr(executor, "pending_confirmation", {}):
-            return None
-        starter = getattr(executor, "confirm_execute_async", None)
-        return starter(confirm_id) if callable(starter) else executor.confirm_execute(confirm_id)
-
-    def reject_tool(self, run_id: str, confirm_id: str) -> tuple[bool, str] | None:
-        if not self.owns_confirmation(run_id, confirm_id):
-            return None
-        with self._lock:
-            executor = self._executors.get(run_id)
-        if executor is None or confirm_id not in getattr(executor, "pending_confirmation", {}):
-            return None
-        return executor.reject_execute(confirm_id)
-
-    def shutdown(self, timeout: float = 10.0) -> None:
-        with self._lock:
-            events = list(self._events.values())
-            threads = list(self._threads.values())
-        for event in events:
-            event.set()
-        deadline = time.monotonic() + max(0.0, timeout)
-        for thread in threads:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                break
-            thread.join(remaining)
-
-
-# Compatibility for imports used by earlier builds and tests.
-BackgroundTaskManager = ConversationRunManager
