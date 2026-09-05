@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.7.6-beta
-  RELEASE_TAG: v1.7.6-beta
-  PACKAGE_NAME: naiba-chat-1.7.6-beta-windows-x64
+  RELEASE_VERSION: 1.7.7-beta
+  RELEASE_TAG: v1.7.7-beta
+  PACKAGE_NAME: naiba-chat-1.7.7-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.7.6 Beta release
+      - name: Publish 1.7.7 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.7.6 Beta
+          name: Naiba Chat 1.7.7 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,13 +99,13 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.7.6 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.7.7 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 对话富文本渲染：输入区「轻量选项」新增「富文本」开关（默认开启）。开启后 AI 回复中的安全白名单富文本（b/i/u/s/span 与 font color 彩色文字）会渲染为实际效果；渲染前先整体 HTML 转义、仅对白名单标签按安全规则还原，颜色只允许标准颜色名或十六进制色值，注释一律剔除，其余标签保持纯文本显示，杜绝注入。
-            - 随时可关：取消勾选「富文本」即让本对话按纯文本/Markdown 渲染；右侧文件面板中的 Markdown 预览始终不受该开关影响。会话设置已支持保存 rich_text 标记，升级后历史会话默认开启。
-            - 文件面板可拖宽：右侧文件面板新增左缘拖拽分隔条，宽度可在 280px 至窗口一半之间自由调整并记忆（重启保留），不再固定；图片预览取消 58vh 高度上限，改为面板内纵向滚动，可完整查看高图。
-            - 细节修复：修复富文本开关与文件面板分隔条在界面中重复渲染的问题。
+            - 富文本开关独立化：输入区的「富文本」开关从「轻量选项（工具 / Skill）」分组中移出，改为独立的行内开关，与轻量模式解耦；不再与工具/Skill 挤在一组，关闭工具不会再被误认为影响富文本显示。
+            - 切换即时生效：打开 / 关闭「富文本」后立即按最新消息重渲染当前对话，开关效果所见即所得，无需等下一轮 AI 回复才生效。
+            - 文件预览隔离：右侧文件面板的 Markdown 预览改用独立的纯文本/Markdown 渲染入口，固定不受对话富文本开关影响，逻辑更清晰。
+            - 渲染性能优化：内容不含任何 HTML 标签的消息在富文本还原阶段直接原样返回，跳过正则解析，降低大段纯文本回复的渲染开销。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

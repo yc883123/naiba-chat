@@ -364,9 +364,10 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 function restoreSafeHtml(escaped) {
+  if (!String(escaped || '').includes('&lt;')) return String(escaped || '');
   const colors = new Set(['black','silver','gray','white','maroon','red','purple','fuchsia','green','lime','olive','yellow','navy','blue','teal','aqua','orange','aliceblue','transparent']);
   const decode = (s) => String(s).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-  return String(escaped || '').replace(/&lt;!--[\s\S]*?--&gt;/gi, '').replace(/&lt;(\/?)(font|b|i|u|s|span)([\s\S]*?)&gt;/gi, (full, slash, name, raw) => {
+  return String(escaped || '').replace(/&lt;!--[\s\S]*?--&gt;/gi, '').replace(/&lt;(\/?)(font|span|b|i|u|s)([\s\S]*?)&gt;/gi, (full, slash, name, raw) => {
     const tag = name.toLowerCase(); if (slash) return `</${tag}>`; const attrs = decode(raw).trim(); if (!attrs) return `<${tag}>`; if (!['font','span'].includes(tag)) return full;
     const m = attrs.match(/^color\s*=\s*["']([^"']+)["']$/i); if (!m) return full; const value = m[1].trim();
     if (!(/^#[0-9a-f]{3,8}$/i.test(value) || colors.has(value.toLowerCase()))) return full; return `<${tag} color="${escapeHtml(value)}">`;
@@ -5504,8 +5505,12 @@ async function toggleRichText(checked) {
   if (state.chatRunId || state.abortController) return; if (!state.conversationId) await createConversation();
   const previous = [...state.lightweightDisabledFeatures], previousEnabled = state.richTextEnabled; const next = new Set(previous);
   if (checked) next.delete('rich_text'); else next.add('rich_text'); state.richTextEnabled = !!checked; state.lightweightDisabledFeatures = [...next]; state.lightweightMode = next.size > 0; updateLightweightModeControl();
-  try { const updated = await api(`/api/conversations/${state.conversationId}/settings`, { method:'POST', body:{lightweight_mode:state.lightweightMode, lightweight_disabled_features:state.lightweightDisabledFeatures} }); state.lightweightDisabledFeatures = updated.lightweight_disabled_features || state.lightweightDisabledFeatures; state.richTextEnabled = !state.lightweightDisabledFeatures.includes('rich_text'); state.lightweightMode = state.lightweightDisabledFeatures.length > 0; }
+  try { const updated = await api(`/api/conversations/${state.conversationId}/settings`, { method:'POST', body:{lightweight_mode:state.lightweightMode, lightweight_disabled_features:state.lightweightDisabledFeatures} }); state.lightweightDisabledFeatures = updated.lightweight_disabled_features || state.lightweightDisabledFeatures; state.richTextEnabled = !state.lightweightDisabledFeatures.includes('rich_text'); state.lightweightMode = state.lightweightDisabledFeatures.length > 0; const current = state.conversations.find((item) => item.id === state.conversationId); if (Array.isArray(current?.messages)) renderMessages(current.messages); }
   catch (error) { state.lightweightDisabledFeatures = previous; state.richTextEnabled = previousEnabled; state.lightweightMode = previous.length > 0; updateLightweightModeControl(); toast(`富文本设置保存失败：${error.message}`); }
+}
+
+function markdownFilePreview(text) {
+  return markdown(text, false);
 }
 
 async function toggleLightweightFeature(feature, checked) {
@@ -6611,7 +6616,7 @@ function fileContentViewHtml(tab) {
   const text = String(info.content || '');
   if (FILE_MD_NAME_RE.test(info.name || '') && !info.truncated) {
     // 文件预览始终按纯文本/Markdown 规则渲染，不受对话富文本开关影响。
-    return `<div class="file-preview-md message-body answer-content">${markdown(text, false)}</div>`;
+    return `<div class="file-preview-md message-body answer-content">${markdownFilePreview(text)}</div>`;
   }
   return `<pre class="file-preview-text">${escapeHtml(text)}</pre>`;
 }
