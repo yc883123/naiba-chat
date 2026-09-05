@@ -261,6 +261,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .workspace-control:hover { border-color: var(--line-strong); background: var(--surface-2); }
 .workspace-control span { color: var(--muted); font-size: 11px; flex: none; }
 .workspace-control b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+/* 「模型 / Agent」标签：禁止被 flex 压缩、禁止换行，强制横向排版，避免挤压后变成竖排 */
+.model-control > span, .agent-control > span { flex: none; white-space: nowrap; writing-mode: horizontal-tb; }
+/* 顶栏「对话设置」文字按钮（原齿轮图标） */
+.conversation-settings-topbar { flex: none; min-height: 34px; padding: 0 12px; font-size: 13px; white-space: nowrap; }
 .model-control { min-width: 0; display: flex; flex: 1 1 180px; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }
 .agent-control { flex: 0 1 170px; }
 .model-control select { width: 100%; max-width: min(480px, 45vw); height: 34px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--text); padding: 0 30px 0 10px; }
@@ -571,17 +575,23 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .skill-item.skill-click { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; border: 0; background: none; text-align: left; font: inherit; cursor: pointer; }
 .skill-item.skill-click:hover { background: var(--surface-2); }
 
+.composer .icon-button,
+.composer .send-button,
+.composer .context-usage-button { width: 38px; height: 38px; }
+.composer .icon-button svg { width: 20px; height: 20px; }
+.composer .send-button svg { width: 20px; height: 20px; }
+.composer .deep-reasoning-button svg { width: 20px; height: 20px; }
 .attach-button { color: var(--muted); }
-.send-button { width: 38px; height: 38px; border: 0; border-radius: var(--r-md); background: var(--accent-solid); color: white; font-size: 21px; transition: var(--t-fast); }
+.send-button { border: 0; border-radius: var(--r-md); background: var(--accent-solid); color: white; transition: var(--t-fast); }
 .send-button:hover { background: var(--brand-700); }
 .send-button.is-stop { background: var(--red); }
 .send-button.is-stop:hover { background: var(--brand-700); }
 .composer-meta { min-height: 22px; display: flex; align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; gap: 12px; white-space: nowrap; }
 .composer-meta-left { min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
-.composer-meta-more { position: relative; flex: none; }
+.composer-meta-more { position: relative; flex: none; display: inline-flex; align-items: center; gap: 7px; }
 .composer-meta-more-button { min-height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--muted); font-size: 11px; cursor: pointer; }
 .composer-meta-more-button:hover { border-color: var(--line-strong); background: var(--surface-2); color: var(--text); }
-.composer-meta-more-button[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.composer-meta-more-button[aria-expanded="true"] { color: var(--accent); }
 .composer-meta-panel { position: absolute; left: 0; bottom: 30px; z-index: 40; min-width: 200px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-3); }
 .composer-meta-panel[hidden] { display: none; }
 .composer-meta-panel .lightweight-feature-inline { flex-direction: column; align-items: flex-start; gap: 8px; }
@@ -589,7 +599,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .lightweight-feature-label { color: var(--text); font-size: 12px; font-weight: 600; }
 .lightweight-feature-inline label { display: inline-flex; align-items: center; gap: 5px; color: var(--text); font-size: 12px; cursor: pointer; }
 .lightweight-feature-inline input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
-.rich-text-toggle-inline { display: inline-flex; align-items: center; gap: 5px; color: var(--text); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.rich-text-toggle-inline { display: inline-flex; align-items: center; gap: 5px; min-height: 22px; color: var(--muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
 .rich-text-toggle-inline input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
 #runtimeStatus { justify-self: end; margin-left: auto; }
 .lightweight-feature-inline + #runtimeStatus { margin-left: auto; }
@@ -987,6 +997,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   }
   #openSidebar { position: static; grid-column: 1; grid-row: 1; }
   .workspace-control { display: none; }
+  .conversation-settings-topbar { display: none; }
   .model-control > span, .agent-control > span { display: none; }
   .model-control, .agent-control { position: static; width: auto; min-width: 0; max-width: none; overflow: hidden; z-index: auto; }
   .model-control { grid-column: 2; grid-row: 1; }
@@ -1027,10 +1038,11 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .choice-buttons { max-height: min(38dvh, 310px); overflow-y: auto; overscroll-behavior: contain; padding: 8px 2px; animation: none; }
   .choice-options { display: grid; grid-template-columns: 1fr; gap: 7px; }
   .choice-btn { width: 100%; min-height: 42px; text-align: left; padding: 9px 12px; border-radius: var(--radius); }
-  .settings-layout { display: block; }
-  .settings-nav { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; overflow: visible; padding: 6px; border-right: 0; border-bottom: 1px solid var(--line); }
-  .settings-nav button { min-width: 0; width: 100%; text-align: center; padding: 0 4px; }
-  .settings-content { height: calc(100% - 89px); padding: 15px; }
+  .settings-layout { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  .settings-nav { display: flex; gap: 4px; overflow-x: auto; overscroll-behavior-x: contain; padding: 6px; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+  .settings-nav::-webkit-scrollbar { display: none; }
+  .settings-nav button { width: auto; min-width: max-content; flex: none; text-align: center; padding: 0 10px; white-space: nowrap; }
+  .settings-content { height: auto; min-height: 0; padding: 15px; }
   .provider-current { grid-template-columns: minmax(0, 1fr) auto auto; }
   .provider-current .control-button, .provider-current .danger-button { padding: 0 10px; }
   .permission-grid { grid-template-columns: 1fr; }

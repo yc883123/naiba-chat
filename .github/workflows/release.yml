@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.7.8-beta
-  RELEASE_TAG: v1.7.8-beta
-  PACKAGE_NAME: naiba-chat-1.7.8-beta-windows-x64
+  RELEASE_VERSION: 1.7.9-beta
+  RELEASE_TAG: v1.7.9-beta
+  PACKAGE_NAME: naiba-chat-1.7.9-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.7.8 Beta release
+      - name: Publish 1.7.9 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.7.8 Beta
+          name: Naiba Chat 1.7.9 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,12 +99,13 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.7.8 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.7.9 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 对话快捷系统提示词：新增「设置→对话快捷系统提示词」，可新增/编辑/删除/搜索可复用的系统提示词预设；对话设置中可直接选择预设一键填充系统提示词，编辑预设不会改动已保存的对话。
-            - 角色卡自动收录：导入 SillyTavern 角色卡 PNG 解析成功后，自动把该角色的人设文本收录为一条快捷系统提示词，无需手动复制。
-            - 更新检查自动选中新版本：检查更新完成后自动在下拉框中选中新版本，无需展开下拉框即可看到有更新；手动选择版本后仍按用户选择保留。
+            - 对话设置入口前置：顶栏「对话设置」从右侧操作区的齿轮图标改为左侧常驻文字按钮，一眼可见、一键直达。
+            - 文件面板记忆最近文件：收起右侧文件面板不再清空当前打开的标签，重新打开（顶栏「文件 N」）时自动显示最近打开的文件。
+            - 输入区按钮统一：发送与工具图标按钮统一为 38×38、图标 20px 尺寸，视觉更规整；「轻量」按钮改为图标+文字并排，富文本开关配色与字号更轻。
+            - 设置页导航精简：设置导航「对话快捷系统提示词」入口简写为「快捷提示词」（悬停 title 显示全名）；移动端设置页 tab 改为横向滚动，不再多列挤压换行。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

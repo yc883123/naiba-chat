@@ -6550,8 +6550,13 @@ function openFilePanel(rawPath) {
 
 function closeFilePanel(clearTabs = false) {
   filePanelState.open = false;
-  filePanelState.activeKey = '';
-  if (clearTabs) filePanelState.tabs = [];
+  if (clearTabs) {
+    filePanelState.tabs = [];
+    filePanelState.activeKey = '';
+  } else if (!filePanelState.tabs.some((item) => item.key === filePanelState.activeKey)) {
+    // Keep the most recently opened file visible when the panel is reopened.
+    filePanelState.activeKey = filePanelState.tabs[0]?.key || '';
+  }
   applyFilePanelOpenClass();
   renderFilePanel();
 }
