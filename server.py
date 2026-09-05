@@ -790,6 +790,9 @@ def default_config() -> dict[str, Any]:
         "workspace_dir": "workspace",
         "data_dir": "data",
         "workspaces": [],
+        # Per-user reusable system prompts for conversation settings.  These
+        # live in config.json instead of the conversation database by design.
+        "conversation_prompt_presets": [],
         "provider_id": "",
         # Deprecated compatibility fields. They are retained for old config
         # files but are never used to build model requests.
@@ -1237,6 +1240,7 @@ class ConfigStore:
                 "use_system_fallback": False,
             }
         self.data = defaults
+        self._migrate_conversation_prompt_presets()
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
         self._migrate_default_agent_skills()
@@ -1296,6 +1300,34 @@ class ConfigStore:
                     for item in scope
                 ]
 
+    def _migrate_conversation_prompt_presets(self) -> None:
+        """Normalize prompt presets from config files created by older builds."""
+        raw_items = self.data.get("conversation_prompt_presets", [])
+        if not isinstance(raw_items, list):
+            raw_items = []
+        normalized: list[dict[str, str]] = []
+        seen_ids: set[str] = set()
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            prompt = str(raw.get("system_prompt") or raw.get("text") or "").strip()
+            if not prompt:
+                continue
+            preset_id = str(raw.get("id") or "").strip()
+            if not preset_id or preset_id in seen_ids:
+                preset_id = uuid.uuid4().hex
+            seen_ids.add(preset_id)
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            normalized.append({
+                "id": preset_id,
+                "title": " ".join(str(raw.get("title") or "快捷系统提示词").split())[:80] or "快捷系统提示词",
+                "system_prompt": prompt[:20000],
+                "source": str(raw.get("source") or "manual")[:40] or "manual",
+                "created_at": str(raw.get("created_at") or now),
+                "updated_at": str(raw.get("updated_at") or raw.get("created_at") or now),
+            })
+        self.data["conversation_prompt_presets"] = normalized
+
     def save(self) -> None:
         with self.lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -1310,7 +1342,7 @@ class ConfigStore:
                 for key, value in self.data.items()
                 if key not in {
                     "access_token", "providers", "mcp_servers",
-                    "temperature", "max_tokens", "context_size",
+                    "temperature", "max_tokens", "context_size", "conversation_prompt_presets",
                 }
             }
             result["resolved_workspace_dir"] = str(self.resolve_workspace_dir())
@@ -1377,6 +1409,82 @@ class ConfigStore:
             if isinstance(items, list):
                 return [dict(item) for item in items if isinstance(item, dict)]
             return []
+
+    @staticmethod
+    def _preset_timestamp() -> str:
+        return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+    def _unique_conversation_preset_title(self, requested: str, *, ignore_id: str = "") -> str:
+        base = " ".join(str(requested or "").strip().split())[:80] or "快捷系统提示词"
+        existing = {
+            str(item.get("title") or "").casefold()
+            for item in self.data.get("conversation_prompt_presets", [])
+            if isinstance(item, dict) and str(item.get("id") or "") != ignore_id
+        }
+        if base.casefold() not in existing:
+            return base
+        index = 2
+        while f"{base} ({index})".casefold() in existing:
+            index += 1
+        return f"{base} ({index})"
+
+    def get_conversation_prompt_presets(self) -> list[dict[str, str]]:
+        with self.lock:
+            items = self.data.get("conversation_prompt_presets", [])
+            if not isinstance(items, list):
+                return []
+            return [dict(item) for item in items if isinstance(item, dict)]
+
+    def add_conversation_prompt_preset(self, title: str, system_prompt: str, source: str = "manual") -> dict[str, str]:
+        prompt = str(system_prompt or "").strip()
+        if not prompt:
+            raise ValueError("系统提示词不能为空")
+        with self.lock:
+            presets = self.data.setdefault("conversation_prompt_presets", [])
+            if not isinstance(presets, list):
+                presets = []
+                self.data["conversation_prompt_presets"] = presets
+            now = self._preset_timestamp()
+            item = {
+                "id": uuid.uuid4().hex,
+                "title": self._unique_conversation_preset_title(title),
+                "system_prompt": prompt[:20000],
+                "source": str(source or "manual")[:40] or "manual",
+                "created_at": now,
+                "updated_at": now,
+            }
+            presets.append(item)
+            self.save()
+            return dict(item)
+
+    def update_conversation_prompt_preset(self, preset_id: str, title: str, system_prompt: str) -> dict[str, str] | None:
+        prompt = str(system_prompt or "").strip()
+        if not prompt:
+            raise ValueError("系统提示词不能为空")
+        with self.lock:
+            presets = self.data.get("conversation_prompt_presets", [])
+            if not isinstance(presets, list):
+                return None
+            for item in presets:
+                if isinstance(item, dict) and str(item.get("id") or "") == preset_id:
+                    item["title"] = self._unique_conversation_preset_title(title, ignore_id=preset_id)
+                    item["system_prompt"] = prompt[:20000]
+                    item["updated_at"] = self._preset_timestamp()
+                    self.save()
+                    return dict(item)
+            return None
+
+    def delete_conversation_prompt_preset(self, preset_id: str) -> bool:
+        with self.lock:
+            presets = self.data.get("conversation_prompt_presets", [])
+            if not isinstance(presets, list):
+                return False
+            filtered = [item for item in presets if not isinstance(item, dict) or str(item.get("id") or "") != preset_id]
+            if len(filtered) == len(presets):
+                return False
+            self.data["conversation_prompt_presets"] = filtered
+            self.save()
+            return True
 
     def add_starter_prompt(self, title: str, text: str) -> list[dict[str, str]]:
         title = " ".join(str(title or "").strip().split())[:40] or "自定义指令"
@@ -3850,6 +3958,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"workspaces": APP.config.data.get("workspaces", [])})
         elif path == "/api/starter-prompts":
             self._json({"prompts": APP.config.get_starter_prompts()})
+        elif path == "/api/conversation-prompt-presets":
+            self._json({"presets": APP.config.get_conversation_prompt_presets()})
         elif path.startswith("/api/conversations/") and path.endswith("/file/open"):
             conversation_id = path.split("/")[-3]
             query = urllib.parse.parse_qs(parsed.query)
@@ -4427,6 +4537,26 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/character-card/parse":
             self._parse_character_card(body)
+        elif path == "/api/conversation-prompt-presets":
+            try:
+                item = APP.config.add_conversation_prompt_preset(
+                    str(body.get("title") or ""),
+                    str(body.get("system_prompt") or ""),
+                    str(body.get("source") or "manual"),
+                )
+                self._json({"preset": item}, HTTPStatus.CREATED)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path.startswith("/api/conversation-prompt-presets/"):
+            preset_id = path.rsplit("/", 1)[-1]
+            try:
+                item = APP.config.update_conversation_prompt_preset(
+                    preset_id, str(body.get("title") or ""), str(body.get("system_prompt") or "")
+                )
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"preset": item} if item else {"error": "快捷提示词不存在"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
         elif path == "/api/uploads":
             self._upload(body)
         elif path == "/api/install/dir":
@@ -4676,6 +4806,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": "无效的指令序号"}, HTTPStatus.BAD_REQUEST)
                 return
             self._json({"prompts": APP.config.remove_starter_prompt(idx)})
+        elif path.startswith("/api/conversation-prompt-presets/"):
+            deleted = APP.config.delete_conversation_prompt_preset(path.rsplit("/", 1)[-1])
+            self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/conversations/") and path.endswith("/messages"):
             conversation_id = path.split("/")[-2]
             if APP.storage.list_background_tasks(conversation_id, active_only=True):
@@ -4830,6 +4963,21 @@ class RequestHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
+        # Every successful character-card parse is also preserved as an
+        # independent reusable prompt.  This does not touch any conversation;
+        # callers may still decide whether to copy the returned text into the
+        # currently open settings draft.
+        filename = Path(str(body.get("name") or "")).name
+        fallback_title = Path(filename).stem.strip()
+        title = str((result.get("meta") or {}).get("name") or "").strip() or fallback_title or "未命名角色"
+        try:
+            result["preset"] = APP.config.add_conversation_prompt_preset(
+                title, str(result.get("system_prompt") or ""), "character_card"
+            )
+        except ValueError:
+            # A card without a usable normalized prompt remains a successful
+            # parse response for old clients, but must not create an entry.
+            pass
         self._json(result)
 
     def _upload(self, body: dict[str, Any]) -> None:

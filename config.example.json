@@ -4,6 +4,7 @@
   "access_token": "change-me",
   "skills_dirs": [],
   "workspace_dir": "skills",
+  "conversation_prompt_presets": [],
   "temperature": 0.7,
   "max_tokens": 8192,
   "context_size": 8192,

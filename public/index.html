@@ -73,6 +73,9 @@
           <select id="agentSelect" aria-label="当前 Agent"></select>
         </label>
         <div class="topbar-actions">
+          <button class="icon-button" id="openCurrentConversationSettings" type="button" title="对话设置" aria-label="对话设置">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.1 2.1-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V20.3h-3v-.1A1.7 1.7 0 0 0 10.7 18.64a1.7 1.7 0 0 0-1.88.34l-.06.06-2.1-2.1.06-.06A1.7 1.7 0 0 0 7.06 15a1.7 1.7 0 0 0-1.56-1.03h-.1v-3h.1A1.7 1.7 0 0 0 7.06 9.94a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.1-2.1.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56v-.1h3v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.1 2.1-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.1v3h-.1A1.7 1.7 0 0 0 19.4 15Z"></path></svg>
+          </button>
           <button class="control-button file-reopen-button" id="openFileTabs" type="button" hidden title="重新打开文件面板（保留已打开的文件标签）">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8.5L19 7.5V21H6z"></path><path d="M14.5 3v4.5H19"></path></svg>
             <span id="fileTabsCount">0</span>
@@ -310,6 +313,7 @@
       </label>
       <label class="field-wide conversation-prompt-field">
         系统提示词
+        <select id="conversationPromptPresetSelect" title="可在 设置 > 对话快捷系统提示词 中管理" aria-label="快捷系统提示词"><option value="">选择快捷系统提示词…</option></select>
         <textarea id="conversationSystemPrompt" rows="9" maxlength="20000" placeholder="只作用于这个对话的角色、规则和输出要求"></textarea>
         <span class="character-card-import">
           <button class="control-button" id="importCharacterCardBtn" type="button">导入角色卡 PNG</button>
@@ -344,6 +348,7 @@
         <button data-settings-tab="vision">视觉</button>
         <button data-settings-tab="search">联网搜索</button>
         <button data-settings-tab="skills">Skills 管理</button>
+        <button data-settings-tab="conversation-prompts">对话快捷系统提示词</button>
         <button data-settings-tab="datamigration">数据与迁移</button>
         <button data-settings-tab="updates">软件更新</button>
       </nav>
@@ -605,6 +610,24 @@
           <div class="skill-list" id="hiddenSkillList"><small class="hint">无已隐藏的 Skill</small></div>
           <p class="hint">此前被"删除/隐藏"的 Skill 会出现在这里；点击"取消隐藏"即可在会话中重新使用。重新导入同名 Skill 也会自动取消隐藏。</p>
         </section>
+        <section data-settings-panel="conversation-prompts" hidden>
+          <div class="section-heading">
+            <div><h3>对话快捷系统提示词</h3><p class="hint">用于快速填充对话设置中的系统提示词；编辑不会修改已保存的对话。</p></div>
+            <div class="conversation-preset-actions">
+              <button class="control-button" id="importPresetCharacterCard" type="button">导入角色卡 PNG</button>
+              <button class="primary-button" id="addConversationPromptPreset" type="button">新增提示词</button>
+              <input id="presetCharacterCardFileInput" type="file" accept="image/png" hidden>
+            </div>
+          </div>
+          <label class="search-field conversation-preset-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg><input id="conversationPromptPresetSearch" type="search" placeholder="搜索标题或提示词内容"></label>
+          <div id="conversationPromptPresetList" class="conversation-preset-list"></div>
+          <form id="conversationPromptPresetForm" class="conversation-preset-form" hidden>
+            <input id="conversationPromptPresetId" type="hidden">
+            <label>标题<input id="conversationPromptPresetTitle" type="text" maxlength="80" placeholder="例如：代码审查助手"></label>
+            <label>系统提示词<textarea id="conversationPromptPresetText" rows="8" maxlength="20000" placeholder="角色、规则和输出要求"></textarea></label>
+            <div class="form-actions"><button class="control-button" id="cancelConversationPromptPreset" type="button">取消</button><button class="primary-button" type="submit">保存提示词</button></div>
+          </form>
+        </section>
         <section data-settings-panel="datamigration" hidden>
           <h3>数据与迁移</h3>
           <label class="field-wide data-dir-field">数据库与上传数据目录
@@ -629,6 +652,7 @@
           <h3>软件更新</h3>
           <div class="update-status">
             <div><span>当前版本</span><b id="currentVersion">-</b></div>
+            <div><span>新版本</span><b id="latestVersion">尚未检查</b></div>
             <div class="update-latest-row">
               <span>目标版本</span>
               <div class="update-latest-value">

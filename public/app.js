@@ -95,6 +95,11 @@ const state = {
   expandedGroups: new Set(),
   customPrompts: [],
   editingStarterPrompt: -1,
+  conversationPromptPresets: [],
+  editingConversationPromptPresetId: '',
+  // A fresh update check should immediately surface a newer release in the
+  // closed select; user choices made afterwards must still be preserved.
+  updateAutoSelectLatest: false,
 };
 const draggedFileCache = new Map();
 
@@ -1645,6 +1650,7 @@ async function initialize() {
   renderProviders();
   renderMcp();
   renderUpdateStatus(state.bootstrap.update || {});
+  await loadConversationPromptPresets();
   await loadConversations();
   await loadStarterPrompts();
   await loadTasks();
@@ -2035,6 +2041,12 @@ function renderUpdateStatus(status) {
   $('#currentVersion').textContent = status.current_commit ? `${current} · ${status.current_commit.slice(0, 7)}` : current;
   const select = $('#updateVersionSelect');
   const releases = Array.isArray(status.releases) ? status.releases : [];
+  const latestVersion = String(status.latest_version || '').trim();
+  const hasNewVersion = status.phase === 'available' && latestVersion;
+  $('#latestVersion').textContent = hasNewVersion
+    ? latestVersion
+    : (status.phase === 'current' ? `${current}（当前）`
+      : (status.phase === 'checking' ? '正在检查…' : '尚未检查'));
   const previousValue = select.value;
   // 重建版本下拉：仅保留可安装项，当前版本标记为「当前」。
   const options = releases
@@ -2048,8 +2060,16 @@ function renderUpdateStatus(status) {
     });
   select.replaceChildren(...options);
   select.disabled = options.length === 0 || ['checking', 'downloading', 'restarting'].includes(status.phase);
-  // 保留用户已选版本；否则默认选中最新可安装版本。
-  if (previousValue && options.some((option) => option.value === previousValue)) {
+  // 检查完成后优先选中新版本，而不是保留检查前的“当前版本”。否则在不展开
+  // 下拉框时看不出已经有更新。手动选择版本后仍按用户选择保留。
+  const newerOption = options.find((option) => {
+    const release = releases.find((item) => item.tag === option.value);
+    return release && !release.current;
+  });
+  if (state.updateAutoSelectLatest && status.phase !== 'checking') {
+    if (newerOption) select.value = newerOption.value;
+    state.updateAutoSelectLatest = false;
+  } else if (previousValue && options.some((option) => option.value === previousValue)) {
     select.value = previousValue;
   } else if (options.length > 0) {
     select.value = options[0].value;
@@ -2104,6 +2124,7 @@ async function checkUpdate() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   button.disabled = true;
+  state.updateAutoSelectLatest = true;
   renderUpdateStatus({ ...(state.bootstrap.update || {}), phase: 'checking' });
   try {
     let status = await api('/api/update/check', { method: 'POST', body: {}, signal: controller.signal });
@@ -2956,7 +2977,10 @@ async function importCharacterCard(file) {
       toast('角色卡解析结果为空');
       return;
     }
+    if ($('#conversationSystemPrompt').value.trim() && $('#conversationSystemPrompt').value.trim() !== prompt
+      && !confirm('当前系统提示词已有内容，是否覆盖？')) return;
     $('#conversationSystemPrompt').value = prompt;
+    await loadConversationPromptPresets();
     const conversation = state.conversations.find((item) => item.id === state.conversationSettingsId);
     const agentId = String(conversation?.agent_id || '');
     const agent = (state.bootstrap?.agents || []).find((item) => String(item.id) === agentId);
@@ -2970,6 +2994,86 @@ async function importCharacterCard(file) {
   } catch (error) {
     toast(`导入失败：${error.message}`);
   }
+}
+
+async function loadConversationPromptPresets() {
+  try {
+    const result = await api('/api/conversation-prompt-presets');
+    state.conversationPromptPresets = Array.isArray(result.presets) ? result.presets : [];
+    renderConversationPromptPresetSelect();
+    renderConversationPromptPresets();
+  } catch (error) {
+    state.conversationPromptPresets = [];
+    renderConversationPromptPresetSelect();
+  }
+}
+
+function renderConversationPromptPresetSelect() {
+  const select = $('#conversationPromptPresetSelect');
+  if (!select) return;
+  select.innerHTML = '<option value="">选择快捷系统提示词…</option>'
+    + state.conversationPromptPresets.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join('');
+}
+
+function renderConversationPromptPresets() {
+  const container = $('#conversationPromptPresetList');
+  if (!container) return;
+  const query = String($('#conversationPromptPresetSearch')?.value || '').trim().toLowerCase();
+  const items = state.conversationPromptPresets.filter((item) => !query || `${item.title} ${item.system_prompt}`.toLowerCase().includes(query));
+  container.innerHTML = items.length ? items.map((item) => {
+    const preview = String(item.system_prompt || '').replace(/\s+/g, ' ').slice(0, 150);
+    return `<article class="conversation-preset-item" data-conversation-preset-id="${escapeHtml(item.id)}"><div><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.source || '手动创建')}</small><p>${escapeHtml(preview)}${String(item.system_prompt || '').length > 150 ? '…' : ''}</p></div><span><button class="control-button tiny" type="button" data-conversation-preset-edit="${escapeHtml(item.id)}">编辑</button><button class="danger-button tiny" type="button" data-conversation-preset-delete="${escapeHtml(item.id)}">删除</button></span></article>`;
+  }).join('') : '<p class="hint">尚无快捷系统提示词。</p>';
+}
+
+function openConversationPromptPresetForm(id = '') {
+  const item = state.conversationPromptPresets.find((preset) => preset.id === id) || {};
+  state.editingConversationPromptPresetId = id;
+  $('#conversationPromptPresetId').value = id;
+  $('#conversationPromptPresetTitle').value = item.title || '';
+  $('#conversationPromptPresetText').value = item.system_prompt || '';
+  $('#conversationPromptPresetForm').hidden = false;
+  $('#conversationPromptPresetTitle').focus();
+}
+
+function closeConversationPromptPresetForm() {
+  state.editingConversationPromptPresetId = '';
+  $('#conversationPromptPresetForm').hidden = true;
+}
+
+async function saveConversationPromptPreset(event) {
+  event.preventDefault();
+  const id = state.editingConversationPromptPresetId;
+  const title = $('#conversationPromptPresetTitle').value;
+  const system_prompt = $('#conversationPromptPresetText').value;
+  try {
+    await api(id ? `/api/conversation-prompt-presets/${encodeURIComponent(id)}` : '/api/conversation-prompt-presets', { method: 'POST', body: { title, system_prompt } });
+    closeConversationPromptPresetForm();
+    await loadConversationPromptPresets();
+    toast(id ? '已更新快捷提示词' : '已新增快捷提示词');
+  } catch (error) { toast(`保存失败：${error.message}`); }
+}
+
+async function importConversationPromptPresetCard(file) {
+  if (!file) return;
+  try {
+    const result = await api('/api/character-card/parse', { method: 'POST', body: { name: file.name, data: await readAsDataUrl(file) } });
+    if (!result.system_prompt) throw new Error('角色卡解析结果为空');
+    await loadConversationPromptPresets();
+    toast(`已收录角色卡「${result.preset?.title || result.meta?.name || file.name}」为快捷提示词`);
+  } catch (error) { toast(`导入失败：${error.message}`); }
+}
+
+async function applyConversationPromptPreset(id) {
+  const item = state.conversationPromptPresets.find((preset) => preset.id === id);
+  const field = $('#conversationSystemPrompt');
+  if (!item || !field) return;
+  const next = String(item.system_prompt || '');
+  if (field.value.trim() && field.value.trim() !== next && !confirm('当前系统提示词已有不同内容，是否覆盖？')) {
+    $('#conversationPromptPresetSelect').value = '';
+    return;
+  }
+  field.value = next;
 }
 
 function openConversationSettings(id) {
@@ -6815,6 +6919,10 @@ function bindEvents() {
     }
   });
   $('#newChatButton').addEventListener('click', () => createConversation('', '', true));
+  $('#openCurrentConversationSettings')?.addEventListener('click', () => {
+    if (state.conversationId) openConversationSettings(state.conversationId);
+    else toast('请先打开或新建一个对话');
+  });
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#unloadModel').addEventListener('click', unloadCurrentModel);
   $('#agentSelect').addEventListener('change', saveAgentSelection);
@@ -6861,12 +6969,26 @@ function bindEvents() {
   $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
+  $('#conversationPromptPresetSelect')?.addEventListener('change', (event) => applyConversationPromptPreset(event.target.value));
   $('#importCharacterCardBtn')?.addEventListener('click', () => $('#characterCardFileInput')?.click());
   $('#characterCardFileInput')?.addEventListener('change', (event) => {
     const file = event.target.files?.[0];
     if (file) importCharacterCard(file);
     event.target.value = '';
   });
+  $('#addConversationPromptPreset')?.addEventListener('click', () => openConversationPromptPresetForm());
+  $('#cancelConversationPromptPreset')?.addEventListener('click', closeConversationPromptPresetForm);
+  $('#conversationPromptPresetForm')?.addEventListener('submit', saveConversationPromptPreset);
+  $('#conversationPromptPresetSearch')?.addEventListener('input', renderConversationPromptPresets);
+  $('#conversationPromptPresetList')?.addEventListener('click', async (event) => {
+    const edit = event.target.closest('[data-conversation-preset-edit]');
+    if (edit) { openConversationPromptPresetForm(edit.dataset.conversationPresetEdit); return; }
+    const remove = event.target.closest('[data-conversation-preset-delete]');
+    if (!remove || !confirm('确定删除这个快捷提示词吗？')) return;
+    try { await api(`/api/conversation-prompt-presets/${encodeURIComponent(remove.dataset.conversationPresetDelete)}`, { method: 'DELETE' }); await loadConversationPromptPresets(); toast('已删除快捷提示词'); } catch (error) { toast(`删除失败：${error.message}`); }
+  });
+  $('#importPresetCharacterCard')?.addEventListener('click', () => $('#presetCharacterCardFileInput')?.click());
+  $('#presetCharacterCardFileInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (file) importConversationPromptPresetCard(file); event.target.value = ''; });
   $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -7713,6 +7835,7 @@ function switchSettingsTab(name) {
   $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
   if (name === 'agent') renderAgentManager();
   if (name === 'skills') loadInstalledSkills(false);
+  if (name === 'conversation-prompts') loadConversationPromptPresets();
   if (name === 'connections') loadMcpServers();
   if (name === 'datamigration') loadDataMigrationHealth();
   if (name === 'updates') api('/api/update').then((status) => {

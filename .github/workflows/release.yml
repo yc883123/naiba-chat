@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 1.7.7-beta
-  RELEASE_TAG: v1.7.7-beta
-  PACKAGE_NAME: naiba-chat-1.7.7-beta-windows-x64
+  RELEASE_VERSION: 1.7.8-beta
+  RELEASE_TAG: v1.7.8-beta
+  PACKAGE_NAME: naiba-chat-1.7.8-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 1.7.7 Beta release
+      - name: Publish 1.7.8 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 1.7.7 Beta
+          name: Naiba Chat 1.7.8 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,13 +99,12 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 1.7.7 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 1.7.8 Beta Windows build from `${{ github.sha }}`.
 
             本次更新：
-            - 富文本开关独立化：输入区的「富文本」开关从「轻量选项（工具 / Skill）」分组中移出，改为独立的行内开关，与轻量模式解耦；不再与工具/Skill 挤在一组，关闭工具不会再被误认为影响富文本显示。
-            - 切换即时生效：打开 / 关闭「富文本」后立即按最新消息重渲染当前对话，开关效果所见即所得，无需等下一轮 AI 回复才生效。
-            - 文件预览隔离：右侧文件面板的 Markdown 预览改用独立的纯文本/Markdown 渲染入口，固定不受对话富文本开关影响，逻辑更清晰。
-            - 渲染性能优化：内容不含任何 HTML 标签的消息在富文本还原阶段直接原样返回，跳过正则解析，降低大段纯文本回复的渲染开销。
+            - 对话快捷系统提示词：新增「设置→对话快捷系统提示词」，可新增/编辑/删除/搜索可复用的系统提示词预设；对话设置中可直接选择预设一键填充系统提示词，编辑预设不会改动已保存的对话。
+            - 角色卡自动收录：导入 SillyTavern 角色卡 PNG 解析成功后，自动把该角色的人设文本收录为一条快捷系统提示词，无需手动复制。
+            - 更新检查自动选中新版本：检查更新完成后自动在下拉框中选中新版本，无需展开下拉框即可看到有更新；手动选择版本后仍按用户选择保留。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.
