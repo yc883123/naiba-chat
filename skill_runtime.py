@@ -21,40 +21,9 @@ from typing import Any, Callable
 
 import net_io
 from mcp_runtime import MCPRegistry
+from naiba.core.diagnostics import _cache_debug_enabled, _debug_message_digest
 
 logger = logging.getLogger("naiba.skill_runtime")
-
-
-def _cache_debug_enabled() -> bool:
-    """诊断总开关：默认关闭（同 server.CACHE_DEBUG_ON），或设 NAIBA_DEBUG_CACHE=1 开启。
-
-    延迟导入避免与 server 的循环导入；导入失败时按默认关闭处理。
-    """
-    try:
-        from server import _cache_debug_enabled as _enabled
-    except Exception:
-        return False
-    return bool(_enabled())
-
-
-def _debug_message_digest(messages, label: str, event=None) -> None:
-    """缓存诊断辅助：逐条输出组装后消息的 [索引:角色:字节数:哈希]。
-
-    默认开启（CACHE_DEBUG_ON）或设 NAIBA_DEBUG_CACHE=1 时触发，用来对比“第 N 轮请求”
-    与“第 N+1 轮历史”中对应消息是否字节一致，定位前缀缓存的分叉点。优先通过 ``event``
-    回调以 ``debug_cache`` 事件推给前端（用户在浏览器控制台可见）；无回调时兜底写 stderr。
-    """
-    lines = [f"[CACHE] {label} digest ({len(messages)} msgs):"]
-    for i, m in enumerate(messages[:40]):
-        try:
-            j = json.dumps(m, ensure_ascii=False, sort_keys=True, default=str)
-        except Exception:
-            j = ""
-        lines.append(f"    [{i}:{m.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]")
-    if callable(event):
-        event({"type": "debug_cache", "label": label, "lines": lines})
-    else:
-        print("\n".join(lines), file=sys.stderr, flush=True)
 
 
 EventCallback = Callable[[dict[str, Any]], None]

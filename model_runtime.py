@@ -14,77 +14,15 @@ import urllib.request
 from typing import Any, Callable
 
 import net_io
+from naiba.core.diagnostics import (
+    _cache_debug_enabled,
+    _debug_complete_marker,
+    _debug_payload_dump,
+    _debug_wire_digest,
+    _sanitize_payload,
+)
 
 logger = logging.getLogger("naiba.model_runtime")
-
-
-def _cache_debug_enabled() -> bool:
-    """诊断总开关：跟随 server.CACHE_DEBUG_ON（默认关闭），或设 NAIBA_DEBUG_CACHE=1 也可开启。"""
-    try:
-        from server import _cache_debug_enabled as _enabled
-    except Exception:
-        return False
-    return bool(_enabled())
-
-
-def _debug_wire_digest(messages: list[dict[str, Any]], status: StatusCallback | None) -> None:
-    """缓存诊断：对**真正发给模型**（经 _openai_messages 转换后）的消息逐条求哈希，
-    用来对比“第 N 轮请求”与“第 N+1 轮历史”对应消息的 wire 字节是否一致。
-    与 skill_runtime 的 `step-*-request`（原始消息）对齐，可分辨“原始 base64 相同
-    但 wire 图片不同 / DeepSeek 不缓存 image 区域”。
-    """
-    if not _cache_debug_enabled() or not callable(status):
-        return
-    lines = [f"[CACHE] wire digest ({len(messages)} msgs):"]
-    for i, m in enumerate(messages[:40]):
-        try:
-            j = json.dumps(m, ensure_ascii=False, sort_keys=True, default=str)
-        except Exception:
-            j = ""
-        lines.append(f"    [{i}:{m.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]")
-    status({"type": "debug_cache", "label": "wire", "lines": lines})
-
-
-def _debug_complete_marker(
-    kind: str,
-    request_format: str,
-    messages: list[dict[str, Any]],
-    status: StatusCallback | None,
-) -> None:
-    """无条件标记：只要进入 ModelRuntime.complete 就打，用于确认 wire 代码确实在
-    真正调用路径上（排除“EXE 里是旧模块/没走到 complete/格式不对”三种可能）。"""
-    if not _cache_debug_enabled() or not callable(status):
-        return
-    what = (
-        f"[CACHE] complete-entry kind={kind} format={request_format} "
-        f"messages={len(messages) if isinstance(messages, list) else None} "
-        f"msgs_type={type(messages).__name__}"
-    )
-    status({"type": "debug_cache", "label": "complete-entry", "lines": [what]})
-
-
-def _sanitize_payload(obj: Any, limit: int = 500) -> Any:
-    """把 payload 里的超长字符串（通常是 base64 图片）压成占位符，便于逐字段比对。"""
-    if isinstance(obj, str):
-        return obj if len(obj) <= limit else f"<str:{len(obj)}>{obj[:40]}…"
-    if isinstance(obj, list):
-        return [_sanitize_payload(item, limit) for item in obj]
-    if isinstance(obj, dict):
-        return {key: _sanitize_payload(value, limit) for key, value in obj.items()}
-    return obj
-
-
-def _debug_payload_dump(payload: dict[str, Any], status: StatusCallback | None) -> None:
-    """把**发给模型**的完整 payload 打出来（图片 base64 压成占位符，其他字段全保留），
-    逐字段对比“第 N 轮请求 vs 第 N+1 轮请求”，定位是哪部分（instructions/tools/messages/…）
-    在每轮变化导致缓存断链。"""
-    if not _cache_debug_enabled() or not callable(status):
-        return
-    try:
-        txt = json.dumps(_sanitize_payload(payload), ensure_ascii=False, sort_keys=True)
-    except Exception:
-        txt = "<payload dump failed>"
-    status({"type": "debug_cache", "label": "payload-dump", "lines": [txt]})
 
 
 StatusCallback = Callable[[dict[str, Any]], None]

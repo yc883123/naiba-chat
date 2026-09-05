@@ -64,6 +64,7 @@ from skill_runtime import (
 from async_tasks import ActiveRunError, ConversationRunManager
 from storage import ChatStorage
 from updater import UpdateManager
+from naiba.core.diagnostics import CACHE_DEBUG_ON, _cache_debug_enabled
 
 
 PUBLIC_DIR = RESOURCE_DIR / "public"
@@ -2483,15 +2484,6 @@ def _content_read_tool_outputs(tool_runs: list[dict[str, Any]]) -> str:
         + json.dumps(runs, ensure_ascii=False)[:60000]
         + "\n</untrusted_tool_result>"
     )
-
-
-# 前缀缓存诊断开关：默认关闭。需要调试时改为 True（或设 NAIBA_DEBUG_CACHE=1）。
-CACHE_DEBUG_ON = False
-
-
-def _cache_debug_enabled() -> bool:
-    """诊断总开关：默认关闭；设 CACHE_DEBUG_ON=True 或 NAIBA_DEBUG_CACHE=1 开启。"""
-    return bool(CACHE_DEBUG_ON) or os.environ.get("NAIBA_DEBUG_CACHE") == "1"
 
 
 def _debug_replay_digest(trace: list[Any], label: str, event=None) -> None:

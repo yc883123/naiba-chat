@@ -1,0 +1,110 @@
+"""前缀缓存诊断开关与调试辅助（唯一实现）。
+
+来源：原 server.py:2488-2494（CACHE_DEBUG_ON/_cache_debug_enabled）、
+model_runtime.py:21-87（_debug_wire_digest/_debug_complete_marker/_sanitize_payload/_debug_payload_dump）、
+skill_runtime.py:28-57（_debug_message_digest）。三处行为曾经不一致（ImportError 兜底
+False/True 相反），已于阶段 0 统一，本模块为合并后的唯一实现。
+
+开关语义：默认关闭；CACHE_DEBUG_ON=True 或环境变量 NAIBA_DEBUG_CACHE=1 时开启。
+各 debug_* 函数在未开启或回调缺失时直接返回，不产生任何副作用。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sys
+from typing import Any, Callable
+
+# 前缀缓存诊断总开关：默认关闭。需要调试时改为 True（或设 NAIBA_DEBUG_CACHE=1）。
+CACHE_DEBUG_ON = False
+
+StatusCallback = Callable[[dict[str, Any]], None] | None
+
+
+def _cache_debug_enabled() -> bool:
+    """诊断总开关：默认关闭；设 CACHE_DEBUG_ON=True 或 NAIBA_DEBUG_CACHE=1 开启。"""
+    return bool(CACHE_DEBUG_ON) or os.environ.get("NAIBA_DEBUG_CACHE") == "1"
+
+
+def _sanitize_payload(obj: Any, limit: int = 500) -> Any:
+    """把 payload 里的超长字符串（通常是 base64 图片）压成占位符，便于逐字段比对。"""
+    if isinstance(obj, str):
+        return obj if len(obj) <= limit else f"<str:{len(obj)}>{obj[:40]}…"
+    if isinstance(obj, list):
+        return [_sanitize_payload(item, limit) for item in obj]
+    if isinstance(obj, dict):
+        return {key: _sanitize_payload(value, limit) for key, value in obj.items()}
+    return obj
+
+
+def _debug_wire_digest(messages: list[dict[str, Any]], status: StatusCallback) -> None:
+    """缓存诊断：对**真正发给模型**（经 _openai_messages 转换后）的消息逐条求哈希，
+    用来对比"第 N 轮请求"与"第 N+1 轮历史"对应消息的 wire 字节是否一致。
+    与 skill_runtime 的 `step-*-request`（原始消息）对齐，可分辨"原始 base64 相同
+    但 wire 图片不同 / DeepSeek 不缓存 image 区域"。
+    """
+    if not _cache_debug_enabled() or not callable(status):
+        return
+    lines = [f"[CACHE] wire digest ({len(messages)} msgs):"]
+    for i, m in enumerate(messages[:40]):
+        try:
+            j = json.dumps(m, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            j = ""
+        lines.append(f"    [{i}:{m.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]")
+    status({"type": "debug_cache", "label": "wire", "lines": lines})
+
+
+def _debug_complete_marker(
+    kind: str,
+    request_format: str,
+    messages: list[dict[str, Any]],
+    status: StatusCallback,
+) -> None:
+    """无条件标记：只要进入 ModelRuntime.complete 就打，用于确认 wire 代码确实在
+    真正调用路径上（排除"EXE 里是旧模块/没走到 complete/格式不对"三种可能）。"""
+    if not _cache_debug_enabled() or not callable(status):
+        return
+    what = (
+        f"[CACHE] complete-entry kind={kind} format={request_format} "
+        f"messages={len(messages) if isinstance(messages, list) else None} "
+        f"msgs_type={type(messages).__name__}"
+    )
+    status({"type": "debug_cache", "label": "complete-entry", "lines": [what]})
+
+
+def _debug_payload_dump(payload: dict[str, Any], status: StatusCallback) -> None:
+    """把**发给模型**的完整 payload 打出来（图片 base64 压成占位符，其他字段全保留），
+    逐字段对比"第 N 轮请求 vs 第 N+1 轮请求"，定位是哪部分（instructions/tools/messages/…）
+    在每轮变化导致缓存断链。"""
+    if not _cache_debug_enabled() or not callable(status):
+        return
+    try:
+        txt = json.dumps(_sanitize_payload(payload), ensure_ascii=False, sort_keys=True)
+    except Exception:
+        txt = "<payload dump failed>"
+    status({"type": "debug_cache", "label": "payload-dump", "lines": [txt]})
+
+
+def _debug_message_digest(messages: list[Any], label: str, event=None) -> None:
+    """缓存诊断辅助：逐条输出组装后消息的 [索引:角色:字节数:哈希]。
+
+    默认关闭（CACHE_DEBUG_ON）或设 NAIBA_DEBUG_CACHE=1 时触发，用来对比"第 N 轮请求"
+    与"第 N+1 轮历史"中对应消息是否字节一致，定位前缀缓存的分叉点。优先通过 ``event``
+    回调以 ``debug_cache`` 事件推给前端（用户在浏览器控制台可见）；无回调时兜底写 stderr。
+    """
+    if not _cache_debug_enabled():
+        return
+    lines = [f"[CACHE] {label} digest ({len(messages)} msgs):"]
+    for i, m in enumerate(messages[:40]):
+        try:
+            j = json.dumps(m, ensure_ascii=False, sort_keys=True, default=str)
+        except Exception:
+            j = ""
+        lines.append(f"    [{i}:{m.get('role')}:{len(j)}:{hashlib.sha256(j.encode('utf-8')).hexdigest()[:10]}]")
+    if callable(event):
+        event({"type": "debug_cache", "label": label, "lines": lines})
+    else:
+        print("\n".join(lines), file=sys.stderr, flush=True)
