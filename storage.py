@@ -784,7 +784,7 @@ class ChatStorage:
         if lightweight_mode is not None:
             values["lightweight_mode"] = 1 if bool(lightweight_mode) else 0
         if lightweight_disabled_features is not None:
-            allowed = {"tools", "skills"}
+            allowed = {"tools", "skills", "rich_text"}
             values["lightweight_disabled_features"] = json.dumps(
                 [item for item in lightweight_disabled_features if item in allowed], ensure_ascii=False
             )
@@ -1699,7 +1699,7 @@ class ChatStorage:
             )
             result["lightweight_disabled_features"] = [
                 item for item in features
-                if item in {"tools", "skills"}
+                if item in {"tools", "skills", "rich_text"}
             ]
         except (json.JSONDecodeError, TypeError):
             result["lightweight_disabled_features"] = []

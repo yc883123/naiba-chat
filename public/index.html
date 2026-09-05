@@ -192,6 +192,7 @@
                   <span class="lightweight-feature-label">轻量选项</span>
                   <label title="勾选后关闭本对话的工具调用（不勾选即普通模式）"><input id="lightweightToolsToggle" type="checkbox"> 工具</label>
                   <label title="勾选后关闭本对话的 Skill 能力（不勾选即普通模式）"><input id="lightweightSkillsToggle" type="checkbox"> Skill</label>
+                  <label title="开启后渲染安全白名单内的 HTML 富文本"><input id="richTextToggle" type="checkbox"> 富文本</label>
                 </div>
               </div>
             </div>
@@ -202,6 +203,7 @@
     </main>
 
     <aside class="file-panel" id="filePanel" aria-label="文件面板">
+      <div class="file-panel-resizer" id="filePanelResizer" title="拖动调整宽度" aria-hidden="true"></div>
       <header class="file-panel-top">
         <div class="file-tabs" id="fileTabs" role="tablist" aria-label="打开的文件"></div>
         <button class="icon-button file-panel-close" id="closeFilePanel" type="button" title="收起文件面板（Esc）" aria-label="收起文件面板">

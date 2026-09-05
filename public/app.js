@@ -86,6 +86,7 @@ const state = {
   reasoningEffort: 'auto',
   lightweightMode: false,
   lightweightDisabledFeatures: [],
+  richTextEnabled: false,
   contextUsage: null,
   providerModelCapabilities: {},
   workspaces: [],
@@ -362,6 +363,15 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 }
+function restoreSafeHtml(escaped) {
+  const colors = new Set(['black','silver','gray','white','maroon','red','purple','fuchsia','green','lime','olive','yellow','navy','blue','teal','aqua','orange','aliceblue','transparent']);
+  const decode = (s) => String(s).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  return String(escaped || '').replace(/&lt;!--[\s\S]*?--&gt;/gi, '').replace(/&lt;(\/?)(font|b|i|u|s|span)([\s\S]*?)&gt;/gi, (full, slash, name, raw) => {
+    const tag = name.toLowerCase(); if (slash) return `</${tag}>`; const attrs = decode(raw).trim(); if (!attrs) return `<${tag}>`; if (!['font','span'].includes(tag)) return full;
+    const m = attrs.match(/^color\s*=\s*["']([^"']+)["']$/i); if (!m) return full; const value = m[1].trim();
+    if (!(/^#[0-9a-f]{3,8}$/i.test(value) || colors.has(value.toLowerCase()))) return full; return `<${tag} color="${escapeHtml(value)}">`;
+  });
+}
 
 // 语言别名归一化：把常见标识归到同一套规则。
 function normalizeLanguage(language) {
@@ -591,7 +601,7 @@ function renderMarkdownTable(rows) {
   return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${tbody}</tbody></table></div>`;
 }
 
-function markdown(text) {
+function markdown(text, allowRichText = true) {
   const codeBlocks = [];
   const addCodeBlock = (language, rawCode) => {
     const index = codeBlocks.length;
@@ -611,6 +621,7 @@ function markdown(text) {
     .replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@\n`)
     .replace(/```([^\n]*)\n([\s\S]*)$/, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@`);
   safe = escapeHtml(safe);
+  if (allowRichText && state.richTextEnabled) safe = restoreSafeHtml(safe);
   const blocks = [];
   let paragraph = [];
   let listType = '';
@@ -5466,16 +5477,18 @@ function applyConversationLightweight(conversation) {
   // 保证默认回到普通模式（什么都不勾选 = 普通对话）。
   const enabled = Boolean(Number(conversation?.lightweight_mode || 0));
   const stored = Array.isArray(conversation?.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features.filter((item) => item === 'tools' || item === 'skills')
+    ? conversation.lightweight_disabled_features.filter((item) => item === 'tools' || item === 'skills' || item === 'rich_text')
     : [];
   state.lightweightDisabledFeatures = enabled ? stored : [];
   state.lightweightMode = state.lightweightDisabledFeatures.length > 0;
+  state.richTextEnabled = !state.lightweightDisabledFeatures.includes('rich_text');
   updateLightweightModeControl();
 }
 
 function updateLightweightModeControl() {
   const toolsToggle = $('#lightweightToolsToggle');
   const skillsToggle = $('#lightweightSkillsToggle');
+  const richTextToggle = $('#richTextToggle');
   const attach = $('#attachButton');
   const disabled = new Set(state.lightweightDisabledFeatures || []);
   for (const [input, key] of [[toolsToggle, 'tools'], [skillsToggle, 'skills']]) {
@@ -5483,8 +5496,16 @@ function updateLightweightModeControl() {
     input.checked = disabled.has(key);
     input.disabled = Boolean(state.chatRunId || state.abortController);
   }
+  if (richTextToggle) { richTextToggle.checked = state.richTextEnabled; richTextToggle.disabled = Boolean(state.chatRunId || state.abortController); }
   if (attach) attach.disabled = false;
   updateDeepReasoningButton();
+}
+async function toggleRichText(checked) {
+  if (state.chatRunId || state.abortController) return; if (!state.conversationId) await createConversation();
+  const previous = [...state.lightweightDisabledFeatures], previousEnabled = state.richTextEnabled; const next = new Set(previous);
+  if (checked) next.delete('rich_text'); else next.add('rich_text'); state.richTextEnabled = !!checked; state.lightweightDisabledFeatures = [...next]; state.lightweightMode = next.size > 0; updateLightweightModeControl();
+  try { const updated = await api(`/api/conversations/${state.conversationId}/settings`, { method:'POST', body:{lightweight_mode:state.lightweightMode, lightweight_disabled_features:state.lightweightDisabledFeatures} }); state.lightweightDisabledFeatures = updated.lightweight_disabled_features || state.lightweightDisabledFeatures; state.richTextEnabled = !state.lightweightDisabledFeatures.includes('rich_text'); state.lightweightMode = state.lightweightDisabledFeatures.length > 0; }
+  catch (error) { state.lightweightDisabledFeatures = previous; state.richTextEnabled = previousEnabled; state.lightweightMode = previous.length > 0; updateLightweightModeControl(); toast(`富文本设置保存失败：${error.message}`); }
 }
 
 async function toggleLightweightFeature(feature, checked) {
@@ -6392,7 +6413,8 @@ function filePanelUsable() {
 }
 
 function filePanelWidthPx() {
-  return Math.max(300, Math.min(430, Math.round(window.innerWidth * 0.36)));
+  const saved = parseFloat(localStorage.getItem('naibaChatFilePanelW') || ''); const max = Math.max(300, Math.floor(window.innerWidth * 0.5));
+  return Math.max(280, Math.min(max, Number.isFinite(saved) ? saved : Math.round(window.innerWidth * 0.36)));
 }
 
 function applyFilePanelOpenClass() {
@@ -6588,7 +6610,8 @@ function fileContentViewHtml(tab) {
   }
   const text = String(info.content || '');
   if (FILE_MD_NAME_RE.test(info.name || '') && !info.truncated) {
-    return `<div class="file-preview-md message-body answer-content">${markdown(text)}</div>`;
+    // 文件预览始终按纯文本/Markdown 规则渲染，不受对话富文本开关影响。
+    return `<div class="file-preview-md message-body answer-content">${markdown(text, false)}</div>`;
   }
   return `<pre class="file-preview-text">${escapeHtml(text)}</pre>`;
 }
@@ -6906,6 +6929,7 @@ function bindEvents() {
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
   $('#lightweightToolsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('tools', event.target.checked));
   $('#lightweightSkillsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('skills', event.target.checked));
+  $('#richTextToggle')?.addEventListener('change', (event) => toggleRichText(event.target.checked));
   // composer-meta「轻量」折叠面板开合
   $('#composerMetaMoreButton')?.addEventListener('click', (event) => {
     event.stopPropagation();
@@ -7199,6 +7223,13 @@ function bindEvents() {
       document.addEventListener('mouseup', onUp);
     });
   }
+  const filePanelResizer = $('#filePanelResizer');
+  if (filePanelResizer) filePanelResizer.addEventListener('mousedown', (event) => {
+    if (!filePanelState.open) return; event.preventDefault(); filePanelResizer.classList.add('dragging');
+    const move = (e) => { const w = Math.max(280, Math.min(Math.floor(window.innerWidth * 0.5), window.innerWidth - e.clientX)); $('#appShell')?.style.setProperty('--file-panel-w', `${w}px`); };
+    const up = () => { filePanelResizer.classList.remove('dragging'); document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); const w = parseFloat(getComputedStyle($('#appShell')).getPropertyValue('--file-panel-w')); if (Number.isFinite(w)) localStorage.setItem('naibaChatFilePanelW', String(Math.round(w))); };
+    document.addEventListener('mousemove', move); document.addEventListener('mouseup', up);
+  });
   // 窗口大小变化时，把侧栏宽度压回窗口 30% 上限，并重绘虚拟列表
   const recalcSidebarW = () => {
     const cur = parseFloat(document.documentElement.style.getPropertyValue('--sidebar-w') || 0) || 272;
@@ -7208,6 +7239,7 @@ function bindEvents() {
       localStorage.setItem('naibaChatSidebarW', maxW + 'px');
     }
     renderSidebar();
+    if (filePanelState.open) applyFilePanelOpenClass();
   };
   window.addEventListener('resize', recalcSidebarW);
   $('#addWorkspace').addEventListener('click', createWorkspace);
