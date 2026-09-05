@@ -1086,7 +1086,7 @@ function updateContextComposerLock(busy = false) {
     input.disabled = atCeiling;
     input.placeholder = atCeiling
       ? '上下文已满，请新建对话后继续'
-      : (busy ? '输入内容后按 Enter 插话' : '输入消息');
+      : (busy ? '回复进行中…' : '输入消息');
   }
   // During an in-progress run the send button doubles as the stop control, so
   // keep it clickable; otherwise lock it at the ceiling too.
@@ -1215,9 +1215,6 @@ function messageElement(message, temporary = false) {
   row.dataset.messageId = message.id || '';
   const metadata = message.metadata || {};
   row.__messageMetadata = metadata;
-  row.dataset.interjection = String(Boolean(metadata.interjection));
-  row.dataset.interjectionGuided = String(Boolean(metadata.interjection_guided));
-  row.dataset.interjectionConsumed = String(Boolean(metadata.interjection_consumed));
   if (Array.isArray(metadata.attachments)) {
     metadata.attachments.forEach((attachment) => {
       const source = attachment.source || attachment.path;
@@ -1225,7 +1222,7 @@ function messageElement(message, temporary = false) {
     });
   }
   if (message.role === 'user') {
-    const actions = message.id ? `<div class="message-actions"><button data-branch-message title="从这条消息分支到新会话继续">分支</button>${metadata.interjection && !metadata.interjection_consumed ? '<button data-delete-message title="删除这条消息">删除</button>' : ''}</div>` : '';
+    const actions = message.id ? '<div class="message-actions"><button data-branch-message title="从这条消息分支到新会话继续">分支</button></div>' : '';
     row.innerHTML = `<div class="message-body">${renderUserContent(metadata.display_content || message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
     const abortedBadge = metadata.aborted
@@ -1266,63 +1263,8 @@ function preloadDraggedFile(source, name = '') {
     .catch(() => {});
 }
 
-function isPendingRunGuidance(message) {
-  const metadata = message?.metadata || {};
-  return message?.role === 'user'
-    && Boolean(metadata.interjection)
-    && !metadata.interjection_guided
-    && !metadata.interjection_consumed
-    && !metadata.interjection_stopped;
-}
-
-function runGuidanceElement(message) {
-  const row = document.createElement('article');
-  const metadata = message.metadata || {};
-  row.className = 'message-row user run-guidance-card';
-  row.dataset.messageId = message.id || '';
-  row.dataset.interjection = 'true';
-  row.dataset.runGuidance = 'true';
-  row.dataset.rawContent = message.content || '';
-  row.innerHTML = `<div class="message-body"><span class="run-guidance-icon" aria-hidden="true">≡</span><div class="run-guidance-preview">${escapeHtml(message.content)}</div>
-    <div class="run-guidance-actions">
-      <button type="button" data-edit-message title="编辑排队消息" aria-label="编辑排队消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg></button>
-      <button type="button" data-delete-message title="删除排队消息" aria-label="删除排队消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
-      <button type="button" data-guide-message title="立即发送此消息" aria-label="立即发送此消息"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg></button>
-    </div>
-  </div>`;
-  return row;
-}
-
-function renderRunGuidance(messages) {
-  const container = $('#runGuidanceList');
-  if (!container) return;
-  const pending = (messages || []).filter(isPendingRunGuidance);
-  container.replaceChildren(...pending.map(runGuidanceElement));
-  container.hidden = pending.length === 0;
-}
-
-function promoteRunGuidance(messageId) {
-  const row = messageId
-    ? document.querySelector(`.run-guidance-card[data-message-id="${CSS.escape(String(messageId))}"]`)
-    : null;
-  if (!row) return;
-  row.classList.remove('run-guidance-card');
-  delete row.dataset.runGuidance;
-  row.querySelector('.run-guidance-actions')?.remove();
-  $('#messages').append(row);
-  const container = $('#runGuidanceList');
-  if (container && !container.children.length) container.hidden = true;
-  scrollToBottom();
-}
-
 function startEditMessage(row) {
-  const editablePendingGuidance = row?.dataset.interjection === 'true'
-    && row?.dataset.interjectionGuided !== 'true'
-    && row?.dataset.interjectionConsumed !== 'true';
-  if (!row || (state.chatRunId && !editablePendingGuidance)) {
-    if (state.chatRunId) toast('请先停止当前对话再编辑');
-    return;
-  }
+  if (!row) return;
   const body = row.querySelector('.message-body');
   if (!body || body.querySelector('textarea[data-edit-input]')) return;
   // 提取纯文本内容（不含附件标记）。带 /ref 引用的消息优先回填原始 display_content（含引用的原文），
@@ -1365,20 +1307,6 @@ async function confirmEditMessage(row, newText) {
   }
   const messageId = row.dataset.messageId;
   if (!messageId || !state.conversationId) return;
-  if (state.chatRunId && row.dataset.interjection === 'true'
-      && row.dataset.interjectionGuided !== 'true'
-      && row.dataset.interjectionConsumed !== 'true') {
-    try {
-      const result = await api('/api/chat/interject/edit', {
-        method: 'POST',
-        body: { conversation_id: state.conversationId, run_id: state.chatRunId, message_id: messageId, message: text },
-      });
-      row.replaceWith(runGuidanceElement(result.message));
-    } catch (error) {
-      toast(`编辑失败：${error.message}`);
-    }
-    return;
-  }
   try {
     const result = await api('/api/messages/edit', {
       method: 'POST',
@@ -1536,14 +1464,13 @@ function renderMessages(messages) {
     container.replaceChildren();
     // 始终保留 empty 在容器中，仅切换 hidden；否则它会被移出 DOM，
     // 导致后续 sendMessage 中 $('#emptyState') 为 null 而崩溃
-    const visibleMessages = messages.filter((message) => !isPendingRunGuidance(message));
+    const visibleMessages = messages;
     empty.hidden = visibleMessages.length > 0;
     container.append(empty);
     if (visibleMessages.length) {
       visibleMessages.forEach((message) => container.append(messageElement(message)));
       scrollToBottom();
     }
-    renderRunGuidance(messages);
     const choiceMessage = pendingChoiceMessage(visibleMessages);
     const choices = choiceMessage?.metadata?.choices || [];
     const choiceGroups = choiceMessage?.metadata?.choice_groups || [];
@@ -5228,7 +5155,7 @@ async function sendChatMessage(textOverride = '') {
   }
   if (!state.conversationId) await createConversation();
   if (state.chatRunId || state.abortController) {
-    await sendRunInterjection(text);
+    toast('回复进行中，请等待完成或先点击停止');
     return;
   }
   // 用户新发起一轮：恢复跟随，让新答复从底部开始流式显示。
@@ -5290,93 +5217,6 @@ async function sendChatMessage(textOverride = '') {
     }
   } finally {
     if (state.abortController === controller) await finishRunSubscription(conversationId, controller);
-  }
-}
-
-async function sendRunInterjection(text) {
-  const input = $('#messageInput');
-  const runId = state.chatRunId;
-  const conversationId = state.conversationId;
-  if (!runId || !conversationId) return;
-  if (state.pendingFiles.some((file) => file.uploading)) {
-    toast('请等待文件上传完成');
-    return;
-  }
-  const attachments = state.pendingFiles.map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
-  state.pendingFiles = [];
-  renderPendingFiles();
-  input.value = '';
-  resizeTextarea();
-  renderInputMirror();
-  hideSkillPopup();
-  try {
-    const result = await api('/api/chat/interject', {
-      method: 'POST',
-      body: { conversation_id: conversationId, run_id: runId, message: text, attachments },
-    });
-    const message = result.message || { role: 'user', content: text, metadata: { attachments, interjection: true } };
-    const container = $('#runGuidanceList');
-    container.append(runGuidanceElement(message));
-    container.hidden = false;
-    toast('已发送，可删除、编辑或引导当前任务');
-    return message;
-  } catch (error) {
-    toast(`消息发送失败：${error.message}`);
-    return null;
-  }
-}
-
-async function guideAllQueuedMessages() {
-  const input = $('#messageInput');
-  const text = input.value.trim();
-  if (text) await sendRunInterjection(text);
-  const rows = [...document.querySelectorAll('.run-guidance-card')];
-  for (const row of rows) {
-    if (!state.chatRunId) break;
-    await guideMessage(row);
-  }
-}
-
-async function guideMessage(row) {
-  const messageId = row?.dataset.messageId;
-  if (!messageId || !state.conversationId || !state.chatRunId) return;
-  const button = row.querySelector('[data-guide-message]');
-  if (button) button.disabled = true;
-  try {
-    const result = await api('/api/chat/interject/guide', {
-      method: 'POST',
-      body: { conversation_id: state.conversationId, run_id: state.chatRunId, message_id: messageId },
-    });
-    promoteRunGuidance(result.message?.id || messageId);
-  } catch (error) {
-    if (button) button.disabled = false;
-    toast(`引导失败：${error.message}`);
-  }
-}
-
-async function deleteMessage(row) {
-  const messageId = row?.dataset.messageId;
-  if (!messageId || !state.conversationId) return;
-  if (state.chatRunId) {
-    try {
-      await api('/api/chat/interject/delete', {
-        method: 'POST',
-        body: { conversation_id: state.conversationId, run_id: state.chatRunId, message_id: messageId },
-      });
-      row.remove();
-      toast('已删除待引导消息');
-    } catch (error) {
-      toast(`删除失败：${error.message}`);
-    }
-    return;
-  }
-  try {
-    await api('/api/messages/edit', {
-      method: 'POST', body: { conversation_id: state.conversationId, message_id: messageId },
-    });
-    await openConversation(state.conversationId);
-  } catch (error) {
-    toast(`删除失败：${error.message}`);
   }
 }
 
@@ -5691,19 +5531,6 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
     state.runConversationId = conversationId;
     row.dataset.runId = state.chatRunId;
     row.dataset.lightweightMode = String(Boolean(event.lightweight_mode));
-  } else if (event.type === 'user_guidance') {
-    hideChoiceButtons();
-    promoteRunGuidance(event.message_id);
-    row.querySelectorAll('.tool-confirm').forEach((confirmation) => {
-      const actions = confirmation.querySelector('.tool-confirm-actions');
-      if (actions) actions.innerHTML = '<div class="tool-confirm-status">新指令已到达，原确认已撤销</div>';
-    });
-    setActivity('已收到引导，准备继续');
-  } else if (event.type === 'interjection_consumed') {
-    const messageRow = event.message_id
-      ? document.querySelector(`.message-row[data-message-id="${CSS.escape(String(event.message_id))}"]`)
-      : null;
-    messageRow?.querySelector('.message-actions')?.remove();
   } else if (event.type === 'vision_start') {
     renderVisionProgress(activity || answer, event);
   } else if (event.type === 'vision_done') {
@@ -5951,17 +5778,6 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
       answer.innerHTML = '<p>计划执行完成</p>';
     }
     $('#runtimeStatus').textContent = '就绪';
-    const followupRunId = String(event.followup_run_id || '');
-    if (followupRunId && !state.cancelRequested && !state.cancelledRunIds.has(String(runId || ''))) {
-      void (async () => {
-        try {
-          const followup = await api(`/api/runs/${encodeURIComponent(followupRunId)}`);
-          if (followup?.id && !state.cancelRequested && state.conversationId === conversationId) await resumeRun(followup);
-        } catch (error) {
-          console.debug('[naiba] 后续插话 Run 恢复失败:', error.message);
-        }
-      })();
-    }
   } else if (event.type === 'error') {
     clearElapsedStatus();
     clearVisionProgress();
@@ -6167,7 +5983,7 @@ function setBusy(busy) {
   sendBtn.setAttribute('aria-label', state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送'));
   const messageInput = $('#messageInput');
   messageInput.disabled = false;
-  messageInput.placeholder = busy ? '输入内容后按 Enter 插话' : '输入消息';
+  messageInput.placeholder = busy ? '回复进行中…' : '输入消息';
   updateContextComposerLock(busy);
   updateLightweightModeControl();
   updateUnloadModelButton();
@@ -7028,8 +6844,7 @@ function bindEvents() {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       if (state.chatRunId || state.abortController) {
-        if (event.ctrlKey || event.metaKey) guideAllQueuedMessages();
-        else sendRunInterjection($('#messageInput').value);
+        toast('回复进行中，请等待完成或先点击停止');
       } else {
         sendMessage();
       }
@@ -7229,23 +7044,6 @@ function bindEvents() {
       startEditMessage(editButton.closest('.message-row'));
       return;
     }
-    const deleteButton = event.target.closest('[data-delete-message]');
-    if (deleteButton) {
-      deleteMessage(deleteButton.closest('.message-row'));
-    }
-  });
-  $('#runGuidanceList').addEventListener('click', (event) => {
-    const row = event.target.closest('.run-guidance-card');
-    if (!row) return;
-    if (event.target.closest('[data-guide-message]')) {
-      guideMessage(row);
-      return;
-    }
-    if (event.target.closest('[data-edit-message]')) {
-      startEditMessage(row);
-      return;
-    }
-    if (event.target.closest('[data-delete-message]')) deleteMessage(row);
   });
   $$('.starter-grid button').forEach((button) => button.addEventListener('click', () => {
     if (button.dataset.installSkill) startSkillInstall();
