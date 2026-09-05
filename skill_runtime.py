@@ -399,14 +399,12 @@ class ToolExecutor:
         mcp_registry: MCPRegistry,
         permission_mode: str = "confirm",
         mcp_register: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
-        mcp_setup: Callable[[], dict[str, Any]] | None = None,
     ):
         self.workspace = workspace.resolve()
         self.python_executable = python_executable
         self.command_timeout = command_timeout
         self.mcp_registry = mcp_registry
         self.mcp_register = mcp_register
-        self.mcp_setup = mcp_setup
         self.permission_mode = "confirm"
         self.set_permission_mode(permission_mode)
         self.pending_confirmation: dict[str, dict[str, Any]] = {}
@@ -426,7 +424,6 @@ class ToolExecutor:
             self.mcp_registry,
             permission_mode=mode,
             mcp_register=self.mcp_register,
-            mcp_setup=self.mcp_setup,
         )
 
     @staticmethod
@@ -1080,28 +1077,6 @@ class ToolExecutor:
     def mcp_tool_guide(self) -> str:
         return self.mcp_registry.tool_guide()
 
-    def mcp_registered_note(self) -> str:
-        """返回已注册 MCP 服务的连接状态摘要，供系统提示注入。
-
-        目的：当会话激活 MCP 语境时，让模型明确知道哪些外部服务已经注册，
-        避免它反复走安装/注册/客户端配置流程。
-        """
-        try:
-            states = self.mcp_registry.states()
-        except Exception:
-            return ""
-        rows = []
-        for item in states:
-            server_id = str(item.get("id") or "")
-            tools = item.get("tools") or []
-            if item.get("connected"):
-                rows.append(f"- {server_id}：已连接（{len(tools)} 个工具）")
-            elif item.get("error"):
-                rows.append(f"- {server_id}：已注册但连接异常（{item.get('error')}）")
-            else:
-                rows.append(f"- {server_id}：已注册（{item.get('status')}）")
-        return "\n".join(rows)
-
 
 
 
@@ -1263,25 +1238,22 @@ class SkillAgent:
         # Official comfy-mcp is installed/registered only when a conversation
         # actually routes to that Skill.  It must never be a settings-page
         # side effect or a startup dependency.
-        try:
-            return self._run_active(
-                user_message,
-                history,
-                profile,
-                options,
-                active,
-                agent_system_prompt,
-                allowed_tools,
-                event,
-                tool_logger,
-                usages,
-                cancel_event,
-                max_steps,
-                tool_registry,
-                run_context,
-            )
-        finally:
-            pass
+        return self._run_active(
+            user_message,
+            history,
+            profile,
+            options,
+            active,
+            agent_system_prompt,
+            allowed_tools,
+            event,
+            tool_logger,
+            usages,
+            cancel_event,
+            max_steps,
+            tool_registry,
+            run_context,
+        )
 
     def _run_active(
         self,
@@ -1917,10 +1889,7 @@ class SkillAgent:
                 skill_key = str(skill.get("id") or skill.get("path") or "")
                 if not skill_key or skill_key in loaded_skill_ids:
                     continue
-                block = render_skill_block(skill)
-                if block is None:
-                    break
-                new_skill_prompts.append(block)
+                new_skill_prompts.append(render_skill_block(skill))
             if new_skill_prompts:
                 messages.append({
                     "role": "user",
@@ -1983,7 +1952,6 @@ class SkillAgent:
                 })
             event({"type": "step_finished", "step": step})
 
-    @staticmethod
     @staticmethod
     def _unsupported_comfyui_connection_claim(
         routing_message: str,
@@ -2356,63 +2324,6 @@ class SkillAgent:
         text = str(content or "")
         ascii_chars = sum(1 for char in text if ord(char) < 128)
         return max(1, (ascii_chars + 3) // 4 + (len(text) - ascii_chars)) if text else 0
-
-    @classmethod
-    def _trim_content_to_token_budget(cls, content: Any, budget: int) -> Any:
-        if budget <= 0:
-            return ""
-        if isinstance(content, str):
-            low, high = 0, len(content)
-            while low < high:
-                middle = (low + high + 1) // 2
-                if cls._estimate_content_tokens(content[:middle]) <= budget:
-                    low = middle
-                else:
-                    high = middle - 1
-            return content[:low]
-        if not isinstance(content, list):
-            return cls._trim_content_to_token_budget(str(content or ""), budget)
-        trimmed: list[dict[str, Any]] = []
-        remaining = budget
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") == "image":
-                if remaining < 1024:
-                    break
-                trimmed.append(part)
-                remaining -= 1024
-                continue
-            if part.get("type") != "text":
-                continue
-            text = cls._trim_content_to_token_budget(str(part.get("text") or ""), remaining)
-            if text:
-                trimmed.append({**part, "text": text})
-                remaining -= cls._estimate_content_tokens(text)
-            if remaining <= 0:
-                break
-        return trimmed
-
-    @staticmethod
-    def _trim_message_content(content: Any, max_chars: int) -> Any:
-        if isinstance(content, str):
-            return content[:max_chars]
-        if not isinstance(content, list):
-            return str(content)[:max_chars]
-        trimmed = []
-        remaining = max_chars
-        for part in content:
-            if not isinstance(part, dict):
-                continue
-            if part.get("type") == "text":
-                text = str(part.get("text") or "")[:remaining]
-                if text:
-                    trimmed.append({"type": "text", "text": text})
-                    remaining -= len(text)
-            elif part.get("type") == "image":
-                trimmed.append(part)
-        return trimmed
-
 
     @classmethod
     def _parse_action(cls, text: str) -> dict[str, Any]:

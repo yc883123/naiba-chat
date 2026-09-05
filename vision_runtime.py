@@ -946,7 +946,6 @@ class VisionRouter:
         作为 image content 直观读取（由 agent loop 负责把主图注入下一条消息）。
         """
         try:
-            from server import _uploads_total_bytes, _thumb_webp_path  # noqa: F401  (lazy import)
             # 安全起见复用 server 的缓存逻辑，避免循环导入。
             paths: list[str] = []
             for raw in args.get("paths") or []:
