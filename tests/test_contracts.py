@@ -32,7 +32,6 @@ class EventContractTests(unittest.TestCase):
             "run_id", "job_id", "conversation_id", "owner_session_id", "parent_job_id",
             "depth", "allowed_tools", "skill_policy", "job_registry", "executor",
             "cancel_event", "vision_budget", "interaction_mode", "routing_message",
-            "pull_interjections", "mark_interjections_consumed",
         }
         annotations = set(RunContext.__annotations__)
         self.assertTrue(canonical <= annotations, f"RunContext 缺失契约键：{canonical - annotations}")

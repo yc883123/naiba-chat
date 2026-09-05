@@ -1,4 +1,9 @@
-"""Focused regression checks for one-click chat-chain cancellation."""
+"""Focused regression checks for one-click chat-chain cancellation（无插话版本）。
+
+覆盖：取消父 Run 时级联取消其子 Job（http_poll 等），父任务进入 cancelling，
+子任务进入 stopping。插话功能已于 2026-09-06 废弃（后端实现全部移除），
+原 interjection stop / follow-up claim 用例随之删除。
+"""
 from __future__ import annotations
 
 import tempfile
@@ -54,11 +59,10 @@ def create_chat(app: FakeApp, conversation_id: str):
     return app.storage.get_background_task(str(run["id"]))
 
 
-def test_cancel_cascades_and_stops_interjection() -> None:
+def test_cancel_cascades_to_child_job() -> None:
     app, conversation_id = new_app()
     parent = create_chat(app, conversation_id)
     parent_id = str(parent["id"])
-    queued = app.storage.add_run_interjection(conversation_id, parent_id, "queued guidance")
     child = app.storage.create_run(
         conversation_id,
         "poll child",
@@ -78,38 +82,8 @@ def test_cancel_cascades_and_stops_interjection() -> None:
     assert str(child["id"]) in app.jobs.cancelled
     stopped_child = app.storage.get_background_task(str(child["id"]))
     assert stopped_child and stopped_child["status"] == "stopping"
-    conversation = app.storage.get_conversation(conversation_id)
-    saved = next(message for message in conversation["messages"] if message["id"] == queued["id"])
-    assert saved["content"] == "queued guidance"
-    assert saved["metadata"]["interjection_stopped"] is True
-    assert app.storage.claim_interjections_for_followup(parent_id, {}) is None
-
-
-def test_terminal_parent_cancel_catches_followup_race() -> None:
-    app, conversation_id = new_app()
-    parent = create_chat(app, conversation_id)
-    parent_id = str(parent["id"])
-    app.storage.add_run_interjection(conversation_id, parent_id, "follow up")
-    app.storage.update_background_task(parent_id, status="completed", finished=True)
-    followup = app.storage.claim_interjections_for_followup(
-        parent_id,
-        {"agent": AGENT, "interaction_mode": "craft"},
-    )
-    assert followup and followup["parent_job_id"] == parent_id
-
-    manager = ConversationRunManager(app)
-    cancelled = manager.cancel(parent_id)
-
-    assert cancelled and cancelled["cancel_requested"]
-    assert cancelled["status"] == "cancelled"
-    child = app.storage.get_background_task(str(followup["id"]))
-    assert child and child["cancel_requested"]
-    assert child["status"] == "cancelling"
-    assert app.storage.claim_interjections_for_followup(parent_id, {}) is None
 
 
 if __name__ == "__main__":
-    test_cancel_cascades_and_stops_interjection()
-    print("PASS cancel cascades to child Jobs and preserves stopped interjections")
-    test_terminal_parent_cancel_catches_followup_race()
-    print("PASS terminal-parent cancellation closes the follow-up race")
+    test_cancel_cascades_to_child_job()
+    print("PASS cancel cascades to child Jobs")

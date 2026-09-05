@@ -722,45 +722,14 @@ class ConversationRunManager:
                 # must not make progressive tool routing think every image is
                 # a generic file-management request.
                 "routing_message": self._routing_message(message, history),
-                "pull_interjections": lambda: self.app.storage.list_run_interjections(run_id),
-                "mark_interjections_consumed": lambda ids: self.app.storage.mark_run_interjections_consumed(run_id, ids),
             }
             if lightweight_direct:
                 direct_messages = list(history)
                 if prompt:
                     direct_messages.insert(0, {"role": "system", "content": prompt})
-                consumed_interjections: set[str] = set()
-                while True:
-                    response = self.app.models.complete(profile, direct_messages, options, event)
-                    response_reasoning = str(getattr(self.app.models, "last_reasoning", "") or "")
-                    if cancel_event.is_set():
-                        raise TaskCancelled("任务已取消")
-                    interjections = [
-                        item for item in self.app.storage.list_run_interjections(run_id)
-                        if str(item.get("id") or "") not in consumed_interjections
-                    ]
-                    if not interjections:
-                        break
-                    assistant_message = {"role": "assistant", "content": response}
-                    if response_reasoning:
-                        assistant_message["reasoning_content"] = response_reasoning
-                    direct_messages.append(assistant_message)
-                    for item in interjections:
-                        consumed_interjections.add(str(item.get("id") or ""))
-                        content = str(item.get("content") or "").strip()
-                        if content:
-                            direct_messages.append({
-                                "role": "user",
-                                "content": "用户新指令（优先处理，并据此继续）：\n" + content,
-                            })
-                        event({
-                            "type": "interjection_consumed",
-                            "message_id": str(item.get("id") or ""),
-                        })
-                    self.app.storage.mark_run_interjections_consumed(
-                        run_id, [str(item.get("id") or "") for item in interjections]
-                    )
-                    event({"type": "status", "message": "已收到新指令，正在继续"})
+                response = self.app.models.complete(profile, direct_messages, options, event)
+                if cancel_event.is_set():
+                    raise TaskCancelled("任务已取消")
                 runs, reasonings = [], []
                 direct_reasoning = str(getattr(self.app.models, "last_reasoning", "") or "")
                 if direct_reasoning:
@@ -910,12 +879,6 @@ class ConversationRunManager:
                     finished=True,
                 )
                 followup = None
-                if sink.failure_message is None:
-                    claim_followup = getattr(self.app.storage, "claim_interjections_for_followup", None)
-                    if callable(claim_followup):
-                        followup = claim_followup(run_id, snapshot)
-                    if followup:
-                        self._start(followup, self._run_chat)
             if choice_groups:
                 self.emit(
                     run_id,
@@ -924,7 +887,7 @@ class ConversationRunManager:
             self.emit(run_id, {
                 "type": "done",
                 "message": saved,
-                "followup_run_id": str((followup or {}).get("id") or ""),
+                "followup_run_id": "",
             })
         except TaskCancelled:
             sink.flush()
@@ -1087,9 +1050,6 @@ class ConversationRunManager:
                 detail={"message": "正在取消任务"} if is_active else {"message": "任务已取消"},
                 finished=not is_active,
             )
-            stop_interjections = getattr(self.app.storage, "stop_pending_interjections", None)
-            if callable(stop_interjections):
-                stop_interjections(run_id)
             conversation_id = str(run.get("conversation_id") or "")
             for child in children:
                 child_id = str(child.get("id") or "")
@@ -1339,67 +1299,6 @@ class ConversationRunManager:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
         except Exception:
             return None
-
-    def interject(self, body: dict[str, Any]) -> dict[str, Any]:
-        conversation_id = str(body.get("conversation_id") or "").strip()
-        run_id = str(body.get("run_id") or "").strip()
-        message = str(body.get("message") or "").strip()
-        attachments = body.get("attachments") or []
-        if not conversation_id or not run_id or not message:
-            raise ValueError("conversation_id、run_id 和 message 不能为空")
-        if not isinstance(attachments, list):
-            raise ValueError("attachments 必须是数组")
-        saved = self.app.storage.add_run_interjection(
-            conversation_id, run_id, message, attachments
-        )
-        return {"message": saved, "run_id": run_id}
-
-    def guide_interjection(self, body: dict[str, Any]) -> dict[str, Any]:
-        conversation_id = str(body.get("conversation_id") or "").strip()
-        run_id = str(body.get("run_id") or "").strip()
-        message_id = str(body.get("message_id") or "").strip()
-        if not conversation_id or not run_id or not message_id:
-            raise ValueError("conversation_id、run_id 和 message_id 不能为空")
-        saved = self.app.storage.guide_run_interjection(conversation_id, run_id, message_id)
-        with self._lock:
-            executor = self._executors.get(run_id)
-        # A pending approval belongs to the old trajectory. Reject it so the
-        # Agent can observe the new user instruction at the next step.
-        if executor is not None:
-            pending = list(getattr(executor, "pending_confirmation", {}).keys())
-            for confirm_id in pending:
-                executor.reject_execute(confirm_id)
-        self.emit(run_id, {
-            "type": "user_guidance",
-            "message_id": message_id,
-            "message": str(saved.get("content") or ""),
-        })
-        return {"message": saved, "run_id": run_id}
-
-    def edit_interjection(self, body: dict[str, Any]) -> dict[str, Any]:
-        conversation_id = str(body.get("conversation_id") or "").strip()
-        run_id = str(body.get("run_id") or "").strip()
-        message_id = str(body.get("message_id") or "").strip()
-        message = str(body.get("message") or "").strip()
-        if not conversation_id or not run_id or not message_id or not message:
-            raise ValueError("conversation_id、run_id、message_id 和 message 不能为空")
-        saved = self.app.storage.edit_run_interjection(conversation_id, run_id, message_id, message)
-        self.emit(run_id, {"type": "user_interjection_edited", "message_id": message_id})
-        return {"message": saved, "run_id": run_id}
-
-    def delete_interjection(self, body: dict[str, Any]) -> dict[str, Any]:
-        conversation_id = str(body.get("conversation_id") or "").strip()
-        run_id = str(body.get("run_id") or "").strip()
-        message_id = str(body.get("message_id") or "").strip()
-        if not conversation_id or not run_id or not message_id:
-            raise ValueError("conversation_id、run_id 和 message_id 不能为空")
-        if not self.app.storage.active_run(conversation_id):
-            raise LookupError("运行已结束")
-        deleted = self.app.storage.delete_run_interjection(conversation_id, run_id, message_id)
-        if not deleted:
-            raise LookupError("插话不存在或已被处理")
-        self.emit(run_id, {"type": "user_interjection_deleted", "message_id": message_id})
-        return {"ok": True, "message_id": message_id}
 
     def cancel_plan(self, plan_id: str) -> dict[str, Any] | None:
         run = next(

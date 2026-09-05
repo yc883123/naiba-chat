@@ -3656,34 +3656,6 @@ class RequestHandler(BaseHTTPRequestHandler):
                         self._json({"retried": True, "job_id": new_id}, HTTPStatus.OK)
                     else:
                         self._json({"error": "Job 不存在或无权访问"}, HTTPStatus.NOT_FOUND)
-        elif path == "/api/chat/interject":
-            try:
-                self._json(APP.runs.interject(body), HTTPStatus.ACCEPTED)
-            except LookupError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
-            except ValueError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-        elif path == "/api/chat/interject/guide":
-            try:
-                self._json(APP.runs.guide_interjection(body))
-            except LookupError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
-            except ValueError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-        elif path == "/api/chat/interject/edit":
-            try:
-                self._json(APP.runs.edit_interjection(body))
-            except LookupError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
-            except ValueError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-        elif path == "/api/chat/interject/delete":
-            try:
-                self._json(APP.runs.delete_interjection(body))
-            except LookupError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
-            except ValueError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/chat":
             self._chat(body)
         elif path == "/api/tasks":

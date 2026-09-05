@@ -31,8 +31,6 @@ class RunContext(TypedDict, total=False):
     vision_budget: Any               # VisionBudget（本轮视觉预算）
     interaction_mode: str            # craft / plan / ask
     routing_message: str             # 触发本轮的用户消息
-    pull_interjections: Any          # 拉取待发插话回调
-    mark_interjections_consumed: Any # 标记插话已消费回调
     # ---- 扩展键（生产方写入、消费方读取，属既有隐式协议，一并显式化）----
     mcp_active: bool                 # 本轮是否激活 MCP（skills 写入）
     trace_messages: list[Any]        # 本轮 trace 原样消息（技能层写入）
@@ -90,8 +88,6 @@ class EventType(str, Enum):
     RUN_CANCELLED = "run_cancelled"
     SUBAGENT_RESULT = "subagent_result"
     SUBAGENT_CANCELLED = "subagent_cancelled"
-    USER_INTERJECTION_EDITED = "user_interjection_edited"
-    USER_INTERJECTION_DELETED = "user_interjection_deleted"
 
 
 class MetadataKeys:
