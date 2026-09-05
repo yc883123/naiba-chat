@@ -596,11 +596,11 @@ class ToolExecutor:
             if not handler:
                 if tool.startswith("mcp__"):
                     parts = tool.split("__", 2)
-                    if len(parts) == 3 and parts[1] in self.mcp_registry.connections:
+                    if len(parts) == 3 and self.mcp_registry.connection(parts[1]) is not None:
                         return self.mcp_registry.call(parts[1], parts[2], arguments)
                 if "." in tool:
                     server_id, mcp_tool = tool.split(".", 1)
-                    if server_id in self.mcp_registry.connections:
+                    if self.mcp_registry.connection(server_id) is not None:
                         return self.mcp_registry.call(server_id, mcp_tool, arguments)
                 return False, f"未知工具：{tool}"
             if tool == "run_skill_script":
@@ -1063,12 +1063,12 @@ class ToolExecutor:
             if handler:
                 return True, str(handler(arguments, active_skills))
         # Map the historical ComfyUI id to the official server registration.
-        if server in {"naiba-chat", "comfyui"} and "comfy-mcp" in self.mcp_registry.connections:
+        if server in {"naiba-chat", "comfyui"} and self.mcp_registry.connection("comfy-mcp") is not None:
             server = "comfy-mcp"
         # Compatibility for prompts written before the official server id was
         # standardized. The old legacy ids now point to comfy-mcp.
-        if server not in self.mcp_registry.connections and server in {"naiba-chat", "comfyui", "comfyui-mcp"}:
-            if "comfy-mcp" in self.mcp_registry.connections:
+        if self.mcp_registry.connection(server) is None and server in {"naiba-chat", "comfyui", "comfyui-mcp"}:
+            if self.mcp_registry.connection("comfy-mcp") is not None:
                 server = "comfy-mcp"
         return self.mcp_registry.call(server, tool, arguments)
 

@@ -3599,8 +3599,7 @@ class NaibaChatApp:
 
     def test_mcp_server(self, server_id: str) -> dict[str, Any]:
         """返回指定 MCP 的 stdio 状态，并对 ComfyUI 额外探测 HTTP 可达性。"""
-        with self.mcp._lock:
-            connection = self.mcp.connections.get(server_id)
+        connection = self.mcp.connection(server_id)
         if not connection:
             raise ValueError(f"未注册的 MCP 服务：{server_id}")
         state = connection.state()
@@ -3619,8 +3618,7 @@ class NaibaChatApp:
 
     def reconnect_mcp_server(self, server_id: str) -> dict[str, Any]:
         """强制重连指定 MCP 服务：先停止再启动，返回最新状态。"""
-        with self.mcp._lock:
-            connection = self.mcp.connections.get(server_id)
+        connection = self.mcp.connection(server_id)
         if not connection:
             raise ValueError(f"未注册的 MCP 服务：{server_id}")
         connection.stop()
