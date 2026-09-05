@@ -7,6 +7,13 @@ from typing import Any
 
 SKILL_POLICY_MODES = {"auto", "pinned", "exclusive"}
 
+# Shared prefix for the skill section injected into the system message. Both the
+# build-time path (skills active at run start) and the runtime path (a skill
+# activated mid-run) render a skill block identically, so a skill that is first
+# introduced mid-run and later baked into the build-time system produces the
+# exact same byte prefix on the next turn -> DeepSeek's token-prefix cache is not
+# re-broken by a wrapper-text difference.
+
 
 def normalize_skill_policy(
     raw_policy: Any = None,
@@ -72,5 +79,40 @@ def normalize_skill_policy(
         effective_ids = list(dict.fromkeys([*fixed, *selected]))
 
     return {"mode": mode, "skill_ids": effective_ids, "referenced_ids": referenced}
+
+
+def _frontmatter_value(text: str, key: str) -> str:
+    match = re.search(rf"(?m)^{re.escape(key)}:\s*(.*)$", text)
+    if not match:
+        return ""
+    value = match.group(1).strip().strip("'\"")
+    if value not in {"|", ">"}:
+        return value
+    lines = []
+    for line in text[match.end() :].splitlines()[1:]:
+        if line and not line[0].isspace():
+            break
+        if line.strip():
+            lines.append(line.strip())
+    return " ".join(lines)
+
+
+
+
+def _skill_display_name(skill_file: Path) -> str:
+    """Read the optional UI title without adding a YAML runtime dependency."""
+    if skill_file.name != "SKILL.md":
+        return ""
+    metadata_file = skill_file.parent / "agents" / "openai.yaml"
+    try:
+        metadata = metadata_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
+    match = re.search(r"(?m)^\s*display_name:\s*(.*?)\s*$", metadata)
+    return match.group(1).strip().strip("'\"") if match else ""
+
+
+
+
 
 
