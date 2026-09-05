@@ -64,6 +64,13 @@ from skill_runtime import (
 from async_tasks import ActiveRunError, ConversationRunManager
 from storage import ChatStorage
 from updater import UpdateManager
+from naiba.core.choices import _detect_choice_groups, _detect_choices
+from naiba.core.paths import path_within
+from naiba.storage.media import (
+    _clean_uploads_cache, _ensure_webp_thumb, _fit_image_pixels, _image_cache_dirs,
+    _process_uploaded_image, _thumb_webp_path, _uploads_total_bytes,
+    IMAGE_CACHE_CLEAN_LIMIT, IMAGE_SUFFIXES,
+)
 from naiba.core.diagnostics import CACHE_DEBUG_ON, _cache_debug_enabled
 
 
@@ -89,8 +96,6 @@ STATUS_PATH = DATA_DIR / "server.json"
 LOCK_PATH = DATA_DIR / "server.lock"
 
 
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
-
 # 部分系统 mimetypes 未注册 webp/avif 等，导致 <img> 接到 application/octet-stream
 # 配合 nosniff 而拒绝渲染（缩略图破图）。提供显式兜底映射。
 _MEDIA_MIME_FALLBACK = {
@@ -108,112 +113,6 @@ _MEDIA_MIME_FALLBACK = {
     ".flac": "audio/flac",
     ".svg": "image/svg+xml",
 }
-
-
-def _thumb_webp_path(main_path: Path) -> Path:
-    """Given a cached main image path, derive the WebP thumbnail path."""
-    return main_path.with_name(main_path.stem + "_thumb.webp")
-
-
-def _fit_image_pixels(img: Any, max_pixels: int) -> Any:
-    """Scale ``img`` down with Lanczos so width*height <= max_pixels."""
-    from PIL import Image
-
-    width, height = img.width, img.height
-    if width * height <= max_pixels:
-        return img.copy()
-    ratio = (max_pixels / (width * height)) ** 0.5
-    nw = max(1, int(width * ratio))
-    nh = max(1, int(height * ratio))
-    return img.resize((nw, nh), Image.LANCZOS)
-
-
-def _ensure_webp_thumb(main_path: Path) -> str:
-    """Generate a ``<stem>_thumb.webp`` next to ``main_path`` if missing.
-
-    Best-effort: returns the thumb path on success, else ``""`` so the caller can
-    fall back (e.g. to the main image). Used by generated-media caching so every
-    ComfyUI image has a served thumbnail in the history.
-    """
-    try:
-        from PIL import Image, ImageOps
-
-        if main_path.suffix.lower() not in IMAGE_SUFFIXES:
-            return ""
-        if not main_path.is_file():
-            return ""
-        thumb_path = _thumb_webp_path(main_path)
-        if thumb_path.is_file() and thumb_path.stat().st_size > 0:
-            return str(thumb_path)
-        img = Image.open(main_path)
-        img.load()
-        if (img.format or "").upper() == "GIF":
-            return ""
-        img = ImageOps.exif_transpose(img)
-        imaging = dict(APP.config.data.get("imaging") or {}) if getattr(APP, "config", None) else {}
-        thumb_px = max(1, int(imaging.get("thumbnail_max_pixels", 500000) or 500000))
-        thumb_img = _fit_image_pixels(img, thumb_px)
-        buf = io.BytesIO()
-        out = thumb_img.convert("RGBA") if thumb_img.mode in ("P", "RGBA") else thumb_img
-        out.save(buf, format="WEBP", quality=82)
-        thumb_path.parent.mkdir(parents=True, exist_ok=True)
-        thumb_path.write_bytes(buf.getvalue())
-        return str(thumb_path)
-    except Exception:  # noqa: BLE001 - thumbnail is best-effort
-        return ""
-
-
-def _process_uploaded_image(
-    data: bytes, filename: str, imaging: dict[str, Any]
-) -> tuple[bytes, str | None, bytes]:
-    """Optionally compress an image and always emit a WebP thumbnail.
-
-    Returns ``(main_bytes, thumb_filename, thumb_bytes)``. Non-images and GIFs
-    are passed through untouched with no thumbnail. Compression keeps the source
-    format and preserves alpha; thumbnails are always WebP.
-    """
-    suffix = Path(filename).suffix.lower()
-    if suffix not in IMAGE_SUFFIXES:
-        return data, None, b""
-    from PIL import Image, ImageOps
-
-    try:
-        img = Image.open(io.BytesIO(data))
-        img.load()
-        fmt = (img.format or "").upper()
-        if fmt == "GIF":
-            return data, None, b""
-        img = ImageOps.exif_transpose(img)
-    except Exception:  # noqa: BLE001 - malformed image -> keep original bytes
-        return data, None, b""
-
-    original = bool(imaging.get("image_upload_original", False))
-    max_px = max(1, int(imaging.get("image_max_pixels", 2000000) or 2000000))
-    thumb_px = max(1, int(imaging.get("thumbnail_max_pixels", 500000) or 500000))
-
-    main_bytes = data
-    if not original and img.width * img.height > max_px:
-        img = _fit_image_pixels(img, max_px)
-        try:
-            buf = io.BytesIO()
-            out_fmt = fmt if fmt in {"PNG", "JPEG", "WEBP"} else "PNG"
-            save_img = img
-            if out_fmt == "JPEG" and save_img.mode not in ("RGB", "L"):
-                save_img = save_img.convert("RGB")
-            save_img.save(buf, format=out_fmt)
-            main_bytes = buf.getvalue()
-        except Exception:  # noqa: BLE001 - fall back to original bytes
-            main_bytes = data
-
-    thumb_img = _fit_image_pixels(img, thumb_px)
-    try:
-        thumb_buf = io.BytesIO()
-        out = thumb_img.convert("RGBA") if thumb_img.mode in ("P", "RGBA") else thumb_img
-        out.save(thumb_buf, format="WEBP", quality=82)
-        thumb_name = Path(filename).stem + "_thumb.webp"
-        return main_bytes, thumb_name, thumb_buf.getvalue()
-    except Exception:  # noqa: BLE001
-        return main_bytes, None, b""
 
 
 def _decode_card_payload(raw: str, try_gzip: bool) -> dict[str, Any]:
@@ -328,97 +227,6 @@ def parse_sillytavern_card(data: bytes) -> dict[str, Any]:
         "system_prompt": "\n\n".join(parts),
         "meta": {"name": name, "creator": creator, "tags": tags},
     }
-
-
-def _image_cache_dirs() -> list[Path]:
-    """返回宿主图片缓存的两个目录：用户上传/视觉缓存（uploads）与生成产物缓存（generated）。"""
-    return [(DATA_DIR / "uploads").resolve(), (DATA_DIR / "generated").resolve()]
-
-
-def _uploads_total_bytes() -> int:
-    """Total size of all cached images (uploads + generated, main + thumbnails)."""
-    total = 0
-    for cache_dir in _image_cache_dirs():
-        if not cache_dir.is_dir():
-            continue
-        for path in cache_dir.rglob("*"):
-            if path.is_file():
-                try:
-                    total += path.stat().st_size
-                except OSError:
-                    continue
-    return total
-
-
-IMAGE_CACHE_CLEAN_LIMIT = 128 * 1024 * 1024  # 128 MB
-
-
-def _clean_uploads_cache(limit: int = IMAGE_CACHE_CLEAN_LIMIT) -> dict[str, Any]:
-    """清理旧图片缓存（uploads + generated）：只保留最新的、总大小不超过 limit 的图片
-    （主图+缩略图成组，跨两个文件夹合并后统一按时间戳从新到旧）。
-
-    返回 {removed: 删除文件数, freed: 释放字节数, size: 清理后剩余字节数}。
-    """
-    cache_dirs = [d for d in _image_cache_dirs() if d.is_dir()]
-    if not cache_dirs:
-        return {"removed": 0, "freed": 0, "size": 0}
-    # 以"主图 + 其缩略图"成组（主图名 X.ext 与其缩略图 X_thumb.webp 归为一组）。
-    # 用 "目录名/前缀" 作为组键，避免不同目录下同名前缀被合并。
-    groups: dict[str, list[Path]] = {}
-    for cache_dir in cache_dirs:
-        for path in cache_dir.rglob("*"):
-            if not path.is_file():
-                continue
-            name = path.name
-            if name.endswith("_thumb.webp"):
-                key = name[: -len("_thumb.webp")]
-            else:
-                key = path.stem
-            groups.setdefault(f"{cache_dir.name}/{key}", []).append(path)
-
-    def _group_mtime(paths: list[Path]) -> int:
-        latest = 0
-        for p in paths:
-            try:
-                latest = max(latest, int(p.stat().st_mtime))
-            except OSError:
-                continue
-        return latest
-
-    def _group_size(paths: list[Path]) -> int:
-        total = 0
-        for p in paths:
-            try:
-                total += p.stat().st_size
-            except OSError:
-                continue
-        return total
-
-    entries: list[tuple[int, str, list[Path]]] = [
-        (_group_mtime(paths), key, paths) for key, paths in groups.items()
-    ]
-    entries.sort(key=lambda item: item[0], reverse=True)  # 新 -> 旧
-    kept_keys: set[str] = set()
-    kept_size = 0
-    for mtime, key, paths in entries:
-        group_size = _group_size(paths)
-        if kept_size + group_size <= limit:
-            kept_size += group_size
-            kept_keys.add(key)
-    removed = 0
-    freed = 0
-    for mtime, key, paths in entries:
-        if key in kept_keys:
-            continue
-        for p in paths:
-            try:
-                size = p.stat().st_size
-                p.unlink()
-                removed += 1
-                freed += size
-            except OSError:
-                continue
-    return {"removed": removed, "freed": freed, "size": _uploads_total_bytes()}
 
 
 def _config_has_providers(path: Path) -> bool:
@@ -572,14 +380,6 @@ def static_asset_version() -> str:
 STATIC_ASSET_VERSION = static_asset_version()
 
 
-def path_within(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
 def validate_skills_dir(resolved: Path) -> None:
     """限制 Skill 目录范围，防止把高危目录暴露给扫描、解压和文件读取。"""
     resolved = resolved.resolve()
@@ -597,188 +397,6 @@ def validate_skills_dir(resolved: Path) -> None:
     forbidden_exact = {Path.home().resolve(), APP_DIR, PUBLIC_DIR.resolve(), DATA_DIR.resolve()}
     if resolved in forbidden_exact:
         raise ValueError("不能把用户主目录或程序自身目录作为 Skill 目录，请使用其子目录")
-
-
-def _detect_choice_groups(text: str) -> list[dict[str, Any]]:
-    """检测回复中的交互选项组，并保留每组前面的提示语。"""
-    # 代码示例中的列表不是交互选项，先排除 fenced code block。
-    # Long Skill manuals and MCP instructions are not interactive choices.
-    raw_text = str(text or "")
-    if len(raw_text) > 5000 or re.search(r"<skill\b|mcp_servers\s*:|official-comfy-mcp", raw_text, re.I):
-        return []
-    visible_text = re.sub(r"```[\s\S]*?```", "", raw_text)
-    lines = visible_text.splitlines()
-
-    MAX_CHOICE_LEN = 40   # 选项文本过长（整段话）不算交互选项
-    MAX_CUE_LEN = 40      # 意图行过长（长句里恰好含"选择/choose"）不算意图
-    MAX_CUE_DISTANCE = 2  # 意图行与选项组首行的最大行距（允许少量空行间隔）
-
-    def clean(value: str) -> str:
-        value = re.sub(r"^(?:\[[ xX]\]\s*)", "", value.strip())
-        value = re.sub(r"^(?:\*\*|__)", "", value)
-        value = re.sub(r"\s*(?:\*\*|__)$", "", value)
-        # 剥离行首编号残留（如 bullet 行 "- 1. 安装依赖" → "安装依赖"）。
-        value = re.sub(r"^\d{1,2}\s*[.、:：)）\]】]\s*", "", value.strip())
-        return value.strip()
-
-    circled_numbers = {char: index for index, char in enumerate("①②③④⑤⑥⑦⑧", start=1)}
-    # 只接受明确的"选择"意图。英文只保留完整词组，避免正文/代码里的
-    # 裸 select / choose / pick 触发误判。
-    choice_cue = re.compile(
-        r"请(?:先|再)?选择|请(?:你|您)?选|再选(?:一下|一个|个)?|供(?:你|您)?选择|可供选择|"
-        r"选哪个|选一个|pick one|choose one|select one|which one|which of|choose from|select from",
-        re.IGNORECASE,
-    )
-
-    numbered_pattern = re.compile(
-        r"^\s*(?:\*\*|__)?(?:[（(\[【]?\s*(\d{1,2})\s*[.、):：）\]】])"
-        r"\s*(?:\*\*|__)?\s*(.+?)\s*$"
-    )
-    lettered_pattern = re.compile(
-        r"^\s*(?:\*\*|__)?(?:[（(\[【]?\s*([A-Ha-h])\s*[.、):：）\]】])"
-        r"\s*(?:\*\*|__)?\s*(.+?)\s*$"
-    )
-    named_pattern = re.compile(
-        r"^\s*(?:\*\*|__)?(?:选项|方案)\s*[一二三四五六七八\dA-Ha-h]+\s*[.、:：)）]"
-        r"\s*(?:\*\*|__)?\s*(.+?)\s*$",
-        re.IGNORECASE,
-    )
-    bullet_pattern = re.compile(r"^\s*[-+*•]\s+(?:\[[ xX]\]\s*)?(.+?)\s*$")
-
-    groups: list[tuple[str, list[tuple[Any, str]], str, int, int]] = []
-    current_kind = ""
-    current_items: list[tuple[Any, str]] = []
-    current_prompt = ""
-    current_start_line = -1
-    current_cue_line = -1  # 组首行时最近一个意图行的快照（避免被后续 cue 覆盖）
-    preceding_prompt = ""
-    recent_cue_prompt = ""
-    cue_line = -1  # 最近一个意图行所在行号
-
-    def finish_group() -> None:
-        nonlocal current_kind, current_items, current_prompt, current_start_line, current_cue_line
-        if current_items:
-            groups.append(
-                (current_kind, current_items, current_prompt, current_start_line, current_cue_line)
-            )
-        current_kind = ""
-        current_items = []
-        current_prompt = ""
-        current_start_line = -1
-        current_cue_line = -1
-
-    for line_index, raw_line in enumerate(lines):
-        # Models frequently put compact choices on one line, for example
-        # "1. 文生视频 2. 图生视频" or "请选择语言：1. 中文 2. 英文".
-        # Split at a choice marker preceded by whitespace or a CJK/ASCII
-        # punctuation so such compact prompts yield separate lines, while
-        # decimal numbers in prose are left untouched.
-        expanded_lines = re.sub(
-            r"(?<=[\s：:、。；;，,])(?=\d{1,2}\s*[.、):：）\]】])",
-            "\n",
-            raw_line,
-        ).splitlines() or [""]
-        for line in expanded_lines:
-            parsed: tuple[str, Any, str] | None = None
-            match = numbered_pattern.match(line)
-            if match:
-                parsed = ("numbered", int(match.group(1)), clean(match.group(2)))
-            if not parsed:
-                match = lettered_pattern.match(line)
-                if match:
-                    parsed = ("lettered", match.group(1).upper(), clean(match.group(2)))
-            if not parsed:
-                match = named_pattern.match(line)
-                if match:
-                    parsed = ("named", len(current_items), clean(match.group(1)))
-            stripped = line.strip()
-            if not parsed and stripped and stripped[0] in circled_numbers:
-                value = clean(stripped[1:].lstrip(".、):：） "))
-                if value:
-                    parsed = ("numbered", circled_numbers[stripped[0]], value)
-            if not parsed:
-                match = bullet_pattern.match(line)
-                if match:
-                    parsed = ("bullet", len(current_items), clean(match.group(1)))
-            # 选项文本非空且不能是整段话
-            if parsed and (not parsed[2] or len(parsed[2]) > MAX_CHOICE_LEN):
-                parsed = None
-            # 断行展开出的裸 bullet 符号（"- " / "• "）不是内容行，
-            # 跳过以免打断正在收集的选项组。
-            if not parsed and re.fullmatch(r"[-+*•]\s*", stripped):
-                continue
-
-            # A numbered heading such as "**1. 请选择时长：**" introduces the
-            # following choices; it is not itself an option. Treat it as the
-            # prompt so the option markers remain consecutive.
-            if parsed and parsed[0] in {"numbered", "lettered"} and choice_cue.search(parsed[2]):
-                finish_group()
-                preceding_prompt = clean(parsed[2])
-                if len(preceding_prompt) <= MAX_CUE_LEN:
-                    recent_cue_prompt = preceding_prompt
-                    cue_line = line_index
-                continue
-
-            if parsed:
-                kind, marker, value = parsed
-                if current_items and kind != current_kind:
-                    finish_group()
-                if not current_items:
-                    current_kind = kind
-                    current_start_line = line_index
-                    current_cue_line = cue_line
-                    current_prompt = (
-                        preceding_prompt
-                        if choice_cue.search(preceding_prompt)
-                        and len(preceding_prompt) <= MAX_CUE_LEN
-                        else recent_cue_prompt
-                    )
-                current_items.append((marker, value))
-                continue
-
-            finish_group()
-            if stripped:
-                preceding_prompt = clean(re.sub(r"^(?:#{1,6}\s*)", "", stripped))
-                if choice_cue.search(preceding_prompt) and len(preceding_prompt) <= MAX_CUE_LEN:
-                    recent_cue_prompt = preceding_prompt
-                    cue_line = line_index
-
-    finish_group()
-
-    candidates: list[dict[str, Any]] = []
-    for kind, items, prompt, start_line, cue_at_start in groups:
-        if len(items) < 2:
-            continue
-        markers = [marker for marker, _ in items]
-        if kind == "numbered" and markers != list(range(markers[0], markers[0] + len(items))):
-            continue
-        if kind == "lettered":
-            expected = [chr(ord(markers[0]) + offset) for offset in range(len(items))]
-            if markers != expected:
-                continue
-        # 意图行必须紧跟选项组（允许少量空行/单行间隔），否则视为普通列表。
-        has_cue = (
-            bool(choice_cue.search(prompt))
-            and 0 <= start_line - cue_at_start <= MAX_CUE_DISTANCE
-        )
-        if not has_cue:
-            continue
-        candidates.append(
-            {
-                "prompt": prompt,
-                "choices": [value for _, value in items][:8],
-            }
-        )
-
-    # 一旦判定是"请选择"场景，就保留全部组（含 cue 未命中的后续问题），
-    # 避免漏掉第二个问题导致"点第一题就发"。
-    return candidates
-
-
-def _detect_choices(text: str) -> list[str]:
-    """兼容旧调用方：返回检测到的第一组选项。"""
-    groups = _detect_choice_groups(text)
-    return groups[0]["choices"] if groups else []
 
 
 def default_config() -> dict[str, Any]:
@@ -3645,7 +3263,7 @@ class NaibaChatApp:
             "agents": self.config.public_agents(),
             "default_agent_id": self.config.default_agent_id(),
             "workspaces": self.config.data.get("workspaces", []),
-            "image_cache_bytes": _uploads_total_bytes(),
+            "image_cache_bytes": _uploads_total_bytes(DATA_DIR),
             **access,
             "lan_restart_required": str(self.config.data.get("host", "0.0.0.0")) != self.listener_host,
             "update": self.updater.status(),
@@ -4410,7 +4028,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/imaging/clean":
             try:
-                result = _clean_uploads_cache()
+                result = _clean_uploads_cache(data_dir=DATA_DIR)
             except OSError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             else:
@@ -4440,7 +4058,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                         "default_model_key": APP.config.default_model_key(),
                         "resolved_workspace_dir": str(APP.config.resolve_workspace_dir()),
                         "resolved_data_dir": str(APP.config.resolve_data_dir()),
-                        "image_cache_bytes": _uploads_total_bytes(),
+                        "image_cache_bytes": _uploads_total_bytes(DATA_DIR),
                         "restart_required": (
                             ("data_dir" in body and APP.config.resolve_data_dir() != DATA_DIR.resolve())
                             or ("host" in body and str(APP.config.data.get("host")) != APP.listener_host)
