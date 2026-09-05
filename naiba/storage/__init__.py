@@ -1,5 +1,7 @@
-"""storage 层：数据持久化与宿主媒体缓存（层级 2 起点）。
+"""storage 层：数据持久化与宿主媒体缓存。
 
-ChatStorage（SQLite）主体仍位于根目录 storage.py，随阶段 3 迁入；
-本包目前承载可独立参数化的媒体缓存工具（naiba/storage/media.py）。
+- store.py：ChatStorage（SQLite 会话/消息/Run/Job/Plan 等 CRUD、迁移、重启恢复）；
+- media.py：图片缓存/缩略图（参数化 data_dir，无模块级全局）。
 """
+
+from naiba.storage.store import *  # noqa: F401,F403
