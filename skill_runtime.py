@@ -27,6 +27,15 @@ from naiba.core.diagnostics import _cache_debug_enabled, _debug_message_digest
 from naiba.core.history import _vision_read_folder_model_summary, encode_image_for_model
 from naiba.core.exceptions import TaskCancelled
 from naiba.tools.executor import ToolExecutor
+from naiba.skills.policy import SKILL_POLICY_MODES, normalize_skill_policy
+from naiba.skills.context import (
+    DEFAULT_CONTEXT_WINDOW, _context_budget, _context_fits, _content_text,
+    _estimate_content_tokens, _select_history, _summarize_usage,
+)
+from naiba.skills.protocol import (
+    _TOOL_NAMED_ATTR, _TOOL_OPEN_TAG, _extract_json, _extract_xml_tool_action,
+    _looks_like_tool_protocol, _parse_action, _parse_xml_parameters,
+)
 
 logger = logging.getLogger("naiba.skill_runtime")
 
@@ -36,99 +45,6 @@ EventCallback = Callable[[dict[str, Any]], None]
 # Mirror of the agent-protocol markers in model_runtime used to decide whether
 # a malformed model output was meant to be a tool call (and therefore must not
 # leak into the answer as plain text).
-_TOOL_OPEN_TAG = re.compile(r"^<(tool_calls|invoke|tool)\b", re.IGNORECASE)
-_TOOL_NAMED_ATTR = re.compile(r"\b(?:name|type)\s*=")
-
-
-
-
-SKILL_POLICY_MODES = {"auto", "pinned", "exclusive"}
-
-# Shared prefix for the skill section injected into the system message. Both the
-# build-time path (skills active at run start) and the runtime path (a skill
-# activated mid-run) render a skill block identically, so a skill that is first
-# introduced mid-run and later baked into the build-time system produces the
-# exact same byte prefix on the next turn -> DeepSeek's token-prefix cache is not
-# re-broken by a wrapper-text difference.
-SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参考资料时，使用 read_file 读取：\n"
-
-# 被引用技能合计体量达到该阈值时，向前端发 skill_warning 提示，但**完整下发**不截断
-# （点 13：只提示、不静默截断）。前端在发送前也用同类阈值自行估算提醒。
-SKILL_CONTENT_WARN_CHARS = 60000
-
-# Conservative context ceiling (tokens) used when a provider exposes no window
-# (e.g. DeepSeek's /v1/models returns no context-length field, so auto-detection
-# yields 0). Rather than silently truncating history — which both drops context
-# and re-breaks DeepSeek's token-prefix cache every turn — a conversation is
-# blocked with a user-visible notice once it reaches this bound.
-DEFAULT_CONTEXT_WINDOW = 256000
-
-
-def normalize_skill_policy(
-    raw_policy: Any = None,
-    *,
-    legacy_auto: Any = None,
-    legacy_ids: Any = None,
-    fixed_ids: Any = None,
-    catalog: Any = None,
-) -> dict[str, Any]:
-    """Normalize and validate the frozen Skill policy for one run.
-
-    Legacy ``auto_skills`` / ``skill_ids`` inputs remain accepted at the API
-    boundary, but every running Agent receives this single policy structure.
-    """
-
-    def _ids(value: Any) -> list[str]:
-        if not isinstance(value, (list, tuple, set)):
-            return []
-        return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
-
-    explicit_policy = isinstance(raw_policy, dict)
-    selected = _ids(raw_policy.get("skill_ids")) if explicit_policy else _ids(legacy_ids)
-    # referenced_ids：本轮消息里通过 /ref 显式引用的技能（可与冻结集重合）。它是
-    # “本轮要启用”的技能，其中不在冻结集内的会走尾部追加；冻结集仍由 skill_ids 决定。
-    referenced = _ids(raw_policy.get("referenced_ids")) if explicit_policy else []
-    if explicit_policy:
-        mode = str(raw_policy.get("mode") or "auto").strip().lower()
-    elif selected:
-        # A legacy selection was always mandatory; auto_skills only controlled
-        # whether routing could add more Skills.
-        mode = "pinned"
-    else:
-        mode = "auto"
-    if mode not in SKILL_POLICY_MODES:
-        raise ValueError("skill_policy.mode 必须是 auto、pinned 或 exclusive")
-
-    available: set[str] | None = None
-    if catalog is not None:
-        rows = catalog.values() if isinstance(catalog, dict) else catalog
-        available = {
-            str(item.get("id") or "")
-            for item in rows
-            if isinstance(item, dict) and item.get("id")
-        }
-        unknown = [skill_id for skill_id in selected if skill_id not in available]
-        if unknown:
-            raise ValueError("未知 Skill：" + ", ".join(unknown))
-        # 引用里未知/已删除的技能静默丢弃（前端在染色时已解析成具体 id，这里只兜底）。
-        referenced = [skill_id for skill_id in referenced if skill_id in available]
-
-    if mode == "exclusive":
-        # 允许为空：exclusive 未选中任何 Skill 时表示该轮不加载任何 Skill（无自动匹配）。
-        effective_ids = selected
-    elif mode == "auto":
-        fixed = _ids(fixed_ids)
-        if available is not None:
-            fixed = [skill_id for skill_id in fixed if skill_id in available]
-        effective_ids = fixed
-    else:
-        fixed = _ids(fixed_ids)
-        if available is not None:
-            fixed = [skill_id for skill_id in fixed if skill_id in available]
-        effective_ids = list(dict.fromkeys([*fixed, *selected]))
-
-    return {"mode": mode, "skill_ids": effective_ids, "referenced_ids": referenced}
-
 
 def _frontmatter_value(text: str, key: str) -> str:
     match = re.search(rf"(?m)^{re.escape(key)}:\s*(.*)$", text)
@@ -1377,34 +1293,10 @@ class SkillAgent:
 
 
     @staticmethod
-    def _summarize_usage(records: list[dict[str, int]]) -> dict[str, Any]:
-        if not records:
-            return {}
-        # 缓存命中率与 token 数均采用“最后一次模型调用”（per-request）口径，而不是
-        # 把本轮多次调用求和后取 Σcached/Σinput。后者会被长 agent 轮次里新增的工具内容
-        # 稀释，导致“本轮”命中率看起来异常低、跨轮不可比。
-        last = records[-1]
-        input_tokens = max(0, int(last.get("input_tokens") or 0))
-        output_tokens = max(0, int(last.get("output_tokens") or 0))
-        cached_tokens = max(0, int(last.get("cached_tokens") or 0))
-        total_tokens = max(0, int(last.get("total_tokens") or 0)) or input_tokens + output_tokens
-        summary = {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": total_tokens,
-            "cached_tokens": cached_tokens,
-            "uncached_tokens": max(0, input_tokens - cached_tokens),
-            "requests": len(records),
-            "last_input_tokens": input_tokens,
-            "last_output_tokens": output_tokens,
-            "context_tokens": input_tokens + output_tokens,
-        }
-        summary["cache_hit_rate"] = (
-            round(cached_tokens / input_tokens * 100, 1) if input_tokens else 0.0
-        )
-        return summary
+    def _summarize_usage(records: list[dict[str, int]]) -> Any:
+        """汇总 usage（实现见 naiba/skills/context.py）。"""
+        return _summarize_usage(records)
 
-    @classmethod
     def _context_budget(
         cls,
         profile: dict[str, Any],
@@ -1436,26 +1328,10 @@ class SkillAgent:
         return limit, history_budget
 
     @staticmethod
-    def _content_text(content: Any) -> str:
-        """Retrieve the plain-text payload of a message for inspections.
+    def _content_text(content: Any) -> Any:
+        """提取消息纯文本（实现见 naiba/skills/context.py）。"""
+        return _content_text(content)
 
-        Accepts either a plain string or the OpenAI multimodal ``content`` list
-        (a sequence of ``{"type": "text"|"image", ...}`` parts, as produced for
-        image-bearing user messages), so anti-hallucination guards that run on
-        replayed assistant history are not bypassed merely because the message
-        carries multipart content.
-        """
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return "\n".join(
-                str(part.get("text") or "")
-                for part in content
-                if isinstance(part, dict) and part.get("type") == "text" and part.get("text")
-            )
-        return str(content or "")
-
-    @classmethod
     def _context_fits(
         cls,
         history: list[dict[str, Any]],
@@ -1478,38 +1354,11 @@ class SkillAgent:
         used += max(0, int(extra_tokens or 0))
         return used <= history_budget, limit, used, history_budget
 
-    def _select_history(
-        self,
-        history: list[dict[str, Any]],
-        profile: dict[str, Any],
-        options: dict[str, Any],
-        system_prompt: str,
-    ) -> list[dict[str, Any]]:
-        """Return the conversation history verbatim, never truncating.
+    def _select_history(self, history: list[dict[str, Any]], profile: dict[str, Any], options: dict[str, Any],
+        system_prompt: str) -> Any:
+        """原样返回历史（实现见 naiba/skills/context.py）。"""
+        return _select_history(history, profile, options, system_prompt)
 
-        A conversation that reaches the effective context limit is blocked before
-        the request is built (see run()); silently dropping the oldest turns
-        would both lose context and re-break the provider's token-prefix cache on
-        every subsequent turn.
-
-        The replayed ``trace`` from a prior turn carries native tool-call records:
-        an assistant message with empty ``content`` but ``tool_calls``, plus the
-        matching ``role: tool`` results. Those must survive so the current request
-        stays byte-identical to the previous turn (caching) and so the model still
-        sees the tool context it needs.
-        """
-        return [
-            item for item in history
-            if isinstance(item, dict)
-            and item.get("role") in {"user", "assistant", "tool"}
-            and (
-                item.get("content")
-                or item.get("tool_calls")
-                or item.get("role") == "tool"
-            )
-        ]
-
-    @staticmethod
     def _estimate_content_tokens(content: Any) -> int:
         """Conservative tokenizer-free estimate for mixed Chinese/ASCII text."""
         if isinstance(content, list):
@@ -1524,21 +1373,10 @@ class SkillAgent:
         return max(1, (ascii_chars + 3) // 4 + (len(text) - ascii_chars)) if text else 0
 
     @classmethod
-    def _parse_action(cls, text: str) -> dict[str, Any]:
-        xml_action = cls._extract_xml_tool_action(text)
-        if xml_action:
-            return xml_action
-        parsed = cls._extract_json(text)
-        if isinstance(parsed, dict) and parsed.get("type") in {"tool", "tools", "final"}:
-            return parsed
-        # The output clearly intends an agent tool action but could not be
-        # parsed (truncated tag, malformed JSON, ...). Signal a parse failure
-        # instead of leaking the raw protocol as the answer.
-        if cls._looks_like_tool_protocol(text):
-            return {"type": "parse_error"}
-        return {"type": "final", "content": text.strip()}
+    def _parse_action(cls, text: str) -> Any:
+        """解析工具动作（实现见 naiba/skills/protocol.py）。"""
+        return _parse_action(text)
 
-    @classmethod
     def _looks_like_tool_protocol(cls, text: str) -> bool:
         """Heuristic: does ``text`` look like an agent tool-call protocol that
         merely failed to parse, rather than a plain-language answer?"""
@@ -1566,63 +1404,10 @@ class SkillAgent:
         return False
 
     @classmethod
-    def _extract_xml_tool_action(cls, text: str) -> dict[str, Any] | None:
-        """Accept XML tool-call dialects emitted by some OpenAI-compatible models."""
-        cleaned = str(text or "").strip()
-        if not cleaned:
-            return None
-        # Models occasionally wrap the protocol in a markdown XML fence.
-        cleaned = re.sub(r"^```(?:xml)?\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+    def _extract_xml_tool_action(cls, text: str) -> Any:
+        """XML 工具方言解析（实现见 naiba/skills/protocol.py）。"""
+        return _extract_xml_tool_action(text)
 
-        # DeepSeek-compatible endpoints may emit ``<tool name="...">``
-        # wrapped in an outer ``<tool type="tool">`` block. Some versions
-        # append a mismatched ``</invoke>`` marker, so parse the named block
-        # directly instead of requiring the entire response to be valid XML.
-        named_tool = re.search(
-            r"<tool\b[^>]*\bname\s*=\s*['\"]([^'\"]+)['\"][^>]*>(.*?)</tool>",
-            cleaned,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        if named_tool:
-            tool = named_tool.group(1).strip()
-            body = named_tool.group(2)
-            arguments = cls._parse_xml_parameters(body)
-            return {"type": "tool", "tool": tool, "arguments": arguments}
-
-        if "<invoke" not in cleaned:
-            return None
-        try:
-            root = ET.fromstring(cleaned)
-        except ET.ParseError:
-            return None
-        invokes = [root] if root.tag.rsplit("}", 1)[-1] == "invoke" else [
-            node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "invoke"
-        ]
-        if len(invokes) != 1:
-            return None
-        invoke = invokes[0]
-        tool = str(invoke.attrib.get("name") or "").strip()
-        if not tool:
-            return None
-        arguments: dict[str, Any] = {}
-        for parameter in invoke:
-            if parameter.tag.rsplit("}", 1)[-1] != "parameter":
-                continue
-            name = str(parameter.attrib.get("name") or "").strip()
-            if not name:
-                continue
-            value = "".join(parameter.itertext()).strip()
-            if value:
-                try:
-                    arguments[name] = json.loads(value)
-                except json.JSONDecodeError:
-                    arguments[name] = value
-            else:
-                arguments[name] = ""
-        return {"type": "tool", "tool": tool, "arguments": arguments}
-
-    @staticmethod
     def _parse_xml_parameters(body: str) -> dict[str, Any]:
         """Parse parameter children from a named tool block."""
         arguments: dict[str, Any] = {}
@@ -1660,27 +1445,9 @@ class SkillAgent:
         return arguments
 
     @staticmethod
-    def _extract_json(text: str) -> dict[str, Any] | None:
-        cleaned = text.strip()
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-        try:
-            value = json.loads(cleaned)
-            return value if isinstance(value, dict) else None
-        except json.JSONDecodeError:
-            pass
-        decoder = json.JSONDecoder()
-        for index, char in enumerate(cleaned):
-            if char != "{":
-                continue
-            try:
-                value, _ = decoder.raw_decode(cleaned[index:])
-                if isinstance(value, dict):
-                    return value
-            except json.JSONDecodeError:
-                continue
-        return None
-
+    def _extract_json(text: str) -> Any:
+        """JSON 抽取（实现见 naiba/skills/protocol.py）。"""
+        return _extract_json(text)
 
 # --------------------------------------------------------------------------
 # Skill import (folder / ZIP / single .md) validation + recoverable delete
