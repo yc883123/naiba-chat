@@ -176,3 +176,5 @@ _hl_test.js
 .playwright-cli/
 deepseek-harness/
 dsh-vision-router/
+# 会话级测试补丁与临时脚本（沙箱环境产物，勿提交）
+.tmptest/
