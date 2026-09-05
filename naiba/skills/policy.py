@@ -7,24 +7,6 @@ from typing import Any
 
 SKILL_POLICY_MODES = {"auto", "pinned", "exclusive"}
 
-# Shared prefix for the skill section injected into the system message. Both the
-# build-time path (skills active at run start) and the runtime path (a skill
-# activated mid-run) render a skill block identically, so a skill that is first
-# introduced mid-run and later baked into the build-time system produces the
-# exact same byte prefix on the next turn -> DeepSeek's token-prefix cache is not
-# re-broken by a wrapper-text difference.
-SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参考资料时，使用 read_file 读取：\n"
-
-# 被引用技能合计体量达到该阈值时，向前端发 skill_warning 提示，但**完整下发**不截断
-# （点 13：只提示、不静默截断）。前端在发送前也用同类阈值自行估算提醒。
-SKILL_CONTENT_WARN_CHARS = 60000
-
-# Conservative context ceiling (tokens) used when a provider exposes no window
-# (e.g. DeepSeek's /v1/models returns no context-length field, so auto-detection
-# yields 0). Rather than silently truncating history — which both drops context
-# and re-breaks DeepSeek's token-prefix cache every turn — a conversation is
-# blocked with a user-visible notice once it reaches this bound.
-
 
 def normalize_skill_policy(
     raw_policy: Any = None,
