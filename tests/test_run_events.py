@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import async_tasks  # noqa: E402
 from async_tasks import ConversationRunManager  # noqa: E402
+from naiba.run import manager as run_manager  # noqa: E402
 from storage import ChatStorage  # noqa: E402
 
 
@@ -82,7 +83,7 @@ class RunEventTests(unittest.TestCase):
     def test_watchdog_forces_cancelled_when_run_stuck(self):
         # 3 秒兜底看门狗：run 线程未及时收尾时，仍把状态置 cancelled 并发出事件。
         self.storage.task = {"status": "cancelling", "conversation_id": "c1", "detail": {}}
-        with mock.patch.object(async_tasks.time, "sleep", return_value=None):
+        with mock.patch.object(run_manager.time, "sleep", return_value=None):
             self.manager._schedule_forced_cancel("r1")
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline:
