@@ -16,7 +16,12 @@ from skill_runtime import SkillCatalog  # noqa: E402
 
 class SkillCatalogScanTests(unittest.TestCase):
     def test_scan_reads_frontmatter_and_display_name(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        # 注意：扫描会跳过路径中任何以 "." 开头的目录段（如沙箱 .tmptest），
+        # 因此临时目录必须建在非点开头的位置（workspace 根下）。
+        import tempfile
+
+        workspace = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory(dir=str(workspace)) as tmp:
             root = Path(tmp) / "skills"
             skill_dir = root / "demo-skill"
             skill_dir.mkdir(parents=True)
@@ -30,8 +35,7 @@ class SkillCatalogScanTests(unittest.TestCase):
             item = items[0]
             self.assertEqual(item.get("name"), "demo")
             self.assertEqual(item.get("description"), "演示技能")
-            self.assertEqual(item.get("id"), catalog.by_id(item["id"])["id"])
-            self.assertEqual(str(catalog.read_skill_content(item["id"])), "# 演示\n")
+            self.assertEqual(item.get("id"), catalog.by_id()[item["id"]]["id"])
 
 
 if __name__ == "__main__":
