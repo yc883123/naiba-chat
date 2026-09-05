@@ -22,6 +22,7 @@ from typing import Any, Callable
 import net_io
 from mcp_runtime import MCPRegistry
 from naiba.core.diagnostics import _cache_debug_enabled, _debug_message_digest
+from naiba.core.history import _vision_read_folder_model_summary, encode_image_for_model
 
 logger = logging.getLogger("naiba.skill_runtime")
 
@@ -1057,10 +1058,6 @@ def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -
     """
     if not inject:
         return []
-    try:
-        from server import encode_image_for_model
-    except Exception:  # noqa: BLE001 - 循环导入时回退为空
-        return []
     parts: list[dict[str, Any]] = []
     for run in step_runs or []:
         if not isinstance(run, dict) or str(run.get("tool") or "") != "vision_read_folder":
@@ -1078,23 +1075,6 @@ def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -
             if part:
                 parts.append(part)
     return parts[:4]
-
-
-def _vision_read_folder_model_summary(result: str) -> str:
-    """给模型看的精简摘要：只保留 note 与图片名，剥离宿主用的存储路径/缩略图/尺寸。"""
-    try:
-        payload = json.loads(str(result or ""))
-    except (json.JSONDecodeError, TypeError):
-        return str(result or "")
-    if not isinstance(payload, dict):
-        return str(result or "")
-    note = str(payload.get("note") or "")
-    names = [
-        str(img.get("name") or "")
-        for img in payload.get("images") or []
-        if isinstance(img, dict) and img.get("name")
-    ]
-    return json.dumps({"note": note, "images": names}, ensure_ascii=False)
 
 
 def _model_visible_runs(step_runs: list[dict[str, Any]]) -> str:

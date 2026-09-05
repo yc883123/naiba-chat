@@ -15,6 +15,7 @@ import traceback
 from typing import Any, Callable
 
 from job_registry import JobRegistry, JobSpec
+from naiba.core.history import build_model_history
 
 MAX_SUBAGENT_DEPTH = 2
 MAX_CHILDREN_PER_PARENT = 4
@@ -52,7 +53,6 @@ def run_subagent_agent(
     emit: Callable[[dict[str, Any]], None],
 ) -> None:
     """子 Agent 运行器：以隔离上下文执行一次 Agent Loop，结果写回 Job。"""
-    from server import build_model_history
     from skill_runtime import SkillAgent, TaskCancelled
     from plan_runtime import CraftToolExecutor
 

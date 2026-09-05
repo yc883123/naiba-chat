@@ -28,6 +28,7 @@ from typing import Any
 
 import net_io
 from model_runtime import ModelRuntime
+from naiba.storage.media import _process_uploaded_image
 
 logger = logging.getLogger("naiba.vision_runtime")
 
@@ -965,8 +966,6 @@ class VisionRouter:
 
     def _cache_folder_images(self, paths: list[str], max_images: int, skip_uploads: bool = True) -> tuple[bool, str]:
         """扫描路径/文件夹里的图片，经 _process_uploaded_image 缓存到 uploads，返回带缩略图的列表。"""
-        from server import _process_uploaded_image
-
         candidates: list[Path] = []
         seen: set[str] = set()
         for raw in paths:

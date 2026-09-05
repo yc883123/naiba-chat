@@ -11,6 +11,10 @@ from typing import Any
 from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
 from skill_runtime import DEFAULT_CONTEXT_WINDOW, SkillAgent, TaskCancelled, normalize_skill_policy
 from vision_runtime import IMAGE_SUFFIXES, VISION_TOOL_NAMES, VisionBudget
+from naiba.core.attachments import _image_intent, extract_attachments
+from naiba.core.choices import _detect_choice_groups
+from naiba.core.file_changes import file_changes_from_runs
+from naiba.core.history import build_model_history
 
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
@@ -849,14 +853,6 @@ class ConversationRunManager:
             event({"type": "status", "message": "任务开始执行"})
             if cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
-            from server import (
-                _detect_choice_groups,
-                build_model_history,
-                extract_attachments,
-                file_changes_from_runs,
-                _image_intent,
-            )
-
             message = str(run.get("message") or "")
             uploads = snapshot.get("attachments") or []
             extra = [f"[用户上传文件：{item.get('path')}]" for item in uploads if item.get("path")]
@@ -1204,7 +1200,12 @@ class ConversationRunManager:
                 "performance": performance,
                 # 只有用户明确要求看/列出/查找图片时，才把枚举类工具(glob/list/search)返回的图片
                 # 作为附件显示；否则枚举结果只是路径，避免一堆不相干的图片出现在消息末尾。
-                "attachments": extract_attachments(runs, allow_enumerated_media=_image_intent(message)),
+                "attachments": extract_attachments(
+                    runs,
+                    allow_enumerated_media=_image_intent(message),
+                    data_dir=self.app.config.resolve_data_dir(),
+                    imaging=self.app.config.data.get("imaging"),
+                ),
                 "sources": search_sources[:20],
                 "choices": choice_groups[0]["choices"] if choice_groups else [],
                 "choice_groups": choice_groups,
@@ -1536,7 +1537,6 @@ class ConversationRunManager:
                     return None
         except Exception:
             pass
-        from server import extract_attachments, file_changes_from_runs
         reasoning, tool_runs, content, activity = self._rebuild_partial_run(run_id, events)
         if not content:
             content = "（已中止）"
@@ -1550,7 +1550,11 @@ class ConversationRunManager:
             "activity": activity,
             "trace": trace or [],
             # 中止/取消的轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
-            "attachments": extract_attachments(tool_runs),
+            "attachments": extract_attachments(
+                tool_runs,
+                data_dir=self.app.config.resolve_data_dir(),
+                imaging=self.app.config.data.get("imaging"),
+            ),
         }
         if changed_files:
             metadata["files"] = changed_files
@@ -1636,7 +1640,6 @@ class ConversationRunManager:
                     return None
         except Exception:
             pass
-        from server import extract_attachments, file_changes_from_runs
         reasoning, tool_runs, content, activity = self._rebuild_partial_run(run_id, events)
         if not content:
             content = "（本次回答未完成）"
@@ -1651,7 +1654,11 @@ class ConversationRunManager:
             "trace": trace or [],
             "error": error,
             # 失败轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
-            "attachments": extract_attachments(tool_runs),
+            "attachments": extract_attachments(
+                tool_runs,
+                data_dir=self.app.config.resolve_data_dir(),
+                imaging=self.app.config.data.get("imaging"),
+            ),
         }
         if changed_files:
             metadata["files"] = changed_files

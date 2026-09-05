@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from skill_runtime import SkillAgent, TaskCancelled, ToolExecutor
+from naiba.core.history import build_model_history
 
 INTERACTION_MODES = ("craft", "plan")
 
@@ -693,8 +694,6 @@ class PlanManager:
         run_executor: ToolExecutor | None = None,
     ) -> str:
         """默认步骤执行器：以 Craft 能力运行 SkillAgent 完成单个步骤。"""
-        from server import build_model_history
-
         conversation_id = str(plan.get("conversation_id") or "")
         conversation = self.app.storage.get_conversation(conversation_id)
         if not conversation:
