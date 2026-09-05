@@ -34,35 +34,6 @@ def _powershell_literal(value: Any) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _frontmatter_value(text: str, key: str) -> str:
-    match = re.search(rf"(?m)^{re.escape(key)}:\s*(.*)$", text)
-    if not match:
-        return ""
-    value = match.group(1).strip().strip("'\"")
-    if value not in {"|", ">"}:
-        return value
-    lines = []
-    for line in text[match.end() :].splitlines()[1:]:
-        if line and not line[0].isspace():
-            break
-        if line.strip():
-            lines.append(line.strip())
-    return " ".join(lines)
-
-
-def _skill_display_name(skill_file: Path) -> str:
-    """Read the optional UI title without adding a YAML runtime dependency."""
-    if skill_file.name != "SKILL.md":
-        return ""
-    metadata_file = skill_file.parent / "agents" / "openai.yaml"
-    try:
-        metadata = metadata_file.read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
-        return ""
-    match = re.search(r"(?m)^\s*display_name:\s*(.*?)\s*$", metadata)
-    return match.group(1).strip().strip("'\"") if match else ""
-
-
 class ToolExecutor:
     VALID_PERMISSION_MODES = {"confirm", "auto", "full", "deny"}
     DANGEROUS_TOOLS = {
