@@ -2490,7 +2490,7 @@ CACHE_DEBUG_ON = False
 
 
 def _cache_debug_enabled() -> bool:
-    """诊断总开关：默认开启，或显式设 NAIBA_DEBUG_CACHE=1 也开启。"""
+    """诊断总开关：默认关闭；设 CACHE_DEBUG_ON=True 或 NAIBA_DEBUG_CACHE=1 开启。"""
     return bool(CACHE_DEBUG_ON) or os.environ.get("NAIBA_DEBUG_CACHE") == "1"
 
 

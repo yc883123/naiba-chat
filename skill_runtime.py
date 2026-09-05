@@ -26,14 +26,14 @@ logger = logging.getLogger("naiba.skill_runtime")
 
 
 def _cache_debug_enabled() -> bool:
-    """诊断总开关：默认开启（CACHE_DEBUG_ON），或设 NAIBA_DEBUG_CACHE=1 也可开启。
+    """诊断总开关：默认关闭（同 server.CACHE_DEBUG_ON），或设 NAIBA_DEBUG_CACHE=1 开启。
 
-    延迟导入避免与 server 的循环导入；导入失败时按默认开启处理。
+    延迟导入避免与 server 的循环导入；导入失败时按默认关闭处理。
     """
     try:
         from server import _cache_debug_enabled as _enabled
     except Exception:
-        return True
+        return False
     return bool(_enabled())
 
 
