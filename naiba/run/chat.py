@@ -22,6 +22,7 @@ from skill_runtime import DEFAULT_CONTEXT_WINDOW, SkillAgent, TaskCancelled, nor
 from vision_runtime import IMAGE_SUFFIXES, VISION_TOOL_NAMES, VisionBudget
 from naiba.core.attachments import _image_intent, extract_attachments
 from naiba.core.choices import _detect_choice_groups
+from naiba.core.exceptions import ActiveRunError
 from naiba.core.file_changes import file_changes_from_runs
 from naiba.core.history import build_model_history
 from naiba.run.stream import _RunEventSink, _safe_activity, _build_activity_timeline

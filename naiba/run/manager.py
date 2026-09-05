@@ -36,12 +36,7 @@ from naiba.run.session import (
 )
 
 from naiba.run.chat import ConversationRunMixin, _search_sources, _merge_usage_summary
-
-
-class ActiveRunError(RuntimeError):
-    def __init__(self, run_id: str):
-        super().__init__("当前对话已有运行中的任务")
-        self.run_id = run_id
+from naiba.core.exceptions import ActiveRunError
 
 
 class ConversationRunManager:

@@ -35,9 +35,13 @@ from naiba.core.history import _vision_read_folder_model_summary, encode_image_f
 from naiba.core.exceptions import TaskCancelled
 from naiba.tools.executor import ToolExecutor
 from naiba.skills.context import DEFAULT_CONTEXT_WINDOW
+from naiba.skills.policy import normalize_skill_policy
 
 
 logger = logging.getLogger("naiba.skills.agent")
+
+# 事件回调签名别名（原 skill_runtime 模块级；仅用于类型标注）
+EventCallback = Callable[[dict[str, Any]], None]
 
 
 # Mirror of the agent-protocol markers in model_runtime used to decide whether
