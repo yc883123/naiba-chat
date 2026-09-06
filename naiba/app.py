@@ -199,14 +199,18 @@ class NaibaChatApp:
         from naiba.capability import CapabilityRuntime
 
         self.capabilities = CapabilityRuntime(self)
-        for _name, _handler in self.capabilities.tool_handlers().items():
-            self.tool_registry.register_system_handler(_name, _handler)
+        # capability 域 Provider（Phase 4）：Skill 安装/解压/定位工具单一定义
+        from naiba.tools.providers.capability import CapabilityToolProvider
+
+        self.tool_registry.register_provider(CapabilityToolProvider(self.capabilities))
         # 视觉运行时（Phase 1-3）：注册 7 个视觉工具处理器。文本大脑看不到图时自动路由。
         from naiba.vision.runtime import VisionRouter
 
         self.vision = VisionRouter(self)
-        for _vname, _vhandler in self.vision.tool_handlers().items():
-            self.tool_registry.register_system_handler(_vname, _vhandler)
+        # vision 域 Provider（Phase 4）：8 个视觉工具单一定义
+        from naiba.tools.providers.vision import VisionToolProvider
+
+        self.tool_registry.register_provider(VisionToolProvider(self.vision))
         # 联网搜索运行时（PLAN4 §联网搜索）：搜索开关开启且 provider 可用时才被加入 allowed_tools。
         from naiba.search import WebSearchRuntime
 
