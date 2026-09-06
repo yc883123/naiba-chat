@@ -108,19 +108,82 @@ def _resolve_read_path(
 # ---- 实现函数（自 ToolExecutor._tool_* 原样抽取） ----
 
 def _tool_read_file(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
+    """按行读取文本文件，行数/字符双预算截断并返回可续读提示。
+
+    预算：max_lines（默认 50 行）与 max_chars（默认 30000 字符）任一触达即截断——
+    行数优先（50 行以内不超预算就不多读），单行超过字符预算时按字符截断该行。
+    截断时尾部标记实际返回的行区间与续读起点（start_line），模型无需猜测。
+    """
     path = _resolve_read_path(ctx, args.get("path"), active_skills)
-    max_chars = min(max(int(args.get("max_chars", 30000)), 100), 100000)
-    content = path.read_text(encoding="utf-8", errors="replace")
-    # start_line（1 起始）用于跳过文件前部，读取大文件时可从指定行开始，
-    # 避免一次性读入过多内容；缺省或非法时从头读取。
-    if args.get("start_line") is not None:
+    try:
+        max_chars = min(max(int(args.get("max_chars", 30000)), 100), 100000)
+    except (TypeError, ValueError):
+        max_chars = 30000
+    try:
+        max_lines = min(max(int(args.get("max_lines", 50)), 1), 5000)
+    except (TypeError, ValueError):
+        max_lines = 50
+    try:
+        start_line = max(1, int(args.get("start_line") or 1))
+    except (TypeError, ValueError):
+        start_line = 1
+    end_line = None
+    if args.get("end_line") is not None:
         try:
-            skip = max(0, int(args.get("start_line")) - 1)
+            end_line = int(args.get("end_line"))
         except (TypeError, ValueError):
-            skip = 0
-        if skip:
-            content = "".join(content.splitlines(keepends=True)[skip:])
-    return content[:max_chars]
+            end_line = None
+    with_numbers = bool(args.get("with_line_numbers", False))
+
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    total_lines = len(lines)
+    if total_lines == 0:
+        return "（文件为空）"
+    if start_line > total_lines:
+        return f"（文件共 {total_lines} 行，start_line={start_line} 已超出范围，请在 1-{total_lines} 之间选取）"
+    limit_idx = total_lines
+    if end_line is not None:
+        if end_line < start_line:
+            return f"（end_line={end_line} 小于 start_line={start_line}，无法读取）"
+        limit_idx = min(total_lines, end_line)
+
+    chosen: list[str] = []
+    chars = 0
+    truncated = False
+    cut_line_no = 0
+    for idx in range(start_line - 1, limit_idx):
+        if len(chosen) >= max_lines:
+            truncated = True
+            break
+        remaining = max_chars - chars
+        if remaining <= 0:
+            truncated = True
+            break
+        line = lines[idx]
+        if len(line) > remaining:
+            # 字符预算触达：当前行按余量截断（去掉行尾换行，避免半行+标记粘连）
+            chosen.append(line[:remaining].rstrip("\n"))
+            truncated = True
+            cut_line_no = idx + 1
+            break
+        chosen.append(line)
+        chars += len(line)
+
+    if with_numbers:
+        text = "".join(f"{start_line + i}: {line}" for i, line in enumerate(chosen))
+    else:
+        text = "".join(chosen)
+    if not truncated:
+        return text
+    last_displayed = cut_line_no if cut_line_no else start_line + len(chosen) - 1
+    resume = cut_line_no if cut_line_no else last_displayed + 1
+    details = [
+        f"…（已达读取上限：文件共 {total_lines} 行，已返回第 {start_line}-{last_displayed} 行",
+    ]
+    if cut_line_no:
+        details.append(f"；第 {cut_line_no} 行按字符预算截断")
+    details.append(f"；如需继续请用 start_line={resume} 重读）")
+    return text + "\n" + "".join(details)
 
 
 def _tool_write_file(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
@@ -137,15 +200,19 @@ def _tool_list_directory(ctx: ToolContext, args: dict[str, Any], active_skills: 
     path = _resolve_read_path(ctx, args.get("path"), active_skills, default_workspace=True)
     recursive = bool(args.get("recursive", False))
     limit = min(max(int(args.get("limit", 200)), 1), 1000)
-    iterator = path.rglob("*") if recursive else path.iterdir()
-    rows = []
-    for item in iterator:
-        relative = item.relative_to(path)
-        rows.append(f"{'DIR ' if item.is_dir() else 'FILE'} {relative}")
-        if len(rows) >= limit:
-            rows.append(f"... 已达到 {limit} 条上限")
-            break
-    return "\n".join(rows) or "目录为空"
+    start_after = str(args.get("start_after") or "").strip()
+    # 确定性输出：按绝对路径字符串排序（名称序）；超限附续枚举提示（start_after=上一批末条路径）。
+    items = sorted(path.rglob("*"), key=str) if recursive else sorted(path.iterdir(), key=str)
+    filtered = [item for item in items if not start_after or str(item) > start_after]
+    rows = [f"{'DIR ' if item.is_dir() else 'FILE'} {item}" for item in filtered[:limit]]
+    text = "\n".join(rows) or "目录为空"
+    if len(filtered) > limit and rows:
+        last = rows[-1].split(" ", 1)[-1]
+        text += (
+            f"\n…（共 {len(filtered)} 项，已列出前 {limit} 项，按名称排序；"
+            f"如需更多请用 start_after=「{last}」重试）"
+        )
+    return text
 
 
 def _expand_glob_braces(pattern: str) -> list[str]:
@@ -185,13 +252,16 @@ def _search_one_file(
     context_lines: int,
     multiline: bool,
     compiled=None,
-) -> str | None:
-    """单文件搜索：兼容旧子串格式；正则支持多行与上下文。命中返回多行文本，未命中返回 None。"""
+) -> tuple[str | None, int]:
+    """单文件搜索：兼容旧子串格式；正则支持多行与上下文。命中返回（文本，命中数），未命中 (None, 0)。
+
+    子串模式与正则模式统一受 ignore_case 控制（默认区分大小写——语义不再随模式突变）。
+    """
     # ---- 多行正则：跨行匹配，输出命中块与所在行范围 ----
     if regex and multiline:
         spans = [(m.start(), m.end()) for m in compiled.finditer(content)]
         if not spans:
-            return None
+            return None, 0
         line_breaks = [index for index, char in enumerate(content) if char == "\n"]
         import bisect
 
@@ -208,7 +278,7 @@ def _search_one_file(
             if len(blocks) >= 20:
                 blocks.append("  ... 命中过多，已截断")
                 break
-        return f"{path}: {len(spans)} 处命中\n" + "\n".join(blocks)
+        return f"{path}: {len(spans)} 处命中\n" + "\n".join(blocks), len(spans)
     # ---- 逐行匹配（子串或正则），支持上下文 ----
     lines = content.splitlines()
     hits: list[int] = []
@@ -217,12 +287,13 @@ def _search_one_file(
             if compiled.search(line):
                 hits.append(index)
     else:
-        needle = query.lower()
+        needle = query if not ignore_case else query.lower()
         for index, line in enumerate(lines):
-            if needle in line.lower():
+            candidate = line if not ignore_case else line.lower()
+            if needle in candidate:
                 hits.append(index)
     if not hits:
-        return None
+        return None, 0
     if context_lines <= 0:
         # 兼容旧格式：path:行号: 内容（子串与正则一致，不破坏既有解析）
         rows = []
@@ -230,7 +301,7 @@ def _search_one_file(
             rows.append(f"{path}:{index + 1}: {lines[index].strip()[:500]}")
         if len(hits) > 100:
             rows.append(f"{path}: ... 共 {len(hits)} 处命中，仅显示前 100 处")
-        return "\n".join(rows)
+        return "\n".join(rows), len(hits)
     # 带上下文：命中行距不超过 2*context+1 的相邻命中合为一块，避免重复打印同一上下文
     blocks: list[str] = []
     shown = 0
@@ -252,7 +323,7 @@ def _search_one_file(
         if shown >= 100:
             blocks.append(f"{path}: ... 已显示 {shown} 处命中，剩余省略")
             break
-    return "\n\n".join(blocks)
+    return "\n\n".join(blocks), len(hits)
 
 
 def _tool_search_files(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
@@ -277,11 +348,16 @@ def _tool_search_files(ctx: ToolContext, args: dict[str, Any], active_skills: li
         except re.error as exc:
             raise ValueError(f"正则无效：{exc}") from exc
     matches: list[str] = []
+    total_hits = 0
+    skipped_large = 0
     for pat in _expand_glob_braces(pattern):
         if len(matches) >= limit:
             break
         for path in root.rglob(pat):
-            if not path.is_file() or path.stat().st_size > max_file_size:
+            if not path.is_file():
+                continue
+            if path.stat().st_size > max_file_size:
+                skipped_large += 1
                 continue
             try:
                 content = path.read_text(encoding="utf-8", errors="ignore")
@@ -289,32 +365,51 @@ def _tool_search_files(ctx: ToolContext, args: dict[str, Any], active_skills: li
                 continue
             if not content:
                 continue
-            found = _search_one_file(
+            found, hits = _search_one_file(
                 path, content, query, regex=regex,
                 ignore_case=ignore_case, context_lines=context_lines,
                 multiline=multiline, compiled=compiled if regex else None,
             )
             if found:
                 matches.append(found)
+                total_hits += hits
                 if len(matches) >= limit:
-                    return "\n".join(matches)
-    return "\n".join(matches) or "未找到匹配内容"
+                    break
+    summary = []
+    if total_hits:
+        summary.append(f"共 {total_hits} 处命中，已显示前 {len(matches)} 组")
+    if skipped_large:
+        summary.append(f"已跳过 {skipped_large} 个超过 {max_file_size} 字节的文件")
+    body = "\n".join(matches) or ("未找到匹配内容" if not summary else "未找到匹配内容（详情见汇总）")
+    return body + (("\n" + "；".join(summary) + "。") if summary else "")
 
 
 def _tool_glob_files(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
     root = _resolve_read_path(ctx, args.get("path"), active_skills, default_workspace=True)
     pattern = str(args.get("pattern") or "**/*")
     limit = min(max(int(args.get("limit", 200)), 1), 2000)
-    rows: list[str] = []
+    start_after = str(args.get("start_after") or "").strip()
+    # 确定性输出：跨多个 pattern 去重后按名称排序；超限附续枚举提示（start_after）。
+    collected: list[str] = []
+    seen: set[str] = set()
     for pat in _expand_glob_braces(pattern):
-        if len(rows) >= limit:
-            break
         for item in root.glob(pat):
-            if item.is_file():
-                rows.append(str(item))
-                if len(rows) >= limit:
-                    break
-    return "\n".join(rows) or "未找到匹配文件"
+            if not item.is_file():
+                continue
+            key = str(item)
+            if key not in seen:
+                seen.add(key)
+                collected.append(key)
+    ordered = sorted(collected)
+    filtered = [item for item in ordered if not start_after or item > start_after]
+    rows = filtered[:limit]
+    text = "\n".join(rows) or "未找到匹配文件"
+    if len(filtered) > limit and rows:
+        text += (
+            f"\n…（共 {len(filtered)} 项，已列出前 {limit} 项，按名称排序；"
+            f"如需更多请用 start_after=「{rows[-1]}」重试）"
+        )
+    return text
 
 
 def _render_unified_diff(path: Path, before: str, after: str, max_lines: int = 60) -> str:
@@ -591,10 +686,32 @@ _ALIAS_CANONICAL: dict[str, str] = {
 }
 
 
-def _make_str_execute(ctx: ToolContext, fn: Callable[..., Any]) -> Any:
+def _make_str_execute(ctx: ToolContext, fn: Callable[..., Any], name: str = "") -> Any:
     def execute(arguments: dict[str, Any], active_skills: list[dict[str, Any]], run_context: dict[str, Any] | None = None) -> tuple[bool, str]:
-        return True, fn(ctx, arguments, active_skills)
+        result = fn(ctx, arguments, active_skills)
+        return _result_success(name, result), result
     return execute
+
+
+def _result_success(name: str, result: str) -> bool:
+    """工具执行成败判定（与工具自身返回值一致的语义层）：
+
+    - pwsh / run_skill_script：非零退出码 = 失败（原为恒 True，模型会把失败当成功）；
+    - http_request：HTTP >= 400 = 失败（原为恒 True，404/500 被当成功）；
+    - 其余工具：执行函数返回即成功（写入/查询类工具自身在结果文本中声明失败）。
+    """
+    text = str(result or "")
+    if name in {"pwsh", "run_skill_script"}:
+        match = re.match(r"^exit_code=(-?\d+)", text)
+        if match:
+            return int(match.group(1)) == 0
+        return True
+    if name == "http_request":
+        match = re.match(r"^HTTP (\d{3})", text)
+        if match:
+            return int(match.group(1)) < 400
+        return True
+    return True
 
 
 class CoreToolProvider:
@@ -607,7 +724,7 @@ class CoreToolProvider:
         results: list[ToolSpec] = []
         for spec in build_core_tool_specs():
             if spec.name in _STR_TOOL_FNS:
-                execute = _make_str_execute(self._context, _STR_TOOL_FNS[spec.name])
+                execute = _make_str_execute(self._context, _STR_TOOL_FNS[spec.name], spec.name)
             else:
                 continue
             results.append(
@@ -623,7 +740,7 @@ class CoreToolProvider:
             results.append(
                 dataclasses.replace(
                     spec,
-                    execute=_make_str_execute(self._context, _ALIAS_IMPLS[spec.name]),
+                    execute=_make_str_execute(self._context, _ALIAS_IMPLS[spec.name], spec.name),
                     policy=_make_core_policy(self._context, canonical),
                 )
             )

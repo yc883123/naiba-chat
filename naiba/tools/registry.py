@@ -299,13 +299,16 @@ def build_core_tool_specs() -> list[ToolSpec]:
     return [
         ToolSpec(
             name="read_file",
-            description="读取文本文件内容（图片之外的文件）。",
+            description="读取文本文件（图片之外）：按行返回，默认最多 50 行或 30000 字符；截断时告知行区间与续读起点。",
             parameters={
                 "type": "object",
                 "properties": {
                     "path": _string("文件绝对路径"),
-                    "max_chars": {"type": "integer", "description": "最多读取字符数", "default": 30000},
-                    "start_line": {"type": "integer", "description": "从第几行开始读取（1 起始，用于跳过文件前部；读取大文件可配合 max_chars 使用），默认 1", "default": 1},
+                    "max_chars": {"type": "integer", "description": "最多读取字符数（与 max_lines 双上限，先触达者生效）", "default": 30000},
+                    "max_lines": {"type": "integer", "description": "最多读取行数（默认 50；行数优先）", "default": 50},
+                    "start_line": {"type": "integer", "description": "从第几行开始读取（1 起始；截断提示中的续读起点）", "default": 1},
+                    "end_line": {"type": "integer", "description": "读取到第几行（含该行；缺省读满预算）"},
+                    "with_line_numbers": {"type": "boolean", "description": "是否输出行号前缀（精确引用行时用）", "default": False},
                 },
                 "required": ["path"],
             },
@@ -333,15 +336,16 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="list_directory",
-            description="列出目录内容。",
+            description="列出目录内容（按名称排序，绝对路径）。path 留空=工作区根；超限提示续枚举。",
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": _string("目录绝对路径"),
+                    "path": _string("目录绝对路径（留空=工作区根）", ""),
                     "recursive": {"type": "boolean", "default": False},
                     "limit": {"type": "integer", "default": 200},
+                    "start_after": _string("上一批最后一条路径（按名称排序续枚举）", ""),
                 },
-                "required": ["path"],
+                "required": [],
             },
             side_effect=False,
             retryable=True,
@@ -350,7 +354,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="search_files",
-            description="在目录中按文本或正则搜索（支持大小写、上下文与多行模式）。",
+            description="在目录中按文本或正则搜索（默认区分大小写；支持上下文与多行模式）。",
             parameters={
                 "type": "object",
                 "properties": {
@@ -358,9 +362,9 @@ def build_core_tool_specs() -> list[ToolSpec]:
                     "query": _string("文本关键字或正则表达式（必填）"),
                     "pattern": {"type": "string", "description": "文件名 glob", "default": "*"},
                     "limit": {"type": "integer", "default": 100},
-                    "max_file_size": {"type": "integer", "description": "搜索时单个文件大小上限（字节），超过跳过，默认 5MB", "default": 5242880},
-                    "regex": {"type": "boolean", "description": "query 是否按正则解析；默认 false（普通子串，不区分大小写）", "default": False},
-                    "ignore_case": {"type": "boolean", "description": "正则模式下是否忽略大小写（普通子串搜索始终忽略大小写）", "default": False},
+                    "max_file_size": {"type": "integer", "description": "搜索时单个文件大小上限（字节），超限跳过并计入汇总，默认 5MB", "default": 5242880},
+                    "regex": {"type": "boolean", "description": "query 是否按正则解析（默认 false，按普通子串）", "default": False},
+                    "ignore_case": {"type": "boolean", "description": "忽略大小写（子串与正则模式统一生效；默认区分大小写）", "default": False},
                     "context_lines": {"type": "integer", "description": "命中行前后各带几行上下文；0 为不带（默认）", "default": 0},
                     "multiline": {"type": "boolean", "description": "正则是否跨行匹配（配合 regex=true）；命中输出所在行范围与片段", "default": False},
                 },
@@ -373,13 +377,14 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="glob_files",
-            description="按 glob 模式列出文件（只读）。path 为根目录绝对路径，pattern 如 *.png 或 **/*.py。",
+            description="按 glob 模式列出文件（只读，按名称排序）。path 为根目录绝对路径，pattern 如 *.png 或 **/*.py；超限提示续枚举。",
             parameters={
                 "type": "object",
                 "properties": {
                     "path": _string("搜索根目录（绝对路径；留空用工作区根）", ""),
                     "pattern": _string("glob 文件名模式，例如 *.png 或 **/*.py", "**/*"),
                     "limit": {"type": "integer", "default": 200},
+                    "start_after": _string("上一批最后一条路径（按名称排序续枚举）", ""),
                 },
                 "required": [],
             },

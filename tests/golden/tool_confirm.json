@@ -47,7 +47,7 @@
       },
       {
         "ok": true,
-        "out": "FILE seed.txt",
+        "out": "FILE <TMP>\\seed.txt",
         "step": "readonly-auto"
       }
     ]

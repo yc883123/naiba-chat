@@ -146,8 +146,9 @@ def run_subagent_agent(
         )
         app.storage.update_job(
             job_id,
-            # 供父模型看到的子 Agent 结果：tool_runs 走模型可见序列化（与主会话一致）。
-            result={"response": content, "tool_runs": [model_visible_run(run) for run in runs], "usage": usage},
+            # 供父模型看到的子 Agent 结果：tool_runs 走模型可见序列化（与主会话一致），
+            # usage 是宿主诊断信息，不进入父模型上下文。
+            result={"response": content, "tool_runs": [model_visible_run(run) for run in runs]},
         )
         emit({"type": "subagent_result", "response": content[:2000]})
     except TaskCancelled:
@@ -287,7 +288,12 @@ def job_tool_handler_factory(app: AppContext) -> dict[str, Callable[..., tuple[b
         text = "\n".join(
             str(e.get("line") or e.get("message") or e.get("content") or "") for e in events
         )
-        return True, text or "（暂无增量输出）"
+        base = text or "（暂无增量输出）"
+        # 增量游标闭环：告知推进后的 cursor，模型可凭它读取后续增量。
+        cursor = out.get("cursor")
+        if cursor is not None and events:
+            base += f"\n…（游标已推进到 {cursor}；如需后续增量请传 cursor={cursor}）"
+        return True, base
 
     def job_status(arguments, active_skills, run_context: RunContext | None = None):
         # 只读操作：允许跨对话/跨会话查询 Job 状态。
