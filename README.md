@@ -1,6 +1,6 @@
 # Naiba Chat 2.0.0 Beta
 
-Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
+Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉工具和文件产物统一到一个对话界面中。
 
 2.0.0 Beta（重构版）在 1.7.9 的基础上完成后端全面模块化重构：核心代码迁入 `naiba/` 包、依赖图单向无环、`server.py` 收口为门面、契约（RunContext/EventType/MetadataKeys）显式化；HTTP API 与事件协议版式不变，前端零配合。详见下方「2.0.0 Beta 主要能力」。
 
@@ -8,7 +8,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 - **后端全面模块化重构（阶段 0–4）**：原先约 2.4 万行堆叠在根目录的后端代码迁入 `naiba/` 包（组装根/传输层/配置/存储/运行/工具/技能/模型/视觉/网络等领域分层），依赖图单向无环、机械可验证（DAG 守门测试）；`server.py` 收口为 136 行门面，HTTP 层仅剩薄包装与传输职责，业务逻辑全部下沉至 `NaibaChatApp` 与领域模块。
 - **路径与配置**：`PathContext` 统一管理源码/冻结双模式目录（冻结版固定 `%LOCALAPPDATA%\NaibaChat`，旧数据迁移与自定义数据目录切换语义保留）；`ConfigStore` 迁入 `naiba/config.py`；静态资源版本哈希改为 lazy-once。
-- **契约化**：`RunContext`（18 键 + 校验工厂）/`EventType`（47 种，与前端反查对齐）/`MetadataKeys` 显式化；`AppContext`/`ConfigView` Protocol 注入收窄（14 处 `app: Any` → `AppContext`）。
+- **契约化**：`RunContext`（18 键 + 校验工厂）/`EventType`（44 种，与前端反查对齐）/`MetadataKeys` 显式化；`AppContext`/`ConfigView` Protocol 注入收窄（14 处 `app: Any` → `AppContext`）。
 - **修复与清理**：模型测试连接 `NameError`（`@staticmethod`+`self` 错配）与上传 500（`self.app` 残留引用）等搬移期缺陷；诊断开关兜底统一；死代码清理（MCP 诊断管道、废弃插话等）。
 - **守门测试**：新增权限矩阵（full/confirm/auto/deny 全模式）、装饰器-绑定一致性、`self.app` 残留引用扫描等网格化守门，共 83 个单测；全量功能回归（11 域 48 项）通过。
 - **工具系统增强**：视觉类工具单入口（vision_analyze 按会话模型能力自动分流 + vision_image_ops 本地图像计算）；移除 call_mcp 网关；多模态/文本模型同一工具集，退役工具自动迁移/提示；DeepSeek 思考模式工具轮兼容修复（reasoning 块数组回传）。
@@ -96,7 +96,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 - **ComfyUI 自动任务**：可检查 API 工作流、修正运行参数、批量提交、轮询队列并收集图片、视频和音频产物。工作流推荐「改本地文件、再引用」：用 `read_file`/`comfyui_prepare_workflow` 读取、`edit_file` 局部修改，再用 `comfyui_batch` 的 `workflow_paths` 提交文件路径，避免把大工作流 JSON 内联进对话。
 - **宿主管理产物**：生成结果由 Naiba Chat 宿主下载、校验、保存到受管理数据目录并附加到消息；即使中止/取消的轮次也会展示已生成的图片缩略图。用户明确要求「把某张图保存/复制到指定目录」时，模型会实际执行以满足该要求。
 - **图片与视频预览**：聊天内可直接预览常见图片和视频格式，也支持音频播放与文件下载；生成产物会自动缓存并生成缩略图（含内容级去重，避免同图反复显示）。
-- **多模态路由**：原生视觉模型可直接接收图片；文本模型可按配置调用独立视觉后端，并复用相同图片与问题的视觉结果。
+- **多模态路由**：原生视觉模型可直接接收图片；文本模型由模型按需调用 `vision_analyze` 工具（独立视觉后端）看图，结果与其它工具一样以工具块呈现。
 - **在线与本地模型**：支持 OpenAI-compatible、Anthropic、Gemini、Ollama、LM Studio、llama.cpp、Unsloth 等常见接口；针对 DeepSeek 思考模式会正确回传 `reasoning_content`。
 - **网络健壮性**：针对代理/VPN TUN 中途切换或代理进程重启导致的连接拒绝，会自动改用直连（绕过系统代理）重试；修复取消请求时的连接泄漏；错误提示附带完整接口路径便于定位。
 - **Skill 与 MCP 扩展**：Skill 可提供领域知识、模板和脚本。MCP 依赖升级到 2.1.1，并在应用启动时自动连接已启用服务（对启动时未连上的做周期重试）；`register_mcp` 只是登记服务，需重开会话后其工具才进入可用集，`call_mcp` 仅能调用当前会话可用集内的 MCP 工具。
