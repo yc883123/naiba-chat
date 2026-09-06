@@ -14,6 +14,7 @@ import urllib.request
 from typing import Any, Callable
 
 import net_io
+from naiba.llm.protocols import ProtocolMixins
 from naiba.core.diagnostics import (
     _cache_debug_enabled,
     _debug_complete_marker,
@@ -23,7 +24,6 @@ from naiba.core.diagnostics import (
 )
 
 logger = logging.getLogger("naiba.model_runtime")
-
 
 StatusCallback = Callable[[dict[str, Any]], None]
 
@@ -60,7 +60,6 @@ _JSON_TOOL_ANYWHERE = re.compile(
 # give up and treat it as plain text, so a malformed stream can never stall.
 _AGENT_BUFFER_LIMIT = 1024
 
-
 class _ErrorHTMLParser(HTMLParser):
     """Extract readable text from an upstream HTML error page."""
 
@@ -96,7 +95,6 @@ class _ErrorHTMLParser(HTMLParser):
         if self._in_title:
             self.title = f"{self.title} {value}".strip()
         self.parts.append(value)
-
 
 def _summarize_http_error(raw: str, content_type: str = "", host: str = "") -> str:
     """Keep upstream failures readable and actionable in the chat UI."""
@@ -158,12 +156,10 @@ def _summarize_http_error(raw: str, content_type: str = "", host: str = "") -> s
 
     return summary[:800]
 
-
 def _network_error_code(error: BaseException) -> int | None:
     reason = error.reason if isinstance(error, urllib.error.URLError) else error
     value = getattr(reason, "winerror", None) or getattr(reason, "errno", None)
     return int(value) if isinstance(value, int) else None
-
 
 # 所有出站 HTTP/HTTPS 统一走 net_io 入口：外部请求按「运行设置 → 代理」策略路由
 # （关闭代理=强制直连；开启=使用手动代理地址；未填地址时按设置回退系统代理），
@@ -182,7 +178,6 @@ def _urlopen_proxy_resilient(
     """
     return net_io.open(request, timeout=timeout)
 
-
 class _NullLock:
     def acquire(self):
         return True
@@ -195,7 +190,6 @@ class _NullLock:
 
     def __exit__(self, *_args):
         return False
-
 
 class _InlineReasoningParser:
     """Split local-model <think> streams without leaking them into the answer."""
@@ -249,7 +243,6 @@ class _InlineReasoningParser:
             (reasoning if self.inside else visible).append(chunk)
         return "".join(visible), "".join(reasoning)
 
-
 class _ReasoningStreamer:
     """Stream reasoning deltas live when a provider exposes them incrementally.
 
@@ -283,8 +276,7 @@ class _ReasoningStreamer:
             # 兜底：模型未实时暴露思考（增量解析没有触发），改为结尾一次性输出。
             ModelRuntime._emit_buffered_reasoning(self.status, "".join(self.parts))
 
-
-class ModelRuntime:
+class ModelRuntime(ProtocolMixins):
     """在线模型调用。"""
 
     _local_execution_lock = threading.RLock()
@@ -488,179 +480,6 @@ class ModelRuntime:
         if error is not None:
             raise error
         return result.get("data", b"")
-
-    @staticmethod
-    def _content_parts(content: Any) -> list[dict[str, Any]]:
-        if isinstance(content, str):
-            return [{"type": "text", "text": content}]
-        if not isinstance(content, list):
-            return [{"type": "text", "text": str(content or "")}]
-        return [part for part in content if isinstance(part, dict)]
-
-    @staticmethod
-    def _content_text(content: Any) -> str:
-        return "\n".join(
-            str(part.get("text") or "")
-            for part in ModelRuntime._content_parts(content)
-            if part.get("type") == "text" and part.get("text")
-        )
-
-    @staticmethod
-    def _openai_content(content: Any) -> Any:
-        if isinstance(content, str):
-            return content
-        converted = []
-        for part in ModelRuntime._content_parts(content):
-            if part.get("type") == "text":
-                converted.append({"type": "text", "text": str(part.get("text") or "")})
-            elif part.get("type") == "image" and part.get("data"):
-                converted.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{part.get('media_type') or 'image/jpeg'};base64,{part['data']}"
-                        },
-                    }
-                )
-        return converted
-
-    @staticmethod
-    def _openai_messages(
-        messages: list[dict[str, Any]],
-        include_reasoning_content: bool = False,
-    ) -> list[dict[str, Any]]:
-        converted = []
-        for item in messages:
-            role = str(item.get("role") or "user")
-            if role == "tool":
-                converted.append({
-                    "role": "tool",
-                    "tool_call_id": str(item.get("tool_call_id") or ""),
-                    "content": ModelRuntime._content_text(item.get("content")),
-                })
-                continue
-            message = {"role": role, "content": ModelRuntime._openai_content(item.get("content"))}
-            if role == "assistant":
-                reasoning_content = item.get("reasoning_content")
-                if reasoning_content is None:
-                    reasoning_content = item.get("reasoning")
-                if reasoning_content is not None or include_reasoning_content:
-                    message["reasoning_content"] = (
-                        "" if reasoning_content is None else str(reasoning_content)
-                    )
-            if role == "assistant" and isinstance(item.get("tool_calls"), list):
-                message["tool_calls"] = [
-                    {
-                        "id": str(call.get("id") or ""),
-                        "type": "function",
-                        "function": {
-                            "name": str(call.get("name") or ""),
-                            "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
-                        },
-                    }
-                    for call in item["tool_calls"] if isinstance(call, dict)
-                ]
-            converted.append(message)
-        return converted
-
-    @staticmethod
-    def _is_deepseek_profile(profile: dict[str, Any]) -> bool:
-        """Return whether an OpenAI-compatible profile speaks DeepSeek's
-        thinking-mode dialect, which requires assistant reasoning_content on
-        every replayed assistant message (including an empty value)."""
-        base_url = str(profile.get("base_url") or "").lower()
-        model = str(profile.get("model") or "").lower()
-        return "deepseek" in model or "deepseek.com" in base_url
-
-    @staticmethod
-    def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        converted = []
-        for item in messages:
-            role = str(item.get("role") or "user")
-            if role == "tool":
-                converted.append({
-                    "type": "function_call_output",
-                    "call_id": str(item.get("tool_call_id") or ""),
-                    "output": ModelRuntime._content_text(item.get("content")),
-                })
-                continue
-            if role == "assistant" and isinstance(item.get("tool_calls"), list):
-                converted.extend({
-                    "type": "function_call",
-                    "call_id": str(call.get("id") or ""),
-                    "name": str(call.get("name") or ""),
-                    "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
-                } for call in item["tool_calls"] if isinstance(call, dict))
-                continue
-            converted.append({
-                "role": role,
-                "content": ModelRuntime._responses_content(item.get("content"), role),
-            })
-        return converted
-
-    @staticmethod
-    def _tool_schemas(tools: Any, request_format: str) -> list[dict[str, Any]]:
-        """Convert ToolRegistry rows to the provider's native function schema."""
-        rows = tools if isinstance(tools, list) else []
-        converted: list[dict[str, Any]] = []
-        for row in rows:
-            if not isinstance(row, dict) or not str(row.get("name") or "").strip():
-                continue
-            name = str(row["name"])
-            description = str(row.get("description") or "")
-            parameters = row.get("parameters") or {"type": "object", "properties": {}}
-            if request_format == "codex_responses":
-                converted.append({
-                    "type": "function",
-                    "name": name,
-                    "description": description,
-                    "parameters": parameters,
-                    "strict": False,
-                })
-            elif request_format == "gemini":
-                converted.append({
-                    "name": name,
-                    "description": description,
-                    "parameters": parameters,
-                })
-            elif request_format == "claude":
-                converted.append({
-                    "name": name,
-                    "description": description,
-                    "input_schema": parameters,
-                })
-            else:
-                converted.append({
-                    "type": "function",
-                    "function": {
-                        "name": name,
-                        "description": description,
-                        "parameters": parameters,
-                    },
-                })
-        return converted
-
-    @staticmethod
-    def _responses_content(content: Any, role: str) -> Any:
-        if isinstance(content, str):
-            return content
-        converted = []
-        for part in ModelRuntime._content_parts(content):
-            if part.get("type") == "text":
-                converted.append(
-                    {
-                        "type": "output_text" if role == "assistant" else "input_text",
-                        "text": str(part.get("text") or ""),
-                    }
-                )
-            elif role != "assistant" and part.get("type") == "image" and part.get("data"):
-                converted.append(
-                    {
-                        "type": "input_image",
-                        "image_url": f"data:{part.get('media_type') or 'image/jpeg'};base64,{part['data']}",
-                    }
-                )
-        return converted
 
     @staticmethod
     def list_online_models(profile: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1419,167 +1238,6 @@ class ModelRuntime:
         return content, reasoning, usage
 
     @staticmethod
-    def _ollama_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        converted = []
-        for item in messages:
-            content = item.get("content")
-            role = str(item.get("role") or "user")
-            message = {
-                "role": role,
-                "content": ModelRuntime._content_text(content) if not isinstance(content, str) else content,
-            }
-            if role == "assistant" and isinstance(item.get("tool_calls"), list):
-                message["tool_calls"] = [{
-                    "function": {
-                        "name": str(call.get("name") or ""),
-                        "arguments": call.get("arguments") or {},
-                    }
-                } for call in item["tool_calls"] if isinstance(call, dict)]
-            if role == "tool":
-                message["tool_name"] = str(item.get("name") or "")
-            images = [
-                str(part.get("data") or "")
-                for part in ModelRuntime._content_parts(content)
-                if part.get("type") == "image" and part.get("data")
-            ]
-            if images:
-                message["images"] = images
-            converted.append(message)
-        return converted
-
-    @staticmethod
-    def _gemini_message(item: dict[str, Any]) -> dict[str, Any]:
-        role = str(item.get("role") or "user")
-        if role == "tool":
-            try:
-                response = json.loads(ModelRuntime._content_text(item.get("content")))
-            except (json.JSONDecodeError, TypeError):
-                response = {"result": ModelRuntime._content_text(item.get("content"))}
-            return {
-                "role": "user",
-                "parts": [{"functionResponse": {"name": str(item.get("name") or ""), "response": response}}],
-            }
-        if role == "assistant" and isinstance(item.get("tool_calls"), list):
-            return {
-                "role": "model",
-                "parts": [{"functionCall": {
-                    "name": str(call.get("name") or ""),
-                    "args": call.get("arguments") or {},
-                }} for call in item["tool_calls"] if isinstance(call, dict)],
-            }
-        return {
-            "role": "model" if role == "assistant" else "user",
-            "parts": [
-                {"text": str(part.get("text") or "")}
-                if part.get("type") == "text"
-                else {"inlineData": {"mimeType": part.get("media_type") or "image/jpeg", "data": part.get("data") or ""}}
-                for part in ModelRuntime._content_parts(item.get("content"))
-                if part.get("type") == "text" or (part.get("type") == "image" and part.get("data"))
-            ],
-        }
-
-    @staticmethod
-    def _claude_message(item: dict[str, Any]) -> dict[str, Any]:
-        role = str(item.get("role") or "user")
-        if role == "tool":
-            return {
-                "role": "user",
-                "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": str(item.get("tool_call_id") or ""),
-                    "content": ModelRuntime._content_text(item.get("content")),
-                }],
-            }
-        if role == "assistant" and isinstance(item.get("tool_calls"), list):
-            return {
-                "role": "assistant",
-                "content": [{
-                    "type": "tool_use",
-                    "id": str(call.get("id") or ""),
-                    "name": str(call.get("name") or ""),
-                    "input": call.get("arguments") or {},
-                } for call in item["tool_calls"] if isinstance(call, dict)],
-            }
-        return {
-            "role": "assistant" if role == "assistant" else "user",
-            "content": [
-                {"type": "text", "text": str(part.get("text") or "")}
-                if part.get("type") == "text"
-                else {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": part.get("media_type") or "image/jpeg",
-                        "data": part.get("data") or "",
-                    },
-                }
-                for part in ModelRuntime._content_parts(item.get("content"))
-                if part.get("type") == "text" or (part.get("type") == "image" and part.get("data"))
-            ],
-        }
-
-    @staticmethod
-    def _lm_studio_messages(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-        """LM Studio 原生 /api/v1/chat 序列化。
-
-        - system 消息提取到顶层 ``system_prompt``；
-        - 其余消息的内容统一展开为结构化部件：文本 ``{"type":"text","content":...}``、
-          图片 ``{"type":"image","data_url":"..."}``。不再使用 OpenAI ``messages``/``image_url``。
-        """
-        system_parts: list[str] = []
-        input_parts: list[dict[str, Any]] = []
-        for item in messages:
-            role = str(item.get("role") or "user")
-            content = item.get("content")
-            if role == "system":
-                system_parts.append(ModelRuntime._content_text(content))
-                continue
-            for part in ModelRuntime._content_parts(content):
-                if part.get("type") == "text":
-                    text = str(part.get("text") or "")
-                    if text:
-                        input_parts.append({"type": "text", "content": text})
-                elif part.get("type") == "image" and part.get("data"):
-                    input_parts.append(
-                        {
-                            "type": "image",
-                            "data_url": f"data:{part.get('media_type') or 'image/jpeg'};base64,{part['data']}",
-                        }
-                    )
-        system_prompt = "\n\n".join(p.strip() for p in system_parts if p.strip())
-        return system_prompt, input_parts
-
-    @staticmethod
-    def _reasoning_params(request_format: str, effort: str, deepseek: bool = False) -> dict[str, Any]:
-        """把思维强度映射为各供应商协议字段；``auto`` 不发送任何参数。"""
-        effort = (effort or "auto").strip().lower()
-        if effort not in {"off", "low", "medium", "high"}:
-            return {}
-        if request_format == "lm_studio":
-            # LM Studio 原生 API 支持 off/low/medium/high/on。
-            return {"reasoning": effort if effort != "off" else "off"}
-        if request_format == "ollama":
-            # Ollama 支持布尔值以及 low/medium/high；保留用户选择的强度。
-            return {"think": False if effort == "off" else effort}
-        if request_format == "openai_chat":
-            # OpenAI 仅支持 low/medium/high；off 视为不启用（不发送字段）。
-            if effort == "off":
-                return {}
-            return {"reasoning_effort": effort}
-        if request_format == "codex_responses":
-            if deepseek:
-                # DeepSeek Responses API 的 effort 取值：none/low/high/max。
-                # 应用四档 off/low/medium/high 据此映射（最高档 high→max，off→none 真正关思考）。
-                mapping = {"off": "none", "low": "low", "medium": "high", "high": "max"}
-                return {"reasoning": {"effort": mapping[effort]}}
-            # OpenAI Codex Responses：低/中/高三档。
-            if effort == "off":
-                return {}
-            return {"reasoning": {"effort": effort}}
-        # gemini / claude 首期保持自动，不发送未验证字段。
-        return {}
-
-    @staticmethod
     def _read_ollama_stream(response: Any, status: StatusCallback | None) -> dict[str, Any]:
         chunks: list[dict[str, Any]] = []
         full_content_parts: list[str] = []
@@ -1797,105 +1455,6 @@ class ModelRuntime:
         }
 
     @staticmethod
-    def _stream_delta_full(request_format: str, chunk: dict[str, Any]) -> tuple[str, str, list[dict[str, str]]]:
-        """Like ``_stream_delta`` but also extracts native OpenAI ``tool_calls``.
-
-        Returns ``(text, reasoning, tool_calls)`` where ``tool_calls`` is a list
-        of ``{"index", "id", "name", "arguments"}`` dicts accumulated by the caller.
-        """
-        text, reasoning = ModelRuntime._stream_delta(request_format, chunk)
-        tool_calls: list[dict[str, str]] = []
-        if request_format in {"openai_chat", "lm_studio"}:
-            choices = chunk.get("choices") or []
-            delta = (choices[0].get("delta") or {}) if choices and isinstance(choices[0], dict) else {}
-            for raw_call in delta.get("tool_calls") or []:
-                if not isinstance(raw_call, dict):
-                    continue
-                function = raw_call.get("function") or {}
-                tool_calls.append(
-                    {
-                        "index": int(raw_call.get("index", 0) or 0),
-                        "id": str(raw_call.get("id") or ""),
-                        "name": str(function.get("name") or ""),
-                        "arguments": function.get("arguments") if isinstance(function.get("arguments"), str) else "",
-                    }
-                )
-        elif request_format == "codex_responses":
-            event_type = str(chunk.get("type") or "")
-            if event_type == "response.output_item.added":
-                item = chunk.get("item") or {}
-                if isinstance(item, dict) and item.get("type") == "function_call":
-                    tool_calls.append({
-                        "index": int(chunk.get("output_index", 0) or 0),
-                        "id": str(item.get("call_id") or item.get("id") or ""),
-                        "name": str(item.get("name") or ""),
-                        "arguments": str(item.get("arguments") or ""),
-                    })
-            elif event_type == "response.function_call_arguments.delta":
-                tool_calls.append({
-                    "index": int(chunk.get("output_index", 0) or 0),
-                    "id": str(chunk.get("item_id") or ""),
-                    "name": "",
-                    "arguments": str(chunk.get("delta") or ""),
-                })
-        elif request_format == "claude":
-            event_type = str(chunk.get("type") or "")
-            index = int(chunk.get("index", 0) or 0)
-            if event_type == "content_block_start":
-                block = chunk.get("content_block") or {}
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    raw_input = block.get("input") or {}
-                    tool_calls.append({
-                        "index": index,
-                        "id": str(block.get("id") or ""),
-                        "name": str(block.get("name") or ""),
-                        "arguments": json.dumps(raw_input, ensure_ascii=False) if raw_input else "",
-                    })
-            elif event_type == "content_block_delta":
-                delta = chunk.get("delta") or {}
-                if isinstance(delta, dict) and delta.get("type") == "input_json_delta":
-                    tool_calls.append({
-                        "index": index,
-                        "id": "",
-                        "name": "",
-                        "arguments": str(delta.get("partial_json") or ""),
-                    })
-        return text, reasoning, tool_calls
-
-    @staticmethod
-    def _build_action_from_native_tool_calls(native_tool_calls: dict[int, dict[str, str]]) -> str:
-        """Reassemble streamed OpenAI ``tool_calls`` into the internal action JSON.
-
-        Raises ``RuntimeError`` on malformed/unsupported calls so the original
-        protocol is never forwarded to the chat answer.
-        """
-        actions = []
-        for call in (native_tool_calls[index] for index in sorted(native_tool_calls)):
-            name = call["name"].strip()
-            if not name:
-                logger.warning("工具调用解析失败：缺少工具名")
-                raise RuntimeError("工具调用解析失败：缺少工具名")
-            raw_args = call["arguments"] or "{}"
-            try:
-                arguments = json.loads(raw_args) if raw_args.strip() else {}
-            except json.JSONDecodeError as exc:
-                # Large native tool-call arguments (e.g. a full workflow JSON) can
-                # be truncated/malformed mid-stream. Do NOT abort the whole run with
-                # a fatal error — surface a retryable "parse_error" action so the
-                # agent loop asks the model to re-emit a clean tool call.
-                logger.warning(
-                    "工具调用解析失败：参数不是合法 JSON（len=%d, head=%r…）：%s",
-                    len(raw_args), raw_args[:120], exc,
-                )
-                return json.dumps({"type": "parse_error"}, ensure_ascii=False)
-            if not isinstance(arguments, dict):
-                logger.warning("工具调用解析失败：参数不是 JSON 对象")
-                return json.dumps({"type": "parse_error"}, ensure_ascii=False)
-            actions.append({"type": "tool", "tool": name, "arguments": arguments})
-        payload = actions[0] if len(actions) == 1 else {"type": "tools", "calls": actions}
-        return json.dumps(payload, ensure_ascii=False)
-
-    @staticmethod
     def _classify_agent_output(buffer: str) -> str:
         """Classify the leading model output before forwarding it to the chat UI.
 
@@ -2025,94 +1584,6 @@ class ModelRuntime:
         return pending[-keep:] if keep else "", False
 
     @staticmethod
-    def _stream_delta(request_format: str, chunk: dict[str, Any]) -> tuple[str, str]:
-        if request_format in {"openai_chat", "lm_studio"}:
-            choices = chunk.get("choices") or []
-            delta = (choices[0].get("delta") or {}) if choices and isinstance(choices[0], dict) else {}
-            return (
-                ModelRuntime._text_value(delta.get("content")),
-                ModelRuntime._text_value(
-                    delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
-                ),
-            )
-        if request_format == "codex_responses":
-            event_type = str(chunk.get("type") or "")
-            if event_type.endswith("output_text.delta"):
-                return str(chunk.get("delta") or ""), ""
-            if "reasoning" in event_type and event_type.endswith("delta"):
-                return "", str(chunk.get("delta") or "")
-            return "", ""
-        if request_format == "claude":
-            delta = chunk.get("delta") or {}
-            if str(chunk.get("type") or "") == "content_block_delta":
-                return str(delta.get("text") or ""), str(delta.get("thinking") or "")
-        return "", ""
-
-    @staticmethod
-    def _online_usage(request_format: str, result: Any) -> dict[str, int]:
-        """把各供应商的 token usage 统一为输入、输出、总量和缓存命中数。"""
-        chunks = result if isinstance(result, list) else [result]
-        usage: dict[str, Any] = {}
-        for chunk in chunks:
-            if not isinstance(chunk, dict):
-                continue
-            candidate = chunk.get("usage") or chunk.get("usageMetadata") or chunk.get("stats")
-            if request_format == "ollama" and any(
-                key in chunk for key in ("prompt_eval_count", "eval_count")
-            ):
-                candidate = chunk
-            # Responses 流式：usage 随最后一条 response.completed / response.incomplete
-            # 事件嵌套在 response 对象里，不在顶层 chunk 上。
-            if candidate is None and request_format == "codex_responses":
-                response_obj = chunk.get("response")
-                if isinstance(response_obj, dict):
-                    candidate = response_obj.get("usage")
-            if isinstance(candidate, dict):
-                usage = candidate
-        if not usage:
-            return {}
-
-        def number(*keys: str) -> int:
-            for key in keys:
-                value = usage.get(key)
-                if value is not None:
-                    try:
-                        return max(0, int(value))
-                    except (TypeError, ValueError):
-                        continue
-            return 0
-
-        input_tokens = number(
-            "prompt_tokens", "input_tokens", "inputTokens", "promptTokenCount", "inputTokenCount", "prompt_eval_count"
-        )
-        output_tokens = number(
-            "completion_tokens", "output_tokens", "outputTokens", "candidatesTokenCount", "outputTokenCount", "eval_count"
-        )
-        total_tokens = number("total_tokens", "totalTokens", "totalTokenCount") or input_tokens + output_tokens
-        cached_tokens = number(
-            "cached_tokens", "cache_read_input_tokens", "cachedContentTokenCount",
-            # DeepSeek reports the context-cache prefix hit via its own field.
-            "prompt_cache_hit_tokens",
-        )
-        if request_format == "claude":
-            # Anthropic separately reports uncached, cache-created and cache-read input tokens.
-            input_tokens += cached_tokens + number("cache_creation_input_tokens")
-            total_tokens = input_tokens + output_tokens
-        for detail_key in ("prompt_tokens_details", "input_tokens_details"):
-            details = usage.get(detail_key)
-            if isinstance(details, dict):
-                try:
-                    cached_tokens = max(cached_tokens, int(details.get("cached_tokens") or 0))
-                except (TypeError, ValueError):
-                    pass
-        return {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": total_tokens,
-            "cached_tokens": min(cached_tokens, input_tokens) if input_tokens else cached_tokens,
-        }
-
-    @staticmethod
     def _online_response(request_format: str, result: Any) -> tuple[str, str]:
         reasoning = ModelRuntime._online_reasoning(request_format, result)
         # Native OpenAI tool_calls (non-streaming) are converted to the internal
@@ -2135,304 +1606,6 @@ class ModelRuntime:
             else:
                 raise RuntimeError(f"在线模型响应中没有文本内容：{str(result)[:1000]}")
         return ModelRuntime._clean_content(content), reasoning
-
-    @staticmethod
-    def _openai_tool_calls_action(result: Any, request_format: str) -> str | None:
-        """Extract native OpenAI ``tool_calls`` from a non-streaming response.
-
-        Returns the internal action JSON string, or ``None`` when the response
-        has no tool calls. Raises ``RuntimeError`` on malformed calls.
-        """
-        if request_format not in {"openai_chat", "lm_studio", "ollama"} or not isinstance(result, dict):
-            return None
-        if request_format == "ollama":
-            message = result.get("message") or {}
-        else:
-            choices = result.get("choices") or []
-            message = (choices[0].get("message") or {}) if choices and isinstance(choices[0], dict) else {}
-        tool_calls = message.get("tool_calls") if isinstance(message, dict) else None
-        if not isinstance(tool_calls, list) or not tool_calls:
-            return None
-        calls: list[dict[str, str]] = []
-        for raw_call in tool_calls:
-            if not isinstance(raw_call, dict):
-                continue
-            function = raw_call.get("function") or {}
-            raw_arguments = function.get("arguments", "")
-            calls.append(
-                {
-                    "name": str(function.get("name") or ""),
-                    "arguments": (
-                        raw_arguments if isinstance(raw_arguments, str)
-                        else json.dumps(raw_arguments, ensure_ascii=False)
-                    ),
-                }
-            )
-        native = {
-            index: {"id": "", "name": call["name"], "arguments": call["arguments"]}
-            for index, call in enumerate(calls)
-        }
-        return ModelRuntime._build_action_from_native_tool_calls(native)
-
-    @staticmethod
-    def _responses_tool_calls_action(result: Any, request_format: str) -> str | None:
-        """Extract a native function call from a non-streaming Responses API result."""
-        if request_format != "codex_responses" or not isinstance(result, dict):
-            return None
-        calls = [
-            item for item in result.get("output") or []
-            if isinstance(item, dict) and item.get("type") == "function_call"
-        ]
-        if not calls:
-            return None
-        native = {
-            index: {
-                "id": str(call.get("call_id") or call.get("id") or ""),
-                "name": str(call.get("name") or ""),
-                "arguments": str(call.get("arguments") or ""),
-            }
-            for index, call in enumerate(calls)
-        }
-        return ModelRuntime._build_action_from_native_tool_calls(native)
-
-    @staticmethod
-    def _gemini_tool_calls_action(result: Any, request_format: str) -> str | None:
-        if request_format != "gemini":
-            return None
-        chunks = result if isinstance(result, list) else [result]
-        calls: list[dict[str, Any]] = []
-        for chunk in chunks:
-            if not isinstance(chunk, dict):
-                continue
-            candidates = chunk.get("candidates") or []
-            content = (candidates[0].get("content") or {}) if candidates and isinstance(candidates[0], dict) else {}
-            for part in content.get("parts") or []:
-                call = part.get("functionCall") if isinstance(part, dict) else None
-                if isinstance(call, dict):
-                    calls.append(call)
-        if not calls:
-            return None
-        native = {
-            index: {
-                "id": "",
-                "name": str(call.get("name") or ""),
-                "arguments": json.dumps(call.get("args") or {}, ensure_ascii=False),
-            }
-            for index, call in enumerate(calls)
-        }
-        return ModelRuntime._build_action_from_native_tool_calls(native)
-
-    @staticmethod
-    def _claude_tool_calls_action(result: Any, request_format: str) -> str | None:
-        if request_format != "claude" or not isinstance(result, dict):
-            return None
-        calls = [
-            block for block in result.get("content") or []
-            if isinstance(block, dict) and block.get("type") == "tool_use"
-        ]
-        if not calls:
-            return None
-        native = {
-            index: {
-                "id": str(call.get("id") or ""),
-                "name": str(call.get("name") or ""),
-                "arguments": json.dumps(call.get("input") or {}, ensure_ascii=False),
-            }
-            for index, call in enumerate(calls)
-        }
-        return ModelRuntime._build_action_from_native_tool_calls(native)
-
-    @staticmethod
-    def _claude_apply_cache_control(messages: list[dict[str, Any]]) -> None:
-        """在最后一条"非 tool_result 的 user 消息"末尾追加 cache_control，启用前缀缓存。
-
-        Anthropic 的 prompt caching 必须显式标记 ``cache_control: {"type": "ephemeral"}``
-        才生效。约束：
-        - 只能标记在 user 角色消息上（assistant 之后内容会打断缓存）；
-        - 绝不能标记在含 tool_result 的 user 消息上（否则 API 400）。
-        """
-        for message in reversed(messages):
-            if str(message.get("role") or "") != "user":
-                continue
-            content = message.get("content")
-            if isinstance(content, str):
-                if not content:
-                    continue
-                message["content"] = [{"type": "text", "text": content}]
-                content = message["content"]
-            if not isinstance(content, list) or not content:
-                continue
-            if any(
-                isinstance(block, dict) and block.get("type") == "tool_result"
-                for block in content
-            ):
-                continue
-            last_block = content[-1]
-            if isinstance(last_block, dict):
-                last_block["cache_control"] = {"type": "ephemeral"}
-            return
-
-    @staticmethod
-    def _reasoning_action(reasoning: str) -> str:
-        """只接受 reasoning_content 中完整、合法的 Agent 动作 JSON。"""
-        cleaned = str(reasoning or "").strip()
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-        try:
-            action = json.loads(cleaned)
-        except (json.JSONDecodeError, TypeError):
-            return ""
-        if not isinstance(action, dict):
-            return ""
-        action_type = action.get("type")
-        if action_type == "tool":
-            if not str(action.get("tool") or "").strip():
-                return ""
-            if "arguments" in action and not isinstance(action.get("arguments"), dict):
-                return ""
-        elif action_type == "final":
-            if not str(action.get("content") or "").strip():
-                return ""
-        else:
-            return ""
-        return json.dumps(action, ensure_ascii=False)
-
-    @staticmethod
-    def _with_endpoint(base_url: str, suffix: str) -> str:
-        parsed = urllib.parse.urlsplit(base_url)
-        target_path = suffix if suffix.startswith("/") else f"/{suffix}"
-        base_path = parsed.path.rstrip("/")
-        if base_path.endswith(target_path):
-            return base_url
-        path = ""
-        for marker in ("/api/v1/", "/v1beta/", "/v1/"):
-            if not target_path.startswith(marker):
-                continue
-            marker_root = marker.rstrip("/")
-            rest = target_path[len(marker_root):]  # e.g. "/chat/completions"
-            if base_path.endswith(marker_root):
-                path = base_path + rest
-                break
-            marker_index = base_path.rfind(marker)
-            if marker_index >= 0:
-                path = base_path[:marker_index] + target_path
-                break
-            # base_url already carries an endpoint path (e.g. a full chat URL
-            # pasted in) but omitted the API-version marker. Re-root it onto the
-            # versioned target instead of doubling the path, which would otherwise
-            # produce broken URLs such as .../chat/completions/v1/chat/completions.
-            if base_path.endswith(rest):
-                path = target_path
-                break
-        if not path:
-            path = base_path + target_path
-        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment))
-
-    @staticmethod
-    def _local_endpoint(base_url: str, path: str) -> str:
-        parsed = urllib.parse.urlsplit(base_url)
-        base_path = parsed.path.rstrip("/")
-        if base_path.endswith("/v1"):
-            base_path = base_path[:-3]
-        target_path = f"{base_path}{path}" if base_path else path
-        return urllib.parse.urlunsplit(
-            (parsed.scheme, parsed.netloc, target_path, parsed.query, parsed.fragment)
-        )
-
-    @staticmethod
-    def _online_reasoning(request_format: str, result: Any) -> str:
-        """尽力从响应中提取推理/思考内容（reasoning_content / thinking 等），无则返回空。"""
-        if not isinstance(result, dict):
-            return ""
-        if request_format in {"openai_chat", "ollama"}:
-            choices = result.get("choices") or []
-            message = (choices[0].get("message") or {}) if choices else {}
-            for key in ("reasoning_content", "reasoning", "thinking", "thought"):
-                value = message.get(key) or result.get(key)
-                if value:
-                    return ModelRuntime._text_value(value)
-            if request_format == "ollama":
-                message = result.get("message") or {}
-                if isinstance(message, dict) and message.get("thinking"):
-                    return str(message["thinking"])
-        if request_format in ("codex_responses", "lm_studio"):
-            for item in result.get("output") or []:
-                if isinstance(item, dict) and item.get("type") == "reasoning":
-                    return ModelRuntime._text_value(item.get("content") or item.get("summary"))
-        return ""
-
-    @staticmethod
-    def _online_content(request_format: str, result: Any) -> str:
-        if request_format == "openai_chat":
-            choices = result.get("choices") or [] if isinstance(result, dict) else []
-            choice = choices[0] if choices else {}
-            message = choice.get("message") or {}
-            return ModelRuntime._text_value(message.get("content") or choice.get("text"))
-
-        if request_format == "ollama":
-            if isinstance(result, list):
-                return "".join(ModelRuntime._online_content(request_format, item) for item in result)
-            message = result.get("message") if isinstance(result, dict) else None
-            return ModelRuntime._text_value(message.get("content") if isinstance(message, dict) else "")
-
-        if request_format == "codex_responses":
-            if not isinstance(result, dict):
-                return ""
-            if result.get("output_text"):
-                return str(result["output_text"])
-            texts = []
-            for output in result.get("output") or []:
-                for item in output.get("content") or []:
-                    text = item.get("text") if isinstance(item, dict) else ""
-                    if text:
-                        texts.append(str(text))
-            return "\n".join(texts)
-
-        if request_format == "gemini":
-            chunks = result if isinstance(result, list) else [result]
-            texts = []
-            for chunk in chunks:
-                if not isinstance(chunk, dict):
-                    continue
-                for candidate in chunk.get("candidates") or []:
-                    for part in (candidate.get("content") or {}).get("parts") or []:
-                        if isinstance(part, dict) and part.get("text"):
-                            texts.append(str(part["text"]))
-            return "".join(texts)
-
-        if request_format == "claude":
-            return ModelRuntime._text_value(result.get("content") if isinstance(result, dict) else None)
-
-        if request_format == "lm_studio":
-            if not isinstance(result, dict):
-                return ""
-            if result.get("output_text"):
-                return str(result["output_text"])
-            output = result.get("output") or result.get("choices") or []
-            texts = []
-            for item in output:
-                if not isinstance(item, dict):
-                    continue
-                # 推理类部件（type == "reasoning"）不属于正文，单独由 _online_reasoning 提取。
-                if str(item.get("type") or "") == "reasoning":
-                    continue
-                value = item.get("content") or (item.get("message") or {}).get("content") or item.get("text")
-                text = ModelRuntime._text_value(value)
-                if text:
-                    texts.append(text)
-            return "\n".join(texts)
-        return ""
-
-    @staticmethod
-    def _text_value(value: Any) -> str:
-        if isinstance(value, str):
-            return value
-        if isinstance(value, list):
-            return "\n".join(
-                str(item.get("text") or item.get("content") or "")
-                for item in value if isinstance(item, dict) and (item.get("text") or item.get("content"))
-            )
-        return ""
 
     @staticmethod
     def _clean_content(content: str) -> str:
