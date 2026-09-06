@@ -15,6 +15,7 @@ import sqlite3
 import sys
 import threading
 import time
+from http import HTTPStatus
 from pathlib import Path
 from typing import Any
 
@@ -761,6 +762,259 @@ class NaibaChatApp:
             return {"ok": False, "error": str(exc), **self.migration_health()}
         return {"ok": True, "report": report, **self.migration_health()}
 
+    # ---- 3.4.3 内联业务下沉：HTTP 分支体迁入（返回 (payload, status) 供传输层直发） ----
+
+    def api_create_conversation(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        title = str(body.get("title") or "新对话")
+        provider_id = str(body.get("provider_id") or self.config.data.get("provider_id") or "")
+        model_key = str(body.get("model_key") or "")
+        raw_agent_id = body.get("agent_id")
+        agent_id = str(raw_agent_id or self.config.default_agent_id())
+        if raw_agent_id is not None and not self.config.get_agent(agent_id):
+            # 前端「新建会话」会沿用上一个会话的 agent_id；若该 Agent 已被删除，
+            # 这里回退到默认 Agent 而不是 400 拒绝，避免新建会话整条链路报错。
+            agent_id = self.config.default_agent_id()
+        permission_mode = str(body.get("permission_mode") or "auto")
+        web_search_enabled = body.get("web_search_enabled", False)
+        deep_reasoning_enabled = body.get("deep_reasoning_enabled", False)
+        reasoning_effort = body.get("reasoning_effort")
+        workspace_dir = body.get("workspace_dir")
+        workspace_group = body.get("workspace_group")
+        if permission_mode not in ("confirm", "auto", "full"):
+            return {"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST
+        if not isinstance(web_search_enabled, bool):
+            return {"error": "web_search_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST
+        if not isinstance(deep_reasoning_enabled, bool):
+            return {"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST
+        if reasoning_effort is not None and str(reasoning_effort).lower() not in {"off", "low", "medium", "high", "auto"}:
+            return {"error": "reasoning_effort 无效"}, HTTPStatus.BAD_REQUEST
+        if workspace_dir is not None and not isinstance(workspace_dir, str):
+            return {"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if workspace_group is not None and not isinstance(workspace_group, str):
+            return {"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST
+        workspace_group = str(workspace_group or "").strip()
+        if workspace_group:
+            try:
+                # Registered workspace bindings are authoritative.
+                workspace_dir = self.config.workspace_dir_for_group(workspace_group)
+                resolved_workspace = self.config.resolve_workspace_dir(workspace_dir)
+                self.config.ensure_workspace_writable(resolved_workspace)
+            except (OSError, ValueError) as exc:
+                return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
+        if workspace_dir is not None and str(workspace_dir).strip():
+            try:
+                resolved_workspace = self.config.resolve_workspace_dir(str(workspace_dir).strip())
+                self.config.ensure_workspace_writable(resolved_workspace)
+            except (OSError, ValueError) as exc:
+                return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
+        return (
+            self.storage.create_conversation(
+                title=title, provider_id=provider_id, agent_id=agent_id,
+                interaction_mode="craft", model_key=model_key,
+                permission_mode=permission_mode,
+                web_search_enabled=web_search_enabled,
+                deep_reasoning_enabled=deep_reasoning_enabled,
+                reasoning_effort=str(reasoning_effort or ("medium" if deep_reasoning_enabled else "auto")),
+                workspace_dir=str(workspace_dir or ""),
+                workspace_group=workspace_group,
+            ),
+            HTTPStatus.CREATED,
+        )
+
+    def api_update_conversation_settings(self, conversation_id: str, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        title = body.get("title")
+        system_prompt = body.get("system_prompt")
+        stream_enabled = body.get("stream_enabled")
+        provider_id = body.get("provider_id")
+        agent_id = body.get("agent_id")
+        model_key = body.get("model_key")
+        if title is not None and not isinstance(title, str):
+            return {"error": "title 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if title is not None and len(title.strip()) > 120:
+            return {"error": "对话名称不能超过 120 个字符"}, HTTPStatus.BAD_REQUEST
+        if system_prompt is not None and not isinstance(system_prompt, str):
+            return {"error": "system_prompt 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if stream_enabled is not None and not isinstance(stream_enabled, bool):
+            return {"error": "stream_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST
+        if provider_id is not None and not isinstance(provider_id, str):
+            return {"error": "provider_id 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if agent_id is not None and not isinstance(agent_id, str):
+            return {"error": "agent_id 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if agent_id is not None and not self.config.get_agent(str(agent_id)):
+            return {"error": "Agent 不存在"}, HTTPStatus.BAD_REQUEST
+        # 会话已固化启用工具集后不允许会话内切换 Agent，否则工具集变化破坏前缀缓存。
+        if agent_id is not None:
+            try:
+                conv_row = self.storage.get_conversation(conversation_id)
+            except Exception:  # noqa: BLE001 - 读取失败不应中断整个请求
+                conv_row = None
+            current_agent_id = str((conv_row or {}).get("agent_id") or "")
+            if agent_id != current_agent_id and (conv_row or {}).get("enabled_tool_ids"):
+                return (
+                    {"error": "该会话已固化启用工具集，暂不支持会话内切换 Agent；请新开对话后再切换"},
+                    HTTPStatus.CONFLICT,
+                )
+        if model_key is not None and not isinstance(model_key, str):
+            return {"error": "model_key 必须是文本"}, HTTPStatus.BAD_REQUEST
+        interaction_mode = body.get("interaction_mode")
+        if interaction_mode is not None:
+            if not isinstance(interaction_mode, str):
+                return {"error": "interaction_mode 必须是文本"}, HTTPStatus.BAD_REQUEST
+            normalized_interaction_mode = interaction_mode.strip().lower()
+            if normalized_interaction_mode not in {"plan", "craft", "ask"}:
+                return {"error": "interaction_mode 必须是 plan 或普通模式"}, HTTPStatus.BAD_REQUEST
+            interaction_mode = "craft"
+        permission_mode = body.get("permission_mode")
+        if permission_mode is not None:
+            if not isinstance(permission_mode, str) or permission_mode not in ("confirm", "auto", "full"):
+                return {"error": "permission_mode 必须是 confirm / auto / full"}, HTTPStatus.BAD_REQUEST
+        web_search_enabled = body.get("web_search_enabled")
+        if web_search_enabled is not None and not isinstance(web_search_enabled, bool):
+            return {"error": "web_search_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST
+        deep_reasoning_enabled = body.get("deep_reasoning_enabled")
+        reasoning_effort = body.get("reasoning_effort")
+        workspace_dir = body.get("workspace_dir")
+        workspace_group = body.get("workspace_group")
+        if deep_reasoning_enabled is not None and not isinstance(deep_reasoning_enabled, bool):
+            return {"error": "deep_reasoning_enabled 必须是布尔值"}, HTTPStatus.BAD_REQUEST
+        if reasoning_effort is not None and str(reasoning_effort).lower() not in {"off", "low", "medium", "high", "auto"}:
+            return {"error": "reasoning_effort 无效"}, HTTPStatus.BAD_REQUEST
+        if workspace_dir is not None and not isinstance(workspace_dir, str):
+            return {"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if workspace_group is not None and not isinstance(workspace_group, str):
+            return {"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if workspace_group is not None:
+            workspace_group = str(workspace_group).strip()
+            if workspace_group:
+                try:
+                    # Switching a group also switches its filesystem root.
+                    workspace_dir = self.config.workspace_dir_for_group(workspace_group)
+                    resolved_workspace = self.config.resolve_workspace_dir(workspace_dir)
+                    self.config.ensure_workspace_writable(resolved_workspace)
+                except (OSError, ValueError) as exc:
+                    return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
+            else:
+                # "Ungrouped" changes only sidebar classification and
+                # deliberately preserves the conversation's directory.
+                workspace_dir = None
+        elif workspace_dir is not None:
+            # 兼容旧客户端只改 workspace_dir：若会话已在注册分组内，保持分组绑定。
+            current = self.storage.get_conversation(conversation_id, include_messages=False)
+            current_group = str((current or {}).get("workspace_group") or "").strip()
+            if current_group:
+                try:
+                    workspace_dir = self.config.workspace_dir_for_group(current_group)
+                    resolved_workspace = self.config.resolve_workspace_dir(workspace_dir)
+                    self.config.ensure_workspace_writable(resolved_workspace)
+                except (OSError, ValueError):
+                    pass
+        lightweight_mode = body.get("lightweight_mode")
+        if lightweight_mode is not None and not isinstance(lightweight_mode, bool):
+            return {"error": "lightweight_mode 必须是布尔值"}, HTTPStatus.BAD_REQUEST
+        lightweight_disabled_features = body.get("lightweight_disabled_features")
+        if lightweight_disabled_features is not None and (
+            not isinstance(lightweight_disabled_features, list)
+            or not all(isinstance(item, str) for item in lightweight_disabled_features)
+        ):
+            return {"error": "lightweight_disabled_features 必须是字符串数组"}, HTTPStatus.BAD_REQUEST
+        updated = self.storage.update_conversation_settings(
+            conversation_id,
+            title=title, system_prompt=system_prompt, stream_enabled=stream_enabled,
+            provider_id=provider_id, agent_id=agent_id, interaction_mode=interaction_mode,
+            model_key=model_key, permission_mode=permission_mode,
+            web_search_enabled=web_search_enabled, deep_reasoning_enabled=deep_reasoning_enabled,
+            reasoning_effort=reasoning_effort, workspace_dir=workspace_dir,
+            workspace_group=workspace_group, lightweight_mode=lightweight_mode,
+            lightweight_disabled_features=lightweight_disabled_features,
+        )
+        return updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND
+
+    def api_upsert_workspace(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        name = str(body.get("name") or "").strip()
+        raw_dir = str(body.get("dir") or "").strip()
+        if not name:
+            return {"error": "工作区名称不能为空"}, HTTPStatus.BAD_REQUEST
+        if not raw_dir:
+            return {"error": "工作区目录不能为空"}, HTTPStatus.BAD_REQUEST
+        try:
+            resolved_dir = self.config.resolve_workspace_dir(raw_dir)
+            self.config.ensure_workspace_writable(resolved_dir)
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
+        workspaces = list(self.config.data.get("workspaces", []))
+        if any(str(ws.get("name") or "").strip() == name for ws in workspaces):
+            return {"error": "工作区名称已存在"}, HTTPStatus.BAD_REQUEST
+        workspaces.append({"name": name, "dir": raw_dir})
+        try:
+            self.config.update_settings({"workspaces": workspaces})
+        except (ValueError, TypeError) as exc:
+            return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
+        return {"workspaces": self.config.data.get("workspaces", [])}, HTTPStatus.OK
+
+    def api_delete_workspace(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        name = str(body.get("name") or "").strip()
+        raw_dir = str(body.get("dir") or "").strip()
+        workspaces = list(self.config.data.get("workspaces", []))
+        new_list = [
+            ws for ws in workspaces
+            if not (
+                str(ws.get("name") or "").strip() == name
+                or (raw_dir and str(ws.get("dir") or "").strip() == raw_dir)
+            )
+        ]
+        removed_names = [
+            str(ws.get("name") or "").strip()
+            for ws in workspaces
+            if ws not in new_list
+        ]
+        if not removed_names:
+            # 注册表中没有匹配项：若调用方仍给了名称，允许归档该名称下的对话（处理遗留分组）。
+            if not name:
+                return {"error": "工作区不存在"}, HTTPStatus.NOT_FOUND
+            removed_names = [name]
+        self.config.update_settings({"workspaces": new_list})
+        # 已删除工作区下的对话归档到「未分组」，避免残留分组。
+        for ws_name in removed_names:
+            if ws_name:
+                self.storage.clear_workspace_group(ws_name)
+        return {"workspaces": self.config.data.get("workspaces", [])}, HTTPStatus.OK
+
+    def api_update_runtime_settings(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        if "data_dir" in body:
+            requested = self.config.resolve_data_dir(str(body.get("data_dir") or "data"))
+            if requested != self.paths.data_dir.resolve() and self.storage.list_background_tasks(active_only=True):
+                return {"error": "存在活动任务，请先等待完成或取消后再切换数据目录"}, HTTPStatus.CONFLICT
+        settings = self.config.update_settings(body)
+        # 代理设置变更即时生效：重建统一网络入口的 opener，无需重启。
+        net_io.configure(self.config.data.get("proxy"))
+        model_key = str(body.get("model_key") or body.get("default_model_key") or "").strip()
+        if model_key:
+            self.config.set_default_model_key(model_key)
+            settings = self.config.public()
+        self.executor.command_timeout = int(self.config.data.get("command_timeout", 120))
+        self.executor.set_permission_mode(str(self.config.data.get("permission_mode", "confirm")))
+        # 工作区变更：仅影响新任务；已运行后台任务继续使用其启动时的快照路径。
+        if "workspace_dir" in body:
+            self.executor.workspace = self.config.resolve_workspace_dir()
+        return (
+            {
+                "settings": settings,
+                "default_model_key": self.config.default_model_key(),
+                "resolved_workspace_dir": str(self.config.resolve_workspace_dir()),
+                "resolved_data_dir": str(self.config.resolve_data_dir()),
+                "image_cache_bytes": _uploads_total_bytes(self.paths.data_dir),
+                "restart_required": (
+                    ("data_dir" in body and self.config.resolve_data_dir() != self.paths.data_dir.resolve())
+                    or ("host" in body and str(self.config.data.get("host")) != self.listener_host)
+                ),
+                "network_access": network_access_status(
+                    self.listener_host,
+                    int(self.config.data.get("port", 8765)),
+                ),
+                "proxy_state": net_io.proxy_state(),
+            },
+            HTTPStatus.OK,
+        )
 
 
 APP: NaibaChatApp
