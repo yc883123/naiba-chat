@@ -30,25 +30,19 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-# 打包成 exe（PyInstaller）后，__file__ 指向临时解压目录，不能用于读写运行数据。
-# 目录分三类：
-#   - EXE_DIR：exe 所在目录（仅冻结时与仓库根不同），用于默认工作区与定位相邻旧数据。
-#   - RESOURCE_DIR：静态资源（public 等），随 exe 打包，运行时从 sys._MEIPASS 读取。
-#   - APP_DIR：可写运行数据目录（config.json / data / skills），冻结版固定到
-#     %LOCALAPPDATA%\NaibaChat；源码模式继续使用仓库目录。
-if getattr(sys, "frozen", False):
-    EXE_DIR = Path(sys.executable).resolve().parent
-    RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", EXE_DIR)).resolve()
-    _localappdata = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
-    APP_DIR = Path(_localappdata).resolve() / "NaibaChat"
-else:
-    EXE_DIR = Path(__file__).resolve().parent
-    RESOURCE_DIR = EXE_DIR
-    APP_DIR = EXE_DIR
-if str(APP_DIR) not in sys.path:
-    sys.path.insert(0, str(APP_DIR))
-if str(EXE_DIR) not in sys.path and str(EXE_DIR) != str(APP_DIR):
-    sys.path.insert(0, str(EXE_DIR))
+# 路径语义与目录分类见 naiba/paths.py：此处构建进程级 PathContext 并暴露同名模块级
+# 常量（与既有引用面保持同名，语义不变；运行时二次重绑定见 NaibaChatApp.__init__）。
+from naiba.paths import PathContext, default_path_context, static_asset_version
+
+PC: PathContext = default_path_context()
+EXE_DIR = PC.exe_dir
+RESOURCE_DIR = PC.resource_dir
+APP_DIR = PC.app_dir
+PUBLIC_DIR = PC.public_dir
+CONFIG_PATH = PC.config_path
+DATA_DIR = PC.data_dir
+STATUS_PATH = PC.status_path
+LOCK_PATH = PC.lock_path
 
 import net_io
 from mcp_runtime import MCPRegistry
@@ -89,28 +83,6 @@ from naiba.storage.media import (
     IMAGE_CACHE_CLEAN_LIMIT, IMAGE_SUFFIXES,
 )
 from naiba.core.diagnostics import CACHE_DEBUG_ON, _cache_debug_enabled
-
-
-PUBLIC_DIR = RESOURCE_DIR / "public"
-CONFIG_PATH = APP_DIR / "config.json"
-
-
-def _configured_data_dir() -> Path:
-    """Resolve the persistent data directory before ConfigStore is initialized."""
-    try:
-        loaded = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        raw = loaded.get("data_dir") if isinstance(loaded, dict) else ""
-    except (OSError, json.JSONDecodeError):
-        raw = ""
-    path = Path(str(raw or "data")).expanduser()
-    if not path.is_absolute():
-        path = APP_DIR / path
-    return path.resolve()
-
-
-DATA_DIR = _configured_data_dir()
-STATUS_PATH = DATA_DIR / "server.json"
-LOCK_PATH = DATA_DIR / "server.lock"
 
 
 # 部分系统 mimetypes 未注册 webp/avif 等，导致 <img> 接到 application/octet-stream
@@ -385,16 +357,6 @@ def migrate_legacy_data() -> dict[str, Any]:
         report["migrated"] = True
         report["source"] = str(EXE_DIR)
     return report
-
-
-def static_asset_version() -> str:
-    digest = hashlib.sha256()
-    for name in ("app.js", "styles.css"):
-        digest.update((PUBLIC_DIR / name).read_bytes())
-    return digest.hexdigest()[:12]
-
-
-STATIC_ASSET_VERSION = static_asset_version()
 
 
 def validate_skills_dir(resolved: Path) -> None:
@@ -2101,9 +2063,9 @@ class NaibaChatApp:
                     )
             except OSError as exc:
                 print(f"Data directory switch migration failed: {exc}")
-            DATA_DIR = configured_data_dir
-            STATUS_PATH = DATA_DIR / "server.json"
-            LOCK_PATH = DATA_DIR / "server.lock"
+            DATA_DIR = PC.rebind_data_dir(configured_data_dir)
+            STATUS_PATH = PC.status_path
+            LOCK_PATH = PC.lock_path
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.storage = ChatStorage(DATA_DIR / "chat.db")
         repaired_bindings = self.storage.synchronize_workspace_bindings(
@@ -3841,7 +3803,7 @@ class RequestHandler(BaseHTTPRequestHandler):
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         data = path.read_bytes()
         if path.name == "index.html":
-            data = data.replace(b"__ASSET_VERSION__", STATIC_ASSET_VERSION.encode("ascii"))
+            data = data.replace(b"__ASSET_VERSION__", static_asset_version(PUBLIC_DIR).encode("ascii"))
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type)
         self.send_header("Content-Length", str(len(data)))
