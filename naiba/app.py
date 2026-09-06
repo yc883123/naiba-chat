@@ -15,8 +15,10 @@ import secrets
 import shutil
 import sqlite3
 import sys
+import tempfile
 import threading
 import time
+import zipfile
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any
@@ -43,7 +45,7 @@ from naiba.plans import PlanManager
 from naiba.run.manager import ConversationRunManager
 from naiba.search import WebSearchRuntime
 from naiba.skills.catalog import SkillCatalog
-from naiba.skills.install import delete_skill, remove_skill_references
+from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
 from naiba.storage.media import _process_uploaded_image, _uploads_total_bytes
 from naiba.storage.store import ChatStorage
 from naiba.subagent import job_tool_handler_factory, run_subagent_agent, subagent_handler_factory
@@ -1338,6 +1340,168 @@ class NaibaChatApp:
             "size": len(main_bytes),
             "thumb_path": thumb_path,
         })
+
+
+    def _finish_install(self, dest_raw: str, dest: Path, extra: dict[str, Any] | None = None) -> None:
+        self.config.add_skills_dir(dest_raw)
+        self.catalog.add_directory(dest_raw)
+        # “导入即启用”：若本次安装目录里的 Skill 命中过 hidden_skill_ids（此前被隐藏/删除），
+        # 自动取消隐藏，避免 scan() 静默过滤导致 UI 导入成功却不显示。
+        installed_ids = {str(item.get("id") or "") for item in SkillCatalog([dest]).scan()}
+        hidden_ids = set(self.config.get_hidden_skill_ids())
+        unhidden: list[str] = [sid for sid in installed_ids if sid in hidden_ids]
+        for sid in unhidden:
+            self.config.unhide_skill(sid)
+            self.catalog.hidden_ids.discard(sid)
+        payload: dict[str, Any] = {
+            "dir": str(dest),
+            "configured": self.config.get_skills_dirs(),
+            "skills": self.catalog.scan(),
+            "hidden_skills": self._hidden_skill_entries(),
+            "unhidden": unhidden,
+        }
+        if extra:
+            payload.update(extra)
+        return self._reply(payload)
+
+    def _install_folder(self, body: dict[str, Any]) -> None:
+        files = body.get("files")
+        if not isinstance(files, list) or not files:
+            return self._reply({"error": "没有收到文件夹内容"}, HTTPStatus.BAD_REQUEST)
+            return
+        if len(files) > 2000:
+            return self._reply({"error": "文件夹内文件数量过多（超过 2000）"}, HTTPStatus.BAD_REQUEST)
+            return
+        dest_resolved, dest_err = self._resolve_skill_dest(body)
+        if dest_err is not None:
+            return dest_err
+        dest_raw, dest = dest_resolved
+        pending: list[tuple[Path, bytes]] = []
+        total = 0
+        for item in files:
+            if not isinstance(item, dict):
+                return self._reply({"error": "文件条目格式不正确"}, HTTPStatus.BAD_REQUEST)
+                return
+            rel = str(item.get("path") or "").replace("\\", "/").lstrip("/")
+            parts = [part for part in rel.split("/") if part not in {"", "."}]
+            if not parts or any(part == ".." or ":" in part for part in parts):
+                return self._reply(
+                    {"error": f"文件夹包含非法路径：{item.get('path')}"},
+                    HTTPStatus.BAD_REQUEST,
+                )
+                return
+            encoded = str(item.get("data") or "")
+            if "," in encoded and encoded.startswith("data:"):
+                encoded = encoded.split(",", 1)[1]
+            try:
+                data = base64.b64decode(encoded, validate=True)
+            except ValueError:
+                return self._reply({"error": f"文件内容不是有效 Base64：{rel}"}, HTTPStatus.BAD_REQUEST)
+                return
+            total += len(data)
+            if total > 300 * 1024 * 1024:
+                return self._reply(
+                    {"error": "文件夹总大小不能超过 300 MB"},
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
+                )
+                return
+            target = (dest / Path(*parts)).resolve()
+            if target != dest and not path_within(target, dest):
+                return self._reply({"error": f"文件夹包含越界路径：{rel}"}, HTTPStatus.BAD_REQUEST)
+                return
+            pending.append((target, data))
+        dest.mkdir(parents=True, exist_ok=True)
+        for target, data in pending:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        return self._finish_install(dest_raw, dest, {"files": len(pending)})
+
+    def _install_skill(self, body: dict[str, Any]) -> None:
+        name = Path(str(body.get("name") or "skill.zip")).name
+        encoded = str(body.get("data") or "")
+        if "," in encoded and encoded.startswith("data:"):
+            encoded = encoded.split(",", 1)[1]
+        try:
+            data = base64.b64decode(encoded, validate=True)
+        except ValueError:
+            return self._reply({"error": "文件内容不是有效 Base64"}, HTTPStatus.BAD_REQUEST)
+            return
+        if len(data) > 80 * 1024 * 1024:
+            return self._reply({"error": "Skill 压缩包不能超过 80 MB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return
+        dest_resolved, dest_err = self._resolve_skill_dest(body)
+        if dest_err is not None:
+            return dest_err
+        dest_raw, dest = dest_resolved
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp_dir = Path(tempfile.mkdtemp(prefix="naiba_skill_"))
+        try:
+            zip_path = tmp_dir / name
+            zip_path.write_bytes(data)
+            with zipfile.ZipFile(zip_path) as archive:
+                bad = archive.testzip()
+                if bad is not None:
+                    return self._reply({"error": f"压缩包损坏：{bad}"}, HTTPStatus.BAD_REQUEST)
+                    return
+                if not _zip_has_skill_md(archive):
+                    return self._reply(
+                        {"error": "压缩包必须包含 SKILL.md（位于压缩包顶层或其下一级目录）"},
+                        HTTPStatus.BAD_REQUEST,
+                    )
+                    return
+                members = archive.infolist()
+                if len(members) > 5000:
+                    return self._reply({"error": "压缩包内文件数量过多（超过 5000）"}, HTTPStatus.BAD_REQUEST)
+                    return
+                if sum(member.file_size for member in members) > 500 * 1024 * 1024:
+                    return self._reply({"error": "压缩包解压后体积过大（超过 500 MB）"}, HTTPStatus.BAD_REQUEST)
+                    return
+                for member in members:
+                    target = (dest / member.filename).resolve()
+                    if target != dest and not path_within(target, dest):
+                        return self._reply(
+                            {"error": f"压缩包包含越界路径：{member.filename}"},
+                            HTTPStatus.BAD_REQUEST,
+                        )
+                        return
+                archive.extractall(dest)
+            return self._finish_install(dest_raw, dest)
+        except zipfile.BadZipFile:
+            return self._reply({"error": "不是有效的 zip 压缩包"}, HTTPStatus.BAD_REQUEST)
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    def _resolve_skill_dest(self, body: dict[str, Any]) -> tuple[tuple[str, Path] | None, tuple[dict[str, Any], int] | None]:
+        """解析 Skill 安装目标目录：未指定时默认安装到托管 Skills 目录。
+
+        托管 Skills 目录位于数据目录内（self.paths.data_dir/skills）；旧 ``self.paths.app_dir/skills``
+        与旧数据目录同级 skills 会重定向/合并到托管目录，保证旧配置不丢且默认落点离开 C 盘。
+        """
+        configured = self.config.get_skills_dirs()
+        managed = self.config.resolve_managed_skills_dir()
+        if str(body.get("dir") or "").strip():
+            dest_raw = str(body.get("dir") or "").strip()
+        elif configured and configured[0] != "skills":
+            dest_raw = configured[0]
+        else:
+            dest_raw = str(managed)
+        dest = self.config._resolve_dir(dest_raw)
+        try:
+            validate_skills_dir(dest, app_dir=self.paths.app_dir, public_dir=self.paths.public_dir, data_dir=self.paths.data_dir)
+        except ValueError as exc:
+            return None, ({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return None
+        allowed = {self.config._resolve_dir(item) for item in configured}
+        allowed.add(self.config._resolve_dir("skills"))
+        allowed.add(managed)
+        allowed.add((self.paths.app_dir / "skills").resolve())
+        if dest not in allowed:
+            return None, (
+                {"error": "只能安装到已添加的 Skill 扫描目录，请先在上方添加该目录"},
+                HTTPStatus.FORBIDDEN,
+            )
+            return None
+        return (dest_raw, dest), None
 
 
 
