@@ -121,10 +121,9 @@ class ToolRegistryShapeTests(unittest.TestCase):
                 self.assertIsInstance(row["retryable"], bool, f"{name}: retryable 非布尔")
 
     def test_every_tool_has_execute_after_assembly(self) -> None:
-        """组装态（Provider 绑定后）：每个声明工具必须绑有 def.execute（防仅声明漂移）。"""
+        """组装态（Provider 绑定后）：每个声明工具（含 Harness 别名）必须绑有 def.execute（防仅声明漂移）。"""
         assembled = _assembled_test_registry()
-        for row in self.rows:
-            name = str(row["name"])
+        for name in self.registry.names():
             with self.subTest(tool=name):
                 if name.startswith("mcp__"):
                     continue  # MCP 动态工具由 register_mcp_tools 绑定
@@ -149,7 +148,40 @@ class ToolRegistryShapeTests(unittest.TestCase):
                 self.assertEqual(set(row.keys()), expected, "schemas() 行键集漂移")
 
     def test_schema_rows_match_names(self) -> None:
-        self.assertEqual(len(self.rows), len(self.registry.names()))
+        # schemas() 为模型/Web 可见集：Harness 别名被隐藏，其余注册 def 必须全部可见。
+        visible = {str(row["name"]) for row in self.rows}
+        everything = set(self.registry.names())
+        self.assertFalse(
+            visible & set(self.aliases), "Harness 别名不应出现在模型可见声明表（schemas）"
+        )
+        self.assertEqual(everything - visible, set(self.aliases), "除别名外 schemas() 不得静默缺漏")
+
+    def test_harness_aliases_hidden_but_compatible(self) -> None:
+        """Harness 别名隐藏守门：模型可见表不含别名；查询层 resolve/get/执行分发仍兼容。"""
+        registry = registry_mod.build_tool_registry()
+        visible = {str(row["name"]) for row in registry.schemas()}
+        for alias, target in registry_mod.HARNESS_ALIASES.items():
+            with self.subTest(alias=alias):
+                self.assertNotIn(alias, visible, f"别名 {alias} 泄露到模型可见声明表")
+                self.assertIsNotNone(registry.get(alias), f"{alias} def 缺失（执行兼容破坏）")
+                self.assertEqual(registry.resolve(alias), target)
+
+    def test_plan_mode_system_tools_exclude_harness_aliases(self) -> None:
+        """allowed_tools 决议（resolve_allowed_tools）不得再注入 Harness 别名（模型可见集来源）。"""
+        from types import SimpleNamespace
+
+        from naiba.run.session import resolve_allowed_tools
+
+        app = SimpleNamespace(
+            config=SimpleNamespace(data={"agent_tools": ["read_file"]}),
+            tool_registry=registry_mod.build_tool_registry(),
+            web_search=SimpleNamespace(is_available=lambda: False),
+        )
+        tools = resolve_allowed_tools(app, "craft", {"tool_scope": []}, False)
+        for alias in registry_mod.HARNESS_ALIASES:
+            with self.subTest(alias=alias):
+                self.assertNotIn(alias, tools, f"别名 {alias} 进入 allowed_tools（模型可见集）")
+        self.assertIn("read_file", tools)
 
 
 class ToolRegistryUnifiedFieldsTests(unittest.TestCase):
