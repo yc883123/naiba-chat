@@ -46,6 +46,29 @@ class LlmProtocolTests(unittest.TestCase):
         self.assertEqual(out[0]["call_id"], "c1")
         self.assertEqual(out[1]["type"], "function_call")
 
+    def test_responses_input_reasoning_text_passback(self):
+        """回归：DeepSeek 思考模式（携带 tools）要求历史 assistant 轮以 reasoning_text
+        字段回传（官方规范），缺失会 400 "The reasoning_text must be passed back"。"""
+        # 纯对话 assistant 轮：message item 带 reasoning_text
+        out = P._responses_input([
+            {"role": "assistant", "content": "回答", "reasoning_content": "思考中"},
+        ])
+        self.assertEqual(out[0]["reasoning_text"], "思考中")
+        self.assertEqual(out[0]["role"], "assistant")
+        # tool_calls 轮：function_call 项 + 相邻 assistant 消息（reasoning_text 随行回传）
+        out2 = P._responses_input([
+            {"role": "assistant", "content": "",
+             "reasoning": "先调用工具",
+             "tool_calls": [{"id": "c1", "name": "pwsh", "arguments": {"command": "dir"}}]},
+        ])
+        self.assertEqual(out2[0]["type"], "function_call")
+        self.assertEqual(out2[1]["role"], "assistant")
+        self.assertEqual(out2[1]["reasoning_text"], "先调用工具")
+        # 无 reasoning 时不携带空字段
+        out3 = P._responses_input([{"role": "assistant", "content": "回答"}])
+        self.assertNotIn("reasoning_text", out3[0])
+        self.assertEqual(out3[0].get("role"), "assistant")
+
     def test_tool_schemas_all_formats(self):
         rows = [{"name": "read_file", "description": "读", "parameters": {"type": "object", "properties": {}}}]
         self.assertEqual(P._tool_schemas(rows, "openai_chat")[0]["type"], "function")

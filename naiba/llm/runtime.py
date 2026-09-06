@@ -855,6 +855,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
         tool_fallback_used = False
         stream_options_fallback_used = False
         reasoning_fallback_used = False
+        reasoning_passback_fallback_used = False
         if diagnostics is not None:
             parsed = urllib.parse.urlsplit(endpoint)
             try:
@@ -1055,6 +1056,34 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                     reasoning_fallback_used = True
                     if status:
                         status({"type": "status", "message": "当前网关不接受思考字段，已自动切换兼容请求"})
+                    continue
+                # DeepSeek 思考模式：携带 tools 的请求必须回传全部历史 reasoning_text
+                # （官方规范，缺失即 400 "must be passed back"）。若回传逻辑缺失/被网关拒绝，
+                # 兜底为去掉 tools 重试一次——官方明示未携带 tools 的请求无需回传 reasoning，
+                # 对话可继续（代价：本轮失去原生工具调用）。
+                reasoning_passback_rejected = (
+                    "must be passed" in lower_detail
+                    or "reasoning_text" in lower_detail
+                )
+                if (
+                    not is_local
+                    and native_tools
+                    and not reasoning_passback_fallback_used
+                    and exc.code in {400, 422}
+                    and reasoning_passback_rejected
+                ):
+                    fallback_payload = dict(payload)
+                    for key in ("tools", "tool_choice", "parallel_tool_calls", "toolConfig"):
+                        fallback_payload.pop(key, None)
+                    request = urllib.request.Request(
+                        endpoint,
+                        data=json.dumps(fallback_payload, ensure_ascii=False).encode("utf-8"),
+                        headers=headers,
+                        method="POST",
+                    )
+                    reasoning_passback_fallback_used = True
+                    if status:
+                        status({"type": "status", "message": "思考模式下回传 reasoning 被网关拒绝，已切换为无工具重试"})
                     continue
                 if (
                     not is_local

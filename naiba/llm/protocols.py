@@ -115,13 +115,39 @@ class ProtocolMixins:
                     "output": ProtocolMixins._content_text(item.get("content")),
                 })
                 continue
-            if role == "assistant" and isinstance(item.get("tool_calls"), list):
-                converted.extend({
-                    "type": "function_call",
-                    "call_id": str(call.get("id") or ""),
-                    "name": str(call.get("name") or ""),
-                    "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
-                } for call in item["tool_calls"] if isinstance(call, dict))
+            if role == "assistant":
+                # DeepSeek 思考模式规范：携带 tools 的请求，所有历史轮次的 reasoning
+                # 必须完整回传（字段名 reasoning_text，与响应事件 reasoning_text.delta 对称），
+                # 否则 400 "The reasoning_text in the thinking mode must be passed back"。
+                # 无 tools 轮次 API 会忽略该字段，因此仅在有值时才携带。
+                reasoning_text = item.get("reasoning_content")
+                if reasoning_text is None:
+                    reasoning_text = item.get("reasoning")
+                reasoning_fields = (
+                    {"reasoning_text": str(reasoning_text)}
+                    if reasoning_text is not None and str(reasoning_text).strip()
+                    else {}
+                )
+                if isinstance(item.get("tool_calls"), list):
+                    converted.extend({
+                        "type": "function_call",
+                        "call_id": str(call.get("id") or ""),
+                        "name": str(call.get("name") or ""),
+                        "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
+                    } for call in item["tool_calls"] if isinstance(call, dict))
+                    # function_call 归并到相邻 assistant 消息：reasoning_text 随 assistant 消息回传
+                    if reasoning_fields:
+                        converted.append({
+                            "role": "assistant",
+                            "content": ProtocolMixins._responses_content(item.get("content"), role),
+                            **reasoning_fields,
+                        })
+                    continue
+                converted.append({
+                    "role": role,
+                    "content": ProtocolMixins._responses_content(item.get("content"), role),
+                    **reasoning_fields,
+                })
                 continue
             converted.append({
                 "role": role,
