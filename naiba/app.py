@@ -1326,7 +1326,7 @@ class NaibaChatApp:
         target_dir = (self.paths.data_dir / "uploads").resolve()
         target_dir.mkdir(parents=True, exist_ok=True)
         target = target_dir / f"naiba_chat_{int(time.time())}_{secrets.token_hex(3)}_{safe_name}"
-        imaging = dict(self.config.data.get("imaging") or {}) if getattr(self.app, "config", None) else {}
+        imaging = dict(self.config.data.get("imaging") or {}) if getattr(self, "config", None) else {}
         main_bytes, thumb_name, thumb_bytes = _process_uploaded_image(data, target.name, imaging)
         target.write_bytes(main_bytes)
         thumb_path = ""

@@ -43,6 +43,20 @@ class StaticDecoratorGuardTests(unittest.TestCase):
                         break
         self.assertEqual(issues, [], f"@staticmethod 方法体内引用了实例绑定名: {issues}")
 
+    def test_app_module_has_no_self_app_refs(self):
+        """搬移脚本只替换了 self.app. 带点形式——getattr(self.app, ...) 等无点形式是盲区。
+
+        事故复盘（2026-09-06 三）：_upload 迁入 app.py 后残留 getattr(self.app, "config", None)，
+        上传接口 500。守门：naiba/app.py 中不允许任何 self.app 引用。
+        """
+        path = Path(__file__).resolve().parents[1] / "naiba" / "app.py"
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        issues = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "self" and node.attr == "app":
+                issues.append(node.lineno)
+        self.assertEqual(issues, [], f"naiba/app.py 残留 self.app 引用: {issues}")
+
     def test_provider_profile_merges_stored_api_key(self):
         handler = RequestHandler.__new__(RequestHandler)
         app = NaibaChatApp.__new__(NaibaChatApp)
