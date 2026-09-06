@@ -164,6 +164,19 @@ class NaibaChatApp:
         self.tool_registry.bind_mcp(self.mcp)
         # 权限同源（Phase 2）：引擎从注册表解析 def 级 policy/元数据
         self.executor.set_def_resolver(self.tool_registry.get)
+        # core 域 Provider（Phase 3 双轨）：def 绑定新实现函数；引擎仍走旧 _tool_* 方法，行为不变
+        from naiba.tools.providers.core import CoreToolProvider, ToolContext
+
+        self.core_tools = CoreToolProvider(
+            ToolContext(
+                workspace=self.config.resolve_workspace_dir(),
+                python_executable=sys.executable,
+                command_timeout=int(self.config.data.get("command_timeout", 120)),
+                mcp_registry=self.mcp,
+                mcp_register=self.register_mcp_server,
+            )
+        )
+        self.tool_registry.register_provider(self.core_tools)
         self.jobs = JobRegistry(self)
         # MCP 生命周期：工具发现后注册到统一工具表，断开/注销时清理
         self.mcp.on_tools_discovered = self.tool_registry.register_mcp_tools
