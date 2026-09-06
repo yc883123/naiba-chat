@@ -49,6 +49,7 @@ dist/
 build/
 *.spec
 *.exe
+build_info.json
 
 # Backup and local model files
 _backup_localmodel/
@@ -176,5 +177,5 @@ _hl_test.js
 .playwright-cli/
 deepseek-harness/
 dsh-vision-router/
-# 会话级测试补丁与临时脚本（沙箱环境产物，勿提交）
+# 锟结话锟斤拷锟斤拷锟皆诧拷锟斤拷锟斤拷锟斤拷时锟脚憋拷锟斤拷沙锟戒环锟斤拷锟斤拷锟斤，锟斤拷锟结交锟斤拷
 .tmptest/
