@@ -116,7 +116,6 @@ class SkillAgent:
 - run_skill_script: {"skill":"技能名","script":"scripts/example.py","args":[],"timeout":120}
 - http_request: {"url":"https://...","method":"GET","headers":{},"body":null,"timeout":60,"max_bytes":100000}
 - register_mcp: {"id":"服务ID","command":"程序路径","args":[],"env":{},"enabled":true}
-- call_mcp: {"server":"服务ID","tool":"工具名","arguments":{}}
 
 只有确实需要调用工具时，才只输出一个 JSON 对象，不要 Markdown。例如：
 {"type":"tool","tool":"list_directory","arguments":{"path":"D:\\skill","recursive":false},"reason":"读取目标目录"}
@@ -189,11 +188,10 @@ class SkillAgent:
         # A Skill may document an external MCP client, but its metadata cannot
         # grant tools, start servers, or change this run's permissions.
         if isinstance(run_context, dict):
-            # MCP 披露改为常驻：只要会话声明了 call_mcp，就稳定注入已注册 MCP 说明，
+            # MCP 披露改为常驻：只要会话工具集声明了 mcp__ 工具，就稳定注入已注册 MCP 说明，
             # 不再按“本轮是否提及 mcp”渐进披露（避免 system 跨轮字节变化破坏前缀缓存）。
             run_context["mcp_active"] = bool(
-                "call_mcp" in allowed_tools
-                or any(str(name).startswith("mcp__") for name in allowed_tools)
+                any(str(name).startswith("mcp__") for name in allowed_tools)
             )
         # Official comfy-mcp is installed/registered only when a conversation
         # actually routes to that Skill.  It must never be a settings-page
@@ -368,7 +366,7 @@ class SkillAgent:
             )
         if {"comfyui_prepare_workflow", "comfyui_batch"} <= allowed:
             guide_parts.append("若已有多个 API 工作流，优先一次调用 comfyui_batch，不要让模型逐节点手工拼 JSON 或逐段手工轮询。")
-        if "call_mcp" in allowed or any(str(t).startswith("mcp__") for t in allowed):
+        if any(str(t).startswith("mcp__") for t in allowed):
             guide_parts.append(
                 "会话内可用工具在首条消息时固化；若你调用 MCP 服务后发现其具体工具不在当前会话可用集内，"
                 "应停下来告知用户：需重开会话并在新建会话的 Agent 工具勾选里加上该 MCP 工具，"
@@ -432,7 +430,7 @@ class SkillAgent:
             system += "\n\n用户配置的 Agent 指令：\n" + agent_system_prompt.strip()
         # MCP 工具不在系统提示里预置说明：其 schema 由 tools 数组在会话工具集内声明
         # （Frozen `allowed_tools`，字节稳定）；连接状态/可用性也不预置——模型调用
-        # call_mcp 时自然得知，避免连接状态变化破坏前缀缓存。
+        # mcp__ 工具时自然得知，避免连接状态变化破坏前缀缓存。
         if skill_prompts:
             system += "\n\n" + SKILL_PROMPT_HEADER + "\n\n".join(skill_prompts)
 
@@ -900,14 +898,6 @@ class SkillAgent:
             ):
                 if any(marker in result for marker in ('"connected": true', '"comfyui_reachable": true', '"status": "connected"')):
                     return False
-            if tool == "call_mcp":
-                nested = str(arguments.get("tool") or "").lower()
-                if any(marker in nested for marker in ("server_info", "environment", "status")):
-                    if any(marker in result for marker in (
-                        '"connected": true', '"comfyui_reachable": true',
-                        '"status": "connected"', '"running": true',
-                    )):
-                        return False
         return True
 
     @staticmethod
@@ -968,10 +958,6 @@ class SkillAgent:
                 marker in tool for marker in ("queue_prompt", "submit", "generate", "run_workflow")
             ) and result.strip():
                 return False
-            if tool == "call_mcp":
-                nested = str(arguments.get("tool") or "").lower()
-                if any(marker in nested for marker in ("queue_prompt", "submit", "generate", "run_workflow")) and result.strip():
-                    return False
         return True
 
     @staticmethod
@@ -1013,7 +999,7 @@ class SkillAgent:
         """
         if tool not in allowed:
             event({"type": "tool_started", "tool": tool})
-            if tool.startswith("mcp__") or tool == "call_mcp":
+            if tool.startswith("mcp__"):
                 # 会话工具集在首条消息时固化。MCP 服务即使已连接，其具体工具若不在
                 # 固化集合里，本会话也无法使用——不要让模型在会话内反复尝试，而是明确
                 # 停下来告知用户重开会话。
@@ -1024,21 +1010,6 @@ class SkillAgent:
                 )
             return False, f"Agent 设置已禁用工具：{tool}"
         event({"type": "tool_started", "tool": tool})
-        # call_mcp 是通用网关，本身在 allowed 内不代表其目标工具也可用。在“会话内工具固化”
-        # 原则下，只有 mcp__<server>__<tool> 在当前会话 allowed 集里的目标工具才允许调用；
-        # 否则停下来告知用户重开会话，不要借 call_mcp 绕过未启用的 MCP 工具。
-        if tool == "call_mcp":
-            server = str((arguments or {}).get("server") or "")
-            mcp_tool = str((arguments or {}).get("tool") or "")
-            if server and mcp_tool:
-                full = f"mcp__{server}__{mcp_tool}"
-                if full not in allowed:
-                    return False, (
-                        f"MCP 工具“{full}”不在当前会话的可用工具集内（会话工具集在首条消息时固化）。"
-                        "请停下来告知用户：需重开一个会话，并在新建会话的 Agent 工具勾选里加上"
-                        f"“{server}”服务的“{mcp_tool}”（或其对应的 mcp__ 工具）后，才能在本会话使用。"
-                        "不要在会话内反复重试。"
-                    )
 
         def _dispatch() -> tuple[bool, str]:
             if tool_registry is not None:

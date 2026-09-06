@@ -461,38 +461,6 @@ def _tool_http_request(ctx: ToolContext, args: dict[str, Any], active_skills: li
         return f"HTTP {exc.code}\n{exc.read(max_bytes).decode('utf-8', errors='replace')}"
 
 
-# call_mcp 的 legacy 只读转发集（旧 Skill 以本机服务名包装只读工具）
-_READ_IMPLS: dict[str, Callable[[ToolContext, dict[str, Any], list[dict[str, Any]]], str]] = {
-    "read_file": _tool_read_file,
-    "list_directory": _tool_list_directory,
-    "search_files": _tool_search_files,
-}
-
-
-def _tool_call_mcp(
-    ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None,
-) -> tuple[bool, str]:
-    server = str(args.get("server") or "")
-    tool = str(args.get("tool") or "")
-    arguments = args.get("arguments") or {}
-    if not isinstance(arguments, dict):
-        raise ValueError("MCP arguments 必须是对象")
-    if not server or not tool:
-        raise ValueError("server 和 tool 不能为空")
-    # Older Skills emitted the local server name for read-only tools.
-    if tool in _READ_IMPLS and server in {"naiba-chat", "comfyui"}:
-        return True, str(_READ_IMPLS[tool](ctx, arguments, active_skills or []))
-    # Map the historical ComfyUI id to the official server registration.
-    if server in {"naiba-chat", "comfyui"} and ctx.mcp_registry.connection("comfy-mcp") is not None:
-        server = "comfy-mcp"
-    # Compatibility for prompts written before the official server id was
-    # standardized. The old legacy ids now point to comfy-mcp.
-    if ctx.mcp_registry.connection(server) is None and server in {"naiba-chat", "comfyui", "comfyui-mcp"}:
-        if ctx.mcp_registry.connection("comfy-mcp") is not None:
-            server = "comfy-mcp"
-    return ctx.mcp_registry.call(server, tool, arguments)
-
-
 def _tool_register_mcp(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
     if not ctx.mcp_register:
         raise RuntimeError("当前 NaibaChat 版本不支持自动注册 MCP")
@@ -577,36 +545,6 @@ def _make_dangerous_policy(reason: str) -> Any:
     return policy
 
 
-def _make_call_mcp_policy(ctx: ToolContext) -> Any:
-    def policy(
-        tool: str,
-        arguments: dict[str, Any],
-        active_skills: list[dict[str, Any]],
-        permission_mode: str,
-        run_context: dict[str, Any] | None,
-        workspace: Path | None = None,
-    ) -> str:
-        # Legacy Skills may wrap local read-only tools in call_mcp：与直接只读工具同样
-        # 的路径边界检查（工作区取当前运行工作区）。
-        ws = workspace if workspace is not None else ctx.workspace
-        server = str((arguments or {}).get("server") or "").strip()
-        nested_tool = str((arguments or {}).get("tool") or "").strip()
-        nested_args = (arguments or {}).get("arguments") or {}
-        if (
-            server in {"naiba-chat", "comfyui"}
-            and nested_tool in {"read_file", "list_directory", "search_files"}
-            and isinstance(nested_args, dict)
-        ):
-            path = _resolve_read_path(ctx, nested_args.get("path"), active_skills, nested_tool != "read_file", ws)
-            if not any(path_within(path, root) for root in _read_roots(ws, active_skills)):
-                return f"读取工作区外路径：{path}"
-            return ""
-        if permission_mode == "auto":
-            return ""
-        return "调用MCP工具"
-    return policy
-
-
 def _make_core_policy(ctx: ToolContext, name: str) -> Any:
     """core 工具 def 级权限策略；None 表示走引擎默认（不应发生，防御性）。"""
     if name in _READ_FAMILY:
@@ -615,8 +553,6 @@ def _make_core_policy(ctx: ToolContext, name: str) -> Any:
         return _make_write_policy(ctx)
     if name == "http_request":
         return _http_request_policy
-    if name == "call_mcp":
-        return _make_call_mcp_policy(ctx)
     reason = _CORE_CONFIRM_REASONS.get(name)
     if reason:
         return _make_dangerous_policy(reason)
@@ -637,7 +573,6 @@ _STR_TOOL_FNS: dict[str, Callable[..., Any]] = {
     "http_request": _tool_http_request,
     "register_mcp": _tool_register_mcp,
 }
-_TUPLE_TOOL_FNS: dict[str, Callable[..., Any]] = {"call_mcp": _tool_call_mcp}
 
 # Harness 兼容别名的实现与策略（别名 def 与 canonical 同实现、同策略；查询层 resolve 归一）
 _ALIAS_IMPLS: dict[str, Callable[..., Any]] = {
@@ -662,14 +597,8 @@ def _make_str_execute(ctx: ToolContext, fn: Callable[..., Any]) -> Any:
     return execute
 
 
-def _make_tuple_execute(ctx: ToolContext, fn: Callable[..., Any]) -> Any:
-    def execute(arguments: dict[str, Any], active_skills: list[dict[str, Any]], run_context: dict[str, Any] | None = None) -> tuple[bool, str]:
-        return fn(ctx, arguments, active_skills)
-    return execute
-
-
 class CoreToolProvider:
-    """core 域 Provider：11 个核心工具的单一定义（schema + 实现函数绑定）。"""
+    """core 域 Provider：10 个核心工具（不含已删除的 call_mcp）的单一定义（schema + 实现函数绑定）。"""
 
     def __init__(self, context: ToolContext) -> None:
         self._context = context
@@ -677,9 +606,7 @@ class CoreToolProvider:
     def tools(self) -> list[ToolSpec]:
         results: list[ToolSpec] = []
         for spec in build_core_tool_specs():
-            if spec.name in _TUPLE_TOOL_FNS:
-                execute = _make_tuple_execute(self._context, _TUPLE_TOOL_FNS[spec.name])
-            elif spec.name in _STR_TOOL_FNS:
+            if spec.name in _STR_TOOL_FNS:
                 execute = _make_str_execute(self._context, _STR_TOOL_FNS[spec.name])
             else:
                 continue

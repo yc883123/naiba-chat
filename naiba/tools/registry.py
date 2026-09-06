@@ -72,6 +72,14 @@ HARNESS_ALIASES = {
     "grep": "search_files",
 }
 
+# 退役工具名 → 引导文案（不注册、模型不可见；仅失败路径提供可读引导）
+# 与 RETIRED_TOOL_MAP（旧名→新名，配置清洗用）配合：MAP 有映射则配置迁移替换为新名，
+# 无映射（如 call_mcp）则配置清洗时移除。
+RETIRED_TOOL_MAP: dict[str, str] = {}
+RETIRED_TOOL_GUIDE: dict[str, str] = {
+    "call_mcp": "call_mcp 已移除：MCP 工具现以 mcp__<server>__<tool> 直接暴露，请直接调用对应工具。",
+}
+
 
 def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bool) -> str:
     head = result[:300].replace("\n", " ").strip()
@@ -261,7 +269,8 @@ class ToolRegistry:
         name = self.resolve(tool)
         spec = self._specs.get(name)
         if spec is None:
-            return False, f"未知工具：{name}"
+            guide = RETIRED_TOOL_GUIDE.get(name)
+            return False, guide or f"未知工具：{name}"
         if spec.system:
             if spec.execute is None:
                 return False, f"系统工具缺少实现：{name}"
@@ -478,23 +487,6 @@ def build_core_tool_specs() -> list[ToolSpec]:
             side_effect=True,
             retryable=False,
             timeout=30,
-            permission="confirm",
-        ),
-        ToolSpec(
-            name="call_mcp",
-            description="调用已注册 MCP 服务的工具。",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "server": _string("服务 ID"),
-                    "tool": _string("工具名"),
-                    "arguments": {"type": "object", "default": {}},
-                },
-                "required": ["server", "tool"],
-            },
-            side_effect=True,
-            retryable=True,
-            timeout=620,
             permission="confirm",
         ),
     ]

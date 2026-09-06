@@ -111,15 +111,6 @@ class ReadOnlyToolExecutor:
     ) -> tuple[bool, str]:
         if tool in self.BLOCKED_TOOLS or "." in tool:
             return False, f"当前为只读模式，已禁止工具：{tool}"
-        if tool == "call_mcp":
-            server_id = str((arguments or {}).get("server") or "")
-            tool_name = str((arguments or {}).get("tool") or "")
-            registry = getattr(self._inner, "mcp_registry", None)
-            connection = getattr(registry, "connections", {}).get(server_id) if registry else None
-            metadata = next((item for item in getattr(connection, "tools", []) if item.get("name") == tool_name), None)
-            if not metadata or not bool((metadata.get("annotations") or {}).get("readOnlyHint")):
-                return False, f"当前为只读模式，已禁止工具：call_mcp:{server_id}.{tool_name}"
-            return self._inner.execute_unchecked(tool, arguments, active_skills, run_context)
         # 只读模式始终禁止 ComfyUI 的 run_workflow 等具有副作用的 MCP 工具。
         if tool.endswith("__run_workflow"):
             return False, f"当前为只读模式，已禁止工具：{tool}"

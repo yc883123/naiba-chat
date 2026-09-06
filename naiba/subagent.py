@@ -33,7 +33,6 @@ SUBAGENT_ALLOWED_TOOLS = [
     "pwsh",
     "run_skill_script",
     "http_request",
-    "call_mcp",
 ]
 
 SUBAGENT_BLOCKED_TOOLS = {

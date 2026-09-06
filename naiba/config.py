@@ -131,7 +131,7 @@ def default_config() -> dict[str, Any]:
 _BUILT_IN_SCOPE_ALL = (
     "read_file", "list_directory", "search_files", "glob_files",
     "write_file", "edit_file", "pwsh", "run_skill_script",
-    "http_request", "web_search", "register_mcp", "call_mcp",
+    "http_request", "web_search", "register_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
     "todo_write", "artifact_report", "recall_history",
     "comfyui_prepare_workflow", "comfyui_batch",
@@ -210,7 +210,7 @@ _TOOL_GROUP = {
     "pwsh": "命令执行",
     "run_skill_script": "Skill 脚本",
     "http_request": "网络", "web_search": "网络",
-    "register_mcp": "MCP", "call_mcp": "MCP",
+    "register_mcp": "MCP",
     "run_in_background": "后台/Job/子任务", "job_output": "后台/Job/子任务", "job_status": "后台/Job/子任务",
     "job_wait": "后台/Job/子任务", "job_kill": "后台/Job/子任务", "subagent": "后台/Job/子任务",
     "todo_write": "后台/Job/子任务", "artifact_report": "后台/Job/子任务",
@@ -257,7 +257,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     order = (
         "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
         "pwsh", "run_skill_script", "http_request", "web_search",
-        "register_mcp", "call_mcp",
+        "register_mcp",
         "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
         "todo_write", "artifact_report", "recall_history",
         "comfyui_prepare_workflow", "comfyui_batch",
@@ -396,12 +396,12 @@ def resolve_tool_preset(preset: dict[str, Any], entries: list[dict[str, Any]]) -
     for raw in preset.get("exclude") or []:
         selected.discard(str(raw))
     # exclude_mcp：预设声明“不启用 MCP 通道”时，无论 include 怎么展开，都剔除
-    # 动态 MCP 工具（mcp__<server>__<tool>）与 MCP 网关入口（register_mcp/call_mcp），
+    # 动态 MCP 工具（mcp__<server>__<tool>）与 MCP 网关入口（register_mcp），
     # 防止将来新增 MCP 服务/分类后自动污染本预设。
     if preset.get("exclude_mcp"):
         selected = {
             n for n in selected
-            if not n.startswith("mcp__") and n not in ("register_mcp", "call_mcp")
+            if not n.startswith("mcp__") and n not in ("register_mcp",)
         }
     order = {str(item.get("name")): i for i, item in enumerate(entries)}
     return sorted(selected, key=lambda name: order.get(name, 999))
@@ -511,11 +511,11 @@ class ConfigStore:
             legacy_default = {
                 "read_file", "write_file", "list_directory", "search_files",
                 "run_skill_script", "http_request",
-                "register_mcp", "call_mcp",
+                "register_mcp",
             }
             # 旧配置只要等同于「历史默认工具集」（含 run_command 或已为 pwsh 都算）
             # 就移除默认 MCP 入口；定制过的工具集保留原选择，仅做死工具名映射。
-            if set(mapped) <= legacy_default | {"pwsh"}:
+            if set(mapped) <= legacy_default | {"pwsh", "call_mcp"}:
                 self.data["agent_tools"] = [
                     item for item in mapped if item not in {"register_mcp", "call_mcp"}
                 ]
@@ -541,7 +541,7 @@ class ConfigStore:
             agent["skill_ids"] = [str(item) for item in skills if str(item) not in legacy]
 
     def _migrate_legacy_tool_names(self) -> None:
-        """run_command 已并入 pwsh：清理持久化 Agent 工具范围里的死工具名。"""
+        """run_command 已并入 pwsh、call_mcp 已移除：清理持久化 Agent 工具范围里的死工具名。"""
         agents = self.data.get("agents")
         if not isinstance(agents, list):
             return
@@ -553,6 +553,7 @@ class ConfigStore:
                 agent["tool_scope"] = [
                     "pwsh" if str(item) == "run_command" else item
                     for item in scope
+                    if str(item) != "call_mcp"
                 ]
 
     def _migrate_conversation_prompt_presets(self) -> None:

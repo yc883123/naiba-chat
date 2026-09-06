@@ -187,7 +187,7 @@ class SkillCatalog:
                 requires_mcp = (
                     declared_mcp in {"1", "true", "yes", "required"}
                     or "mcp" in mcp_signals
-                    or "call_mcp" in text
+                    or "mcp__" in text
                 )
                 try:
                     stable_path = skill_file.relative_to(directory)
