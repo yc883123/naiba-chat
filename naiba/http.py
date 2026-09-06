@@ -919,91 +919,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _parse_character_card(self, body: dict[str, Any]) -> None:
-        """解析 SillyTavern 角色卡 PNG，返回归一化的人设 system_prompt 文本。"""
-        encoded = str(body.get("data") or "")
-        if "," in encoded and encoded.startswith("data:"):
-            encoded = encoded.split(",", 1)[1]
-        try:
-            data = base64.b64decode(encoded, validate=True)
-        except ValueError:
-            self._json({"error": "文件内容不是有效 Base64"}, HTTPStatus.BAD_REQUEST)
-            return
-        if len(data) > 80 * 1024 * 1024:
-            self._json({"error": "角色卡文件不能超过 80 MB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
-            return
-        try:
-            result = parse_sillytavern_card(data)
-        except ValueError as exc:
-            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-            return
-        # Every successful character-card parse is also preserved as an
-        # independent reusable prompt.  This does not touch any conversation;
-        # callers may still decide whether to copy the returned text into the
-        # currently open settings draft.
-        filename = Path(str(body.get("name") or "")).name
-        fallback_title = Path(filename).stem.strip()
-        title = str((result.get("meta") or {}).get("name") or "").strip() or fallback_title or "未命名角色"
-        try:
-            result["preset"] = self.app.config.add_conversation_prompt_preset(
-                title, str(result.get("system_prompt") or ""), "character_card"
-            )
-        except ValueError:
-            # A card without a usable normalized prompt remains a successful
-            # parse response for old clients, but must not create an entry.
-            pass
-        self._json(result)
+        self._json(*self.app._parse_character_card(body))
 
     def _upload(self, body: dict[str, Any]) -> None:
-        name = Path(str(body.get("name") or "upload.bin")).name
-        encoded = str(body.get("data") or "")
-        if "," in encoded and encoded.startswith("data:"):
-            encoded = encoded.split(",", 1)[1]
-        try:
-            data = base64.b64decode(encoded, validate=True)
-        except ValueError:
-            self._json({"error": "文件内容不是有效 Base64"}, HTTPStatus.BAD_REQUEST)
-            return
-        if len(data) > 80 * 1024 * 1024:
-            self._json({"error": "单个文件不能超过 80 MB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
-            return
-        safe_name = re.sub(r"[^A-Za-z0-9._\-\u4e00-\u9fff]", "_", name)
-        target_dir = (self.app.paths.data_dir / "uploads").resolve()
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / f"naiba_chat_{int(time.time())}_{secrets.token_hex(3)}_{safe_name}"
-        imaging = dict(self.app.config.data.get("imaging") or {}) if getattr(self.app, "config", None) else {}
-        main_bytes, thumb_name, thumb_bytes = _process_uploaded_image(data, target.name, imaging)
-        target.write_bytes(main_bytes)
-        thumb_path = ""
-        if thumb_name and thumb_bytes:
-            thumb_file = target_dir / thumb_name
-            thumb_file.write_bytes(thumb_bytes)
-            thumb_path = str(thumb_file)
-        self._json({
-            "name": target.name,
-            "path": str(target),
-            "size": len(main_bytes),
-            "thumb_path": thumb_path,
-        })
+        self._json(*self.app._upload(body))
 
     def _install_dir(self, body: dict[str, Any]) -> None:
-        raw = str(body.get("dir") or "").strip()
-        try:
-            resolved = self.app.config.add_skills_dir(raw)
-        except ValueError as exc:
-            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-            return
-        self.app.catalog.add_directory(raw)
-        skills = self.app.catalog.scan()
-        self._json({"dir": str(resolved), "configured": self.app.config.get_skills_dirs(), "skills": skills})
+        self._json(*self.app._install_dir(body))
 
     def _remove_install_dir(self, body: dict[str, Any]) -> None:
-        raw = str(body.get("dir") or "").strip()
-        if not raw:
-            self._json({"error": "目录路径不能为空"}, HTTPStatus.BAD_REQUEST)
-            return
-        configured = self.app.config.remove_skills_dir(raw)
-        self.app.catalog.remove_directory(raw)
-        self._json({"configured": configured, "skills": self.app.catalog.scan()})
+        self._json(*self.app._remove_install_dir(body))
 
     def _resolve_skill_dest(self, body: dict[str, Any]) -> tuple[str, Path] | None:
         """解析 Skill 安装目标目录：未指定时默认安装到托管 Skills 目录。
@@ -1167,201 +1092,35 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._finish_install(dest_raw, dest, {"files": len(pending)})
 
     def _hidden_skill_entries(self) -> list[dict[str, Any]]:
-        """返回当前被隐藏（命中 hidden_skill_ids，但不带隐藏过滤扫描得到）的 Skill 条目。"""
-        hidden_ids = set(self.app.config.get_hidden_skill_ids())
-        if not hidden_ids:
-            return []
-        try:
-            all_skills = SkillCatalog(list(self.app.catalog.directories)).scan()
-        except Exception:  # noqa: BLE001 - 隐藏列表只是展示信息，不应让扫描失败
-            return []
-        return [
-            {**item, "hidden": True}
-            for item in all_skills
-            if str(item.get("id") or "") in hidden_ids
-        ]
+        return self.app._hidden_skill_entries()
 
     def _unhide_skill(self, body: dict[str, Any]) -> None:
-        skill_id = str(body.get("skill_id") or "").strip()
-        if not skill_id:
-            self._json({"error": "skill_id 不能为空"}, HTTPStatus.BAD_REQUEST)
-            return
-        self.app.config.unhide_skill(skill_id)
-        self.app.catalog.hidden_ids.discard(skill_id)
-        self._json({
-            "ok": True,
-            "skills": self.app.catalog.scan(),
-            "hidden_skills": self._hidden_skill_entries(),
-        })
+        self._json(*self.app._unhide_skill(body))
 
     def _delete_skill(self, body: dict[str, Any]) -> None:
-        skill_id = str(body.get("skill_id") or "").strip()
-        if not skill_id:
-            self._json({"error": "skill_id 不能为空"}, HTTPStatus.BAD_REQUEST)
-            return
-        self._delete_skill_by_id(skill_id)
+        self._json(*self.app._delete_skill(body))
 
-    def _delete_skill_by_id(self, skill_id: str) -> None:
-        """可恢复删除：移动到应用托管的回收目录，并从 Agent 固定 Skill 中清理引用。"""
-        skills = self.app.catalog.by_id()
-        skill = skills.get(skill_id)
-        if not skill:
-            self._json({"error": "Skill 不存在"}, HTTPStatus.NOT_FOUND)
-            return
-        root = Path(str(skill.get("root") or skill.get("path") or "")).expanduser().resolve()
-        if not root.exists():
-            self._json({"error": "Skill 目录不存在"}, HTTPStatus.NOT_FOUND)
-            return
-        managed_dir = root.parent
-        recycle_dir = self.app.paths.data_dir / "skills_recycle"
-        agents = self.app.config.public_agents()
-        try:
-            result = delete_skill(
-                skill_id,
-                str(recycle_dir),
-                agents,
-                str(managed_dir),
-                skills_by_id=skills,
-            )
-        except Exception as exc:  # noqa: BLE001
-            self._json({"error": f"删除失败：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
-            return
-        if not result.get("success"):
-            self._json({"error": result.get("error", "删除失败")}, HTTPStatus.BAD_REQUEST)
-            return
-        if result.get("hidden"):
-            self.app.config.hide_skill(skill_id)
-            self.app.catalog.hidden_ids.add(skill_id)
-        updated_agents = remove_skill_references(skill_id, agents)
-        for agent in updated_agents:
-            if agent.get("id") in built_in_agent_ids():
-                continue
-            try:
-                self.app.config.upsert_agent(agent)
-            except Exception:  # noqa: BLE001
-                pass
-        self._json(
-            {
-                "ok": True,
-                "recycled_to": result.get("recycled_to"),
-                "hidden": bool(result.get("hidden")),
-                "cleaned_agent_refs": result.get("cleaned_agent_refs", []),
-                "skills": self.app.catalog.scan(),
-                "agents": self.app.config.public_agents(),
-                "hidden_skills": self._hidden_skill_entries(),
-            }
-        )
+    def _delete_skill_by_id(self, body: dict[str, Any]) -> None:
+        self._json(*self.app._delete_skill_by_id(body))
 
 
     def _test_provider(self, body: dict[str, Any]) -> None:
-        try:
-            provider = self._resolve_model_profile(body)
-            result = self.app.models.complete(
-                provider,
-                [
-                    {"role": "system", "content": "你是连接测试助手。直接回答，不要调用工具。"},
-                    {"role": "user", "content": "只回复 OK"},
-                ],
-                {"temperature": 0, "max_tokens": 128, "stream": False, "connection_test": True},
-            )
-            capability_resolver = getattr(self.app.vision, "brain_image_capability", None)
-            capability = (
-                capability_resolver(provider, probe_if_unknown=True)
-                if callable(capability_resolver)
-                else {
-                    "supported": bool(self.app.vision.brain_supports_images(provider)),
-                    "confirmed": False,
-                    "source": "model_name",
-                }
-            )
-            self._json({
-                "ok": True,
-                "response": result,
-                "supports_images": bool(capability.get("supported")),
-                "capability_confirmed": bool(capability.get("confirmed")),
-                "capability_source": str(capability.get("source") or "model_name"),
-                "proxy_state": net_io.proxy_state(),
-            })
-        except Exception as exc:
-            proxy_note = (net_io.proxy_state().get("note") or "").strip()
-            suffix = f"（外部请求：{proxy_note}）" if proxy_note else ""
-            self._json({"ok": False, "error": f"{exc}{suffix}"}, HTTPStatus.BAD_REQUEST)
+        self._json(*self.app._test_provider(body))
 
     def _provider_models(self, body: dict[str, Any]) -> None:
-        try:
-            provider = self._resolve_model_profile(body)
-            self._json({"models": self.app.models.list_online_models(provider)})
-        except Exception as exc:
-            proxy_note = (net_io.proxy_state().get("note") or "").strip()
-            suffix = f"（外部请求：{proxy_note}）" if proxy_note else ""
-            self._json({"error": f"{exc}{suffix}"}, HTTPStatus.BAD_REQUEST)
+        self._json(*self.app._provider_models(body))
 
     def _unload_provider(self, body: dict[str, Any]) -> None:
-        try:
-            model_key = str(body.get("model_key") or "").strip()
-            provider = self.app.config.profile(model_key)
-            result = self.app.models.unload_local_model(provider)
-            self._json({"ok": True, **result})
-        except Exception as exc:
-            self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        self._json(*self.app._unload_provider(body))
 
     def _resolve_model_profile(self, body: dict[str, Any]) -> dict[str, Any]:
-        """优先用 model_key 解析，缺失时回退到内联 provider（兼容旧调用）。"""
-        model_key = str(body.get("model_key") or "").strip()
-        if model_key:
-            return self.app.config.profile(model_key)
-        return self._provider_profile(body)
+        return self.app._resolve_model_profile(body)
 
     def _provider_profile(self, body: dict[str, Any]) -> dict[str, Any]:
-        provider = dict(body)
-        if provider.get("id") and not provider.get("api_key"):
-            stored = next(
-                (item for item in self.app.config.data.get("providers", []) if item.get("id") == provider["id"]),
-                None,
-            )
-            if stored:
-                provider = {
-                    **stored,
-                    **{
-                        key: value for key, value in provider.items()
-                        if key != "api_key" or bool(value)
-                    },
-                }
-        request_format = str(provider.get("request_format") or "openai_chat").strip().lower()
-        provider["kind"] = (
-            str(provider.get("kind") or "").strip().lower()
-            if str(provider.get("kind") or "").strip().lower() in VALID_MODEL_KINDS
-            else _infer_kind_for_request_format(request_format)
-        )
-        explicit_images = provider.get("supports_images")
-        provider["supports_images_explicit"] = (
-            explicit_images if isinstance(explicit_images, bool) else None
-        )
-        return provider
+        return self.app._provider_profile(body)
 
     def _edit_message(self, body: dict[str, Any]) -> None:
-        """删除指定消息及其之后所有消息，供"从该处重新编辑对话"使用。
-
-        前端随后会携带新内容调用 /api/chat 重发一轮，因此这里只负责截断。
-        """
-        conversation_id = str(body.get("conversation_id") or "")
-        message_id = str(body.get("message_id") or "")
-        if not conversation_id or not message_id:
-            self._json({"error": "conversation_id 和 message_id 不能为空"}, HTTPStatus.BAD_REQUEST)
-            return
-        conversation = self.app.storage.get_conversation(conversation_id)
-        if not conversation:
-            self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
-            return
-        target = next((m for m in conversation.get("messages", []) if m.get("id") == message_id), None)
-        if not target:
-            self._json({"error": "消息不存在"}, HTTPStatus.NOT_FOUND)
-            return
-        if target.get("role") != "user":
-            self._json({"error": "只能编辑用户消息"}, HTTPStatus.BAD_REQUEST)
-            return
-        removed = self.app.storage.truncate_from_message(conversation_id, message_id)
-        self._json({"ok": True, "removed": removed, "attachments": (target.get("metadata") or {}).get("attachments") or []})
+        self._json(*self.app._edit_message(body))
 
     def _chat(self, body: dict[str, Any]) -> None:
         try:
@@ -1416,33 +1175,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
 
     def _confirm_tool(self, body: dict[str, Any]) -> None:
-        confirm_id = str(body.get("confirm_id") or "").strip()
-        run_id = str(body.get("run_id") or "").strip()
-        if not confirm_id or not run_id:
-            self._json({"error": "run_id 和 confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
-            return
-        # Do not hold the browser's approval request open while a generation,
-        # command or MCP action runs for minutes. The owning Run keeps waiting
-        # for the real result through the confirmation condition.
-        result_pair = self.app.runs.confirm_tool_async(run_id, confirm_id)
-        if result_pair is None:
-            self._json({"error": "确认请求不属于该运行或已失效"}, HTTPStatus.CONFLICT)
-            return
-        success, result = result_pair
-        self._json({"success": success, "result": result})
+        self._json(*self.app._confirm_tool(body))
 
     def _reject_tool(self, body: dict[str, Any]) -> None:
-        confirm_id = str(body.get("confirm_id") or "").strip()
-        run_id = str(body.get("run_id") or "").strip()
-        if not confirm_id or not run_id:
-            self._json({"error": "run_id 和 confirm_id 不能为空"}, HTTPStatus.BAD_REQUEST)
-            return
-        result_pair = self.app.runs.reject_tool(run_id, confirm_id)
-        if result_pair is None:
-            self._json({"error": "确认请求不属于该运行或已失效"}, HTTPStatus.CONFLICT)
-            return
-        success, result = result_pair
-        self._json({"success": success, "result": result})
+        self._json(*self.app._reject_tool(body))
 
 
 # ---- 服务生命周期：状态文件 / 实例锁 / 主入口（自 server.py 收口迁入） ----

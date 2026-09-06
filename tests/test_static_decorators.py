@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from naiba.app import NaibaChatApp  # noqa: E402
 from naiba.http import RequestHandler  # noqa: E402
 
 
@@ -44,13 +45,11 @@ class StaticDecoratorGuardTests(unittest.TestCase):
 
     def test_provider_profile_merges_stored_api_key(self):
         handler = RequestHandler.__new__(RequestHandler)
-        handler.server = SimpleNamespace(
-            app=SimpleNamespace(
-                config=SimpleNamespace(
-                    data={"providers": [{"id": "demo", "name": "演示", "api_key": "sk-1"}]}
-                )
-            )
+        app = NaibaChatApp.__new__(NaibaChatApp)
+        app.config = SimpleNamespace(
+            data={"providers": [{"id": "demo", "name": "演示", "api_key": "sk-1"}]}
         )
+        handler.server = SimpleNamespace(app=app)
         profile = handler._provider_profile({"id": "demo"})
         self.assertEqual(profile["api_key"], "sk-1")
         # 未指定 id 时按内联 provider 原样返回（kind 推断不报错）。
