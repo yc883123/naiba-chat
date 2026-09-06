@@ -6,6 +6,11 @@
   "sha256": "d7c07dc07699788ce34e9104754d87b25e764617bd986e24b8941db6064fd369",
   "published_at": "2026-09-05T00:00:00.0000000Z",
   "release_notes": [
+    "Naiba Chat 2.0.0 Beta 补充：工具职责收敛——glob_files 并入 list_directory（新增 pattern/files_only 参数，旧调用自动迁移并返回引导提示）；read_file 的 max_chars 不再对模型暴露（单次读取受 50 行×30000 字符硬预算约束）；search_files 的 path 允许留空=工作区根。",
+    "Naiba Chat 2.0.0 Beta 补充：工具设计修正——read_file 按行返回（默认最多 50 行或 30000 字符，截断时告知行区间与续读起点，支持精确行区间与行号输出）；pwsh/脚本非零退出码与 http_request 4xx/5xx 现在按失败上报（模型可正确重试/降级）；文件枚举按名称排序并支持续枚举；搜索默认区分大小写并汇总命中数与跳过文件；后台任务输出附带游标进度，可增量续读。",
+    "Naiba Chat 2.0.0 Beta 补充：工具返回对模型可见性统一——模型上下文只含「工具名 + 成败 + 结果」，参数与理由（模型自产）不再重复进上下文；结果剥离宿主机器字段（图片存储路径/缩略图/尺寸、SHA-256、产物路径），超长结果带「已截断」标记；前端展示与模型上下文同源。",
+    "Naiba Chat 2.0.0 Beta 补充：工具清单净化——Harness 兼容别名（read/write/edit/grep）从模型可见工具清单隐藏（仅保留查询层归一与执行兼容，历史调用不受影响）；清理随重构废弃的旧版 Run 调度器副本。",
+    "Naiba Chat 2.0.0 Beta 补充：视觉调用统一由模型驱动（含行为变更）\n移除「设置→视觉→自动路由」开关与后台自动识图：纯文本模型上传图片时不再后台调用视觉链注入描述，而是把图片改写为路径引用占位，由模型按需主动调用 vision_analyze 工具（结果与其它工具一样以工具块呈现）；支持视觉的多模态模型仍直接收到原图。旧配置残留的 vision.auto_route 启动时自动清洗；视觉工具的事件呈现与其它工具完全一致。",
     "Naiba Chat 2.0.0 Beta 更新：完成后端全面模块化重构（阶段 0-4）——核心代码迁入 naiba/ 包、依赖图单向无环、server.py 收口为 136 行门面，HTTP 层仅剩薄包装与传输职责，业务逻辑全部下沉至 NaibaChatApp 与领域模块；HTTP API 与事件协议版式不变，前端零配合。",
     "Naiba Chat 2.0.0 Beta 补充：工具系统增强（含破坏性变更）\n① 视觉工具单入口重构：8 个视觉工具合并为 vision_analyze（唯一识图入口，按会话模型能力自动提供「视觉后端分析」或「图片装载」，工具名恒定、模型无需自省）与 vision_image_ops（本地图像计算：主色/裁剪/像素对比）；原 vision_describe/vision_ground/vision_detect/vision_ocr/vision_colors/vision_crop/vision_pixel_diff/vision_read_folder 已移除——旧配置自动迁移至新入口，旧调用返回替换引导提示。\n② call_mcp 网关已移除：MCP 工具以 mcp__<server>__<tool> 直接暴露，请直接调用对应工具；旧配置自动清理，旧调用返回引导提示。\n③ 工具集不再按模型能力区分：多模态/文本模型看到相同的视觉工具集，模型能力差异由会话化工具形态（RunContext.tool_defs）处理。",
     "Naiba Chat 2.0.0 Beta 补充：DeepSeek 思考模式工具轮兼容修复\n修复 deepseek-v4-flash / v4-pro（Responses API + thinking）工具调用轮次 400：\n「The reasoning_text in the thinking mode must be passed back to the API」。\n根因：携带 tools 的请求必须完整回传历史 reasoning，实测确证的合法形态为\n`{\"type\":\"reasoning\",\"content\":[{\"type\":\"reasoning_text\",\"text\":\"…\"}]}`（块数组）；\n`reasoning_text` 字段与明文 content 均不被接受。另：vision-exp 在服务端不校验 thinking 回传\n（两模型客户端行为一致，属服务端特性，无需适配）；超时兜底——若仍遇该 400，自动移除 tools\n重试一次以保证对话不中断。",
