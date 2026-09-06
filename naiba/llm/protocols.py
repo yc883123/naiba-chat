@@ -116,28 +116,29 @@ class ProtocolMixins:
                 })
                 continue
             if role == "assistant":
-                # DeepSeek 思考模式规范：携带 tools 的请求，所有历史轮次的 reasoning
-                # 必须完整回传（字段名 reasoning_text，与响应事件 reasoning_text.delta 对称），
-                # 否则 400 "The reasoning_text in the thinking mode must be passed back"。
-                # 无 tools 轮次 API 会忽略该字段，因此仅在有值时才携带。
+                # DeepSeek 思考模式：携带 tools 的请求，历史轮次推理必须回传，否则 400
+                # "The reasoning_text in the thinking mode must be passed back"。
+                # 实测确证的合法形态：独立 `{"type":"reasoning","content":[{"type":
+                # "reasoning_text","text":"…"}]}`（content 必须为内容块数组——明文字符串会被
+                # serde 拒绝 "invalid type: string ... expected a sequence"；assistant 消息上的
+                # reasoning_text 字段不被识别为回传）。
                 reasoning_text = item.get("reasoning_content")
                 if reasoning_text is None:
                     reasoning_text = item.get("reasoning")
-                reasoning_fields = (
-                    {"reasoning_text": str(reasoning_text)}
-                    if reasoning_text is not None and str(reasoning_text).strip()
-                    else {}
-                )
+                if reasoning_text is not None and str(reasoning_text).strip():
+                    converted.append({
+                        "type": "reasoning",
+                        "content": [
+                            {"type": "reasoning_text", "text": str(reasoning_text)}
+                        ],
+                    })
                 if isinstance(item.get("tool_calls"), list):
-                    # assistant 消息在前（与 function_call 相邻，DeepSeek 归并语义），
-                    # function_call 与 function_call_output 必须保持相邻配对——
-                    # 任何插在两者之间的 item 都会导致 "No tool output found"。
-                    if reasoning_fields:
-                        converted.append({
-                            "role": "assistant",
-                            "content": ProtocolMixins._responses_content(item.get("content"), role),
-                            **reasoning_fields,
-                        })
+                    # reasoning/assistant/function_call 相邻成组；function_call 与
+                    # function_call_output 保持相邻配对（中间不可插入 item）。
+                    converted.append({
+                        "role": "assistant",
+                        "content": ProtocolMixins._responses_content(item.get("content"), role),
+                    })
                     converted.extend({
                         "type": "function_call",
                         "call_id": str(call.get("id") or ""),
@@ -148,7 +149,6 @@ class ProtocolMixins:
                 converted.append({
                     "role": role,
                     "content": ProtocolMixins._responses_content(item.get("content"), role),
-                    **reasoning_fields,
                 })
                 continue
             converted.append({
