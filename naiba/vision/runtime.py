@@ -782,6 +782,11 @@ class VisionRouter:
             merged_text = (text + "\n\n" + marker).strip() if text else marker
             new_history.append({**item, "content": [{"type": "text", "text": merged_text}]})
         new_history = self._apply_image_memory(new_history)
+        # 图片记忆只服务当次 prepare_history（本轮重放历史中较早轮次占位的回填）：
+        # 立即清空，防止跨 run/跨会话（含分支会话）把旧反推结果注入无关上下文。
+        with self._path_lock:
+            self._path_cache.clear()
+            self._path_cache_identity.clear()
         notes = []
         if recognized_images:
             notes.append(f"已自动识图 {recognized_images} 张图片")

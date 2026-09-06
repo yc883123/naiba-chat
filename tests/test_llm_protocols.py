@@ -55,15 +55,17 @@ class LlmProtocolTests(unittest.TestCase):
         ])
         self.assertEqual(out[0]["reasoning_text"], "思考中")
         self.assertEqual(out[0]["role"], "assistant")
-        # tool_calls 轮：function_call 项 + 相邻 assistant 消息（reasoning_text 随行回传）
+        # tool_calls 轮：assistant 消息（reasoning_text 随行）在前，function_call 紧随
+        # （function_call 与 function_call_output 必须相邻配对，否则 "No tool output found"）
         out2 = P._responses_input([
             {"role": "assistant", "content": "",
              "reasoning": "先调用工具",
              "tool_calls": [{"id": "c1", "name": "pwsh", "arguments": {"command": "dir"}}]},
         ])
-        self.assertEqual(out2[0]["type"], "function_call")
-        self.assertEqual(out2[1]["role"], "assistant")
-        self.assertEqual(out2[1]["reasoning_text"], "先调用工具")
+        self.assertEqual(out2[0]["role"], "assistant")
+        self.assertEqual(out2[0]["reasoning_text"], "先调用工具")
+        self.assertEqual(out2[1]["type"], "function_call")
+        self.assertEqual(out2[1]["call_id"], "c1")
         # 无 reasoning 时不携带空字段
         out3 = P._responses_input([{"role": "assistant", "content": "回答"}])
         self.assertNotIn("reasoning_text", out3[0])

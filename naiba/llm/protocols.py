@@ -129,19 +129,21 @@ class ProtocolMixins:
                     else {}
                 )
                 if isinstance(item.get("tool_calls"), list):
-                    converted.extend({
-                        "type": "function_call",
-                        "call_id": str(call.get("id") or ""),
-                        "name": str(call.get("name") or ""),
-                        "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
-                    } for call in item["tool_calls"] if isinstance(call, dict))
-                    # function_call 归并到相邻 assistant 消息：reasoning_text 随 assistant 消息回传
+                    # assistant 消息在前（与 function_call 相邻，DeepSeek 归并语义），
+                    # function_call 与 function_call_output 必须保持相邻配对——
+                    # 任何插在两者之间的 item 都会导致 "No tool output found"。
                     if reasoning_fields:
                         converted.append({
                             "role": "assistant",
                             "content": ProtocolMixins._responses_content(item.get("content"), role),
                             **reasoning_fields,
                         })
+                    converted.extend({
+                        "type": "function_call",
+                        "call_id": str(call.get("id") or ""),
+                        "name": str(call.get("name") or ""),
+                        "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
+                    } for call in item["tool_calls"] if isinstance(call, dict))
                     continue
                 converted.append({
                     "role": role,
