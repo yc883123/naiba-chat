@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from naiba.core.contracts import AppContext
 
-import base64
 import hashlib
 import io
 import json
@@ -32,10 +31,6 @@ import net_io
 from model_runtime import ModelRuntime
 from naiba.storage.media import _process_uploaded_image
 from naiba.vision.images import (
-    IMAGE_MEDIA_TYPES,
-    MAX_EDGE,
-    TARGET_BYTES,
-    _encode_image_bytes,
     _image_size,
     _make_probe_jpeg_b64,
     _read_rgb,

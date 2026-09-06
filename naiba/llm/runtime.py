@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import logging
 import re
 import threading
@@ -17,11 +16,9 @@ import net_io
 from naiba.llm.protocols import ProtocolMixins
 from naiba.llm.stream import StreamMixins
 from naiba.core.diagnostics import (
-    _cache_debug_enabled,
     _debug_complete_marker,
     _debug_payload_dump,
     _debug_wire_digest,
-    _sanitize_payload,
 )
 
 logger = logging.getLogger("naiba.model_runtime")

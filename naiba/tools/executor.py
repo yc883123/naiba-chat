@@ -8,7 +8,6 @@ _powershell_literal（原 skill_runtime 模块级，仅执行器使用）。
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import sys

@@ -6,9 +6,7 @@ from __future__ import annotations
 import base64
 import gzip
 import json
-import re
 import struct
-from pathlib import Path
 from typing import Any
 
 

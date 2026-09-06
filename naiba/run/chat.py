@@ -10,31 +10,20 @@ from __future__ import annotations
 from naiba.core.contracts import MetadataKeys, RunContext
 
 import json
-import re
 import threading
 import time
 import traceback
-from pathlib import Path
 from typing import Any
 
-from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor, normalize_interaction_mode, resolve_mode_tools
+from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor
 from skill_runtime import DEFAULT_CONTEXT_WINDOW, SkillAgent, TaskCancelled, normalize_skill_policy
-from vision_runtime import IMAGE_SUFFIXES, VISION_TOOL_NAMES, VisionBudget
+from vision_runtime import VisionBudget
 from naiba.core.attachments import _image_intent, extract_attachments
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.exceptions import ActiveRunError
 from naiba.core.file_changes import file_changes_from_runs
 from naiba.core.history import build_model_history
-from naiba.run.stream import _RunEventSink, _safe_activity, _build_activity_timeline
-from naiba.run.session import (
-    all_tool_names,
-    attachments_have_images,
-    bake_session_tool_ids,
-    enable_conversation_tools,
-    generation_options,
-    resolve_allowed_tools,
-    routing_message,
-)
+from naiba.run.stream import _RunEventSink, _safe_activity
 
 def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Extract normalized, deduplicated citations from successful search calls."""

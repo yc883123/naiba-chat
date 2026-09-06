@@ -151,23 +151,3 @@ def migrate_legacy_data(paths: PathContext) -> dict[str, Any]:
         report["migrated"] = True
         report["source"] = str(paths.exe_dir)
     return report
-
-
-from naiba.config import (
-    ConfigStore,
-    VALID_MODEL_KINDS,
-    _context_window_source,
-    _infer_context_window,
-    _infer_kind_for_request_format,
-    _infer_supports_images,
-    built_in_agent_ids,
-    built_in_agents,
-    default_config,
-    resolve_tool_preset,
-    tool_catalog_entries,
-    tool_group_entries,
-    tool_preset_entries,
-    validate_skills_dir,
-)
-
-
