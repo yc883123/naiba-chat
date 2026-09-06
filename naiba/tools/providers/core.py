@@ -354,6 +354,8 @@ def _search_one_file(
 
 def _tool_search_files(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
     root = _resolve_read_path(ctx, args.get("path"), active_skills, default_workspace=True)
+    if not root.exists():
+        raise ValueError(f"路径不存在：{root}")
     query = str(args.get("query") or "")
     pattern = str(args.get("pattern") or "*")
     limit = min(max(int(args.get("limit", 100)), 1), 500)
@@ -373,6 +375,29 @@ def _tool_search_files(ctx: ToolContext, args: dict[str, Any], active_skills: li
             compiled = re.compile(query, flags)
         except re.error as exc:
             raise ValueError(f"正则无效：{exc}") from exc
+
+    def _search_single_file(path: Path) -> tuple[str | None, int]:
+        try:
+            content = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return None, 0
+        if not content:
+            return None, 0
+        return _search_one_file(
+            path, content, query, regex=regex,
+            ignore_case=ignore_case, context_lines=context_lines,
+            multiline=multiline, compiled=compiled if regex else None,
+        )
+
+    # path 指向单个文件时：直接在该文件内搜索（pattern 仅目录模式下生效）。
+    # 此前把文件路径静默当"空目录"处理，导致"未找到匹配内容"的误导性空结果、
+    # 模型误以为文件被跳过/编码问题而反复试错。
+    if root.is_file():
+        found, hits = _search_single_file(root)
+        if found:
+            return found + (f"\n共 {hits} 处命中。" if hits else "")
+        return "未找到匹配内容"
+
     matches: list[str] = []
     total_hits = 0
     skipped_large = 0
@@ -385,17 +410,7 @@ def _tool_search_files(ctx: ToolContext, args: dict[str, Any], active_skills: li
             if path.stat().st_size > max_file_size:
                 skipped_large += 1
                 continue
-            try:
-                content = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            if not content:
-                continue
-            found, hits = _search_one_file(
-                path, content, query, regex=regex,
-                ignore_case=ignore_case, context_lines=context_lines,
-                multiline=multiline, compiled=compiled if regex else None,
-            )
+            found, hits = _search_single_file(path)
             if found:
                 matches.append(found)
                 total_hits += hits

@@ -192,6 +192,35 @@ class SearchSemanticsTests(unittest.TestCase):
         }, None)
         self.assertIn("已跳过 1 个超过 1024 字节的文件", out)
 
+    def test_path_as_single_file_searches_inside_it(self) -> None:
+        """模型直觉用法：path 传文件路径 → 直接在该文件内搜索（不再误为空目录）。"""
+        target = self.tmp / "k1.json"
+        target.write_text('{"k1": "xxx", "k2": "yyy"}', encoding="utf-8")
+        out = core_provider._tool_search_files(self.ctx, {
+            "path": str(target), "query": "k1",
+        }, None)
+        self.assertIn("共 1 处命中", out)
+        self.assertIn("k1", out)
+
+    def test_single_file_pattern_ignored_and_miss_reported(self) -> None:
+        target = self.tmp / "k1.json"
+        target.write_text('{"k1": "xxx"}', encoding="utf-8")
+        out = core_provider._tool_search_files(self.ctx, {
+            "path": str(target), "query": "k1", "pattern": "*.txt",
+        }, None)
+        self.assertIn("共 1 处命中", out, "单文件搜索时 pattern 应被忽略")
+        miss = core_provider._tool_search_files(self.ctx, {
+            "path": str(target), "query": "zzz_not_exists",
+        }, None)
+        self.assertEqual(miss, "未找到匹配内容")
+
+    def test_missing_path_reports_explicit_error(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            core_provider._tool_search_files(self.ctx, {
+                "path": str(self.tmp / "nope"), "query": "x",
+            }, None)
+        self.assertIn("路径不存在", str(ctx.exception))
+
 
 class JobOutputCursorTests(unittest.TestCase):
     def test_cursor_marker_roundtrip(self) -> None:

@@ -356,13 +356,13 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="search_files",
-            description="在目录中按文本或正则搜索（默认区分大小写；支持上下文与多行模式）。",
+            description="在目录中按文本或正则搜索（默认区分大小写；支持上下文与多行模式）。path 可传单个文件。",
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": _string("搜索根目录（留空=工作区根）", ""),
+                    "path": _string("文件或目录的绝对路径（留空=工作区根；传文件=只搜索该文件）", ""),
                     "query": _string("文本关键字或正则表达式（必填）"),
-                    "pattern": {"type": "string", "description": "文件名 glob", "default": "*"},
+                    "pattern": {"type": "string", "description": "文件名 glob（path 为目录时生效；传文件时可忽略）", "default": "*"},
                     "limit": {"type": "integer", "default": 100},
                     "max_file_size": {"type": "integer", "description": "搜索时单个文件大小上限（字节），超限跳过并计入汇总，默认 5MB", "default": 5242880},
                     "regex": {"type": "boolean", "description": "query 是否按正则解析（默认 false，按普通子串）", "default": False},
