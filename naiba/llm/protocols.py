@@ -115,24 +115,14 @@ class ProtocolMixins:
                     "output": ProtocolMixins._content_text(item.get("content")),
                 })
                 continue
-            if role == "assistant":
-                # DeepSeek Responses API（思考模式）：上一轮 assistant 的 reasoning 必须以
-                # `reasoning` item（明文 content）回传（错误信息 "The reasoning_text in the
-                # thinking mode must be passed back"），否则工具/多轮的下一轮请求返回 400。
-                # OpenAI 兼容层亦容忍该 item（忽略或按规范归并）。
-                reasoning_text = item.get("reasoning_content")
-                if reasoning_text is None:
-                    reasoning_text = item.get("reasoning")
-                if reasoning_text is not None and str(reasoning_text).strip():
-                    converted.append({"type": "reasoning", "content": str(reasoning_text)})
-                if isinstance(item.get("tool_calls"), list):
-                    converted.extend({
-                        "type": "function_call",
-                        "call_id": str(call.get("id") or ""),
-                        "name": str(call.get("name") or ""),
-                        "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
-                    } for call in item["tool_calls"] if isinstance(call, dict))
-                    continue
+            if role == "assistant" and isinstance(item.get("tool_calls"), list):
+                converted.extend({
+                    "type": "function_call",
+                    "call_id": str(call.get("id") or ""),
+                    "name": str(call.get("name") or ""),
+                    "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
+                } for call in item["tool_calls"] if isinstance(call, dict))
+                continue
             converted.append({
                 "role": role,
                 "content": ProtocolMixins._responses_content(item.get("content"), role),
