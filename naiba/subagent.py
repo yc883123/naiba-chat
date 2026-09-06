@@ -18,6 +18,7 @@ from typing import Any, Callable
 
 from naiba.jobs import JobRegistry, JobSpec
 from naiba.core.history import build_model_history
+from naiba.core.tool_results import model_visible_run
 
 MAX_SUBAGENT_DEPTH = 2
 MAX_CHILDREN_PER_PARENT = 4
@@ -139,16 +140,14 @@ def run_subagent_agent(
             combined_prompt,
             allowed_tools,
             emit,
-            lambda tool, args, result, success: app.storage.log_tool_run(
-                conversation_id, tool, args, result, success
-            ),
             cancel,
             tool_registry=app.tool_registry,
             run_context=run_context,
         )
         app.storage.update_job(
             job_id,
-            result={"response": content, "tool_runs": runs, "usage": usage},
+            # 供父模型看到的子 Agent 结果：tool_runs 走模型可见序列化（与主会话一致）。
+            result={"response": content, "tool_runs": [model_visible_run(run) for run in runs], "usage": usage},
         )
         emit({"type": "subagent_result", "response": content[:2000]})
     except TaskCancelled:

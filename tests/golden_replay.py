@@ -397,9 +397,19 @@ def scenario_history_images(tmp_root: Path) -> dict:
     (tmp_root / "config.txt").write_text("备注文本", encoding="utf-8")
 
     messages = json.loads(json.dumps(HISTORY_INPUTS["messages"]))
-    # 把 <TMP> 占位符替换为真实临时根
+    # 把 <TMP> 占位符替换为真实临时根。对"JSON 字符串字段"（如工具结果 result）
+    # 先解析再结构化替换，避免把含反斜杠的 Windows 路径直接插入 JSON 字符串
+    # （裸 \t / \. 会破坏 JSON 合法性，让脱敏路径永远不生效——假象）。
     def substitute(item):
         if isinstance(item, str):
+            stripped = item.strip()
+            if stripped.startswith("{") or stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    parsed = None
+                if parsed is not None:
+                    return json.dumps(substitute(parsed), ensure_ascii=False)
             return item.replace("<TMP>", str(tmp_root))
         if isinstance(item, dict):
             return {k: substitute(v) for k, v in item.items()}

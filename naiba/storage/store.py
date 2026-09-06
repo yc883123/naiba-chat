@@ -12,7 +12,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -233,6 +233,14 @@ def _migrate_to_v12(db: sqlite3.Connection) -> None:
         )
 
 
+def _migrate_to_v13(db: sqlite3.Connection) -> None:
+    """移除已退役的 tool_runs 表（工具结果改由 message.metadata.tool_runs 承载）。
+
+    该表的写入管线（log_tool_run）已删除，且全库无任何读取者；老库直接 DROP 释放空间。
+    """
+    db.execute("DROP TABLE IF EXISTS tool_runs")
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -247,6 +255,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     10: _migrate_to_v10,
     11: _migrate_to_v11,
     12: _migrate_to_v12,
+    13: _migrate_to_v13,
 }
 
 
@@ -301,16 +310,6 @@ class ChatStorage:
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation
                     ON messages(conversation_id, created_at);
-                CREATE TABLE IF NOT EXISTS tool_runs (
-                    id TEXT PRIMARY KEY,
-                    conversation_id TEXT NOT NULL,
-                    tool_name TEXT NOT NULL,
-                    arguments TEXT NOT NULL,
-                    result TEXT NOT NULL,
-                    success INTEGER NOT NULL,
-                    created_at INTEGER NOT NULL,
-                    FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
-                );
                 CREATE TABLE IF NOT EXISTS background_tasks (
                     id TEXT PRIMARY KEY,
                     conversation_id TEXT NOT NULL,
@@ -883,7 +882,6 @@ class ChatStorage:
     def clear_conversation_messages(self, conversation_id: str) -> int:
         """Clear persisted chat/tool history while retaining the conversation settings."""
         with self._connect() as db:
-            db.execute("DELETE FROM tool_runs WHERE conversation_id = ?", (conversation_id,))
             cursor = db.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
             db.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -909,12 +907,6 @@ class ChatStorage:
                 return 0
             created_at = target[0]
             rowid = target[1]
-            # 先删关联的 tool_runs：工具结果必然晚于对应用户消息，保持 created_at 区间删除
-            # （tool_runs 无 message 外键，同毫秒边界误删风险可忽略）。
-            db.execute(
-                "DELETE FROM tool_runs WHERE conversation_id = ? AND created_at >= ?",
-                (conversation_id, created_at),
-            )
             # 精确删除编辑点及其之后的消息：按 (created_at, rowid) 复合条件，
             # 前缀消息一律保留。
             cursor = db.execute(
@@ -927,29 +919,6 @@ class ChatStorage:
                 (int(time.time() * 1000), conversation_id),
             )
         return cursor.rowcount
-
-    def log_tool_run(
-        self,
-        conversation_id: str,
-        tool_name: str,
-        arguments: dict[str, Any],
-        result: str,
-        success: bool,
-    ) -> None:
-        with self._connect() as db:
-            db.execute(
-                "INSERT INTO tool_runs(id, conversation_id, tool_name, arguments, result, success, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    uuid.uuid4().hex,
-                    conversation_id,
-                    tool_name,
-                    json.dumps(arguments, ensure_ascii=False),
-                    result[:50000],
-                    1 if success else 0,
-                    int(time.time() * 1000),
-                ),
-            )
 
     def create_background_task(
         self,

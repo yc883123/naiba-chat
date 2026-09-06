@@ -26,6 +26,7 @@ from naiba.core.choices import _detect_choice_groups
 from naiba.core.exceptions import ActiveRunError
 from naiba.core.file_changes import file_changes_from_runs
 from naiba.core.history import build_model_history
+from naiba.core.tool_results import display_tool_run
 from naiba.run.stream import _RunEventSink, _safe_activity
 
 def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -362,18 +363,6 @@ class ConversationRunMixin:
                 ]
             sink(payload)
 
-        def log_tool_run(tool: str, args: dict[str, Any], result: str, success: bool) -> None:
-            self.app.storage.log_tool_run(conversation_id, tool, args, result, success)
-            if tool != "web_search" or not success:
-                return
-            known = {item["url"] for item in search_sources}
-            for source in _search_sources([{
-                "tool": tool, "result": result, "success": success,
-            }]):
-                if source["url"] not in known:
-                    known.add(source["url"])
-                    search_sources.append(source)
-
         try:
             if cancel_event.is_set():
                 raise TaskCancelled("任务已取消")
@@ -557,12 +546,14 @@ class ConversationRunMixin:
                     prompt,
                     allowed_tools,
                     event,
-                    log_tool_run,
                     cancel_event,
                     tool_registry=self.app.tool_registry,
                     run_context=run_context,
                 )
                 chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
+            # web_search 引用收集改为收尾一次性计算（原始 runs；log_tool_run 死管线已删除）。
+            search_sources = _search_sources(runs)
+            display_runs = [display_tool_run(run) for run in runs]
             if usage:
                 # Surface the effective window (provider value or the conservative
                 # DEFAULT_CONTEXT_WINDOW fallback) so the UI can show the real ring
@@ -632,10 +623,12 @@ class ConversationRunMixin:
             changed_files = file_changes_from_runs(runs)
             metadata = {
                 "skills": skills,
-                "tool_runs": runs,
+                # 前端/历史展示与模型上下文同源（core.tool_results）：result 已脱敏+截断标记，
+                # arguments/reason 仅作展示（模型上下文不含）。
+                "tool_runs": display_runs,
                 "allowed_tools": allowed_tools,
                 "reasoning": reasonings,
-                "activity": _safe_activity(self._all_run_events(run_id), reasonings, runs),
+                "activity": _safe_activity(self._all_run_events(run_id), reasonings, display_runs),
                 "usage": usage,
                 "performance": performance,
                 # 只有用户明确要求看/列出/查找图片时，才把枚举类工具(glob/list/search)返回的图片

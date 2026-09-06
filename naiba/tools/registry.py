@@ -1,6 +1,6 @@
 """统一工具系统（单轨形态：声明/执行/策略同源）。
 
-- 声明：``ToolSpec``（名称/参数/side_effect/retryable/timeout/permission/execute/summarize/
+- 声明：``ToolSpec``（名称/参数/side_effect/retryable/timeout/permission/execute/
   aliases/policy/system/metadata），按域由 ``build_*_tool_specs`` / ``ToolProvider`` 提供；
 - 分发：``ToolRegistry.execute`` 别名归一后单插槽执行——system 工具直调 def.execute，
   常规工具经注入引擎（策略/确认/模式包装），引擎兜底 def.execute；
@@ -20,8 +20,6 @@ from typing import Any, Callable, Protocol
 # 执行函数签名：(arguments, active_skills, run_context) -> (success, result_text)
 # run_context 为可选，承载当前运行上下文（job_id / depth / owner 等），供子 Agent 等系统工具使用
 ToolExecuteFn = Callable[[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None], tuple[bool, str]]
-# 结果摘要：(tool, arguments, result, success) -> short_summary
-ToolSummarizeFn = Callable[[str, dict[str, Any], str, bool], str]
 # 权限策略（单一定义 Phase 2+）：
 # (tool_name, arguments, active_skills, permission_mode, run_context, workspace) -> 确认理由；
 # 返回空串表示无需用户确认，非空串为展示给用户的确认理由（与 NEED_CONFIRM 协议对齐）。
@@ -42,7 +40,6 @@ class ToolSpec:
     # permission 取值与 ToolExecutor.VALID_PERMISSION_MODES 对齐
     permission: str = "confirm"
     execute: ToolExecuteFn | None = None
-    summarize: ToolSummarizeFn | None = None
     # 来自 MCP 工具的 annotations（readOnlyHint / destructiveHint 等）
     annotations: dict[str, Any] = field(default_factory=dict)
     # ---- 单一定义扩展（工具系统重构 Phase 1 引入）----
@@ -90,11 +87,6 @@ RETIRED_TOOL_GUIDE: dict[str, str] = {
 }
 for _old_name, _new_name in RETIRED_TOOL_MAP.items():
     RETIRED_TOOL_GUIDE.setdefault(_old_name, f"{_old_name} 已并入 {_new_name}，请改用 {_new_name}。")
-
-
-def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bool) -> str:
-    head = result[:300].replace("\n", " ").strip()
-    return f"{tool} {'成功' if success else '失败'}: {head}"
 
 
 def _mcp_tool_policy(annotations: dict[str, Any]) -> ToolPolicyFn:
@@ -162,8 +154,6 @@ class ToolRegistry:
 
     # ---- 注册 ----
     def register(self, spec: ToolSpec) -> None:
-        if not spec.summarize:
-            spec.summarize = _default_summarize
         self._specs[spec.name] = spec
         # def 级别名并入别名表（查询层 resolve 归一）
         for alias in spec.aliases:
@@ -298,15 +288,6 @@ class ToolRegistry:
         if spec.execute is not None:
             return spec.execute(arguments, active_skills, run_context)
         return False, f"工具缺少执行实现：{name}"
-
-    def summarize(self, tool: str, args: dict[str, Any], result: str, success: bool) -> str:
-        spec = self._specs.get(tool)
-        if spec and spec.summarize:
-            try:
-                return spec.summarize(tool, args, result, success)
-            except Exception:
-                return _default_summarize(tool, args, result, success)
-        return _default_summarize(tool, args, result, success)
 
 
 def _string(desc: str, default: str = "") -> dict[str, Any]:

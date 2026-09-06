@@ -10,6 +10,7 @@ SQLite 保存权威状态，同时把计划归档到配置工作区的 `.naiba-c
 from __future__ import annotations
 
 from naiba.core.contracts import AppContext
+from naiba.core.tool_results import display_tool_run
 
 import re
 import threading
@@ -752,9 +753,6 @@ class PlanManager:
             combined_prompt,
             allowed_tools,
             event,
-            lambda tool, args, result, success: self.app.storage.log_tool_run(
-                conversation_id, tool, args, result, success
-            ),
             cancel_event,
             tool_registry=self.app.tool_registry,
             run_context={
@@ -776,7 +774,8 @@ class PlanManager:
                 "plan_id": plan.get("id"),
                 "plan_step": step.get("id"),
                 "plan_step_title": step.get("title"),
-                "tool_runs": runs,
+                # 前端/历史展示与模型上下文同源（core.tool_results）。
+                "tool_runs": [display_tool_run(run) for run in runs],
                 "reasoning": reasonings,
                 "usage": usage,
             },
