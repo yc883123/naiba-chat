@@ -4,11 +4,11 @@
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, hideImageContextMenu, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, toggleContextUsagePopover } from "./03-media.js";
-import { branchMessage, isNearBottom, startEditMessage, stickToBottom } from "./04-messages.js";
+import { branchMessage, isNearBottom, setStickToBottom, startEditMessage } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadCurrentModel, unloadProviderModel } from "./07-models-agents.js";
-import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
+import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
 import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
 import { cancelCurrentRun, handlePasteImage, openStarterPromptDialog, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleLightweightFeature, toggleRichText, updateDeepReasoningButton } from "./12-chat-input.js";
@@ -286,7 +286,7 @@ export function bindEvents() {
   }
   // 记录用户是否停留在底部：流式输出时只有跟随底部才自动滚动，上滑阅读则不抢滚动。
   $('#messages').addEventListener('scroll', () => {
-    stickToBottom = isNearBottom();
+    setStickToBottom(isNearBottom());
   }, { passive: true });
   $('#messages').addEventListener('dragstart', (event) => {
     // 缩略图（带 data-large-url）由全局 dragstart 统一以"大图 URL"拖动，这里跳过避免重复设置。
@@ -428,11 +428,11 @@ export function bindEvents() {
   // 侧栏虚拟化：滚动时按窗口重绘可视行
   $('#sidebarWorkspaceTree').addEventListener('scroll', () => {
     if (sidebarScrollRaf) return;
-    sidebarScrollRaf = requestAnimationFrame(() => {
-      sidebarScrollRaf = 0;
+    setSidebarScrollRaf(requestAnimationFrame(() => {
+      setSidebarScrollRaf(0);
       const tree = $('#sidebarWorkspaceTree');
       if (tree && sidebarRowCache.length) renderSidebarWindow(tree.scrollTop);
-    });
+    }));
   }, { passive: true });
   // 右侧文件面板：标签页 / 正文操作 / 关闭 / Esc / 窗口宽度
   $('#fileTabs').addEventListener('click', (event) => {

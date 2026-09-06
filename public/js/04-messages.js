@@ -190,6 +190,9 @@ export function uploadedFileMarkup(files = []) {
 
 export let stickToBottom = true;
 
+// ESM 下 import 绑定只读：跨文件写入经 setter（读点保持直接引用不变）。
+export function setStickToBottom(value) { stickToBottom = value; }
+
 export function isNearBottom(threshold = 80) {
   const messages = $('#messages');
   if (!messages) return true;

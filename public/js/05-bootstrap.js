@@ -5,7 +5,7 @@
 import { $, $$, api, state, toast } from "./01-core.js";
 import { loadTasks, startTaskSync } from "./06-tasks-plans.js";
 import { populateModels, renderAgents, renderUpdateStatus } from "./07-models-agents.js";
-import { loadConversationPromptPresets, loadConversations, restoreSidebarWidth, sidebarScrollToActive, startConversationSync } from "./08-conversations.js";
+import { loadConversationPromptPresets, loadConversations, restoreSidebarWidth, setSidebarScrollToActive, startConversationSync } from "./08-conversations.js";
 import { populateRuntimeSettings, populateSearchSettings, populateVisionSettings, renderAgentManager, renderMcp, renderProviders, renderSkills, startMcpPoll } from "./09-settings.js";
 import { loadStarterPrompts } from "./12-chat-input.js";
 export async function authenticate(token) {
@@ -52,7 +52,7 @@ export async function enableLanAccess() {
 
 export async function initialize() {
   restoreSidebarWidth();
-  sidebarScrollToActive = true;
+  setSidebarScrollToActive(true);
   try {
     state.bootstrap = await api('/api/bootstrap');
   } catch (error) {

@@ -55,6 +55,10 @@ export let sidebarTotalH = 0;
 export let sidebarMetrics = null;
 export let sidebarScrollToActive = false;
 export let sidebarScrollRaf = 0;
+
+// ESM 下 import 绑定只读：跨文件写入经 setter（读点保持直接引用不变）。
+export function setSidebarScrollToActive(value) { sidebarScrollToActive = value; }
+export function setSidebarScrollRaf(value) { sidebarScrollRaf = value; }
 export let sidebarShowAll = new Set(); // 已“展开全部会话”的工作区名集合（默认全部折叠到 5 条）
 export const SIDE_BUFFER = 240; // 视口上下预渲染缓冲（px）
 export const SIDE_CONV_LIMIT = 5; // 每个展开工作区默认显示的最新会话数

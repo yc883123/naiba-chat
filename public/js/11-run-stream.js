@@ -3,7 +3,7 @@
 // ============================================================
 
 import { $, api, escapeHtml, state, toast } from "./01-core.js";
-import { messageElement, scrollToBottom, stickToBottom } from "./04-messages.js";
+import { messageElement, scrollToBottom, setStickToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { createConversation, loadConversations, openConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
@@ -461,7 +461,7 @@ export async function sendChatMessage(textOverride = '') {
     return;
   }
   // 用户新发起一轮：恢复跟随，让新答复从底部开始流式显示。
-  stickToBottom = true;
+  setStickToBottom(true);
   hideChoiceButtons();
   const referencedIds = parseSkillReferences(text).map((tok) => tok.skill.id);
   const messageText = stripSkillReferences(text);
