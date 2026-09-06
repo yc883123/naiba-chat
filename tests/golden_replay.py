@@ -170,13 +170,13 @@ def scenario_cancel_race(tmp_root: Path) -> dict:
     storage = _CancelStorage()
     manager = _make_cancel_env(tmp_root, storage)
 
-    # 1) emit 状态映射（运行中）
+    # 1) emit 状态映射（运行中）——观测行带 event_type（非事件负载键，区别于真实事件）
     mapping = []
     for payload in CANCEL_INPUTS["emit_sequence"]:
         manager.emit(CANCEL_INPUTS["run_id"], dict(payload))
         run_id, kw = storage.updates[-1]
         mapping.append({
-            "type": payload.get("type"),
+            "event_type": payload.get("type"),
             "status": kw.get("status"),
             "detail_message": (kw.get("detail") or {}).get("message"),
         })
@@ -186,7 +186,7 @@ def scenario_cancel_race(tmp_root: Path) -> dict:
     updates_before = len(storage.updates)
     manager.emit(CANCEL_INPUTS["run_id"], dict(CANCEL_INPUTS["freeze_emit"]))
     run_id, kw = storage.updates[-1]
-    freeze = {"type": CANCEL_INPUTS["freeze_emit"].get("type"),
+    freeze = {"event_type": CANCEL_INPUTS["freeze_emit"].get("type"),
               "status": kw.get("status"), "updates_count": len(storage.updates) - updates_before}
 
     # 3) aborted 重建（首次）

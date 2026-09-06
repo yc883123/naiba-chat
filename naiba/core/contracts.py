@@ -179,21 +179,65 @@ class EventType(str, Enum):
     SUBAGENT_CANCELLED = "subagent_cancelled"
 
 
-class MetadataKeys:
-    """消息 metadata JSON 键（写入方 async_tasks / 重放方 core.history 共用契约）。"""
+class EventPayload(TypedDict, total=False):
+    """流式事件负载契约（各事件 type 字段的并集；wire 版式零变化，仅类型标注）。
 
-    ATTACHMENTS = "attachments"
-    REASONING = "reasoning"
-    TOOL_RUNS = "tool_runs"
-    TRACE = "trace"
-    USAGE = "usage"
-    FILES = "files"
-    PLAN_ID = "plan_id"
-    PLAN_STEP = "plan_step"
-    PLAN_STEP_TITLE = "plan_step_title"
-    ABORTED = "aborted"
-    PARTIAL = "partial"
-    ERROR = "error"
-    RUN_ID = "run_id"
-    AGENT_ID = "agent_id"
-    DISPLAY_CONTENT = "display_content"
+    实际负载键与前端消费键的一致性由 tests/test_contracts 以 golden 基线反查校验：
+    任何 emit 负载出现新键而本契约未登记，即判定为漂移；新增事件字段必须先加进这里。
+    """
+
+    type: str
+    message: str
+    content: str
+    reasoning: str
+    text: str
+    # 对话流 / 状态
+    run_id: str
+    sequence: int
+    status: str
+    step: int
+    attempt: int
+    limit: int
+    used: int
+    budget: int
+    reason: str
+    # 工具流
+    tool: str
+    tool_name: str
+    tool_desc: str
+    arguments: dict[str, Any]
+    confirm_id: str
+    success: bool
+    tools: list[dict[str, Any]]
+    skills: list[dict[str, Any]]
+    choices: list[str]
+    choice_groups: list[dict[str, Any]]
+    plan: dict[str, Any]
+    todos: list[dict[str, Any]]
+    aborted_message: dict[str, Any]
+    # 视觉 / 诊断
+    backend: str
+    image_count: int
+    started_at: int
+    label: str
+    lines: list[str]
+    # Job 流
+    kind: str
+    phase: str
+    handle: str
+    next_check_in: int
+    shot: int
+    total: int
+    files: list[str]
+    index: int
+    prompt_id: str
+    line: str
+    # 子 Agent / 计划
+    current_step: str
+    response: str
+    error: str
+    result: str
+
+
+# 已迁往 naiba.core.messages（收官线 ③；保留 re-export 兼容，既有导入零改动）。
+from naiba.core.messages import MESSAGE_METADATA_KEYS, MetadataKeys  # noqa: E402,F401

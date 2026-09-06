@@ -146,35 +146,35 @@
       }
     },
     "cancel_freeze": {
+      "event_type": "status",
       "status": null,
-      "type": "status",
       "updates_count": 1
     },
     "emit_mapping": [
       {
         "detail_message": "开始执行",
-        "status": "running",
-        "type": "status"
+        "event_type": "status",
+        "status": "running"
       },
       {
         "detail_message": "正在执行 pwsh",
-        "status": "running",
-        "type": "tool_start"
+        "event_type": "tool_start",
+        "status": "running"
       },
       {
         "detail_message": "等待工具确认",
-        "status": "waiting",
-        "type": "tool_confirm"
+        "event_type": "tool_confirm",
+        "status": "waiting"
       },
       {
         "detail_message": "工具 pwsh 执行完毕",
-        "status": "running",
-        "type": "tool_result"
+        "event_type": "tool_result",
+        "status": "running"
       },
       {
         "detail_message": "已启用 Skill",
-        "status": null,
-        "type": "skills"
+        "event_type": "skills",
+        "status": null
       }
     ],
     "watchdog": {
