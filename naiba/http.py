@@ -62,7 +62,7 @@ from naiba.core.diagnostics import CACHE_DEBUG_ON, _cache_debug_enabled
 from naiba.core.exceptions import ActiveRunError
 from naiba.core.network import _is_usable_lan_ipv4, get_lan_ip, network_access_status
 from naiba.core.paths import path_within
-from naiba.paths import static_asset_version
+from naiba.paths import PathContext, default_path_context, static_asset_version
 from naiba.skills.catalog import SkillCatalog
 from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
 from naiba.storage.media import (
@@ -1736,3 +1736,104 @@ class RequestHandler(BaseHTTPRequestHandler):
         self._json({"success": success, "result": result})
 
 
+# ---- 服务生命周期：状态文件 / 实例锁 / 主入口（自 server.py 收口迁入） ----
+
+def write_status(host: str, port: int, token: str, paths: PathContext) -> None:
+    paths.data_dir.mkdir(parents=True, exist_ok=True)
+    access = network_access_status(host, port)
+    paths.status_path.write_text(
+        json.dumps(
+            {
+                "pid": os.getpid(),
+                "host": host,
+                "port": port,
+                **access,
+                "access_token": token,
+                "started_at": int(time.time()),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
+def acquire_instance_lock(paths: PathContext):
+    try:
+        paths.data_dir.mkdir(parents=True, exist_ok=True)
+        handle = paths.lock_path.open("a+b")
+        if paths.lock_path.stat().st_size == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            handle.close()
+            raise RuntimeError("naiba-chat 已经在运行，请勿重复启动") from exc
+        return handle
+    except OSError as exc:
+        raise RuntimeError(
+            f"无法创建实例锁文件（{exc}）：请检查数据目录 {paths.data_dir} 及锁文件 {paths.lock_path} 是否可写"
+        ) from exc
+
+
+def main_entry(paths: PathContext | None = None, on_app=None) -> None:
+    """命令行主入口：构造应用、绑定 HTTP 服务并运行（自 server.py 收口迁入）。"""
+    import argparse
+
+    paths = paths or default_path_context()
+    os.environ["PYTHONUTF8"] = "1"
+    os.environ["PYTHONIOENCODING"] = "utf-8"
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure:
+            reconfigure(encoding="utf-8", errors="replace", line_buffering=True, write_through=True)
+    parser = argparse.ArgumentParser(description="naiba-chat 局域网对话服务")
+    parser.add_argument("--host", default="")
+    parser.add_argument("--port", type=int, default=0)
+    args = parser.parse_args()
+
+    try:
+        instance_lock = acquire_instance_lock(paths)
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2) from exc
+
+    APP = NaibaChatApp(paths=paths)
+    if on_app:
+        on_app(APP, paths)
+    host = args.host or str(APP.config.data.get("host", "0.0.0.0"))
+    port = args.port or int(APP.config.data.get("port", 8765))
+    APP.config.data["host"] = host
+    APP.config.data["port"] = port
+    APP.config.save()
+    APP.listener_host = host
+    server = AppHTTPServer((host, port), RequestHandler, APP)
+    server.daemon_threads = True
+    write_status(host, port, str(APP.config.data["access_token"]), paths)
+    print("\nnaiba-chat 已启动")
+    access = network_access_status(host, port)
+    print(f"手机访问： {access['lan_url'] or access['lan_reason']}")
+    print(f"本机访问： {access['local_url']}")
+    print(f"访问口令： {APP.config.data['access_token']}")
+    print("电脑端不需要打开网页。按 Ctrl+C 停止服务。\n")
+    try:
+        server.serve_forever(poll_interval=0.5)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        APP.stop()
+        instance_lock.close()
+        try:
+            paths.status_path.unlink(missing_ok=True)
+        except OSError:
+            pass

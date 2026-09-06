@@ -112,105 +112,33 @@ from naiba.config import (
 
 
 def write_status(host: str, port: int, token: str) -> None:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    access = network_access_status(host, port)
-    STATUS_PATH.write_text(
-        json.dumps(
-            {
-                "pid": os.getpid(),
-                "host": host,
-                "port": port,
-                **access,
-                "access_token": token,
-                "started_at": int(time.time()),
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
+    """兼容门面委托（3.4.3 收口）：实现见 naiba.http.write_status。"""
+    from naiba.http import write_status as _impl
+
+    _impl(host, port, token, PC)
 
 
 def acquire_instance_lock():
-    try:
-        DATA_DIR.mkdir(parents=True, exist_ok=True)
-        handle = LOCK_PATH.open("a+b")
-        if LOCK_PATH.stat().st_size == 0:
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
-        try:
-            if os.name == "nt":
-                import msvcrt
+    """兼容门面委托（3.4.3 收口）：实现见 naiba.http.acquire_instance_lock。"""
+    from naiba.http import acquire_instance_lock as _impl
 
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as exc:
-            # 锁文件已能正常打开并写入，仍加锁失败，视为已有实例正在运行。
-            handle.close()
-            raise RuntimeError("naiba-chat 已经在运行，请勿重复启动") from exc
-        return handle
-    except OSError as exc:
-        # 数据目录创建失败、锁文件打不开等属于环境/权限问题，绝不能误报为"重复启动"。
-        raise RuntimeError(
-            f"无法创建实例锁文件（{exc}）：请检查数据目录 {DATA_DIR} 及锁文件 {LOCK_PATH} 是否可写"
-        ) from exc
+    return _impl(PC)
 
 
 def main() -> None:
-    os.environ["PYTHONUTF8"] = "1"
-    os.environ["PYTHONIOENCODING"] = "utf-8"
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure:
-            reconfigure(encoding="utf-8", errors="replace", line_buffering=True, write_through=True)
-    parser = argparse.ArgumentParser(description="naiba-chat 局域网对话服务")
-    parser.add_argument("--host", default="")
-    parser.add_argument("--port", type=int, default=0)
-    args = parser.parse_args()
-
-    try:
-        instance_lock = acquire_instance_lock()
-    except RuntimeError as exc:
-        print(str(exc), file=sys.stderr)
-        raise SystemExit(2) from exc
-
+    """兼容门面委托（3.4.3 收口）：实现见 naiba.http.main_entry。"""
     global APP, DATA_DIR, STATUS_PATH, LOCK_PATH
-    APP = NaibaChatApp(paths=PC)
-    # 构造后同步路径全局（data_dir 可能被配置重绑定）
-    DATA_DIR = PC.data_dir
-    STATUS_PATH = PC.status_path
-    LOCK_PATH = PC.lock_path
-    host = args.host or str(APP.config.data.get("host", "0.0.0.0"))
-    port = args.port or int(APP.config.data.get("port", 8765))
-    APP.config.data["host"] = host
-    APP.config.data["port"] = port
-    APP.config.save()
-    APP.listener_host = host
-    server = AppHTTPServer((host, port), RequestHandler, APP)
-    server.daemon_threads = True
-    write_status(host, port, str(APP.config.data["access_token"]))
-    print("\nnaiba-chat 已启动")
-    access = network_access_status(host, port)
-    print(f"手机访问： {access['lan_url'] or access['lan_reason']}")
-    print(f"本机访问： {access['local_url']}")
-    print(f"访问口令： {APP.config.data['access_token']}")
-    print("电脑端不需要打开网页。按 Ctrl+C 停止服务。\n")
-    try:
-        server.serve_forever(poll_interval=0.5)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
-        APP.stop()
-        instance_lock.close()
-        try:
-            STATUS_PATH.unlink(missing_ok=True)
-        except OSError:
-            pass
+
+    def _bind(instance, paths) -> None:
+        global APP, DATA_DIR, STATUS_PATH, LOCK_PATH
+        APP = instance
+        DATA_DIR = paths.data_dir
+        STATUS_PATH = paths.status_path
+        LOCK_PATH = paths.lock_path
+
+    from naiba.http import main_entry
+
+    main_entry(PC, on_app=_bind)
 
 
 if __name__ == "__main__":
