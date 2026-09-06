@@ -16,7 +16,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any
 
-import net_io
+from naiba import net as net_io
 
 from naiba.core.paths import path_within  # noqa: F401  (re-export for callers)
 from naiba.storage.media import _ensure_webp_thumb

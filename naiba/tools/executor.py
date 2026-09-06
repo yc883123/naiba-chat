@@ -19,7 +19,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-import net_io
+from naiba import net as net_io
 from naiba.core.exceptions import TaskCancelled
 from naiba.mcp import MCPRegistry
 

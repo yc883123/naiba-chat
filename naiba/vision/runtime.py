@@ -27,8 +27,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-import net_io
-from model_runtime import ModelRuntime
+from naiba import net as net_io
+from naiba.llm.runtime import ModelRuntime
 from naiba.storage.media import _process_uploaded_image
 from naiba.vision.images import (
     _image_size,

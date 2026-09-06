@@ -20,7 +20,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-import net_io
+from naiba import net as net_io
 
 logger = logging.getLogger("naiba.web_search")
 

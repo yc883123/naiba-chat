@@ -16,7 +16,7 @@ from naiba.core.contracts import AppContext, RunContext
 import traceback
 from typing import Any, Callable
 
-from job_registry import JobRegistry, JobSpec
+from naiba.jobs import JobRegistry, JobSpec
 from naiba.core.history import build_model_history
 
 MAX_SUBAGENT_DEPTH = 2
@@ -55,8 +55,9 @@ def run_subagent_agent(
     emit: Callable[[dict[str, Any]], None],
 ) -> None:
     """子 Agent 运行器：以隔离上下文执行一次 Agent Loop，结果写回 Job。"""
-    from skill_runtime import SkillAgent, TaskCancelled
-    from plan_runtime import CraftToolExecutor
+    from naiba.skills.agent import SkillAgent
+    from naiba.core.exceptions import TaskCancelled
+    from naiba.plans import CraftToolExecutor
 
     conversation_id = str(spec.conversation_id or "")
     params = spec.params or {}

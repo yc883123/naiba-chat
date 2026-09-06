@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from skill_runtime import SkillCatalog  # noqa: E402
+from naiba.skills.catalog import SkillCatalog  # noqa: E402
 
 
 class SkillCatalogScanTests(unittest.TestCase):

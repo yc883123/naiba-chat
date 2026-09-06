@@ -13,7 +13,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable
 
-import net_io
+from naiba import net as net_io
 
 
 REPOSITORY = "yc883123/naiba-chat"

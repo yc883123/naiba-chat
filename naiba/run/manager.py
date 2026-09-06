@@ -15,9 +15,12 @@ import traceback
 from pathlib import Path
 from typing import Any
 
-from plan_runtime import CraftToolExecutor, ReadOnlyToolExecutor
-from skill_runtime import DEFAULT_CONTEXT_WINDOW, SkillAgent, TaskCancelled, normalize_skill_policy
-from vision_runtime import VisionBudget
+from naiba.plans import CraftToolExecutor, ReadOnlyToolExecutor
+from naiba.skills.agent import SkillAgent
+from naiba.skills.context import DEFAULT_CONTEXT_WINDOW
+from naiba.skills.policy import normalize_skill_policy
+from naiba.core.exceptions import TaskCancelled
+from naiba.vision.runtime import VisionBudget
 from naiba.core.attachments import _image_intent, extract_attachments
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.file_changes import file_changes_from_runs

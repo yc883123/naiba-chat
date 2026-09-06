@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from server import ConfigStore  # noqa: E402
-from storage import ChatStorage  # noqa: E402
+from naiba.storage.store import ChatStorage  # noqa: E402
 
 
 class WorkspaceBindingTests(unittest.TestCase):

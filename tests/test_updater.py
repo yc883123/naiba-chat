@@ -17,7 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from updater import EXECUTABLE_ASSET, LATEST_TAG, MANIFEST_ASSET, REPOSITORY, UpdateManager  # noqa: E402
+from naiba.updater import EXECUTABLE_ASSET, LATEST_TAG, MANIFEST_ASSET, REPOSITORY, UpdateManager  # noqa: E402
 
 
 API_RELEASES_URL = f"https://api.github.com/repos/{REPOSITORY}/releases?per_page=100"

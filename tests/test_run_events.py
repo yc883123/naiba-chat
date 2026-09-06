@@ -16,10 +16,9 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import async_tasks  # noqa: E402
-from async_tasks import ConversationRunManager  # noqa: E402
+from naiba.run.manager import ConversationRunManager  # noqa: E402
 from naiba.run import manager as run_manager  # noqa: E402
-from storage import ChatStorage  # noqa: E402
+from naiba.storage.store import ChatStorage  # noqa: E402
 
 
 class RecordingStorage:

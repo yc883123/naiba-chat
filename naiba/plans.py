@@ -18,7 +18,9 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable
 
-from skill_runtime import SkillAgent, TaskCancelled, ToolExecutor
+from naiba.skills.agent import SkillAgent
+from naiba.core.exceptions import TaskCancelled
+from naiba.tools.executor import ToolExecutor
 from naiba.core.history import build_model_history
 
 INTERACTION_MODES = ("craft", "plan")

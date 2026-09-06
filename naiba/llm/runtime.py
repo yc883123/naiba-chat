@@ -12,7 +12,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Callable
 
-import net_io
+from naiba import net as net_io
 from naiba.llm.protocols import ProtocolMixins
 from naiba.llm.stream import StreamMixins
 from naiba.core.diagnostics import (

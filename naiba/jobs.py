@@ -34,7 +34,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-import net_io
+from naiba import net as net_io
 
 JOB_TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 JOB_ACTIVE = {"queued", "running", "waiting", "stopping"}

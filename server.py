@@ -44,22 +44,18 @@ DATA_DIR = PC.data_dir
 STATUS_PATH = PC.status_path
 LOCK_PATH = PC.lock_path
 
-import net_io
-from mcp_runtime import MCPRegistry
-from model_runtime import ModelRuntime
-from plan_runtime import CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
-from skill_runtime import (
-    SkillAgent,
-    SkillCatalog,
-    TaskCancelled,
-    ToolExecutor,
-    _zip_has_skill_md,
-    delete_skill,
-    remove_skill_references,
-)
-from async_tasks import ActiveRunError, ConversationRunManager
-from storage import ChatStorage
-from updater import UpdateManager
+from naiba import net as net_io
+from naiba.mcp import MCPRegistry
+from naiba.llm.runtime import ModelRuntime
+from naiba.plans import CraftToolExecutor, PlanManager, ReadOnlyToolExecutor, resolve_mode_tools
+from naiba.skills.agent import SkillAgent
+from naiba.skills.catalog import SkillCatalog
+from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
+from naiba.core.exceptions import ActiveRunError, TaskCancelled
+from naiba.tools.executor import ToolExecutor
+from naiba.run.manager import ConversationRunManager
+from naiba.storage.store import ChatStorage
+from naiba.updater import UpdateManager
 from naiba.core.attachments import (
     MEDIA_PRODUCT_EXTS, _IMAGE_MEDIA_TERM_RE, _IMAGE_VIEW_ACTION_RE,
     _image_intent, _is_media_product_path, extract_attachments,

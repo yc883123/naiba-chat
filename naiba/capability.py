@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from skill_runtime import validate_and_install_skill, validate_and_extract_archive
+from naiba.skills.install import validate_and_install_skill, validate_and_extract_archive
 
 
 class CapabilityRuntime:

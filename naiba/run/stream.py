@@ -13,8 +13,8 @@ import threading
 import time
 from typing import Any
 
-from skill_runtime import TaskCancelled
-from vision_runtime import VISION_TOOL_NAMES
+from naiba.core.exceptions import TaskCancelled
+from naiba.vision.runtime import VISION_TOOL_NAMES
 
 
 def _safe_activity(

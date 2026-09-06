@@ -1581,7 +1581,7 @@ def _infer_supports_images(provider: dict[str, Any]) -> bool:
             hint in model for hint in deepseek_vision_hints
         )
     try:
-        from vision_runtime import VisionRouter
+        from naiba.vision.runtime import VisionRouter
 
         return VisionRouter._brain_supports_vision(provider)
     except Exception:  # noqa: BLE001 - 视觉模块不可用时不阻塞模型解析

@@ -12,8 +12,8 @@ from naiba.core.contracts import AppContext
 import re
 from typing import Any
 
-from plan_runtime import normalize_interaction_mode, resolve_mode_tools
-from vision_runtime import IMAGE_SUFFIXES
+from naiba.plans import normalize_interaction_mode, resolve_mode_tools
+from naiba.vision.runtime import IMAGE_SUFFIXES
 
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
