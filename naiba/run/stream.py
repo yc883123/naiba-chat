@@ -3,7 +3,7 @@
 - ``safe_activity`` / ``build_activity_timeline``：把事件序列编排成前端可渲染的
   思维链/工具链时间线（模块级纯函数，任何异常不阻断消息保存/发送）。
 - ``_RunEventSink``：模型事件持久化协调器——delta 合流（≥4096 字符或 ≥0.1s 落库）、
-  tool_requested/tool_started 去重为单个 tool_start、视觉事件旁路、取消即抛 TaskCancelled。
+  tool_requested/tool_started 去重为单个 tool_start、取消即抛 TaskCancelled。
   双线程（run 线程与看门狗线程）共享同一 sink，delta 缓冲由锁保护。
 """
 
@@ -14,7 +14,6 @@ import time
 from typing import Any
 
 from naiba.core.exceptions import TaskCancelled
-from naiba.vision.runtime import VISION_TOOL_NAMES
 
 
 def _safe_activity(
@@ -144,21 +143,7 @@ class _RunEventSink:
             payload = {**payload, "type": "tool_start"}
             if tool:
                 self._announced_tools.add(tool)
-        if str(payload.get("type") or "") == "tool_start" and str(payload.get("tool") or "") in VISION_TOOL_NAMES:
-            self.manager.emit(self.run_id, {
-                "type": "vision_start",
-                "backend": "视觉工具",
-                "tool": str(payload.get("tool") or ""),
-                "started_at": int(time.time() * 1000),
-            })
-        elif str(payload.get("type") or "") == "tool_result" and str(payload.get("tool") or "") in VISION_TOOL_NAMES:
-            self.manager.emit(self.run_id, {
-                "type": "vision_done" if payload.get("success") else "vision_error",
-                "message": (
-                    "视觉识别完成，正在继续处理"
-                    if payload.get("success") else f"视觉识别失败：{payload.get('result') or '视觉后端未返回结果'}"
-                ),
-            })
+        # 视觉工具与其它工具同构：不再旁路为 vision_start/vision_done 状态事件。
         self.manager.emit(self.run_id, payload)
 
     def flush(self) -> None:

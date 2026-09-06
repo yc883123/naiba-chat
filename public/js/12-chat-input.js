@@ -10,7 +10,7 @@ import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation, renderConversationRuleBar } from "./08-conversations.js";
 import { uploadFiles } from "./10-upload.js";
-import { SKILL_INSTALL_PRESET, clearElapsedStatus, clearRunReconnectTimers, clearStreamingAnswer, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, renderVisionProgress, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
+import { SKILL_INSTALL_PRESET, clearElapsedStatus, clearRunReconnectTimers, clearStreamingAnswer, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
 import { renderInputMirror, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
 export async function startSkillInstall() {
   if (state.chatRunId || state.abortController) {
@@ -308,21 +308,9 @@ export function handleChatEvent(event, row, conversationId = state.conversationI
     state.runConversationId = conversationId;
     row.dataset.runId = state.chatRunId;
     row.dataset.lightweightMode = String(Boolean(event.lightweight_mode));
-  } else if (event.type === 'vision_start') {
-    renderVisionProgress(activity || answer, event);
-  } else if (event.type === 'vision_done') {
-    clearVisionProgress();
-    setActivity(event.message || '视觉识别完成，正在交给主模型处理');
-    $('#runtimeStatus').textContent = event.message || '视觉识别完成，正在交给主模型处理';
-  } else if (event.type === 'vision_error') {
-    clearVisionProgress();
-    setActivity(event.message || '视觉识别失败，已降级处理');
-    $('#runtimeStatus').textContent = '视觉识别失败，已降级处理';
   } else if (event.type === 'status') {
     clearVisionProgress();
-    const statusMessage = String(event.message || '').startsWith('已自动识图')
-      ? `视觉识别完成，正在交给主模型处理（${event.message}）`
-      : event.message;
+    const statusMessage = String(event.message || '');
     setActivity(statusMessage);
     // 思考等待计时：显示 “正在思考 … · 已等待 X 秒”，收到进展事件即清除
     if (state.elapsedTimer) clearElapsedStatus();

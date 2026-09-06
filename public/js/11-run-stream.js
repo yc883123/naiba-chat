@@ -242,22 +242,6 @@ export function clearVisionProgress() {
   state.visionStartedAt = 0;
 }
 
-export function renderVisionProgress(answer, event) {
-  clearVisionProgress();
-  const startedAt = Number(event.started_at || Date.now());
-  state.visionStartedAt = startedAt;
-  const backend = String(event.backend || '视觉模型');
-  const update = () => {
-    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-    const label = answer.querySelector('.vision-progress-elapsed');
-    if (label) label.textContent = `已等待 ${elapsed} 秒`;
-    $('#runtimeStatus').textContent = `${backend} · 已等待 ${elapsed} 秒`;
-  };
-  answer.innerHTML = `<div class="vision-progress"><span class="vision-spinner" aria-hidden="true"></span><span class="vision-progress-label">正在调用 ${escapeHtml(backend)}</span><span class="vision-progress-elapsed">已等待 0 秒</span></div>`;
-  update();
-  state.visionTimer = window.setInterval(update, 1000);
-}
-
 export function clearStreamingAnswer(answer) {
   if (!answer) return;
   answer.dataset.raw = '';

@@ -101,8 +101,8 @@ def default_config() -> dict[str, Any]:
         ],
         "default_agent_id": "general",
         # 视觉（Phase 0-3）：provider 缺省时使用内置 OVH 免费匿名视觉链兜底。
+        # 视觉调用统一由模型驱动（vision_analyze 工具），无自动路由开关。
         "vision": {
-            "auto_route": True,
             "provider_model_key": "",
             "fallback_models": [],
             "brain_supports_image": False,
@@ -447,6 +447,10 @@ class ConfigStore:
         vision = defaults.get("vision")
         if isinstance(vision, dict) and vision.get("timeout_ms") == 120000:
             vision["timeout_ms"] = 180000
+        # 自动路由已移除（视觉统一由模型按需调用 vision_analyze）：清理旧配置残留键。
+        if isinstance(vision, dict):
+            vision.pop("auto_route", None)
+            defaults["vision"] = vision
         # MCP 配置去重：重复 server id 只保留首个（PLAN4 §MCP）。
         servers = defaults.get("mcp_servers")
         if isinstance(servers, list):

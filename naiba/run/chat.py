@@ -416,20 +416,11 @@ class ConversationRunMixin:
                 )
             reasoning_effort = profile["reasoning_effort"]
             history = build_model_history(snapshot.get("conversation_messages") or [], event)
-            # 视觉自动路由（Phase 1）：文本大脑不支持看图时，把图片改写为不可信描述注入；
-            # 纯文本大脑绝不会收到原始 image_url。
-            image_pending = any(
-                isinstance(item.get("content"), list)
-                and any(
-                    isinstance(part, dict) and part.get("type") == "image"
-                    for part in item.get("content") or []
-                )
-                for item in history
-                if isinstance(item, dict)
-            )
+            # 视觉统一由模型驱动（自动路由已移除）：文本大脑不支持看图时，只把图片改写为
+            # 安全文本占位（路径引用 + 工具提示），由模型按需主动调用 vision_analyze；
+            # 纯文本大脑绝不会收到原始 image_url，也不会再有后台自动识图。
             vision_config_getter = getattr(self.app.vision, "config", None)
             vision_config = vision_config_getter() if callable(vision_config_getter) else {}
-            vision_backend_name = "视觉模型"
             snapshot_capability = snapshot.get("chat_supports_images")
             if isinstance(snapshot_capability, bool):
                 brain_supports_images = snapshot_capability
@@ -442,44 +433,6 @@ class ConversationRunMixin:
             # Keep every downstream routing decision on the same frozen
             # capability value; prepare_history must not re-infer differently.
             profile["supports_images"] = brain_supports_images
-            vision_auto_route_applied = bool(
-                image_pending
-                and vision_config.get("auto_route", True)
-                and not brain_supports_images
-            )
-            cache_covers = False
-            cache_checker = getattr(self.app.vision, "auto_route_cache_covers", None)
-            if vision_auto_route_applied and callable(cache_checker):
-                try:
-                    cache_covers = bool(cache_checker(history))
-                except Exception:
-                    cache_covers = False
-            vision_route_started = bool(vision_auto_route_applied and not cache_covers)
-            if vision_route_started:
-                selected_vision_key = str(vision_config.get("provider_model_key") or "")
-                try:
-                    vision_profile = self.app.config.profile(selected_vision_key) if selected_vision_key else {}
-                    request_format = str(vision_profile.get("request_format") or "").lower()
-                    if request_format == "llama_cpp":
-                        vision_backend_name = "本地视觉模型（llama.cpp）"
-                    elif request_format == "unsloth":
-                        vision_backend_name = "本地视觉模型（Unsloth）"
-                    elif vision_profile.get("kind") == "local":
-                        vision_backend_name = "本地视觉模型"
-                    elif vision_profile.get("name"):
-                        vision_backend_name = f"视觉模型（{vision_profile['name']}）"
-                except (KeyError, ValueError, TypeError):
-                    pass
-                event({
-                    "type": "vision_start",
-                    "backend": vision_backend_name,
-                    "image_count": sum(
-                        sum(1 for part in item.get("content") or []
-                            if isinstance(part, dict) and part.get("type") == "image")
-                        for item in history if isinstance(item, dict)
-                    ),
-                    "started_at": int(time.time() * 1000),
-                })
             try:
                 vision_timeout = max(1.0, int(vision_config.get("timeout_ms", 180000)) / 1000)
             except (TypeError, ValueError):
@@ -490,20 +443,16 @@ class ConversationRunMixin:
                     history, profile, cancel_event=cancel_event, vision_budget=vision_budget
                 )
                 vision_trace = dict(getattr(self.app.vision, "last_trace", {}) or vision_trace)
-                if vision_route_started:
-                    event({"type": "vision_done", "message": "视觉识别完成，正在交给主模型处理"})
                 if vision_note:
                     event({"type": "status", "message": vision_note})
-            except Exception as exc:  # noqa: BLE001 - 视觉不可用不应阻断普通聊天
+            except Exception as exc:  # noqa: BLE001 - 图片清洗异常不应阻断普通聊天
                 if cancel_event.is_set():
                     raise TaskCancelled("任务已取消")
-                if vision_route_started:
-                    event({"type": "vision_error", "message": f"视觉识别失败，已安全降级：{exc}"})
                 history, removed = self.app.vision.strip_images_for_text_model(
-                    history, f"视觉路由异常：{exc}"
+                    history, f"图片处理异常：{exc}"
                 )
                 if removed:
-                    event({"type": "status", "message": f"视觉路由异常，已安全移除 {removed} 张图片"})
+                    event({"type": "status", "message": f"图片处理异常，已安全移除 {removed} 张图片"})
             options = dict(snapshot.get("generation_options") or self._generation_options(self.app.config, model_key))
             options["stream"] = bool(snapshot.get("stream_enabled", True))
             options["reasoning_enabled"] = reasoning_effort != "off"
@@ -554,9 +503,11 @@ class ConversationRunMixin:
             # 图片处理策略必须“常驻”而非按“本轮是否含图”追加，否则系统提示会在
             # 第一张图片轮发生变化（插入到 skill 块/MCP 说明之前，将其整体右移），
             # 破坏 DeepSeek 前缀缓存（首图轮全量重算、下一图轮才恢复）。
-            if brain_supports_images or bool(vision_config.get("auto_route", True)):
-                prompt = (prompt + "\n\n图片处理策略：当上下文中已包含图片证据时，不要为普通答复重复调用图像描述/视觉工具；"
-                           "仅当用户明确要求裁剪、OCR、坐标、像素比较等新的图像操作时才调用视觉工具。").strip()
+            # 自动路由已移除：图片内容不再后台注入，文本模型需要看图时由模型主动
+            # 调用 vision_analyze（多模态模型的图片已在上下文中直接可见，无需调用）。
+            prompt = (prompt + "\n\n图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径；"
+                       "图片已作为原图直接可见时（多模态模型）无需调用；仅当用户明确要求裁剪、OCR、坐标、像素比较等"
+                       "新操作时才调用 vision_image_ops。").strip()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
             run_context: RunContext = {
                 "run_id": run_id,
@@ -627,24 +578,13 @@ class ConversationRunMixin:
                     "chat": dict(chat_diagnostics),
                 }
             performance_warnings: list[str] = []
-            selected_vision_key = str(vision_config.get("provider_model_key") or "")
-            if (
-                vision_route_started
-                and selected_vision_key
-                and selected_vision_key == model_key
-                and str(profile.get("kind") or "").lower() == "local"
-            ):
-                performance_warnings.append("视觉和聊天使用同一本地模型，将串行执行两次推理")
             performance = {
                 "vision": dict(vision_trace),
                 "chat": dict(chat_diagnostics),
                 "total_ms": round((time.perf_counter() - run_started) * 1000, 1),
                 "warnings": performance_warnings,
                 "routing": {
-                    "auto_route": bool(vision_config.get("auto_route", True)),
                     "chat_supports_images": bool(brain_supports_images),
-                    "vision_route_started": bool(vision_route_started),
-                    "vision_cache_reused": bool(vision_auto_route_applied and cache_covers),
                     "model_key": model_key,
                 },
             }

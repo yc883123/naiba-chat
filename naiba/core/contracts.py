@@ -160,9 +160,6 @@ class EventType(str, Enum):
     USER_GUIDANCE = "user_guidance"
     INTERJECTION_CONSUMED = "interjection_consumed"
     RESPONSE_RETRACTED = "response_retracted"
-    VISION_START = "vision_start"
-    VISION_DONE = "vision_done"
-    VISION_ERROR = "vision_error"
     DEBUG_CACHE = "debug_cache"
     HEARTBEAT = "heartbeat"
 
@@ -220,10 +217,7 @@ class EventPayload(TypedDict, total=False):
     plan: dict[str, Any]
     todos: list[dict[str, Any]]
     aborted_message: dict[str, Any]
-    # 视觉 / 诊断
-    backend: str
-    image_count: int
-    started_at: int
+    # 诊断
     label: str
     lines: list[str]
     # Job 流

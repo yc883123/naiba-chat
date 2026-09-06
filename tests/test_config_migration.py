@@ -89,6 +89,12 @@ class ConfigMigrationTests(unittest.TestCase):
         store = self._store({"vision": {"timeout_ms": 130000}})
         self.assertEqual(store.data["vision"]["timeout_ms"], 130000)
 
+    def test_retired_vision_auto_route_cleaned(self):
+        # 自动路由已移除（视觉统一由模型按需调用 vision_analyze）：旧配置残留键必须被清洗。
+        store = self._store({"vision": {"auto_route": False, "timeout_ms": 150000}})
+        self.assertNotIn("auto_route", store.data["vision"])
+        self.assertEqual(store.data["vision"]["timeout_ms"], 150000)
+
     def test_bundled_comfyui_mcp_dir_removed_from_skill_roots(self):
         store = self._store({"skills_dirs": ["skills", "data/comfyui-mcp"]})
         self.assertEqual(store.data["skills_dirs"], ["skills"])

@@ -538,7 +538,6 @@ export function populateVisionSettings() {
     const deleteButton = $('#deleteVisionProvider');
     if (deleteButton) deleteButton.disabled = !select.value;
   }
-  const auto = $('#visionAutoRoute'); if (auto) auto.checked = vision.auto_route !== false;
   const timeout = $('#visionTimeout'); if (timeout) timeout.value = vision.timeout_ms || 180000;
   const maxImages = $('#visionMaxImages'); if (maxImages) maxImages.value = vision.max_images || 4;
 }
@@ -605,7 +604,6 @@ export async function saveVisionSettings(options = {}) {
   const payload = {
     vision: {
       provider_model_key: $('#visionProvider')?.value || '',
-      auto_route: $('#visionAutoRoute')?.checked !== false,
       timeout_ms: Number($('#visionTimeout')?.value || 180000),
       max_images: Number($('#visionMaxImages')?.value || 4),
     },
