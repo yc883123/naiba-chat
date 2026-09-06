@@ -185,18 +185,15 @@ class NaibaChatApp:
         # MCP uses demand-driven lifecycle.  Configured services stay stopped
         # until a run explicitly needs them or calls an MCP tool.
         from naiba.subagent import (
-            subagent_handler_factory,
-            job_tool_handler_factory,
             run_subagent_agent,
         )
         self.jobs.agent_runner = lambda jid, spec, cancel, emit: run_subagent_agent(
             self, jid, spec, cancel, emit
         )
-        self.tool_registry.register_system_handler("subagent", subagent_handler_factory(self))
-        for _name, _handler in job_tool_handler_factory(self).items():
-            self.tool_registry.register_system_handler(_name, _handler)
-        self.tool_registry.register_system_handler("todo_write", self._todo_write_handler)
-        self.tool_registry.register_system_handler("artifact_report", self._artifact_report_handler)
+        # job/subagent 域 Provider（Phase 4）：8 个任务工具单一定义（def.execute + system）
+        from naiba.tools.providers.jobs import JobToolProvider
+
+        self.tool_registry.register_provider(JobToolProvider(self))
         self.tool_registry.register_system_handler("comfyui_prepare_workflow", self._comfyui_prepare_workflow_handler)
         self.tool_registry.register_system_handler("comfyui_batch", self._comfyui_batch_handler)
         from naiba.capability import CapabilityRuntime
@@ -214,8 +211,10 @@ class NaibaChatApp:
         from naiba.search import WebSearchRuntime
 
         self.web_search = WebSearchRuntime(self)
-        self.tool_registry.register_system_handler("web_search", self._web_search_handler)
-        self.tool_registry.register_system_handler("recall_history", self._recall_history_handler)
+        # search/recall 域 Provider（Phase 4）：web_search/recall_history 单一定义
+        from naiba.tools.providers.search import SearchRecallProvider
+
+        self.tool_registry.register_provider(SearchRecallProvider(self.web_search, self.storage))
         # Storage marks in-flight runs as interrupted on startup. Deterministic
         # jobs that explicitly opted into resume are safely re-created from
         # their durable checkpoint and persisted parameters.
@@ -231,124 +230,6 @@ class NaibaChatApp:
         self.plans.shutdown()
         self.jobs.shutdown()
         self.mcp.stop()
-
-    def _web_search_handler(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
-        query = str(args.get("query") or args.get("q") or "")
-        max_results = args.get("max_results")
-        return self.web_search.search(query, int(max_results) if isinstance(max_results, (int, float)) else None)
-
-    def _recall_history_handler(
-        self, args: dict[str, Any], _skills: Any, _ctx: Any,
-    ) -> tuple[bool, str]:
-        """历史会话检索：只读本机会话库，按关键词匹配会话标题与消息文本。"""
-        query = str(args.get("query") or "").strip()
-        raw_max = args.get("max_results")
-        max_results = min(max(int(raw_max) if isinstance(raw_max, (int, float)) else 5, 1), 20)
-        if not query:
-            return False, "query 不能为空"
-        try:
-            with self.storage._connect() as db:
-                rows = db.execute(
-                    "SELECT c.id AS cid, c.title AS title, "
-                    "       c.updated_at AS conv_updated, "
-                    "       m.role AS role, m.content AS content, "
-                    "       m.created_at AS msg_created "
-                    "FROM messages m JOIN conversations c ON c.id = m.conversation_id "
-                    "WHERE instr(lower(m.content), lower(?)) > 0 "
-                    "ORDER BY m.created_at DESC LIMIT 400",
-                    (query,),
-                ).fetchall()
-        except Exception as exc:  # noqa: BLE001
-            return False, f"检索失败：{type(exc).__name__}: {exc}"
-        if not rows:
-            return True, f"未在历史会话中找到与「{query}」相关的内容"
-        # 按会话聚合：每个会话取时间最新的前 3 条命中消息
-        grouped: dict[str, dict[str, Any]] = {}
-        for row in rows:
-            cid = str(row["cid"])
-            bucket = grouped.setdefault(
-                cid,
-                {"title": str(row["title"] or "（无标题）"),
-                 "updated": int(row["conv_updated"] or 0),
-                 "hits": []},
-            )
-            if len(bucket["hits"]) < 3:
-                bucket["hits"].append(
-                    {"role": str(row["role"] or ""), "content": str(row["content"] or ""),
-                     "created": int(row["msg_created"] or 0)}
-                )
-        ordered = sorted(grouped.values(), key=lambda item: item["updated"], reverse=True)[:max_results]
-        now_ms = int(time.time() * 1000)
-        output = [f"在历史会话中找到 {len(ordered)} 个相关会话（关键词「{query}」，仅本机检索）："]
-        for index, bucket in enumerate(ordered, 1):
-            age_days = max(0, (now_ms - bucket["updated"]) / 86400000)
-            when = f"{age_days:.1f} 天前" if age_days >= 1 else "今天"
-            output.append(f"{index}. 《{bucket['title']}》（{when} 更新）")
-            for hit in bucket["hits"]:
-                role_label = "用户" if hit["role"] == "user" else "助手"
-                snippet = " ".join(hit["content"].split())[:200]
-                output.append(f"   - [{role_label}] {snippet}{'…' if len(hit['content']) > 200 else ''}")
-            output.append("")
-        output.append("如需确认是哪一次对话，请把上面的标题与时间给用户核对；内容仅作回忆上下文，引用前应回到对应会话复核。")
-        return True, "\n".join(output).strip()
-
-    def _todo_write_handler(
-        self,
-        args: dict[str, Any],
-        _skills: Any,
-        run_context: RunContext | None = None,
-    ) -> tuple[bool, str]:
-        run_id = str((run_context or {}).get("run_id") or (run_context or {}).get("job_id") or "")
-        if not run_id:
-            return False, "无法确定当前运行，不能保存任务清单"
-        raw = (args or {}).get("todos")
-        if not isinstance(raw, list) or len(raw) > 100:
-            return False, "todos 必须是最多 100 项的数组"
-        todos: list[dict[str, str]] = []
-        active = 0
-        for index, item in enumerate(raw, 1):
-            if not isinstance(item, dict):
-                return False, f"第 {index} 项不是对象"
-            content = str(item.get("content") or "").strip()
-            status = str(item.get("status") or "pending")
-            if not content or status not in {"pending", "in_progress", "completed"}:
-                return False, f"第 {index} 项缺少 content 或 status 无效"
-            active += int(status == "in_progress")
-            todos.append({"id": str(item.get("id") or index), "content": content[:1000], "status": status})
-        if active > 1:
-            return False, "同时最多只能有一个 in_progress 任务"
-        self.storage.append_run_event(run_id, {"type": "todo_state", "todos": todos})
-        return True, json.dumps({"saved": True, "todos": todos}, ensure_ascii=False)
-
-    def _artifact_report_handler(
-        self,
-        args: dict[str, Any],
-        _skills: Any,
-        _run_context: RunContext | None = None,
-    ) -> tuple[bool, str]:
-        paths = (args or {}).get("paths")
-        if not isinstance(paths, list) or not paths or len(paths) > 200:
-            return False, "paths 必须是 1 到 200 个文件路径"
-        require_nonempty = bool((args or {}).get("require_nonempty", True))
-        rows: list[dict[str, Any]] = []
-        errors: list[dict[str, str]] = []
-        for raw in paths:
-            path = Path(str(raw or "")).expanduser().resolve()
-            try:
-                if not path.is_file():
-                    raise FileNotFoundError(path)
-                size = path.stat().st_size
-                if require_nonempty and size <= 0:
-                    raise ValueError("文件为空")
-                digest = hashlib.sha256()
-                with path.open("rb") as handle:
-                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                        digest.update(chunk)
-                rows.append({"path": str(path), "size": size, "sha256": digest.hexdigest()})
-            except (OSError, ValueError) as exc:
-                errors.append({"path": str(path), "error": str(exc)})
-        result = {"status": "verified" if rows and not errors else ("partial" if rows else "failed"), "label": str((args or {}).get("label") or ""), "artifacts": rows, "errors": errors}
-        return (not errors), json.dumps(result, ensure_ascii=False)
 
     def _comfyui_batch_handler(
         self,

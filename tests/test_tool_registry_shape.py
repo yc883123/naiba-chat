@@ -16,6 +16,8 @@
 from __future__ import annotations
 
 import ast
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -111,6 +113,58 @@ def _system_handler_names() -> set[str]:
     return names
 
 
+def _assembled_test_registry() -> Any:
+    """组装态注册表（桩依赖）：模拟 app 装配后的 Provider 绑定，供通道/一致性守门。
+
+    仅用于测试：runtime 依赖以桩代替（不启动 App / 不触达存储与网络）。
+    """
+    from types import SimpleNamespace
+
+    from naiba.tools.providers import capability as cap_provider
+    from naiba.tools.providers import comfyui as comfyui_provider
+    from naiba.tools.providers import core as core_provider
+    from naiba.tools.providers import jobs as jobs_provider
+    from naiba.tools.providers import search as search_provider
+    from naiba.tools.providers import vision as vision_provider
+
+    class _FakeHandlers:
+        def __init__(self, names: set[str]) -> None:
+            self._names = names
+
+        def tool_handlers(self):
+            return {name: (lambda args, skills, ctx=None: (True, "")) for name in self._names}
+
+    def _stub_app() -> SimpleNamespace:
+        return SimpleNamespace(jobs=None, storage=None)
+
+    reg = registry_mod.build_tool_registry()
+    reg.register_provider(
+        core_provider.CoreToolProvider(
+            core_provider.ToolContext(
+                workspace=Path(tempfile.mkdtemp(prefix="naiba-assembled-")),
+                python_executable=sys.executable,
+                command_timeout=60,
+                mcp_registry=None,
+                mcp_register=None,
+            )
+        )
+    )
+    reg.register_provider(jobs_provider.JobToolProvider(_stub_app()))
+    reg.register_provider(comfyui_provider.ComfyUIProvider(_stub_app()))
+    reg.register_provider(search_provider.SearchRecallProvider(None, None))
+    reg.register_provider(
+        cap_provider.CapabilityToolProvider(
+            _FakeHandlers({spec.name for spec in registry_mod.build_capability_tool_specs()})
+        )
+    )
+    reg.register_provider(
+        vision_provider.VisionToolProvider(
+            _FakeHandlers({spec.name for spec in registry_mod.build_vision_tool_specs()})
+        )
+    )
+    return reg
+
+
 class ToolRegistryShapeTests(unittest.TestCase):
     """声明表形态与通道完整性守门。"""
 
@@ -154,8 +208,10 @@ class ToolRegistryShapeTests(unittest.TestCase):
     def test_every_tool_has_one_execution_channel(self) -> None:
         """声明的每个工具必须能解析到执行通道（防"仅声明/仅实现"漂移）。
 
+        通道演进（Phase 4+）：executor 方法 | 系统处理器（静态清单）| def.execute（组装态）。
         别名（TOOL_ALIASES）经其目标工具解析通道。
         """
+        assembled = _assembled_test_registry()
         for row in self.rows:
             name = str(row["name"])
             with self.subTest(tool=name):
@@ -164,10 +220,13 @@ class ToolRegistryShapeTests(unittest.TestCase):
                 lookup = self.aliases.get(name, name)
                 if lookup in self.methods:
                     continue  # 执行器实现（或别名指向的实现）
+                spec = assembled.get(lookup)
+                if spec is not None and spec.execute is not None:
+                    continue  # 单一定义：Provider 绑定 def.execute
                 self.assertIn(
                     lookup,
                     self.handlers,
-                    f"{name}（别名→{lookup}）：既无 _tool_* 方法也不在系统处理器注册表（仅声明，无法执行）",
+                    f"{name}（别名→{lookup}）：无 _tool_* 方法、无 def.execute、不在系统处理器注册表",
                 )
 
     def test_declared_tools_have_implementations_or_handlers_consistent(self) -> None:
