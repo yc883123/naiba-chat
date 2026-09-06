@@ -24,6 +24,7 @@ from typing import Any, Callable
 from naiba.core.diagnostics import _cache_debug_enabled, _debug_message_digest
 from naiba.core.history import _vision_read_folder_model_summary, encode_image_for_model
 from naiba.core.exceptions import TaskCancelled
+from naiba.skills.catalog import SkillCatalog
 from naiba.tools.executor import ToolExecutor
 from naiba.skills.context import DEFAULT_CONTEXT_WINDOW
 from naiba.skills.policy import normalize_skill_policy

@@ -7,7 +7,7 @@ ConversationRunManager：每会话一轮 Run 的调度器与注册表——提�
 
 from __future__ import annotations
 
-from naiba.core.contracts import AppContext, RunContext
+from naiba.core.contracts import AppContext, MetadataKeys, RunContext
 
 import threading
 import time
