@@ -8,68 +8,29 @@
 from __future__ import annotations
 
 import argparse
-import base64
-import gzip
-import hashlib
-import io
-import ipaddress
 import json
 import mimetypes
 import os
-import re
 import secrets
-import shutil
 import socket
-import struct
 import sys
-import tempfile
-import threading
 import time
-import traceback
 import urllib.parse
-import uuid
-import zipfile
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from naiba.app import NaibaChatApp
 import naiba.net as net_io
-from naiba.config import (
-    VALID_MODEL_KINDS, _infer_kind_for_request_format, built_in_agent_ids,
-    resolve_tool_preset, tool_catalog_entries, tool_group_entries,
-    tool_preset_entries, validate_skills_dir,
-)
-from naiba.core.attachments import (
-    MEDIA_PRODUCT_EXTS, _IMAGE_MEDIA_TERM_RE, _IMAGE_VIEW_ACTION_RE,
-    _image_intent, _is_media_product_path, extract_attachments,
-)
-from naiba.core.choices import _detect_choice_groups, _detect_choices
-from naiba.core.cards import _decode_card_payload, parse_sillytavern_card
-from naiba.core.conv_files import (
-    _CONV_FILE_READ_CAP, _CONV_FILE_SAVE_CAP, _CONV_FILE_SNIFF_BYTES, _CONV_IMAGE_EXTS,
-    _conv_file_allow, _conv_file_open, _conv_file_save, _conv_file_target,
-    _conv_touched_files, _conv_workspace_root,
-)
-from naiba.core.file_changes import FILE_MODIFY_TOOLS, file_changes_from_runs
-from naiba.core.history import (
-    CONTENT_READ_TOOLS, IMAGE_MEDIA_TYPES, MODEL_IMAGE_HISTORY_LIMIT,
-    MODEL_IMAGE_MAX_EDGE, MODEL_IMAGE_TARGET_BYTES, _content_read_tool_outputs,
-    _copy_model_trace_message, _debug_replay_digest, build_model_history, encode_image_for_model,
-)
-from naiba.core.diagnostics import CACHE_DEBUG_ON, _cache_debug_enabled
+from naiba.app import NaibaChatApp
+from naiba.config import tool_catalog_entries, tool_group_entries, tool_preset_entries
+from naiba.core.choices import _detect_choice_groups
+from naiba.core.conv_files import _conv_file_allow, _conv_file_open, _conv_file_save
 from naiba.core.exceptions import ActiveRunError
-from naiba.core.network import _is_usable_lan_ipv4, get_lan_ip, network_access_status
+from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
 from naiba.paths import PathContext, default_path_context, static_asset_version
-from naiba.skills.catalog import SkillCatalog
-from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
-from naiba.storage.media import (
-    IMAGE_CACHE_CLEAN_LIMIT, IMAGE_SUFFIXES, _clean_uploads_cache, _ensure_webp_thumb,
-    _fit_image_pixels, _image_cache_dirs, _process_uploaded_image, _thumb_webp_path,
-    _uploads_total_bytes,
-)
+from naiba.storage.media import _clean_uploads_cache
 
 
 # 部分系统 mimetypes 未注册 webp/avif 等，导致 <img> 接到 application/octet-stream
