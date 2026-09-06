@@ -28,7 +28,6 @@ SUBAGENT_ALLOWED_TOOLS = [
     "read_file",
     "list_directory",
     "search_files",
-    "glob_files",
     "write_file",
     "edit_file",
     "pwsh",

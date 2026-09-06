@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from naiba.plans import normalize_interaction_mode, resolve_mode_tools
+from naiba.tools.registry import RETIRED_TOOL_MAP
 from naiba.vision.runtime import IMAGE_SUFFIXES
 
 
@@ -20,9 +21,9 @@ from naiba.vision.runtime import IMAGE_SUFFIXES
 # - Craft 模式：作业/子 Agent/视觉/搜索工具全部可用；
 # - Ask/Plan 模式：仅只读分析与搜索工具（crop/pixel_diff 等写文件工具排除）。
 JOB_TOOLS = ("run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write", "artifact_report")
-# Harness 兼容别名（read/write/edit/glob/grep）只存在于查询层归一（执行兼容），
+# Harness 兼容别名（read/write/edit/grep）只存在于查询层归一（执行兼容），
 # 不再注入 allowed_tools/模型可见集；只保留规范名，避免别名与规范名重复披露。
-HARNESS_TOOLS = ("read_file", "write_file", "edit_file", "glob_files", "search_files", "pwsh")
+HARNESS_TOOLS = ("read_file", "write_file", "edit_file", "list_directory", "search_files", "pwsh")
 CAPABILITY_TOOLS = ("install_skill", "unpack_skill_archive", "inspect_installed_skill")
 VISION_READONLY_TOOLS = (
     "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
@@ -58,7 +59,12 @@ def resolve_allowed_tools(
     不再叠加 base+system 并集（未固化/无快照时退回旧逻辑，保证迁移/旧会话兼容）。
     """
     if enabled_tool_ids:
-        allowed_tools = list(dict.fromkeys(str(item) for item in enabled_tool_ids if item))
+        # 旧会话固化的工具集可能含退役名（如 glob_files）：按退役映射归一为新名，
+        # 避免"老工具被消失、替代工具也不在固化集里"导致能力静默丢失。
+        allowed_tools = list(dict.fromkeys(
+            RETIRED_TOOL_MAP.get(str(item), str(item))
+            for item in enabled_tool_ids if str(item).strip()
+        ))
     else:
         base_tools = resolve_mode_tools(
             mode,

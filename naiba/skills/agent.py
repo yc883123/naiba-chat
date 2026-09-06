@@ -345,9 +345,9 @@ class SkillAgent:
         # 只引用当前确实可用（allowed）的工具，绝不提示模型去用已被禁用/过滤掉的工具，
         # 避免“某工具被禁用但另一工具仍宣称使用它”导致的困惑。
         guide_parts: list[str] = []
-        if {"glob_files", "search_files", "read_file"} & allowed:
+        if {"list_directory", "search_files", "read_file"} & allowed:
             guide_parts.append(
-                "通用自动化遵循模块化路径：先用 glob_files/search_files/read_file 查找已有模块；可复用时直接复用。"
+                "通用自动化遵循模块化路径：先用 list_directory/search_files/read_file 查找已有模块；可复用时直接复用。"
             )
         if {"write_file", "edit_file", "pwsh"} & allowed:
             guide_parts.append(
@@ -389,9 +389,9 @@ class SkillAgent:
         if workspace_path:
             workspace_line = (
                 f"当前工作区（本机文件根目录）为：{workspace_path}。"
-                "涉及本机文件时一律用该绝对路径：glob_files 的 path 填根目录的绝对路径、pattern 填文件名模式（如 *.png 或 **/*.py）；"
-                "list_directory/read_file/search_files 的 path 用绝对路径。"
-                "不要用相对路径如 . 或 ..；不确定文件在哪时，先对工作区绝对路径做 glob_files/list_directory 定位。\n\n"
+                "涉及本机文件时一律用该绝对路径：list_directory 的 path 填根目录绝对路径、pattern 填文件名模式（如 *.png 或 **/*.py）；"
+                "read_file/search_files 的 path 用绝对路径。"
+                "不要用相对路径如 . 或 ..；不确定文件在哪时，先对工作区绝对路径做 list_directory 定位。\n\n"
             )
         system_parts = [
             "你是运行在用户 Windows 电脑上的 AI 助手。准确完成当前请求。",

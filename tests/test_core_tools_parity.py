@@ -89,11 +89,18 @@ class CoreToolsParityTests(unittest.TestCase):
         )
         self.assertTrue(ok)
         self.assertIn("codes.txt", out)
+        # glob_files 已并入 list_directory（pattern/files_only 等价语义）。
         ok, out = self.executor.execute(
-            "glob_files", {"path": str(self.workspace), "pattern": "*.txt"}, []
+            "list_directory",
+            {"path": str(self.workspace), "pattern": "*.txt", "files_only": True},
+            [],
         )
         self.assertTrue(ok)
         self.assertIn("codes.txt", out)
+        # 退役名调用必须返回引导而非“未知工具”。
+        ok, out = self.reg.execute("glob_files", {}, [])
+        self.assertFalse(ok)
+        self.assertIn("list_directory", out)
 
     def test_registry_execute_engine_wired_produces_same_as_def(self) -> None:
         """组装态 registry + 引擎分发与 def.execute 直调结果一致（单一执行通道）。"""

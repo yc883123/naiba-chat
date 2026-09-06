@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import dataclasses
+import fnmatch
 import json
 import re
 import subprocess
@@ -199,15 +200,38 @@ def _tool_write_file(ctx: ToolContext, args: dict[str, Any], active_skills: list
 
 
 def _tool_list_directory(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
+    """列出目录内容（glob 单入口：原 glob_files 已并入，pattern/files_only 等价）。
+
+    确定性输出：按绝对路径字符串排序（名称序）；超限附续枚举提示（start_after=上一批末条路径）。
+    """
     path = _resolve_read_path(ctx, args.get("path"), active_skills, default_workspace=True)
     recursive = bool(args.get("recursive", False))
     limit = min(max(int(args.get("limit", 200)), 1), 1000)
     start_after = str(args.get("start_after") or "").strip()
-    # 确定性输出：按绝对路径字符串排序（名称序）；超限附续枚举提示（start_after=上一批末条路径）。
-    items = sorted(path.rglob("*"), key=str) if recursive else sorted(path.iterdir(), key=str)
-    filtered = [item for item in items if not start_after or str(item) > start_after]
-    rows = [f"{'DIR ' if item.is_dir() else 'FILE'} {item}" for item in filtered[:limit]]
-    text = "\n".join(rows) or "目录为空"
+    pattern = str(args.get("pattern") or "*").strip() or "*"
+    files_only = bool(args.get("files_only", False))
+
+    if recursive:
+        candidates = list(path.rglob("*"))
+        matched = [
+            item for item in candidates
+            if any(fnmatch.fnmatch(str(item.relative_to(path)), pat)
+                   for pat in _expand_glob_braces(pattern))
+        ]
+    else:
+        matched = [
+            item for item in path.iterdir()
+            if any(fnmatch.fnmatch(item.name, pat)
+                   for pat in _expand_glob_braces(pattern))
+        ]
+    ordered = sorted(matched, key=str)
+    filtered = [item for item in ordered if not start_after or str(item) > start_after]
+    rows = []
+    for item in filtered[:limit]:
+        if files_only and item.is_dir():
+            continue
+        rows.append(f"{'DIR ' if item.is_dir() else 'FILE'} {item}")
+    text = "\n".join(rows) or "未找到匹配文件"
     if len(filtered) > limit and rows:
         last = rows[-1].split(" ", 1)[-1]
         text += (
@@ -386,34 +410,6 @@ def _tool_search_files(ctx: ToolContext, args: dict[str, Any], active_skills: li
     return body + (("\n" + "；".join(summary) + "。") if summary else "")
 
 
-def _tool_glob_files(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
-    root = _resolve_read_path(ctx, args.get("path"), active_skills, default_workspace=True)
-    pattern = str(args.get("pattern") or "**/*")
-    limit = min(max(int(args.get("limit", 200)), 1), 2000)
-    start_after = str(args.get("start_after") or "").strip()
-    # 确定性输出：跨多个 pattern 去重后按名称排序；超限附续枚举提示（start_after）。
-    collected: list[str] = []
-    seen: set[str] = set()
-    for pat in _expand_glob_braces(pattern):
-        for item in root.glob(pat):
-            if not item.is_file():
-                continue
-            key = str(item)
-            if key not in seen:
-                seen.add(key)
-                collected.append(key)
-    ordered = sorted(collected)
-    filtered = [item for item in ordered if not start_after or item > start_after]
-    rows = filtered[:limit]
-    text = "\n".join(rows) or "未找到匹配文件"
-    if len(filtered) > limit and rows:
-        text += (
-            f"\n…（共 {len(filtered)} 项，已列出前 {limit} 项，按名称排序；"
-            f"如需更多请用 start_after=「{rows[-1]}」重试）"
-        )
-    return text
-
-
 def _render_unified_diff(path: Path, before: str, after: str, max_lines: int = 60) -> str:
     """用 difflib 生成紧凑 unified diff（改动前后各一行上下文），供模型自审。
 
@@ -566,7 +562,7 @@ def _tool_register_mcp(ctx: ToolContext, args: dict[str, Any], active_skills: li
 
 # ---- 权限策略（Phase 5：引擎内建确认逻辑收敛到 def 级 policy） ----
 
-_READ_FAMILY = {"read_file", "list_directory", "search_files", "glob_files"}
+_READ_FAMILY = {"read_file", "list_directory", "search_files"}
 _CORE_CONFIRM_REASONS = {
     "pwsh": "执行 PowerShell 命令",
     "run_skill_script": "运行技能脚本",
@@ -663,7 +659,6 @@ _STR_TOOL_FNS: dict[str, Callable[..., Any]] = {
     "write_file": _tool_write_file,
     "list_directory": _tool_list_directory,
     "search_files": _tool_search_files,
-    "glob_files": _tool_glob_files,
     "edit_file": _tool_edit_file,
     "pwsh": _tool_pwsh,
     "run_skill_script": _tool_run_skill_script,
@@ -676,14 +671,12 @@ _ALIAS_IMPLS: dict[str, Callable[..., Any]] = {
     "read": _tool_read_file,
     "write": _tool_write_file,
     "edit": _tool_edit_file,
-    "glob": _tool_glob_files,
     "grep": _tool_search_files,
 }
 _ALIAS_CANONICAL: dict[str, str] = {
     "read": "read_file",
     "write": "write_file",
     "edit": "edit_file",
-    "glob": "glob_files",
     "grep": "search_files",
 }
 

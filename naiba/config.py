@@ -129,7 +129,7 @@ def default_config() -> dict[str, Any]:
 # 内置 Agent 使用当前对话选择的模型。
 # 全部可选工具：内置 Agent 的 tool_scope 默认“全开启”，用户可再按需裁剪。
 _BUILT_IN_SCOPE_ALL = (
-    "read_file", "list_directory", "search_files", "glob_files",
+    "read_file", "list_directory", "search_files",
     "write_file", "edit_file", "pwsh", "run_skill_script",
     "http_request", "web_search", "register_mcp",
     "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
@@ -200,11 +200,10 @@ def built_in_agent_ids() -> set[str]:
 # 视觉模型（vision_read_folder 直接看图）用的；default_selected 决定新建 Agent 的默认勾选。
 _ALIAS_MAIN = {
     "read": "read_file", "write": "write_file", "edit": "edit_file",
-    "glob": "glob_files", "grep": "search_files",
+    "grep": "search_files",
 }
 _TOOL_GROUP = {
     "read_file": "文件读取/搜索", "list_directory": "文件读取/搜索", "search_files": "文件读取/搜索",
-    "glob_files": "文件读取/搜索",
     "write_file": "文件写入/编辑", "edit_file": "文件写入/编辑",
     "pwsh": "命令执行",
     "run_skill_script": "Skill 脚本",
@@ -220,7 +219,7 @@ _TOOL_GROUP = {
 }
 # 模型能力映射已随视觉单入口重构移除（vision_analyze 按会话能力换形态，不再按模型裁剪工具集）。
 _DEFAULT_SELECTED_TOOLS = frozenset({
-    "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
+    "read_file", "write_file", "list_directory", "search_files", "edit_file",
     "pwsh", "run_skill_script", "http_request", "web_search", "vision_analyze",
 })
 
@@ -245,7 +244,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         })
     # 端到端顺序：把前端呈现顺序稳定化，避免逐轮随机
     order = (
-        "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
+        "read_file", "write_file", "list_directory", "search_files", "edit_file",
         "pwsh", "run_skill_script", "http_request", "web_search",
         "register_mcp",
         "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
@@ -309,7 +308,7 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "name": "极简模式",
         "tagline": "只读不改",
         "desc": "只能查看和搜索文件、看图片。不写文件、不跑命令、不联网，最省心。",
-        "include": ["read_file", "list_directory", "search_files", "glob_files", "vision_analyze"],
+        "include": ["read_file", "list_directory", "search_files", "vision_analyze"],
     },
     {
         "id": "standard",
@@ -317,7 +316,7 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "tagline": "日常推荐",
         "desc": "读写文件 + 搜索 + 跑命令 + 联网 + 看图，覆盖绝大多数日常任务。",
         "include": [
-            "read_file", "write_file", "list_directory", "search_files", "glob_files",
+            "read_file", "write_file", "list_directory", "search_files",
             "edit_file", "pwsh", "run_skill_script", "http_request", "web_search",
             "vision_analyze",
         ],

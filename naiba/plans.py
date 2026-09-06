@@ -38,11 +38,10 @@ ALL_TOOLS = (
     "search_files",
     "run_skill_script",
     "http_request",
-    "glob_files",
     "edit_file",
     "pwsh",
 )
-READONLY_TOOLS = {"read_file", "list_directory", "search_files", "glob_files", "http_request"}
+READONLY_TOOLS = {"read_file", "list_directory", "search_files", "http_request"}
 
 PLAN_PREPARE_PROMPT = (
     "## Plan 计划模式\n"

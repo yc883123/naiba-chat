@@ -65,7 +65,6 @@ HARNESS_ALIASES = {
     "read": "read_file",
     "write": "write_file",
     "edit": "edit_file",
-    "glob": "glob_files",
     "grep": "search_files",
 }
 
@@ -81,9 +80,11 @@ RETIRED_TOOL_MAP: dict[str, str] = {
     "vision_colors": "vision_image_ops",
     "vision_crop": "vision_image_ops",
     "vision_pixel_diff": "vision_image_ops",
+    "glob_files": "list_directory",
 }
 RETIRED_TOOL_GUIDE: dict[str, str] = {
     "call_mcp": "call_mcp 已移除：MCP 工具现以 mcp__<server>__<tool> 直接暴露，请直接调用对应工具。",
+    "glob": "glob 已并入 list_directory：请用 list_directory 的 pattern/files_only 参数。",
 }
 for _old_name, _new_name in RETIRED_TOOL_MAP.items():
     RETIRED_TOOL_GUIDE.setdefault(_old_name, f"{_old_name} 已并入 {_new_name}，请改用 {_new_name}。")
@@ -335,12 +336,14 @@ def build_core_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="list_directory",
-            description="列出目录内容（按名称排序，绝对路径）。path 留空=工作区根；超限提示续枚举。",
+            description="列出目录内容（按名称排序，绝对路径）。path 留空=工作区根；pattern 过滤（如 *.png 或 **/*.py），files_only 只列文件；超限提示续枚举。",
             parameters={
                 "type": "object",
                 "properties": {
                     "path": _string("目录绝对路径（留空=工作区根）", ""),
-                    "recursive": {"type": "boolean", "default": False},
+                    "recursive": {"type": "boolean", "description": "是否递归子目录", "default": False},
+                    "pattern": _string("文件名模式（glob；如 *.txt 或 **/*.png；与 recursive 配合）", "*"),
+                    "files_only": {"type": "boolean", "description": "只列文件，不列目录", "default": False},
                     "limit": {"type": "integer", "default": 200},
                     "start_after": _string("上一批最后一条路径（按名称排序续枚举）", ""),
                 },
@@ -357,7 +360,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
             parameters={
                 "type": "object",
                 "properties": {
-                    "path": _string("搜索根目录"),
+                    "path": _string("搜索根目录（留空=工作区根）", ""),
                     "query": _string("文本关键字或正则表达式（必填）"),
                     "pattern": {"type": "string", "description": "文件名 glob", "default": "*"},
                     "limit": {"type": "integer", "default": 100},
@@ -367,25 +370,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
                     "context_lines": {"type": "integer", "description": "命中行前后各带几行上下文；0 为不带（默认）", "default": 0},
                     "multiline": {"type": "boolean", "description": "正则是否跨行匹配（配合 regex=true）；命中输出所在行范围与片段", "default": False},
                 },
-                "required": ["path", "query"],
-            },
-            side_effect=False,
-            retryable=True,
-            timeout=60,
-            permission="confirm",
-        ),
-        ToolSpec(
-            name="glob_files",
-            description="按 glob 模式列出文件（只读，按名称排序）。path 为根目录绝对路径，pattern 如 *.png 或 **/*.py；超限提示续枚举。",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "path": _string("搜索根目录（绝对路径；留空用工作区根）", ""),
-                    "pattern": _string("glob 文件名模式，例如 *.png 或 **/*.py", "**/*"),
-                    "limit": {"type": "integer", "default": 200},
-                    "start_after": _string("上一批最后一条路径（按名称排序续枚举）", ""),
-                },
-                "required": [],
+                "required": ["query"],
             },
             side_effect=False,
             retryable=True,
@@ -806,7 +791,6 @@ def build_harness_alias_specs() -> list[ToolSpec]:
         ToolSpec(name="read", description="Harness 兼容别名：读取文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"max_lines":{"type":"integer","default":50},"start_line":{"type":"integer","description":"从第几行开始读取（1 起始），默认 1","default":1}},"required":["path"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
         ToolSpec(name="write", description="Harness 兼容别名：写入文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"content":{"type":"string"},"append":{"type":"boolean","default":False}},"required":["path","content"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
         ToolSpec(name="edit", description="Harness 兼容别名：精确编辑文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"old_text":{"type":"string"},"new_text":{"type":"string"},"all":{"type":"boolean","default":False}},"required":["path","old_text","new_text"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
-        ToolSpec(name="glob", description="Harness 兼容别名：glob 文件。", parameters={"type":"object","properties":{"path":_string("根目录",""),"pattern":_string("glob 模式","**/*"),"limit":{"type":"integer","default":200}},"required":[]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
         ToolSpec(name="grep", description="Harness 兼容别名：搜索文本。", parameters={"type":"object","properties":{"path":_string("根目录",""),"query":_string("搜索文本"),"pattern":_string("文件模式","*"),"limit":{"type":"integer","default":100}},"required":["query"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
     ]
 

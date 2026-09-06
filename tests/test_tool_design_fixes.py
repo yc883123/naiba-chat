@@ -3,9 +3,9 @@
 
 保护对象：
 - read_file 按行双预算（50 行 × 30000 字符）截断、截断标记（含行区间与续读起点）、
-  with_line_numbers / end_line；
+  with_line_numbers / end_line；max_chars 对模型隐藏、执行层硬上限；
 - pwsh / run_skill_script 非零退出码、http_request >=400 → success=False（原恒 True）；
-- glob_files / list_directory 按名称排序、绝对路径、start_after 续枚举与超限提示；
+- list_directory 单入口（glob_files 已并入）：pattern/files_only/recursive/start_after 续枚举；
 - search_files ignore_case 统一生效、超大文件跳过计数、命中总数汇总；
 - job_output 增量游标闭环（推进 cursor 回传）。
 """
@@ -126,19 +126,36 @@ class DeterministicEnumerationTests(unittest.TestCase):
         for name in ("b.txt", "a.txt", "c.txt", "d.txt"):
             (self.tmp / name).write_text(name, encoding="utf-8")
 
-    def test_glob_sorted_and_resume_marker(self) -> None:
-        out = core_provider._tool_glob_files(self.ctx, {"path": str(self.tmp), "pattern": "*.txt", "limit": 2}, None)
+    def test_list_sorted_pattern_and_resume_marker(self) -> None:
+        out = core_provider._tool_list_directory(
+            self.ctx,
+            {"path": str(self.tmp), "pattern": "*.txt", "files_only": True, "limit": 2},
+            None,
+        )
         lines = out.splitlines()
         self.assertIn("a.txt", lines[0])
         self.assertIn("b.txt", lines[1])
         self.assertIn("共 4 项，已列出前 2 项", out)
         self.assertIn("start_after=", out)
-        last = lines[1]
-        resumed = core_provider._tool_glob_files(
-            self.ctx, {"path": str(self.tmp), "pattern": "*.txt", "limit": 2, "start_after": last}, None
+        last = lines[1].split(" ", 1)[-1]  # 去掉 "FILE "/"DIR " 前缀，取干净路径
+        resumed = core_provider._tool_list_directory(
+            self.ctx,
+            {"path": str(self.tmp), "pattern": "*.txt", "files_only": True, "limit": 2, "start_after": last},
+            None,
         )
         self.assertIn("c.txt", resumed)
         self.assertIn("d.txt", resumed)
+
+    def test_recursive_pattern_finds_nested(self) -> None:
+        sub = self.tmp / "sub"
+        sub.mkdir()
+        (sub / "deep.png").write_text("x", encoding="utf-8")
+        out = core_provider._tool_list_directory(
+            self.ctx,
+            {"path": str(self.tmp), "recursive": True, "pattern": "**/*.png"},
+            None,
+        )
+        self.assertIn("deep.png", out)
 
     def test_list_directory_absolute_sorted(self) -> None:
         out = core_provider._tool_list_directory(self.ctx, {"path": str(self.tmp)}, None)

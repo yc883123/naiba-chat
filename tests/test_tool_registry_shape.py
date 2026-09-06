@@ -429,7 +429,7 @@ class VisionEntryUnificationTests(unittest.TestCase):
     LEGACY_NAMES = {
         "vision_describe", "vision_ground", "vision_detect", "vision_ocr",
         "vision_colors", "vision_crop", "vision_pixel_diff", "vision_read_folder",
-        "call_mcp",
+        "call_mcp", "glob_files", "glob",
     }
 
     def test_legacy_names_absent_from_schemas(self) -> None:
@@ -454,7 +454,7 @@ class VisionEntryUnificationTests(unittest.TestCase):
 
     def test_retired_names_guide_instead_of_unknown(self) -> None:
         registry = registry_mod.build_tool_registry()
-        for old_name in ("vision_describe", "vision_read_folder", "call_mcp", "vision_colors"):
+        for old_name in ("vision_describe", "vision_read_folder", "call_mcp", "vision_colors", "glob_files", "glob"):
             with self.subTest(old=old_name):
                 ok, result = registry.execute(old_name, {}, [])
                 self.assertFalse(ok)
