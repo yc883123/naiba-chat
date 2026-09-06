@@ -1,93 +1,67 @@
 # -*- coding: utf-8 -*-
-"""护栏：ComfyUI 反幻觉守卫（引用历史证据豁免 + 系统校验文案不冒充用户）。
+"""护栏：ComfyUI 防幻觉守卫已整体移除，防幻觉由「事实回环 + 系统法规」承担。
 
-修复的误判场景（用户实测复现）：
-- 模型回复"复述了前几轮已成功提交的 Job ID"（或 ComfyUI 地址/版本）——这是历史真实证据，
-  旧守卫只看"本轮 runs"，把引用历史判成编造 → 撤回回复 + 注入"你刚才声称…"的
-  role=user 校正消息（模型误以为用户质疑）+ 自动重试（画面一闪、自动新一轮）。
-- 校正文本曾断言"视为从未提交，禁止使用任务 ID"——对真实事实是破坏性误判。
+决策依据（用户实测 + 全库取证，2026-09-07）：
+- 守卫在全库 253 会话中正确拦截 0 次、误判 2 次（把"引用历史真实 Job ID/连接证据"
+  判为编造 → 撤回回复 + role=user 校正消息冒充用户 + 自动 retry，
+  模型误以为用户质疑，正常轮次被拖去执行真实提交）；
+- 现有框架下模型无从编造成功：一切 ID/状态只能来自工具返回；编造 ID 会立即被
+  job_status/job_output/job_wait 的"不存在/无从访问"事实戳穿（天然闭环）。
 
-保护对象：
-- content 中引用的 ID/prompt_id/UUID/URL/版本号在历史证据中出现 → 豁免（不算幻觉）；
-- 真正编造（ID 无任何出处）→ 仍然判为幻觉；
-- 校正文案以 [系统校验（非用户消息）] 开头、不包含"视为从未提交"断言。
+保护对象：守卫函数与校正注入不存在；系统提示常驻法规存在；job 状态查询的
+"不存在"提示（事实回环端点）仍在。
 """
 
+import inspect
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import naiba.skills.agent as agent_mod  # noqa: E402
 from naiba.skills.agent import SkillAgent  # noqa: E402
 
-JOB_ID = "995ae103b0514986a1de445bdd68c53e"
-FAKE_ID = "ffffffff00000000aaaaaaaa11111111"
-HISTORY_TEXT = (
-    "✅ 已成功提交 `sd文生图简单版 (2).json`： Job ID：995ae103b0514986a1de445bdd68c53e\n"
-    "ComfyUI 探测完成，接口正常可用：地址 http://127.0.0.1:8188，版本 0.34.0，HTTP 200"
-)
 
+class GuardRemovedByTruthLoopTests(unittest.TestCase):
+    def test_guard_machinery_is_removed(self) -> None:
+        for name in (
+            "_unsupported_comfyui_submission_claim",
+            "_unsupported_comfyui_connection_claim",
+            "_comfyui_evidence_covered",
+        ):
+            with self.subTest(method=name):
+                self.assertFalse(hasattr(SkillAgent, name), f"{name} 应已整体移除")
 
-class ComfyUiGuardTests(unittest.TestCase):
-    # ---- 提交守卫 ----
-    def test_quoting_historical_job_id_is_exempt(self) -> None:
-        content = "上一轮已提交成功，Job ID：995ae103b0514986a1de445bdd68c53e。"
-        claim = SkillAgent._unsupported_comfyui_submission_claim(
-            "改个种子再交一次", content, [], evidence_text=HISTORY_TEXT
-        )
-        self.assertFalse(claim, "引用历史真实 Job ID 不应判为幻觉")
-
-    def test_fabricated_job_id_is_still_flagged(self) -> None:
-        content = f"已提交任务，Job ID：{FAKE_ID}。"
-        claim = SkillAgent._unsupported_comfyui_submission_claim(
-            "提交sd文生图工作流", content, [], evidence_text=HISTORY_TEXT
-        )
-        self.assertTrue(claim, "无来源的编造 ID 必须仍被判定为幻觉")
-
-    def test_this_round_proof_is_exempt(self) -> None:
-        runs = [{"tool": "comfyui_batch", "success": True, "result": '{"job_id": "x"}'}]
-        claim = SkillAgent._unsupported_comfyui_submission_claim(
-            "提交sd文生图工作流", "已提交，Job ID：x", runs, evidence_text=""
-        )
-        self.assertFalse(claim)
-
-    # ---- 连接守卫 ----
-    def test_quoting_historical_connection_is_exempt(self) -> None:
-        content = "ComfyUI 已连接，地址 http://127.0.0.1:8188，版本 0.34.0。"
-        claim = SkillAgent._unsupported_comfyui_connection_claim(
-            "检查ComfyUI", content, [], evidence_text=HISTORY_TEXT
-        )
-        self.assertFalse(claim, "引用历史探测结果（URL/版本）不应判为幻觉")
-
-    def test_unverified_connection_is_still_flagged(self) -> None:
-        claim = SkillAgent._unsupported_comfyui_connection_claim(
-            "检查ComfyUI", "ComfyUI 已连接并正常运行。", [], evidence_text=""
-        )
-        self.assertTrue(claim, "无证据的连接结论必须仍被判定为幻觉")
-
-    # ---- 证据覆盖辅助 ----
-    def test_evidence_covered_identifier_and_connection(self) -> None:
-        self.assertTrue(SkillAgent._comfyui_evidence_covered(
-            f"Job ID：{JOB_ID}", HISTORY_TEXT
-        ))
-        self.assertTrue(SkillAgent._comfyui_evidence_covered(
-            "http://127.0.0.1:8188 0.34.0", HISTORY_TEXT
-        ))
-        self.assertFalse(SkillAgent._comfyui_evidence_covered(
-            f"Job ID：{FAKE_ID}", HISTORY_TEXT
-        ))
-
-    # ---- 校正文案纪律 ----
-    def test_correction_copy_is_system_validation_not_user_voice(self) -> None:
-        # 文案散落在 _run_active：断言当前源码不含旧的"冒充用户/破坏性断言"字眼。
-        import inspect
-        import naiba.skills.agent as agent_mod
-
+    def test_source_has_no_guard_correction_copy(self) -> None:
         source = inspect.getsource(agent_mod)
         self.assertNotIn("你刚才声称已提交", source)
-        self.assertNotIn("视为从未提交，禁止使用", source)
-        self.assertIn("[系统校验（非用户消息）]", source)
+        self.assertNotIn("视为从未提交", source)
+        self.assertNotIn("[系统校验（非用户消息）]", source)
+
+    def test_truth_loop_rule_present_in_system_prompt(self) -> None:
+        source = inspect.getsource(agent_mod)
+        self.assertIn("未经验证的状态", source, "系统提示须含任务事实纪律法规")
+        self.assertIn("先用 job_status", source)
+
+    def test_job_status_missing_job_truth_loop_endpoint(self) -> None:
+        """事实回环端点仍在：查询不存在的 Job 必须明确返回"不存在/无从访问"。"""
+        from naiba.subagent import job_tool_handler_factory
+
+        class _MissingJobs:
+            def get(self, job_id):
+                return None
+
+            def read(self, job_id, cursor=0):
+                raise AssertionError("不应尝试读取不存在的 Job")
+
+        from types import SimpleNamespace
+
+        app = SimpleNamespace(jobs=_MissingJobs())
+        handler = job_tool_handler_factory(app)["job_status"]
+        ok, out = handler({"job_id": "no_such_job"}, [], None)
+        self.assertFalse(ok)
+        self.assertIn("不存在", out)
 
 
 if __name__ == "__main__":
