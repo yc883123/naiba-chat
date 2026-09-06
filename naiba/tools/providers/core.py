@@ -116,7 +116,9 @@ def _tool_read_file(ctx: ToolContext, args: dict[str, Any], active_skills: list[
     """
     path = _resolve_read_path(ctx, args.get("path"), active_skills)
     try:
-        max_chars = min(max(int(args.get("max_chars", 30000)), 100), 100000)
+        # max_chars 对模型隐藏（schema 不含该参数）：执行层仍兼容旧调用，但硬上限
+        # 30000 字符，防止任何入口把单次读取撑到超出预算（浪费上下文与 token）。
+        max_chars = min(max(int(args.get("max_chars", 30000)), 100), 30000)
     except (TypeError, ValueError):
         max_chars = 30000
     try:

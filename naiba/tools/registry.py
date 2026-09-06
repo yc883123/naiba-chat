@@ -304,8 +304,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
                 "type": "object",
                 "properties": {
                     "path": _string("文件绝对路径"),
-                    "max_chars": {"type": "integer", "description": "最多读取字符数（与 max_lines 双上限，先触达者生效）", "default": 30000},
-                    "max_lines": {"type": "integer", "description": "最多读取行数（默认 50；行数优先）", "default": 50},
+                    "max_lines": {"type": "integer", "description": "最多读取行数（默认 50；字符预算 30000 兜底）", "default": 50},
                     "start_line": {"type": "integer", "description": "从第几行开始读取（1 起始；截断提示中的续读起点）", "default": 1},
                     "end_line": {"type": "integer", "description": "读取到第几行（含该行；缺省读满预算）"},
                     "with_line_numbers": {"type": "boolean", "description": "是否输出行号前缀（精确引用行时用）", "default": False},
@@ -804,7 +803,7 @@ def build_job_tool_specs() -> list[ToolSpec]:
 
 def build_harness_alias_specs() -> list[ToolSpec]:
     return [
-        ToolSpec(name="read", description="Harness 兼容别名：读取文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"max_chars":{"type":"integer","default":30000},"start_line":{"type":"integer","description":"从第几行开始读取（1 起始），默认 1","default":1}},"required":["path"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
+        ToolSpec(name="read", description="Harness 兼容别名：读取文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"max_lines":{"type":"integer","default":50},"start_line":{"type":"integer","description":"从第几行开始读取（1 起始），默认 1","default":1}},"required":["path"]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),
         ToolSpec(name="write", description="Harness 兼容别名：写入文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"content":{"type":"string"},"append":{"type":"boolean","default":False}},"required":["path","content"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
         ToolSpec(name="edit", description="Harness 兼容别名：精确编辑文件。", parameters={"type":"object","properties":{"path":_string("文件路径"),"old_text":{"type":"string"},"new_text":{"type":"string"},"all":{"type":"boolean","default":False}},"required":["path","old_text","new_text"]}, side_effect=True, retryable=False, timeout=60, permission="confirm"),
         ToolSpec(name="glob", description="Harness 兼容别名：glob 文件。", parameters={"type":"object","properties":{"path":_string("根目录",""),"pattern":_string("glob 模式","**/*"),"limit":{"type":"integer","default":200}},"required":[]}, side_effect=False, retryable=True, timeout=60, permission="confirm"),

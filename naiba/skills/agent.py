@@ -104,7 +104,7 @@ def _model_visible_runs(step_runs: list[dict[str, Any]]) -> str:
 class SkillAgent:
     TOOL_GUIDE = """
 可用工具（需要操作时一次只调用一个）：
-- read_file: {"path":"绝对路径","max_chars":30000,"start_line":1}（start_line>1 表示从第 start_line 行开始读取，跳过文件前部）
+- read_file: {"path":"绝对路径","max_lines":50,"start_line":1}（按行返回，默认最多 50 行；截断时告知行区间与续读起点）
 - write_file: {"path":"绝对路径","content":"内容","append":false}
 - list_directory: {"path":"绝对路径","recursive":false,"limit":200}
 - search_files: {"path":"目录","query":"文本","pattern":"*.py","limit":100,"max_file_size":5242880}

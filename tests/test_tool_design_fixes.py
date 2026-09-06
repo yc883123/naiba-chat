@@ -86,6 +86,19 @@ class ReadFileTests(unittest.TestCase):
         out = core_provider._tool_read_file(self.ctx, {"path": str(target), "start_line": 9}, None)
         self.assertIn("文件共 2 行", out)
 
+    def test_max_chars_hidden_from_schema_and_capped(self) -> None:
+        """max_chars 不得对模型暴露；执行层兼容旧调用但硬上限 30000 字符（防浪费）。"""
+        from naiba.tools.registry import build_core_tool_specs
+
+        spec = next(item for item in build_core_tool_specs() if item.name == "read_file")
+        self.assertNotIn("max_chars", (spec.parameters or {}).get("properties", {}))
+        target = self.tmp / "huge.txt"
+        target.write_text(("X" * 40000) + "\n", encoding="utf-8")
+        out = core_provider._tool_read_file(
+            self.ctx, {"path": str(target), "max_chars": 100000}, None
+        )
+        self.assertEqual(out.count("X"), 30000, "执行层必须把 max_chars 封顶在 30000")
+
     def test_empty_file(self) -> None:
         target = self.tmp / "empty.txt"
         target.write_text("", encoding="utf-8")
