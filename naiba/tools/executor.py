@@ -65,6 +65,12 @@ class ToolExecutor:
         self.pending_confirmation: dict[str, dict[str, Any]] = {}
         self.confirmation_results: dict[str, tuple[bool, str]] = {}
         self._confirmation_lock = threading.RLock()
+        # 工具定义解析器（ToolRegistry.get 或等价物）：def 级 policy / 元数据同源（Phase 2）
+        self._def_resolver: Callable[[str], Any] | None = None
+
+    def set_def_resolver(self, resolver: Callable[[str], Any] | None) -> None:
+        """注入工具定义解析器；用于 def 级 policy 与元数据查询（权限同源）。"""
+        self._def_resolver = resolver
 
     def set_permission_mode(self, mode: str) -> None:
         normalized = str(mode or "confirm").strip().lower()
@@ -72,7 +78,7 @@ class ToolExecutor:
 
     def clone_for_permission(self, mode: str) -> "ToolExecutor":
         """Create an isolated executor for one Run while sharing external services."""
-        return ToolExecutor(
+        clone = ToolExecutor(
             self.workspace,
             self.python_executable,
             self.command_timeout,
@@ -80,6 +86,8 @@ class ToolExecutor:
             permission_mode=mode,
             mcp_register=self.mcp_register,
         )
+        clone._def_resolver = self._def_resolver
+        return clone
 
     @staticmethod
     def _path_within(path: Path, root: Path) -> bool:
@@ -158,10 +166,20 @@ class ToolExecutor:
         tool: str,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
+        run_context: dict[str, Any] | None = None,
     ) -> str:
         tool = self.TOOL_ALIASES.get(tool, tool)
         if self.permission_mode == "full":
             return ""
+        # def 级权限策略优先（权限同源 Phase 2）：策略异常按需确认处理（fail-closed，不静默放行）
+        spec = self._def_resolver(tool) if self._def_resolver is not None else None
+        if spec is not None and getattr(spec, "policy", None) is not None:
+            try:
+                return str(
+                    spec.policy(tool, arguments, active_skills, self.permission_mode, run_context) or ""
+                )
+            except Exception as exc:
+                return f"权限策略评估失败：{type(exc).__name__}: {exc}"
         # Legacy Skills may wrap local read-only tools in call_mcp. Apply the
         # same path resolution and boundary check as direct read tools.
         if tool == "call_mcp" and isinstance(arguments, dict):
@@ -214,9 +232,9 @@ class ToolExecutor:
             return f"调用MCP工具：{tool}"
         return ""
 
-    def execute(self, tool: str, arguments: dict[str, Any], active_skills: list[dict[str, Any]]) -> tuple[bool, str]:
+    def execute(self, tool: str, arguments: dict[str, Any], active_skills: list[dict[str, Any]], run_context: dict[str, Any] | None = None) -> tuple[bool, str]:
         try:
-            reason = self._confirmation_reason(tool, arguments, active_skills)
+            reason = self._confirmation_reason(tool, arguments, active_skills, run_context)
         except Exception as exc:
             return False, f"{type(exc).__name__}: {exc}"
         if reason:

@@ -277,7 +277,7 @@ class ToolRegistryUnifiedFieldsTests(unittest.TestCase):
             def __init__(self) -> None:
                 self.calls: list[str] = []
 
-            def execute(self, name: str, arguments: dict[str, Any], active_skills: list[Any]) -> tuple[bool, str]:
+            def execute(self, name: str, arguments: dict[str, Any], active_skills: list[Any], run_context: Any = None) -> tuple[bool, str]:
                 self.calls.append(name)
                 return True, "engine-ok"
 
@@ -299,6 +299,165 @@ class ToolRegistryUnifiedFieldsTests(unittest.TestCase):
             dict(ToolExecutor.TOOL_ALIASES),
             "HARNESS_ALIASES 与 ToolExecutor.TOOL_ALIASES 漂移（Phase 5 只保留其一）",
         )
+
+
+class ToolPolicyUnificationTests(unittest.TestCase):
+    """Phase 2：权限策略并入 ToolSpec 同源守门。"""
+
+    def _make_executor(self, mode: str = "confirm", tmp: Path | None = None):
+        import sys
+        import tempfile
+
+        from naiba.mcp import MCPRegistry
+        from naiba.tools.executor import ToolExecutor
+
+        root = tmp or Path(tempfile.mkdtemp(prefix="naiba-toolpolicy-"))
+        registry = registry_mod.build_tool_registry()
+        executor = ToolExecutor(root, sys.executable, 60, MCPRegistry([]), permission_mode=mode)
+        executor.set_def_resolver(registry.get)
+        return executor
+
+    def test_dangerous_tools_match_side_effect_defs(self) -> None:
+        """DANGEROUS_TOOLS 与「引擎直管 + 副作用」def 完全一致（防双源漂移）。"""
+        from naiba.tools.executor import ToolExecutor
+
+        methods = _executor_method_names()
+        side_effect_engine = {
+            str(row["name"])
+            for row in registry_mod.build_tool_registry().schemas()
+            if row["side_effect"] and str(row["name"]) in methods
+        }
+        self.assertEqual(
+            set(ToolExecutor.DANGEROUS_TOOLS),
+            side_effect_engine,
+            "DANGEROUS_TOOLS 与 def.side_effect=True 的引擎直管工具漂移",
+        )
+
+    def test_read_family_matches_readonly_engine_defs(self) -> None:
+        """只读免确认族（引擎路径边界逻辑）与「引擎直管 + 只读」def 一致。"""
+        from naiba.tools.executor import ToolExecutor
+
+        methods = _executor_method_names()
+        readonly_engine = {
+            str(row["name"])
+            for row in registry_mod.build_tool_registry().schemas()
+            if not row["side_effect"] and str(row["name"]) in methods
+        }
+        self.assertEqual(
+            readonly_engine,
+            {"read_file", "list_directory", "search_files", "glob_files"},
+            "引擎只读族集合与 def.side_effect=False 的引擎直管工具漂移",
+        )
+
+    def test_http_request_policy_method_aware(self) -> None:
+        """行为优化：GET/HEAD 免确认；POST 在 confirm 模式需确认、auto 放行。"""
+        executor = self._make_executor()
+        self.assertEqual(
+            executor._confirmation_reason("http_request", {"method": "GET", "url": "http://x"}, []),
+            "",
+        )
+        self.assertEqual(
+            executor._confirmation_reason("http_request", {"method": "HEAD", "url": "http://x"}, []),
+            "",
+        )
+        self.assertIn(
+            "HTTP",
+            executor._confirmation_reason("http_request", {"method": "POST", "url": "http://x"}, []),
+        )
+        auto = self._make_executor(mode="auto")
+        self.assertEqual(
+            auto._confirmation_reason("http_request", {"method": "POST", "url": "http://x"}, []),
+            "",
+        )
+
+    def test_def_policy_invoked_with_mode(self) -> None:
+        """def 级 policy 优先于引擎内建规则，且收到 permission_mode。"""
+        import sys
+        import tempfile
+
+        from naiba.mcp import MCPRegistry
+        from naiba.tools.executor import ToolExecutor
+
+        root = Path(tempfile.mkdtemp(prefix="naiba-toolpolicy-"))
+        registry = registry_mod.ToolRegistry()
+        seen: list[str] = []
+
+        def policy(tool, arguments, active_skills, permission_mode, run_context):
+            seen.append(permission_mode)
+            return "自定义确认" if permission_mode == "confirm" else ""
+
+        registry.register(
+            registry_mod.ToolSpec(
+                name="t_policy",
+                description="策略测试工具",
+                parameters={"type": "object", "properties": {}},
+                execute=lambda args, skills, ctx: (True, "ok"),
+                policy=policy,
+                system=False,
+            )
+        )
+        executor = ToolExecutor(root, sys.executable, 60, MCPRegistry([]), permission_mode="confirm")
+        executor.set_def_resolver(registry.get)
+        reason = executor._confirmation_reason("t_policy", {}, [])
+        self.assertIn("自定义确认", reason)
+        self.assertEqual(seen, ["confirm"])
+        auto = ToolExecutor(root, sys.executable, 60, MCPRegistry([]), permission_mode="auto")
+        auto.set_def_resolver(registry.get)
+        self.assertEqual(auto._confirmation_reason("t_policy", {}, []), "")
+
+    def test_def_policy_fail_closed(self) -> None:
+        """策略抛异常 → 返回需确认理由（fail-closed，不静默放行）。"""
+        import sys
+        import tempfile
+
+        from naiba.mcp import MCPRegistry
+        from naiba.tools.executor import ToolExecutor
+
+        root = Path(tempfile.mkdtemp(prefix="naiba-toolpolicy-"))
+        registry = registry_mod.ToolRegistry()
+
+        def boom(tool, arguments, active_skills, permission_mode, run_context):
+            raise RuntimeError("策略炸了")
+
+        registry.register(
+            registry_mod.ToolSpec(
+                name="t_boom",
+                description="炸策略工具",
+                parameters={"type": "object", "properties": {}},
+                policy=boom,
+            )
+        )
+        executor = ToolExecutor(root, sys.executable, 60, MCPRegistry([]), permission_mode="confirm")
+        executor.set_def_resolver(registry.get)
+        reason = executor._confirmation_reason("t_boom", {}, [])
+        self.assertIn("权限策略评估失败", reason)
+        self.assertIn("RuntimeError", reason)
+
+    def test_full_mode_skips_policy(self) -> None:
+        """full 模式语义 = 永不询问：策略不被评估。"""
+        import sys
+        import tempfile
+
+        from naiba.mcp import MCPRegistry
+        from naiba.tools.executor import ToolExecutor
+
+        root = Path(tempfile.mkdtemp(prefix="naiba-toolpolicy-"))
+        registry = registry_mod.ToolRegistry()
+
+        def strict(tool, arguments, active_skills, permission_mode, run_context):
+            return "永远确认"
+
+        registry.register(
+            registry_mod.ToolSpec(
+                name="t_full",
+                description="full 测试工具",
+                parameters={"type": "object", "properties": {}},
+                policy=strict,
+            )
+        )
+        executor = ToolExecutor(root, sys.executable, 60, MCPRegistry([]), permission_mode="full")
+        executor.set_def_resolver(registry.get)
+        self.assertEqual(executor._confirmation_reason("t_full", {}, []), "")
 
 
 if __name__ == "__main__":

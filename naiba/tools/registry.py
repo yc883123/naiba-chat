@@ -25,9 +25,12 @@ from typing import Any, Callable, Protocol
 ToolExecuteFn = Callable[[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None], tuple[bool, str]]
 # 结果摘要：(tool, arguments, result, success) -> short_summary
 ToolSummarizeFn = Callable[[str, dict[str, Any], str, bool], str]
-# 权限策略（单一定义 Phase 1+）：(tool_name, arguments, active_skills, run_context) -> 确认理由；
-# 返回空串表示无需用户确认，非空串为展示给用户的确认理由（与 NEED_CONFIRM 协议对齐）
-ToolPolicyFn = Callable[[str, dict[str, Any], list[dict[str, Any]], dict[str, Any] | None], str]
+# 权限策略（单一定义 Phase 2+）：
+# (tool_name, arguments, active_skills, permission_mode, run_context) -> 确认理由；
+# 返回空串表示无需用户确认，非空串为展示给用户的确认理由（与 NEED_CONFIRM 协议对齐）。
+# permission_mode 由引擎透传（confirm/auto/full/deny），策略内部按模式细化；
+# 引擎在 full 模式下不评估策略（full 语义 = 永不询问）。
+ToolPolicyFn = Callable[[str, dict[str, Any], list[dict[str, Any]], str, dict[str, Any] | None], str]
 
 
 @dataclass
@@ -75,6 +78,25 @@ HARNESS_ALIASES = {
 def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bool) -> str:
     head = result[:300].replace("\n", " ").strip()
     return f"{tool} {'成功' if success else '失败'}: {head}"
+
+
+def _http_request_policy(
+    tool: str,
+    arguments: dict[str, Any],
+    active_skills: list[dict[str, Any]],
+    permission_mode: str,
+    run_context: dict[str, Any] | None,
+) -> str:
+    """http_request 按 method 判定副作用（行为优化 Phase 2）：
+
+    GET/HEAD 免确认（无副作用）；其余方法在 confirm 模式需确认，auto 模式放行。
+    """
+    method = str((arguments or {}).get("method") or "GET").upper()
+    if method in {"GET", "HEAD"}:
+        return ""
+    if permission_mode == "auto":
+        return ""
+    return "发送HTTP请求"
 
 
 class ToolRegistry:
@@ -251,18 +273,18 @@ class ToolRegistry:
             if not spec.system:
                 executor = self._run_executor(run_context)
                 if executor is not None:
-                    return executor.execute(name, arguments, active_skills)
+                    return executor.execute(name, arguments, active_skills, run_context)
             return spec.execute(arguments, active_skills, run_context)
         executor = self._run_executor(run_context)
         if name.startswith("mcp__") and executor is not None:
-            return executor.execute(name, arguments, active_skills)
+            return executor.execute(name, arguments, active_skills, run_context)
         if name in self._system_handlers:
             return self._system_handlers[name](arguments, active_skills, run_context)
         if name in self._specs and executor is not None:
-            return executor.execute(name, arguments, active_skills)
+            return executor.execute(name, arguments, active_skills, run_context)
         # MCP 工具形如 server.tool，ToolExecutor 内部处理
         if "." in name and executor is not None:
-            return executor.execute(name, arguments, active_skills)
+            return executor.execute(name, arguments, active_skills, run_context)
         return False, f"未知工具：{name}"
 
     def summarize(self, tool: str, args: dict[str, Any], result: str, success: bool) -> str:
@@ -442,11 +464,12 @@ def build_core_tool_specs() -> list[ToolSpec]:
                 },
                 "required": ["url"],
             },
-            # GET/HEAD 无副作用且可重试；写方法不可重试
+            # GET/HEAD 无副作用且可重试；写方法不可重试。确认行为由 _http_request_policy 按 method 细化
             side_effect=True,
             retryable=True,
             timeout=60,
             permission="confirm",
+            policy=_http_request_policy,
         ),
         ToolSpec(
             name="register_mcp",

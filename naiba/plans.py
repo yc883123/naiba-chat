@@ -107,6 +107,7 @@ class ReadOnlyToolExecutor:
         tool: str,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
+        run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         if tool in self.BLOCKED_TOOLS or "." in tool:
             return False, f"当前为只读模式，已禁止工具：{tool}"
@@ -126,7 +127,7 @@ class ReadOnlyToolExecutor:
             method = str((arguments or {}).get("method") or "GET").upper()
             if method not in {"GET", "HEAD"}:
                 return False, f"只读模式仅允许 GET/HEAD 请求（收到 {method}）"
-        return self._inner.execute(tool, arguments, active_skills)
+        return self._inner.execute(tool, arguments, active_skills, run_context)
 
 
 class CraftToolExecutor:
@@ -143,12 +144,13 @@ class CraftToolExecutor:
         tool: str,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
+        run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         if tool in {"write_file", "edit_file"} and getattr(self._inner, "permission_mode", "confirm") != "deny":
             path = self._inner._resolve_tool_path((arguments or {}).get("path"))
             if self._inner._path_within(path, self._inner.workspace):
                 return self._inner._execute_unchecked(tool, arguments, active_skills)
-        return self._inner.execute(tool, arguments, active_skills)
+        return self._inner.execute(tool, arguments, active_skills, run_context)
 
 
 def parse_plan_document(content: str) -> tuple[str, list[dict[str, Any]]]:

@@ -162,6 +162,8 @@ class NaibaChatApp:
         self.tool_registry = build_tool_registry()
         self.tool_registry.bind_executor(self.executor)
         self.tool_registry.bind_mcp(self.mcp)
+        # 权限同源（Phase 2）：引擎从注册表解析 def 级 policy/元数据
+        self.executor.set_def_resolver(self.tool_registry.get)
         self.jobs = JobRegistry(self)
         # MCP 生命周期：工具发现后注册到统一工具表，断开/注销时清理
         self.mcp.on_tools_discovered = self.tool_registry.register_mcp_tools
