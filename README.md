@@ -11,7 +11,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 - **契约化**：`RunContext`（18 键 + 校验工厂）/`EventType`（44 种，与前端反查对齐）/`MetadataKeys` 显式化；`AppContext`/`ConfigView` Protocol 注入收窄（14 处 `app: Any` → `AppContext`）。
 - **修复与清理**：模型测试连接 `NameError`（`@staticmethod`+`self` 错配）与上传 500（`self.app` 残留引用）等搬移期缺陷；诊断开关兜底统一；死代码清理（MCP 诊断管道、废弃插话等）。
 - **守门测试**：新增权限矩阵（full/confirm/auto/deny 全模式）、装饰器-绑定一致性、`self.app` 残留引用扫描等网格化守门，共 83 个单测；全量功能回归（11 域 48 项）通过。
-- **工具系统增强**：视觉类工具单入口（vision_analyze 按会话模型能力自动分流 + vision_image_ops 本地图像计算）；移除 call_mcp 网关；多模态/文本模型同一工具集，退役工具自动迁移/提示；DeepSeek 思考模式工具轮兼容修复（reasoning 块数组回传）。
+- **工具系统增强**：视觉类工具单入口（vision_analyze 按会话模型能力自动分流 + vision_image_ops 本地图像计算）；移除 call_mcp 网关；多模态/文本模型同一工具集，退役工具自动迁移/提示；DeepSeek 思考模式工具轮兼容修复（reasoning 块数组回传）；Harness 兼容别名（read/write/edit/glob/grep）从模型可见工具清单隐藏（执行兼容保留）。
 - **行为兼容**：对外 HTTP API 路径、事件流协议与前端完全不改；13 个根模块保留兼容 shim（`from naiba.X import *`）；`launcher.py`/PyInstaller spec 零改动。
 
 ### 历史能力（1.7.8 及更早）
