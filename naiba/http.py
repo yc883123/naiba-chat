@@ -1312,8 +1312,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             return self.app.config.profile(model_key)
         return self._provider_profile(body)
 
-    @staticmethod
-    def _provider_profile(body: dict[str, Any]) -> dict[str, Any]:
+    def _provider_profile(self, body: dict[str, Any]) -> dict[str, Any]:
         provider = dict(body)
         if provider.get("id") and not provider.get("api_key"):
             stored = next(
