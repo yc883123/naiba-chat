@@ -390,6 +390,65 @@ class ToolPolicyUnificationTests(unittest.TestCase):
         executor.set_def_resolver(registry.get)
         self.assertEqual(executor._confirmation_reason("t_full", {}, []), "")
 
+
+class VisionEntryUnificationTests(unittest.TestCase):
+    """视觉单入口重构守门：8 个旧视觉工具 + call_mcp 退役，2 个新入口同名会话化。"""
+
+    LEGACY_NAMES = {
+        "vision_describe", "vision_ground", "vision_detect", "vision_ocr",
+        "vision_colors", "vision_crop", "vision_pixel_diff", "vision_read_folder",
+        "call_mcp",
+    }
+
+    def test_legacy_names_absent_from_schemas(self) -> None:
+        registry = registry_mod.build_tool_registry()
+        declared = {str(row["name"]) for row in registry.schemas()}
+        self.assertEqual(declared & self.LEGACY_NAMES, set(), "退役工具名仍出现在模型可见声明表")
+
+    def test_new_vision_entries_declared(self) -> None:
+        registry = registry_mod.build_tool_registry()
+        for name in ("vision_analyze", "vision_image_ops"):
+            with self.subTest(tool=name):
+                self.assertIsNotNone(registry.get(name), f"{name} 未声明")
+
+    def test_retired_map_targets_exist(self) -> None:
+        for old_name, new_name in registry_mod.RETIRED_TOOL_MAP.items():
+            with self.subTest(old=old_name):
+                self.assertEqual(registry_mod.build_tool_registry().get(old_name), None)
+                self.assertIsNotNone(
+                    registry_mod.build_tool_registry().get(new_name),
+                    f"退役映射目标 {new_name} 不存在（{old_name} 的映射）",
+                )
+
+    def test_retired_names_guide_instead_of_unknown(self) -> None:
+        registry = registry_mod.build_tool_registry()
+        for old_name in ("vision_describe", "vision_read_folder", "call_mcp", "vision_colors"):
+            with self.subTest(old=old_name):
+                ok, result = registry.execute(old_name, {}, [])
+                self.assertFalse(ok)
+                self.assertIn("已", result, f"{old_name} 失败提示不是退役引导：{result}")
+                self.assertNotEqual(result, f"未知工具：{old_name}")
+
+    def test_vision_analyze_load_variant(self) -> None:
+        base = registry_mod.build_vision_tool_specs()[0]
+        variant = registry_mod.vision_analyze_load_variant(base)
+        self.assertEqual(variant.name, "vision_analyze", "会话化换形态不得改名（模型接口恒定）")
+        self.assertEqual(
+            set((variant.parameters or {}).get("properties", {}).keys()),
+            {"paths", "folder", "max_images"},
+            "装载形态参数集应替换为装载参数（不含 question）",
+        )
+        self.assertNotEqual(variant.description, base.description)
+        self.assertEqual(base.name, variant.name)
+
+    def test_vision_image_ops_op_enum(self) -> None:
+        spec = registry_mod.build_vision_tool_specs()[1]
+        op_schema = (spec.parameters or {}).get("properties", {}).get("op", {})
+        self.assertEqual(
+            op_schema.get("enum"), ["colors", "crop", "pixel_diff"], "op 枚举必须三选一"
+        )
+        self.assertIn("op", (spec.parameters or {}).get("required", []))
+
     def test_policy_uses_engine_workspace_not_assembly_config(self) -> None:
         """回归：策略必须使用「当前运行（引擎级）工作区」，而非 provider 装配期配置。
 

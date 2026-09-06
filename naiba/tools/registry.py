@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from naiba.core.contracts import RunContext
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Protocol
 
 # 执行函数签名：(arguments, active_skills, run_context) -> (success, result_text)
@@ -73,12 +73,23 @@ HARNESS_ALIASES = {
 }
 
 # 退役工具名 → 引导文案（不注册、模型不可见；仅失败路径提供可读引导）
-# 与 RETIRED_TOOL_MAP（旧名→新名，配置清洗用）配合：MAP 有映射则配置迁移替换为新名，
-# 无映射（如 call_mcp）则配置清洗时移除。
-RETIRED_TOOL_MAP: dict[str, str] = {}
+# 与 RETIRED_TOOL_MAP（旧名→新名，配置清洗/会话固化解析用）配合：
+# MAP 有映射则旧配置/旧固化集解析为新名；无映射（如 call_mcp）则配置清洗时移除。
+RETIRED_TOOL_MAP: dict[str, str] = {
+    "vision_describe": "vision_analyze",
+    "vision_ground": "vision_analyze",
+    "vision_detect": "vision_analyze",
+    "vision_ocr": "vision_analyze",
+    "vision_read_folder": "vision_analyze",
+    "vision_colors": "vision_image_ops",
+    "vision_crop": "vision_image_ops",
+    "vision_pixel_diff": "vision_image_ops",
+}
 RETIRED_TOOL_GUIDE: dict[str, str] = {
     "call_mcp": "call_mcp 已移除：MCP 工具现以 mcp__<server>__<tool> 直接暴露，请直接调用对应工具。",
 }
+for _old_name, _new_name in RETIRED_TOOL_MAP.items():
+    RETIRED_TOOL_GUIDE.setdefault(_old_name, f"{_old_name} 已并入 {_new_name}，请改用 {_new_name}。")
 
 
 def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bool) -> str:
@@ -492,92 +503,94 @@ def build_core_tool_specs() -> list[ToolSpec]:
     ]
 
 
-def build_vision_tool_specs() -> list[ToolSpec]:
-    """声明视觉工具（Phase 2）：大脑可主动调用「眼睛」按需看图。
+# ---- 视觉工具单入口重构（Phase 6）----
+# vision_analyze 是唯一识图入口：会话按模型能力换形态（分析=委托视觉后端 / 装载=装入对话），
+# 名字与工具集对模型恒定；vision_image_ops 是 PIL 本地图像计算（不依赖视觉模型）。
 
-    全部基于 Pillow + 标准库，执行逻辑在 ``vision_runtime.VisionRouter`` 中。
-    Ask/Plan 只允许只读分析工具（describe/ground/detect/ocr/colors），
-    crop/pixel_diff 会写工作区文件，仅在 Craft/内置 dsh Agent 下可用。
+VISION_ANALYZE_DESCRIPTION = (
+    "分析本地图片：把图片与你的问题交给视觉模型后端分析，返回结果（描述、识别文字等由提问决定）。"
+    "无需选择分析模式，直接提问即可。paths/image 请填绝对路径（可用工作区绝对路径拼出）。"
+)
+VISION_ANALYZE_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "paths": {"type": "array", "items": {"type": "string"}, "description": "图片文件路径列表"},
+        "image": _string("单张图片路径（paths 的简写）"),
+        "question": _string("对图片的提问；写清意图即可（识别文字/定位元素/描述内容等），无需选择模式"),
+        "json": {"type": "boolean", "description": "是否返回结构化 JSON", "default": False},
+    },
+    "required": [],
+}
+VISION_ANALYZE_LOAD_DESCRIPTION = (
+    "从文件夹或路径列表读取图片并装入本次对话（供你直接查看）。paths/folder 请填绝对路径，"
+    "图片会存入宿主并附带缩略图；一次可读多张。"
+)
+VISION_ANALYZE_LOAD_PARAMETERS: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "paths": {"type": "array", "items": {"type": "string"}, "description": "图片或文件夹的绝对路径列表"},
+        "folder": _string("待扫描文件夹的绝对路径（paths 的简写）"),
+        "max_images": {"type": "integer", "description": "最多读取张数", "default": 8},
+    },
+    "required": [],
+}
+
+
+def vision_analyze_load_variant(spec: ToolSpec | dict[str, Any]) -> ToolSpec:
+    """返回 vision_analyze 的「装载」形态（会话按模型能力换形态用）：同名、装载参数与描述。"""
+    assert isinstance(spec, ToolSpec), "vision_analyze_load_variant 需要 ToolSpec"
+    return replace(
+        spec,
+        description=VISION_ANALYZE_LOAD_DESCRIPTION,
+        parameters=VISION_ANALYZE_LOAD_PARAMETERS,
+        metadata={**(spec.metadata or {}), "vision_variant": "load"},
+    )
+
+
+def build_vision_tool_specs() -> list[ToolSpec]:
+    """声明视觉工具（单入口重构）：vision_analyze（唯一识图入口）+ vision_image_ops（PIL 三合一）。
+
+    vision_analyze 由会话固化层按模型能力换形态（分析/装载），此处为「分析」形态基定义；
+    vision_image_ops 为本地图像计算（colors/crop/pixel_diff），不依赖视觉后端。
+    执行逻辑在 ``vision_runtime.VisionRouter``。
     """
-    readonly_analysis = {
-        "vision_describe": "对给定图片提问或要求描述内容（可多图）。结果标注为不可信证据。",
-        "vision_ground": "在图中定位目标物体，返回原图像素框 x1/y1/x2/y2 与标注图路径。",
-        "vision_detect": "盘点图中某类元素，返回编号清单与坐标框。",
-        "vision_ocr": "识别图片中的文字并逐字转写。",
-        "vision_colors": "提取图片主色板与占比。",
-    }
-    writing = {
-        "vision_crop": "按像素框 x1,y1,x2,y2 裁剪图片并保存到工作区 .naiba-chat/vision/。",
-        "vision_pixel_diff": "逐像素对比两张图片，返回差异率与热力图路径。",
-    }
-    specs: list[ToolSpec] = []
-    for name, description in readonly_analysis.items():
-        specs.append(
-            ToolSpec(
-                name=name,
-                description=description,
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "paths": {"type": "array", "items": {"type": "string"}, "description": "图片文件路径列表"},
-                        "image": _string("单张图片路径（paths 的简写）"),
-                        "question": _string("对图片的提问（vision_describe 用）"),
-                        "target": _string("目标/元素描述（ground/detect 用）"),
-                        "json": {"type": "boolean", "description": "是否返回结构化 JSON（describe 用）", "default": False},
-                    },
-                    "required": [],
-                },
-                side_effect=False,
-                retryable=False,
-                timeout=180,
-                permission="confirm",
-            )
-        )
-    for name, description in writing.items():
-        specs.append(
-            ToolSpec(
-                name=name,
-                description=description,
-                parameters={
-                    "type": "object",
-                    "properties": {
-                        "paths": {"type": "array", "items": {"type": "string"}, "description": "图片文件路径列表"},
-                        "image": _string("单张图片路径（paths 的简写）"),
-                        "region": _string("像素框 x1,y1,x2,y2（vision_crop 用）"),
-                        "original": _string("原图路径（vision_pixel_diff 用）"),
-                        "rebuilt": _string("对比图路径（vision_pixel_diff 用）"),
-                        "threshold": {"type": "integer", "description": "差异阈值 0-255", "default": 16},
-                    },
-                    "required": [],
-                },
-                side_effect=True,
-                retryable=False,
-                timeout=120,
-                permission="confirm",
-            )
-        )
-    # 多模态大脑专用：从文件夹/路径读取任意张图片，缓存到宿主 uploads 目录并生成缩略图，
-    # 供多模态模型作为 image content 直观读取。与按需看图的 vision_* 工具不同，它不依赖视觉后端。
-    specs.append(
+    return [
         ToolSpec(
-            name="vision_read_folder",
-            description="从文件夹或路径列表读取图片并缓存（一次可读多张）。paths/folder 请填绝对路径（可用工作区绝对路径拼出），支持文件夹目录路径或图片路径。图片会存入宿主并附带缩略图，供多模态模型直接看图。",
+            name="vision_analyze",
+            description=VISION_ANALYZE_DESCRIPTION,
+            parameters=VISION_ANALYZE_PARAMETERS,
+            side_effect=False,
+            retryable=False,
+            timeout=180,
+            permission="auto",
+        ),
+        ToolSpec(
+            name="vision_image_ops",
+            description=(
+                "图像处理（本地计算，不依赖视觉模型）：op=colors 提取主色板与占比；"
+                "op=crop 按像素框裁剪并保存到工作区 .naiba-chat/vision/；"
+                "op=pixel_diff 逐像素对比两张图片，返回差异率与热力图路径。"
+            ),
             parameters={
                 "type": "object",
                 "properties": {
-                    "paths": {"type": "array", "items": {"type": "string"}, "description": "图片或文件夹的绝对路径列表"},
-                    "folder": _string("待扫描文件夹的绝对路径（paths 的简写）"),
-                    "max_images": {"type": "integer", "description": "最多读取张数", "default": 8},
+                    "op": {"type": "string", "enum": ["colors", "crop", "pixel_diff"], "description": "操作类型", "default": "colors"},
+                    "paths": {"type": "array", "items": {"type": "string"}, "description": "图片文件路径列表"},
+                    "image": _string("单张图片路径（paths 的简写）"),
+                    "region": _string("像素框 x1,y1,x2,y2（op=crop 用）"),
+                    "original": _string("原图路径（op=pixel_diff 用）"),
+                    "rebuilt": _string("对比图路径（op=pixel_diff 用）"),
+                    "threshold": {"type": "integer", "description": "差异阈值 0-255（op=pixel_diff 用）", "default": 16},
+                    "top": {"type": "integer", "description": "主色数量 1-20（op=colors 用）", "default": 6},
                 },
-                "required": [],
+                "required": ["op"],
             },
-            side_effect=False,
+            side_effect=True,
             retryable=False,
             timeout=120,
-            permission="auto",
-        )
-    )
-    return specs
+            permission="confirm",
+        ),
+    ]
 
 
 def build_search_tool_specs() -> list[ToolSpec]:

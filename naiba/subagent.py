@@ -99,6 +99,22 @@ def run_subagent_agent(
 
     emit({"type": "job_status", "status": "running", "current_step": "子 Agent 推理中"})
     worker = SkillAgent(app.catalog, CraftToolExecutor(app.executor), app.models.complete)
+    try:
+        brain_has_vision = bool(
+            app.vision.brain_supports_images(profile)
+            if callable(getattr(getattr(app, "vision", None), "brain_supports_images", None))
+            else False
+        )
+    except Exception:
+        brain_has_vision = False
+    try:
+        session_defs = (
+            app.vision.session_tool_defs(brain_has_vision)
+            if callable(getattr(getattr(app, "vision", None), "session_tool_defs", None))
+            else None
+        )
+    except Exception:
+        session_defs = None
     run_context: RunContext = {
         "run_id": job_id,
         "job_id": job_id,
@@ -109,6 +125,8 @@ def run_subagent_agent(
         "allowed_tools": list(allowed_tools),
         "skill_policy": dict(skill_policy),
         "job_registry": app.jobs,
+        "model_has_vision": brain_has_vision,
+        "tool_defs": session_defs,
     }
     try:
         content, runs, reasonings, usage = worker.run(

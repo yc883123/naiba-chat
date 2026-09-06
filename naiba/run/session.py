@@ -75,28 +75,8 @@ def resolve_allowed_tools(
         # （会话固化工具集是否含 web_search 决定它是否进入 allowed_tools）。
         # 不再受发送区开关（web_search_enabled）动态控制，避免切换时改变 tools 伤害缓存。
         allowed_tools.remove("web_search")
-    # A multimodal chat model is already the image reader. Do not expose
-    # a second vision lane that can make the agent re-interpret the same
-    # attachment (or serialize another local inference pass).
-    if model_key:
-        try:
-            profile = app.config.profile(model_key)
-            resolver = getattr(app.vision, "resolve_brain_supports_images", None)
-            supports_images = (
-                bool(resolver(profile)) if callable(resolver)
-                else bool(app.vision.brain_supports_images(profile))
-            )
-            if supports_images:
-                # 多模态大脑用 vision_read_folder 从文件夹读取任意图片并注入
-                # image content；其余按需看图的 vision_* 工具保留给纯文本大脑。
-                allowed_tools = [
-                    tool for tool in allowed_tools
-                    if not tool.startswith("vision_") or tool == "vision_read_folder"
-                ]
-        except Exception:
-            # Capability detection must never remove tools on an unknown
-            # or temporarily unavailable model profile.
-            pass
+    # 视觉工具对文本/多模态模型暴露同一工具集（vision_analyze 单入口），
+    # 模型能力差异由会话化 def 换形态（RunContext.tool_defs）处理，不再按能力裁剪工具名。
     # Dependency closure: ensure Job creators are always paired with the
     # query tools their descriptions reference, so the model never sees a
     # "use job_output/job_status/job_wait" instruction for a tool that was

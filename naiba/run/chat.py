@@ -515,13 +515,8 @@ class ConversationRunMixin:
                     tool for tool in allowed_tools
                     if tool not in {"install_skill", "run_skill_script"}
                 ]
-            if brain_supports_images:
-                # 多模态大脑隐藏按需看图的 vision_* 工具，但保留 vision_read_folder
-                # 供其从文件夹读取任意图片并注入 image content。
-                allowed_tools = [
-                    tool for tool in allowed_tools
-                    if not tool.startswith("vision_") or tool == "vision_read_folder"
-                ]
+            # 视觉工具对文本/多模态模型暴露同一工具集（vision_analyze 单入口），
+            # 模型能力差异由会话化 def 换形态（run_context.tool_defs）处理。
             # 视觉工具是会话固化的（用户预设），不再按“本轮是否含图”动态裁剪 allowed_tools；
             # 避免 tools 数组在首图轮变化破坏前缀缓存。是否重复描述图片由常驻的“图片处理策略”约束。
             schema_getter = getattr(self.app.tool_registry, "schemas", None)
@@ -579,6 +574,12 @@ class ConversationRunMixin:
                 # must not make progressive tool routing think every image is
                 # a generic file-management request.
                 "routing_message": self._routing_message(message, history),
+                "model_has_vision": bool(brain_supports_images),
+                "tool_defs": (
+                    self.app.vision.session_tool_defs(bool(brain_supports_images))
+                    if callable(getattr(getattr(self.app, "vision", None), "session_tool_defs", None))
+                    else None
+                ),
             }
             if lightweight_direct:
                 direct_messages = list(history)

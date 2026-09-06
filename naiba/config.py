@@ -136,8 +136,7 @@ _BUILT_IN_SCOPE_ALL = (
     "todo_write", "artifact_report", "recall_history",
     "comfyui_prepare_workflow", "comfyui_batch",
     "install_skill", "unpack_skill_archive", "inspect_installed_skill",
-    "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
-    "vision_crop", "vision_pixel_diff", "vision_read_folder",
+    "vision_analyze", "vision_image_ops",
 )
 
 
@@ -217,21 +216,12 @@ _TOOL_GROUP = {
     "recall_history": "会话与记忆",
     "comfyui_prepare_workflow": "ComfyUI", "comfyui_batch": "ComfyUI",
     "install_skill": "能力/Skill 管理", "unpack_skill_archive": "能力/Skill 管理", "inspect_installed_skill": "能力/Skill 管理",
-    "vision_describe": "视觉（文本模型）", "vision_ground": "视觉（文本模型）", "vision_detect": "视觉（文本模型）",
-    "vision_ocr": "视觉（文本模型）", "vision_colors": "视觉（文本模型）",
-    "vision_crop": "视觉（文本模型）", "vision_pixel_diff": "视觉（文本模型）",
-    "vision_read_folder": "视觉（视觉模型）",
+    "vision_analyze": "视觉", "vision_image_ops": "视觉",
 }
-_MODEL_TARGET = {
-    "vision_read_folder": "vision",
-    "vision_describe": "text", "vision_ground": "text", "vision_detect": "text",
-    "vision_ocr": "text", "vision_colors": "text", "vision_crop": "text", "vision_pixel_diff": "text",
-}
-# 新建 Agent 的默认勾选：常用基础工具 + 让视觉模型看图的 vision_read_folder；MCP/ComfyUI/后台Job/
-# 能力Skill 网关默认不选，用户可自行开启并明确其成本。
+# 模型能力映射已随视觉单入口重构移除（vision_analyze 按会话能力换形态，不再按模型裁剪工具集）。
 _DEFAULT_SELECTED_TOOLS = frozenset({
     "read_file", "write_file", "list_directory", "search_files", "glob_files", "edit_file",
-    "pwsh", "run_skill_script", "http_request", "web_search", "vision_read_folder",
+    "pwsh", "run_skill_script", "http_request", "web_search", "vision_analyze",
 })
 
 
@@ -249,7 +239,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "name": name,
             "description": first_line[:120],
             "group": "MCP" if name.startswith("mcp__") else _TOOL_GROUP.get(name, "其他"),
-            "model_target": _MODEL_TARGET.get(name, "any"),
+            "model_target": "any",
             "default_selected": name in _DEFAULT_SELECTED_TOOLS,
             "alias_of": _ALIAS_MAIN.get(name),
         })
@@ -262,8 +252,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "todo_write", "artifact_report", "recall_history",
         "comfyui_prepare_workflow", "comfyui_batch",
         "install_skill", "unpack_skill_archive", "inspect_installed_skill",
-        "vision_read_folder", "vision_describe", "vision_ground", "vision_detect", "vision_ocr",
-        "vision_colors", "vision_crop", "vision_pixel_diff",
+        "vision_analyze", "vision_image_ops",
     )
     index = {name: i for i, name in enumerate(order)}
     entries.sort(key=lambda item: (index.get(item["name"], 999), item["name"]))
@@ -320,7 +309,7 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "name": "极简模式",
         "tagline": "只读不改",
         "desc": "只能查看和搜索文件、看图片。不写文件、不跑命令、不联网，最省心。",
-        "include": ["read_file", "list_directory", "search_files", "glob_files", "vision_read_folder"],
+        "include": ["read_file", "list_directory", "search_files", "glob_files", "vision_analyze"],
     },
     {
         "id": "standard",
@@ -330,7 +319,7 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "include": [
             "read_file", "write_file", "list_directory", "search_files", "glob_files",
             "edit_file", "pwsh", "run_skill_script", "http_request", "web_search",
-            "vision_read_folder",
+            "vision_analyze",
         ],
     },
     {
@@ -341,7 +330,7 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "include": [
             "group:文件读取/搜索", "group:文件写入/编辑", "group:Skill 脚本", "group:网络",
             "group:会话与记忆",
-            "todo_write", "artifact_report", "vision_read_folder",
+            "todo_write", "artifact_report", "vision_analyze",
         ],
     },
     {
@@ -351,7 +340,7 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "desc": "标准能力 + 后台任务/子 Agent 全套，适合一次跑很多、跑很久的活。",
         "include": [
             "group:文件读取/搜索", "group:文件写入/编辑", "group:命令执行", "group:Skill 脚本",
-            "group:网络", "group:后台/Job/子任务", "vision_read_folder",
+            "group:网络", "group:后台/Job/子任务", "vision_analyze",
         ],
     },
     {
@@ -361,7 +350,7 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "desc": "标准能力 + ComfyUI 工作流与批量出图 + 后台任务，适合批量生成图片/视频素材。走 HTTP 通道直连本机 ComfyUI，不启用任何 MCP 连接。",
         "include": [
             "group:文件读取/搜索", "group:文件写入/编辑", "group:命令执行", "group:Skill 脚本",
-            "group:ComfyUI", "group:后台/Job/子任务", "vision_read_folder", "http_request",
+            "group:ComfyUI", "group:后台/Job/子任务", "vision_analyze", "http_request",
             "web_search",
         ],
         "exclude_mcp": True,
@@ -503,8 +492,13 @@ class ConfigStore:
         tools = self.data.get("agent_tools")
         # run_command 已并入 pwsh：历史默认集里保存的是 run_command（而非 pwsh）。
         # 先统一映射死工具名，避免升级后通用 Agent 静默丢失命令执行能力。
+        from naiba.tools.registry import RETIRED_TOOL_MAP
+
         if isinstance(tools, list):
-            mapped = ["pwsh" if str(item) == "run_command" else item for item in tools]
+            mapped = [
+                "pwsh" if str(item) == "run_command" else RETIRED_TOOL_MAP.get(str(item), item)
+                for item in tools
+            ]
             # MCP is an explicit external integration, never a default capability.
             # Remove the exact historical default pair while preserving a user's
             # separately selected MCP tools and configured server definitions.
@@ -541,7 +535,9 @@ class ConfigStore:
             agent["skill_ids"] = [str(item) for item in skills if str(item) not in legacy]
 
     def _migrate_legacy_tool_names(self) -> None:
-        """run_command 已并入 pwsh、call_mcp 已移除：清理持久化 Agent 工具范围里的死工具名。"""
+        """run_command 已并入 pwsh、call_mcp 已移除、视觉旧名已并入新入口：清理持久化工具名。"""
+        from naiba.tools.registry import RETIRED_TOOL_MAP
+
         agents = self.data.get("agents")
         if not isinstance(agents, list):
             return
@@ -551,7 +547,7 @@ class ConfigStore:
             scope = agent.get("tool_scope")
             if isinstance(scope, list):
                 agent["tool_scope"] = [
-                    "pwsh" if str(item) == "run_command" else item
+                    "pwsh" if str(item) == "run_command" else RETIRED_TOOL_MAP.get(str(item), item)
                     for item in scope
                     if str(item) != "call_mcp"
                 ]

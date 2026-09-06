@@ -83,11 +83,11 @@ def encode_image_for_model(source: str) -> dict[str, str] | None:
 
 
 # 这些工具的结果属于"内容/文件/图像读取"，模型在后续轮次可能仍要引用
-# （例如读取的 SKILL.md、references、配置、以及 vision_describe 的图片描述）。
+# （例如读取的 SKILL.md、references、配置、以及 vision_analyze 的图片结果）。
 # 它们会被持久注入到下一轮及之后的历史，避免模型跨轮丢失或反复调用视觉 API。
 # 其余的一次性/查询类工具（pwsh、list_directory、job_*、web_search 等）
 # 不注入历史，防止上下文无限膨胀。
-CONTENT_READ_TOOLS = frozenset({"read_file", "search_files", "vision_read_folder", "vision_describe"})
+CONTENT_READ_TOOLS = frozenset({"read_file", "search_files", "vision_read_folder", "vision_analyze"})
 
 
 def _vision_read_folder_model_summary(result: str) -> str:
@@ -105,6 +105,24 @@ def _vision_read_folder_model_summary(result: str) -> str:
         if isinstance(img, dict) and img.get("name")
     ]
     return json.dumps({"note": note, "images": names}, ensure_ascii=False)
+
+
+def _vision_analyze_model_summary(result: str) -> str:
+    """给模型看的精简摘要：vision_analyze 可能是「装载」形态（JSON 元数据，剥离路径）
+    或「分析」形态（文本结果，截断到安全长度）。"""
+    stripped = str(result or "")
+    if not stripped:
+        return ""
+    try:
+        payload = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        return stripped[:4000]
+    if isinstance(payload, dict):
+        # 装载形态：{note, images:[{name,path,thumb_path,...}]} → 只留 note 与名字
+        if "images" in payload or "note" in payload:
+            return _vision_read_folder_model_summary(stripped)
+        return stripped[:4000]
+    return stripped[:4000]
 
 
 def _content_read_tool_outputs(tool_runs: list[dict[str, Any]]) -> str:
@@ -126,6 +144,8 @@ def _content_read_tool_outputs(tool_runs: list[dict[str, Any]]) -> str:
         item = dict(run)
         if tool == "vision_read_folder":
             item["result"] = _vision_read_folder_model_summary(item.get("result"))
+        elif tool == "vision_analyze":
+            item["result"] = _vision_analyze_model_summary(item.get("result"))
         runs.append(item)
     if not runs:
         return ""

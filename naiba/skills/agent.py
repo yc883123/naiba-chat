@@ -22,7 +22,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 from naiba.core.diagnostics import _cache_debug_enabled, _debug_message_digest
-from naiba.core.history import _vision_read_folder_model_summary, encode_image_for_model
+from naiba.core.history import (
+    _vision_analyze_model_summary,
+    _vision_read_folder_model_summary,
+    encode_image_for_model,
+)
 from naiba.core.exceptions import TaskCancelled
 from naiba.skills.catalog import SkillCatalog
 from naiba.tools.executor import ToolExecutor
@@ -60,7 +64,8 @@ SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参
 SKILL_CONTENT_WARN_CHARS = 60000
 
 def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -> list[dict[str, Any]]:
-    """从 ``vision_read_folder`` 工具结果提取图片 image parts，供多模态模型直接看图。
+    """从 ``vision_analyze``（视觉模型会话=装载形态）工具结果提取图片 image parts，
+    供多模态模型直接看图。
 
     仅当 ``inject``（大脑支持图片）时生成 image parts；文本型大脑只缓存、不注入，
     避免把纯文本模型看不到的图片塞进消息。
@@ -69,7 +74,7 @@ def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -
         return []
     parts: list[dict[str, Any]] = []
     for run in step_runs or []:
-        if not isinstance(run, dict) or str(run.get("tool") or "") != "vision_read_folder":
+        if not isinstance(run, dict) or str(run.get("tool") or "") != "vision_analyze":
             continue
         try:
             payload = json.loads(str(run.get("result") or ""))
@@ -89,16 +94,17 @@ def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -
 def _model_visible_runs(step_runs: list[dict[str, Any]]) -> str:
     """把工具结果序列化给模型，但**脱敏**仅宿主需要的字段。
 
-    ``vision_read_folder`` 返回的 JSON 里含存储路径/缩略图/尺寸，这些是宿主
-    （extract_attachments、_extract_step_images）用来建附件和注入图片用的，
-    模型并不需要，也不应关心图片放到了宿主的哪个目录。这里只给模型 note + 图片名，
-    让它能按名称引用具体图片即可。
+    ``vision_analyze``（装载形态）/旧 ``vision_read_folder`` 返回的 JSON 里含存储路径/
+    缩略图/尺寸，这些是宿主（extract_attachments、_extract_step_images）用来建附件和
+    注入图片用的，模型并不需要。这里只给模型 note + 图片名，让它能按名称引用具体图片。
     """
     visible: list[dict[str, Any]] = []
     for run in step_runs or []:
         item = dict(run)
         if str(item.get("tool") or "") == "vision_read_folder":
             item["result"] = _vision_read_folder_model_summary(item.get("result"))
+        elif str(item.get("tool") or "") == "vision_analyze":
+            item["result"] = _vision_analyze_model_summary(item.get("result"))
         visible.append(item)
     return json.dumps(visible, ensure_ascii=False)
 
@@ -309,10 +315,30 @@ class SkillAgent:
         available_schemas: list[dict[str, Any]] = []
         routing_message = str((run_context or {}).get("routing_message") or user_message)
         if tool_registry is not None:
+            # 会话化 def 覆盖（RunContext.tool_defs：如 vision_analyze 按会话模型能力换形态）：
+            # 模型可见 schema 与系统提示工具清单均以会话化形态为准（工具名不变，行为由后端分流）。
+            session_defs = (run_context or {}).get("tool_defs") or {}
+            raw_schemas = tool_registry.schemas()
+            if session_defs:
+                available_schemas = [
+                    {
+                        **spec,
+                        **(
+                            {
+                                "description": str(getattr(session_defs[str(spec["name"])], "description", "") or ""),
+                                "parameters": getattr(session_defs[str(spec["name"])], "parameters", {}) or {},
+                            }
+                            if str(spec.get("name") or "") in session_defs
+                            else {}
+                        ),
+                    }
+                    for spec in raw_schemas
+                ]
+            else:
+                available_schemas = raw_schemas
             # 直接声明本会话稳定可用的全部授权工具（能力过滤后），保证 system 与
             # tools 字节稳定，不再按消息意图渐进披露导致前缀缓存失效。模型看得到
             # 即可调用（授权仍按冻结的 allowed），既不碰壁也保住缓存。
-            available_schemas = tool_registry.schemas()
             native_tools = [spec for spec in available_schemas if spec["name"] in allowed]
             tool_lines = [
                 f"- {spec['name']}：{spec.get('description') or ''}"
