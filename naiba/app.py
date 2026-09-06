@@ -203,7 +203,7 @@ class NaibaChatApp:
         from naiba.tools.providers.capability import CapabilityToolProvider
 
         self.tool_registry.register_provider(CapabilityToolProvider(self.capabilities))
-        # 视觉运行时（Phase 1-3）：注册 7 个视觉工具处理器。文本大脑看不到图时自动路由。
+        # 视觉运行时：注册 2 个视觉工具处理器。文本大脑发图只留路径占位，由模型按需调用 vision_analyze。
         from naiba.vision.runtime import VisionRouter
 
         self.vision = VisionRouter(self)

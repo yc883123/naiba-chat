@@ -660,8 +660,8 @@
 <p><img alt="视觉" src="images/09-settings-vision.png"></p>
 <ul>
 <li><strong>视觉供应商</strong>：留空 = 走 OVH 免费链兜底</li>
-<li><strong>自动路由</strong>：开了之后根据用户上传自动选视觉模型</li>
-<li><strong>超时 / 最大图片数</strong>：8 张默认</li>
+<li><strong>单次视觉请求超时 / 最大图片数</strong>：vision_analyze 工具调用视觉后端的单次超时；单轮占位引用的图片数上限（默认 4）</li>
+<li>视觉调用统一由模型驱动：文本模型发图只拿到路径引用，由模型按需调用 <code>vision_analyze</code>（结果以工具块呈现）；支持视觉的多模态模型直接收到原图。</li>
 </ul>
 <h2 id="56">5.6 联网搜索</h2>
 <p><img alt="联网搜索" src="images/10-settings-search.png"></p>
