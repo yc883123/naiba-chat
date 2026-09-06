@@ -7,8 +7,8 @@
 
 ## 一、当前状态（接手即此）
 
-- **分支**：`master`，HEAD = **`2f2c68f`**（工具设计修正：read_file 双预算/失败语义/确定性枚举/搜索语义/游标闭环）；
-- **验证基线**：`python -m unittest discover -s tests` = **180 用例 OK**；`tests.golden_replay` = 3 基线 OK（tool_confirm 已重录并人工核查）；`.tmptest/scan_undef_all.py` = 0 候选；工具注册 def 总数 = **32**（模型/Web 可见 `schemas()` = **27**）；
+- **分支**：`master`，HEAD = **`2fd1c24`**（工具职责收敛：glob_files 并入 list_directory）；
+- **验证基线**：`python -m unittest discover -s tests` = **182 用例 OK**；`tests.golden_replay` = 3 基线 OK；`.tmptest/scan_undef_all.py` = 0 候选；工具注册 def 总数 = **31**（模型/Web 可见 `schemas()` = **26**）；
 - **冻结版**：`dist\naiba-chat.exe`（含 701debd 全部修复；本阶段产物未重新编译，发布时按 §五 重编）；
 - **分支说明**：`test1` 为诊断实验分支（仍保留文件日志 + `NAIBA_NO_REASONING_PASSBACK` 开关，未并入 master）；master 工作树除 `build_info.json` 外干净（符合规则）。
 
@@ -30,6 +30,7 @@
 | e5e2567 | **工具描述瘦身（均衡档）**：描述 ≤100 字/≤3 句、删内部术语（Harness/宿主）与跨工具编排长句式；跨工具规则迁系统提示常驻区（ComfyUI 两段合一、Job ID 纪律句法优化）；http_request method 参数改 enum；守门 `tests/test_tool_description_slim.py`（4 条）；对照文档 `docs/dev/tools-description-slim.md` |
 | 6280cf1 | **工具结果对模型可见性统一（去自产字段/剥机器字段/截断标记/清死管线）**：新增 `core/tool_results.py` 单一事实源；模型上下文只含 `{tool, success, result}`（arguments/reason 不进上下文），result 按工具剥离机器字段（vision 装载 path/thumb/尺寸、artifact_report sha/绝对路径、vision_image_ops 产物路径）并统一「已截断」标记；native/兼容/历史兜底三条模型通道统一；前端（stream 事件/metadata.tool_runs）与上下文同源；删除 `log_tool_run` 写入与 `tool_runs` 表（迁移 v13 DROP）与 `ToolSpec.summarize` 死 API；守门 `test_tool_results_visibility`（7 条）；golden history_images 重录（脱敏生效） |
 | 2f2c68f | **工具设计修正（7 项）**：read_file 按行读取（50 行×30000 字符双预算、截断标记含行区间与续读起点、max_lines/end_line/with_line_numbers）；pwsh/run_skill_script 非零退出码与 http_request≥400 → success=False（原恒 True）；glob/list 按名称排序+绝对路径+start_after 续枚举；list_directory required 修正；search_files ignore_case 统一生效（默认区分大小写）+超大文件跳过计数+命中总数汇总；job_output 增量游标闭环；子 Agent 结果去 usage；守门 `tests/test_tool_design_fixes.py`（14 条）；golden tool_confirm 重录 |
+| 2fd1c24 | **工具职责收敛（单入口）**：glob_files 并入 list_directory（新增 pattern/files_only，递归+续枚举语义等价）；read_file 的 max_chars 对模型隐藏（执行层封顶 30000）；search_files path 可选（留空=工作区根）；RETIRED_TOOL_MAP 增 glob_files→list_directory（配置/会话固化自动归一）；内置作用域/预设/指南全部替换；守门：退役名引导、单入口等价语义 |
 
 **其余成果**（更早阶段，已在 master）：工具单一定义架构（`ToolSpec`/`providers/*`/单插槽分发/引擎瘦身）、确认链修复（policy 工作区/NEED_CONFIRM 冒号/前端委托）、golden 基线体系。
 
@@ -51,7 +52,7 @@
 4. **工具行为终态（read_file 双预算/失败语义/确定性枚举，接手勿改）**：
    - read_file：按行读取，50 行×30000 字符双预算（先触达者截断）；**max_chars 对模型隐藏**（schema 不含该参数，执行层封顶 30000 防浪费）；截断标记含「文件共 N 行，已返回第 A-B 行；如需继续请用 start_line=…」；单行超预算时按字符截断该行且续读起点回到该行；空文件/越界 start_line 显式提示。
    - 失败语义：`_result_success`（core.py）——pwsh/run_skill_script 非零退出码、http_request ≥400 → success=False（模型失败路径正确触发）；判定为纯函数，勿在别处另写。
-   - 枚举确定性：glob_files/list_directory 按名称排序、输出绝对路径、超限附 start_after 续枚举提示；search_files 默认区分大小写（ignore_case 对子串/正则统一生效）、超大文件跳过与命中总数计入汇总。
+   - 枚举确定性：list_directory 单入口（原 glob_files 已并入：pattern/files_only/recursive/start_after），按名称排序、输出绝对路径、超限附续枚举提示；search_files 默认区分大小写（ignore_case 对子串/正则统一生效）、超大文件跳过与命中总数计入汇总。退役名 glob_files/glob 走 RETIRED_TOOL_GUIDE 引导，会话固化集在 resolve_allowed_tools 入口自动归一（RETIRED_TOOL_MAP）。
    - job_output 增量：输出尾部回传推进后的 cursor（模型凭它读取后续增量）。
 5. **视觉模型差异是服务端特性**：DeepSeek 只对 `deepseek-v4-flash`/`v4-pro` 校验 thinking 回传，`vision-exp` 不校验（诊断证实两模型客户端请求完全同构）。**无需为 vision-exp 做适配**。
 6. **诊断纪律**：windowed exe 无控制台、应用无 logging handler → **诊断写文件**（test1 分支的 `_write_model_debug` 模式可复用；`AllocConsole` 方案实测无效）。
@@ -61,7 +62,7 @@
 1. **发布清单执行**（发布时）：`naiba-chat-update.json` 的 `commit`/`sha256` 由 workflow 覆盖；`README.md` 能力列表按需微调；冻结版编译（见 §五）。
 2. 浏览器冒烟（Playwright）需用户本机 `npm install playwright` + Edge 权限，本 DSH 沙箱被拦（已知）。
 3. `docs/manual/`（手动文档与截图）当前按用户指示不再维护（旧图含已移除的自动路由行，保留现状）。
-4. **待用户实测**：① 描述瘦身后的理解质量——文本模型 + 工具轮三场景（识图、后台 Job、ComfyUI「改文件再引用」）；② 可见性统一后工具块展示与模型行为（机器字段不再出现在前端/上下文，`arguments` 仅展示）；③ read_file 双预算与截断标记的续读闭环（大文件多轮读取应显著减少试错）、pwsh/http_request 失败语义（失败提示与重试行为正确）。
+4. **待用户实测**：① 描述瘦身后的理解质量——文本模型 + 工具轮三场景（识图、后台 Job、ComfyUI「改文件再引用」）；② 可见性统一后工具块展示与模型行为（机器字段不再出现在前端/上下文，`arguments` 仅展示）；③ read_file 双预算与截断标记的续读闭环（大文件多轮读取应显著减少试错）、pwsh/http_request 失败语义（失败提示与重试行为正确）；④ glob_files 并入后，模型"找文件"是否仍顺畅（list_directory 的 pattern/files_only 应覆盖旧 glob 用法）。
 
 ## 五、验证与复测命令
 
@@ -83,9 +84,9 @@ $env:NAIBA_BUILD_VERSION = "2.0.0-beta"; & "D:\naiba-chat\.venv\Scripts\python.e
 
 ## 六、本次触碰文件（master 增量）
 
-- 后端：`naiba/{core/tool_results(new),core/history,skills/agent,run/chat,subagent,plans,tools/registry,tools/providers/core,storage/store,vision/runtime,run/stream,run/session,run/manager,core/contracts,config,app}.py`
+- 后端：`naiba/{core/tool_results(new),core/history,skills/agent,run/chat,run/session,subagent,plans,tools/registry,tools/providers/core,storage/store,vision/runtime,run/stream,run/manager,core/contracts,config,app}.py`
 - 前端：`public/{index.html,styles.css,js/09-settings.js,js/11-run-stream.js,js/12-chat-input.js}`
-- 测试：`tests/{test_config_migration,test_vision_prepare_history,test_tool_registry_shape,test_tool_description_slim,test_tool_results_visibility,test_tool_design_fixes,golden_replay}.py`、`tests/golden/{history_images,tool_confirm}.json`（重录）
+- 测试：`tests/{test_config_migration,test_vision_prepare_history,test_tool_registry_shape,test_tool_description_slim,test_tool_results_visibility,test_tool_design_fixes,test_core_tools_parity,golden_replay}.py`、`tests/golden/{history_images,tool_confirm}.json`（重录）
 - 发布/文档：`release_notes.json`、`README.md`、`项目维护说明（修改代码前必读）.md`、`docs/dev/tools-enhancement-handoff.md`（本文档）、`docs/dev/tools-description-slim.md`（瘦身对照，评审后删除）、`版本更新说明.md`（本地，gitignored）。**`docs/manual/` 按用户指示不再维护。**
 - 验证脚本（gitignored）：`.tmptest/esm_graph_check.py` 已修复（剥离注释/字符串/模板/正则后的词边界扫描，消除正则字面量误报；合成用例验证真缺 import 仍能检出）
 
