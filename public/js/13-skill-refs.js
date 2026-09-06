@@ -2,10 +2,12 @@
 // 13-skill-refs.js —— 拆分自 public/app.js 第 6069-6328 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function skillList() { return Array.isArray(state.bootstrap?.skills) ? state.bootstrap.skills : []; }
+import { $, escapeHtml, state } from "./01-core.js";
+import { markdown } from "./02-markdown.js";
+export function skillList() { return Array.isArray(state.bootstrap?.skills) ? state.bootstrap.skills : []; }
 
 // 按 /ref 反查 skill：优先 ref，其次 name，忽略大小写。
-function skillByRef(refText) {
+export function skillByRef(refText) {
   const key = String(refText || '').trim().toLowerCase();
   if (!key) return null;
   return skillList().find((s) => String(s.ref || '').toLowerCase() === key)
@@ -13,7 +15,7 @@ function skillByRef(refText) {
 }
 
 // 识别文本里所有 <(^|\s)/ref> 且命中了已安装 skill 的引用。
-function tokenizeSkillRefs(text) {
+export function tokenizeSkillRefs(text) {
   const matches = [];
   const re = /(^|\s)\/([^\s/#]+)/g;
   let m;
@@ -28,7 +30,7 @@ function tokenizeSkillRefs(text) {
 }
 
 // 供镜像层/气泡：把文本转成带 <span class="skill-ref"> 高亮的 HTML。
-function highlightSkillRefsHtml(text) {
+export function highlightSkillRefsHtml(text) {
   const tokens = tokenizeSkillRefs(text);
   if (!tokens.length) return escapeHtml(text);
   let out = ''; let pos = 0;
@@ -41,7 +43,7 @@ function highlightSkillRefsHtml(text) {
   return out;
 }
 
-function renderInputMirror() {
+export function renderInputMirror() {
   const mirror = $('#inputMirror');
   const input = $('#messageInput');
   if (!mirror || !input) return;
@@ -52,7 +54,7 @@ function renderInputMirror() {
 }
 
 // 当前光标所在的那个 <(^|\s)/name…> token；无效时返回 null。
-function currentSlashToken(value, cursor) {
+export function currentSlashToken(value, cursor) {
   if (!value || cursor == null) return null;
   const isWS = (ch) => ch === undefined || /\s/.test(ch);
   let i = cursor;
@@ -65,9 +67,9 @@ function currentSlashToken(value, cursor) {
   return { tokenStart: i, tokenEnd: j, typed: value.slice(i + 1, cursor) };
 }
 
-const popupState = { open: false, selectedIndex: 0, items: [], token: null };
+export const popupState = { open: false, selectedIndex: 0, items: [], token: null };
 
-function positionSkillPopup() {
+export function positionSkillPopup() {
   const popup = $('#skillPopup');
   const input = $('#messageInput');
   if (!popup || !input || popup.hidden) return;
@@ -80,7 +82,7 @@ function positionSkillPopup() {
   popup.style.top = `${top}px`;
 }
 
-function showSkillPopup(items, selectedIndex, token) {
+export function showSkillPopup(items, selectedIndex, token) {
   const popup = $('#skillPopup');
   if (!popup) return;
   popupState.open = true; popupState.items = items; popupState.token = token; popupState.selectedIndex = selectedIndex;
@@ -100,13 +102,13 @@ function showSkillPopup(items, selectedIndex, token) {
   positionSkillPopup();
 }
 
-function hideSkillPopup() {
+export function hideSkillPopup() {
   popupState.open = false; popupState.items = []; popupState.token = null; popupState.selectedIndex = 0;
   const popup = $('#skillPopup');
   if (popup) popup.hidden = true;
 }
 
-function setSkillPopupSelection(index) {
+export function setSkillPopupSelection(index) {
   popupState.selectedIndex = index;
   const popup = $('#skillPopup');
   popup?.querySelectorAll('[data-skill-index]').forEach((el) => {
@@ -115,7 +117,7 @@ function setSkillPopupSelection(index) {
   popup?.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
 }
 
-function updateSkillPopup() {
+export function updateSkillPopup() {
   const input = $('#messageInput');
   if (!input) return hideSkillPopup();
   const token = currentSlashToken(input.value, input.selectionStart);
@@ -131,13 +133,13 @@ function updateSkillPopup() {
   showSkillPopup(items, 0, token);
 }
 
-function moveSkillPopupSelection(delta) {
+export function moveSkillPopupSelection(delta) {
   if (!popupState.open || !popupState.items.length) return;
   const n = popupState.items.length;
   setSkillPopupSelection((popupState.selectedIndex + delta + n) % n);
 }
 
-function commitSkillSelection(skill) {
+export function commitSkillSelection(skill) {
   const input = $('#messageInput');
   const value = input.value;
   const cursor = input.selectionStart;
@@ -155,7 +157,7 @@ function commitSkillSelection(skill) {
 }
 
 // 在光标处插入一个 skill 引用（顶栏点击 / 预填复用）。
-function insertSkillRefAtCursor(skill) {
+export function insertSkillRefAtCursor(skill) {
   const input = $('#messageInput');
   if (!input) return;
   const refText = '/' + (skill.ref || skill.name);
@@ -173,7 +175,7 @@ function insertSkillRefAtCursor(skill) {
 }
 
 // 新会话：把当前 Agent 预设 skill 以 /ref 引用预填到输入框（用户删掉即不引用，统一途径）。
-function prefillPresetSkillsInComposer(conversation) {
+export function prefillPresetSkillsInComposer(conversation) {
   const input = $('#messageInput');
   if (!input) return;
   const agentId = String(conversation?.agent_id || '');
@@ -190,7 +192,7 @@ function prefillPresetSkillsInComposer(conversation) {
 }
 
 // 切换 Agent 后：把该 Agent 预设 Skill 以 /ref 追加到输入框末尾（已在框内的跳过，避免重复）。
-function appendPresetSkillsToComposer(agentId) {
+export function appendPresetSkillsToComposer(agentId) {
   const input = $('#messageInput');
   if (!input) return;
   const agent = (state.bootstrap?.agents || []).find((a) => String(a.id) === String(agentId));
@@ -210,7 +212,7 @@ function appendPresetSkillsToComposer(agentId) {
 }
 
 // 解析并返回本消息引用的 skill（去重）。
-function parseSkillReferences(text) {
+export function parseSkillReferences(text) {
   const seen = new Set();
   const refs = [];
   for (const tok of tokenizeSkillRefs(text)) {
@@ -222,7 +224,7 @@ function parseSkillReferences(text) {
 }
 
 // 把 /ref 引用从消息文本里剥离（发给模型用）；若剥空则保留原文（纯引用调用场景）。
-function stripSkillReferences(text) {
+export function stripSkillReferences(text) {
   const tokens = tokenizeSkillRefs(text);
   if (!tokens.length) return text;
   let out = ''; let pos = 0;
@@ -236,7 +238,7 @@ function stripSkillReferences(text) {
 }
 
 // 用户气泡：优先显示 display_content（含 /ref），并对命中 skill 的引用高亮；保留 markdown。
-function renderUserContent(text) {
+export function renderUserContent(text) {
   const tokens = tokenizeSkillRefs(text);
   if (!tokens.length) return markdown(text);
   let protectedText = ''; let pos = 0; let idx = 0;
@@ -255,7 +257,7 @@ function renderUserContent(text) {
 }
 
 
-function resizeTextarea() {
+export function resizeTextarea() {
   const input = $('#messageInput');
   input.style.height = 'auto';
   input.style.height = `${Math.min(input.scrollHeight, 180)}px`;

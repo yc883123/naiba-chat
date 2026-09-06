@@ -2,7 +2,14 @@
 // 04-messages.js —— 拆分自 public/app.js 第 1212-1501 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function messageElement(message, temporary = false) {
+import { $, api, draggedFileCache, emptyStateElement, escapeHtml, state, toast } from "./01-core.js";
+import { markdown } from "./02-markdown.js";
+import { activityMarkup, attachmentThumbUrl, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaMarkup, reasoningMarkup, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, usageMarkup } from "./03-media.js";
+import { openConversation } from "./08-conversations.js";
+import { renderPendingFiles } from "./10-upload.js";
+import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
+import { hideSkillPopup, renderInputMirror, renderUserContent, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
+export function messageElement(message, temporary = false) {
   const row = document.createElement('article');
   row.className = `message-row ${message.role}`;
   row.dataset.messageId = message.id || '';
@@ -48,7 +55,7 @@ function messageElement(message, temporary = false) {
   return row;
 }
 
-function preloadDraggedFile(source, name = '') {
+export function preloadDraggedFile(source, name = '') {
   const url = new URL(fileUrl(source), location.href).href;
   if (draggedFileCache.has(url)) return;
   fetch(url).then((response) => response.ok ? response.blob() : Promise.reject(new Error('image fetch failed')))
@@ -56,7 +63,7 @@ function preloadDraggedFile(source, name = '') {
     .catch(() => {});
 }
 
-function startEditMessage(row) {
+export function startEditMessage(row) {
   if (!row) return;
   const body = row.querySelector('.message-body');
   if (!body || body.querySelector('textarea[data-edit-input]')) return;
@@ -92,7 +99,7 @@ function startEditMessage(row) {
   });
 }
 
-async function confirmEditMessage(row, newText) {
+export async function confirmEditMessage(row, newText) {
   const text = newText.trim();
   if (!text) {
     toast('内容不能为空');
@@ -126,7 +133,7 @@ async function confirmEditMessage(row, newText) {
 
 // 从某条 user 消息分支：新开一个会话，复制分支点之前的历史，并把分支消息预填进输入框。
 // 非破坏性（原会话保留）；运行中不显示分支按钮（见 CSS .conversation-running），此处兜底拦截。
-async function branchMessage(row) {
+export async function branchMessage(row) {
   if (state.chatRunId || state.abortController) {
     toast('请先等待当前任务结束或停止后再分支');
     return;
@@ -166,7 +173,7 @@ async function branchMessage(row) {
   }
 }
 
-function uploadedFileMarkup(files = []) {
+export function uploadedFileMarkup(files = []) {
   if (!files.length) return '';
   const html = files.map((file) => {
     const source = file.source || file.path || '';
@@ -181,9 +188,9 @@ function uploadedFileMarkup(files = []) {
   return `<div class="media-grid">${html}</div>`;
 }
 
-let stickToBottom = true;
+export let stickToBottom = true;
 
-function isNearBottom(threshold = 80) {
+export function isNearBottom(threshold = 80) {
   const messages = $('#messages');
   if (!messages) return true;
   return (messages.scrollHeight - messages.scrollTop - messages.clientHeight) < threshold;
@@ -191,19 +198,19 @@ function isNearBottom(threshold = 80) {
 
 // 默认滚动：只在用户仍停留在底部（跟随）时才自动滚到最新内容；
 // 用户滚轮上滑阅读历史时，后续任何 delta/工具事件都不再把页面强行拉回底部。
-function scrollToBottom() {
+export function scrollToBottom() {
   if (!stickToBottom) return;
   const messages = $('#messages');
   if (messages) messages.scrollTop = messages.scrollHeight;
 }
 
 // 强制滚到底部：用于确实需要展示最新内容的地方（渲染后一次性定位）。
-function forceScrollToBottom() {
+export function forceScrollToBottom() {
   const messages = $('#messages');
   if (messages) messages.scrollTop = messages.scrollHeight;
 }
 
-function scheduleStreamingMarkdown(element, raw) {
+export function scheduleStreamingMarkdown(element, raw) {
   if (!element) return;
   element.dataset.raw = raw;
   if (element.dataset.renderScheduled === '1') return;
@@ -219,7 +226,7 @@ function scheduleStreamingMarkdown(element, raw) {
 // 只有当 answer 的前一个兄弟元素已经是流式正文块时才复用；一旦中间插入了工具/思考块，
 // 之后的新正文会生成新的独立块，从而保持“思考→正文→工具→思考→正文…”的顺序，
 // 而不是把所有正文统一累积到末尾的 answer-content。
-function getStreamingProseSegment(row, answer) {
+export function getStreamingProseSegment(row, answer) {
   if (!answer) return null;
   const prev = answer.previousElementSibling;
   if (prev && prev.classList && prev.classList.contains('stream-prose')) {
@@ -233,7 +240,7 @@ function getStreamingProseSegment(row, answer) {
 
 // 首个工具出现时，把之前累计在底部（answer-content）的正文移到内联的正文块，
 // 让它紧跟在该工具之前，与思考块/后续工具按时间交错，而不是停在末尾。
-function moveBottomProseInline(row, answer) {
+export function moveBottomProseInline(row, answer) {
   if (!answer) return;
   const bottomRaw = answer.dataset.raw || '';
   if (!bottomRaw.trim()) return;
@@ -245,7 +252,7 @@ function moveBottomProseInline(row, answer) {
   answer.replaceChildren();
 }
 
-function renderMessages(messages) {
+export function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
   closeImageLightbox();
@@ -277,7 +284,7 @@ function renderMessages(messages) {
   }
 }
 
-function pendingChoiceMessage(messages) {
+export function pendingChoiceMessage(messages) {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (message?.role === 'user') return null;

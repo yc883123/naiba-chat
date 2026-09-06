@@ -2,7 +2,13 @@
 // 05-bootstrap.js —— 拆分自 public/app.js 第 1502-1605 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-async function authenticate(token) {
+import { $, $$, api, state, toast } from "./01-core.js";
+import { loadTasks, startTaskSync } from "./06-tasks-plans.js";
+import { populateModels, renderAgents, renderUpdateStatus } from "./07-models-agents.js";
+import { loadConversationPromptPresets, loadConversations, restoreSidebarWidth, sidebarScrollToActive, startConversationSync } from "./08-conversations.js";
+import { populateRuntimeSettings, populateSearchSettings, populateVisionSettings, renderAgentManager, renderMcp, renderProviders, renderSkills, startMcpPoll } from "./09-settings.js";
+import { loadStarterPrompts } from "./12-chat-input.js";
+export async function authenticate(token) {
   const response = await fetch('/api/auth', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -13,7 +19,7 @@ async function authenticate(token) {
   localStorage.setItem('naibaChatToken', token);
 }
 
-function renderNetworkAccess() {
+export function renderNetworkAccess() {
   const access = state.bootstrap || {};
   const configuredHost = String(access.settings?.host || '0.0.0.0');
   const pendingRestart = Boolean(access.lan_restart_required);
@@ -32,7 +38,7 @@ function renderNetworkAccess() {
   copyButton.title = copyButton.disabled ? reason : '复制手机访问地址';
 }
 
-async function enableLanAccess() {
+export async function enableLanAccess() {
   try {
     const result = await api('/api/settings', { method: 'POST', body: { host: '0.0.0.0' } });
     Object.assign(state.bootstrap.settings, result.settings || {});
@@ -44,7 +50,7 @@ async function enableLanAccess() {
   }
 }
 
-async function initialize() {
+export async function initialize() {
   restoreSidebarWidth();
   sidebarScrollToActive = true;
   try {
@@ -91,7 +97,7 @@ async function initialize() {
 }
 
 // 后台检查可能启动时才开始（checking 阶段），前端以 30 秒间隔轮询感知结果。
-function startUpdatePoll() {
+export function startUpdatePoll() {
   if (state.updatePollTimer) return;
   state.updatePollTimer = window.setInterval(async () => {
     const status = state.bootstrap.update || {};

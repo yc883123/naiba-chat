@@ -2,7 +2,8 @@
 // 02-markdown.js —— 拆分自 public/app.js 第 398-711 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function highlightCode(rawCode, language) {
+import { $, escapeHtml, normalizeLanguage, restoreSafeHtml, state } from "./01-core.js";
+export function highlightCode(rawCode, language) {
   const code = String(rawCode ?? '');
   const lang = normalizeLanguage(language);
   const esc = escapeHtml;
@@ -118,7 +119,7 @@ function highlightCode(rawCode, language) {
 }
 
 // ---- Markdown 内联处理：逐段 / 逐单元格执行，避免加粗/代码/链接跨行、跨段落或跨表格行泄漏 ----
-function markdownInline(s) {
+export function markdownInline(s) {
   return String(s || '')
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>')
@@ -128,8 +129,8 @@ function markdownInline(s) {
 // 防御式表格单元格切分：按 | 切分一行，但：
 //  1) 不切分被内联标签（<code>/<a>/<strong>…）包裹的 |（例如 <code>a|b</code> 里的 |）；
 //  2) 支持 \| 转义（\| 作为一个字面 | 留在单元格里）。
-const TABLE_SHIELD_TAGS = new Set(['code','a','strong','b','em','i','span','del','s','u','sub','sup','pre','mark','kbd']);
-function splitMarkdownTableRow(row) {
+export const TABLE_SHIELD_TAGS = new Set(['code','a','strong','b','em','i','span','del','s','u','sub','sup','pre','mark','kbd']);
+export function splitMarkdownTableRow(row) {
   const text = String(row || '').trim().replace(/^\|/, '').replace(/\|$/, '');
   const cells = [];
   let current = '';
@@ -169,21 +170,21 @@ function splitMarkdownTableRow(row) {
 
 // 只有“以 | 开头、以 | 结尾且中间至少一个字符”的行才可能是一个表格行，
 // 避免把普通含 | 的文本（例如 “a | b，不是表格”）误判。
-function isMarkdownTableRow(line) {
+export function isMarkdownTableRow(line) {
   const t = String(line || '').trim();
   if (!t.startsWith('|') || !t.endsWith('|')) return false;
   return t.length > 2;
 }
 
 // 分隔行：所有单元格都是 - 和可选 :（如 | :-- | --: |）。
-function isMarkdownTableSeparator(line) {
+export function isMarkdownTableSeparator(line) {
   const t = String(line || '').trim();
   if (!t.startsWith('|') || !t.endsWith('|')) return false;
   const cells = splitMarkdownTableRow(t);
   return cells.length >= 1 && cells.every((c) => /^:?-{3,}:?$/.test(c.trim()));
 }
 
-function collectMarkdownTable(lines, start) {
+export function collectMarkdownTable(lines, start) {
   if (start + 1 >= lines.length) return null;
   if (!isMarkdownTableRow(lines[start])) return null;
   if (!isMarkdownTableSeparator(lines[start + 1])) return null;
@@ -199,7 +200,7 @@ function collectMarkdownTable(lines, start) {
   return { rows, end: j };
 }
 
-function renderMarkdownTable(rows) {
+export function renderMarkdownTable(rows) {
   // 每行先做内联（把 ** / `code` / [text](url) 换成 <strong>/<code>/<a>），再按 | 切分，
   // 这样 “|” 在内联代码/链接/加粗里不会把单元格切坏；同时把加粗限制在“单行”内，避免跨行泄漏。
   const header = splitMarkdownTableRow(markdownInline(rows[0]));
@@ -214,7 +215,7 @@ function renderMarkdownTable(rows) {
   return `<div class="table-wrap"><table><thead><tr>${th}</tr></thead><tbody>${tbody}</tbody></table></div>`;
 }
 
-function markdown(text, allowRichText = true) {
+export function markdown(text, allowRichText = true) {
   const codeBlocks = [];
   const addCodeBlock = (language, rawCode) => {
     const index = codeBlocks.length;

@@ -2,7 +2,17 @@
 // 12-chat-input.js —— 拆分自 public/app.js 第 5238-6068 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-async function startSkillInstall() {
+import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
+import { markdown } from "./02-markdown.js";
+import { updateContextComposerLock, updateContextUsage } from "./03-media.js";
+import { getStreamingProseSegment, messageElement, moveBottomProseInline, renderMessages, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
+import { loadTasks } from "./06-tasks-plans.js";
+import { updateUnloadModelButton } from "./07-models-agents.js";
+import { createConversation, openConversation, renderConversationRuleBar } from "./08-conversations.js";
+import { uploadFiles } from "./10-upload.js";
+import { SKILL_INSTALL_PRESET, clearElapsedStatus, clearRunReconnectTimers, clearStreamingAnswer, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, renderVisionProgress, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
+import { renderInputMirror, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
+export async function startSkillInstall() {
   if (state.chatRunId || state.abortController) {
     toast('请先等待当前任务结束或停止后再安装 Skill');
     return;
@@ -23,7 +33,7 @@ async function startSkillInstall() {
 }
 
 // ---- 自定义指令（开始新对话页的“+”按钮）：固化到用户 config，可快速复用 ----
-async function loadStarterPrompts() {
+export async function loadStarterPrompts() {
   try {
     const r = await api('/api/starter-prompts');
     state.customPrompts = Array.isArray(r.prompts) ? r.prompts : [];
@@ -33,7 +43,7 @@ async function loadStarterPrompts() {
   }
 }
 
-function renderStarterPrompts() {
+export function renderStarterPrompts() {
   const grid = document.querySelector('.starter-grid');
   const addBtn = $('#starterAddBtn');
   if (!grid || !addBtn) return;
@@ -66,7 +76,7 @@ function renderStarterPrompts() {
   });
 }
 
-function openStarterPromptDialog(index = -1) {
+export function openStarterPromptDialog(index = -1) {
   state.editingStarterPrompt = index;
   const p = (index >= 0 ? state.customPrompts[index] : null) || {};
   $('#starterPromptTitle').value = p.title || '';
@@ -75,7 +85,7 @@ function openStarterPromptDialog(index = -1) {
   $('#starterPromptTitle').focus();
 }
 
-async function saveStarterPrompt() {
+export async function saveStarterPrompt() {
   const title = $('#starterPromptTitle').value;
   const text = $('#starterPromptText').value;
   if (!text.trim()) { toast('指令内容不能为空'); return; }
@@ -93,7 +103,7 @@ async function saveStarterPrompt() {
   }
 }
 
-async function removeStarterPrompt(index) {
+export async function removeStarterPrompt(index) {
   try {
     const r = await api(`/api/starter-prompts/${index}`, { method: 'DELETE' });
     state.customPrompts = r.prompts || [];
@@ -104,7 +114,7 @@ async function removeStarterPrompt(index) {
   }
 }
 
-const SKILL_EDIT_PRESET =
+export const SKILL_EDIT_PRESET =
   '用户希望编辑本应用内一个已安装的 Skill。本会话已为你启用 inspect_installed_skill（以及读取/编辑/写入文件）工具。'
   + '请按以下流程执行，并【先等待用户指定要编辑哪个 Skill】：\n'
   + '1. 等待用户给出目标 Skill（支持名称或 id）。\n'
@@ -114,7 +124,7 @@ const SKILL_EDIT_PRESET =
   + '5. 提醒用户：改动会持久化到该 Skill 文件；切换/重开会话或重新引用（/技能名）后生效。\n'
   + '6. 若用户给的 Skill 不存在（inspect_installed_skill 返回未找到），向用户说明可用的 Skill，不要凭空编造。';
 
-async function startSkillEdit() {
+export async function startSkillEdit() {
   if (state.chatRunId || state.abortController) {
     toast('请先等待当前任务结束或停止后再编辑 Skill');
     return;
@@ -134,11 +144,11 @@ async function startSkillEdit() {
   sendMessage(SKILL_EDIT_PRESET);
 }
 
-async function sendMessage(textOverride = '') {
+export async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
 }
 
-function updateDeepReasoningButton() {
+export function updateDeepReasoningButton() {
   const btn = $('#deepReasoningButton');
   if (!btn) return;
   const disabled = Boolean(state.chatRunId || state.abortController);
@@ -152,7 +162,7 @@ function updateDeepReasoningButton() {
   btn.title = auto ? '深度思考：跟随 API（自动）' : (effort !== 'off' ? '深度思考：开启' : '深度思考：关闭');
 }
 
-async function toggleDeepReasoning() {
+export async function toggleDeepReasoning() {
   if (!state.conversationId) await createConversation();
   if (state.chatRunId || state.abortController) return;
   const menu = $('#reasoningMenu');
@@ -183,7 +193,7 @@ async function toggleDeepReasoning() {
   }
 }
 
-function applyConversationLightweight(conversation) {
+export function applyConversationLightweight(conversation) {
   // 轻量模式只能由下方“工具 / Skill”选项开启：勾选即关闭对应能力。
   // 若会话从未开启过轻量模式（lightweight_mode=0），忽略旧版本残留的关闭项，
   // 保证默认回到普通模式（什么都不勾选 = 普通对话）。
@@ -197,7 +207,7 @@ function applyConversationLightweight(conversation) {
   updateLightweightModeControl();
 }
 
-function updateLightweightModeControl() {
+export function updateLightweightModeControl() {
   const toolsToggle = $('#lightweightToolsToggle');
   const skillsToggle = $('#lightweightSkillsToggle');
   const richTextToggle = $('#richTextToggle');
@@ -212,7 +222,7 @@ function updateLightweightModeControl() {
   if (attach) attach.disabled = false;
   updateDeepReasoningButton();
 }
-async function toggleRichText(checked) {
+export async function toggleRichText(checked) {
   if (state.chatRunId || state.abortController) return; if (!state.conversationId) await createConversation();
   const previous = [...state.lightweightDisabledFeatures], previousEnabled = state.richTextEnabled; const next = new Set(previous);
   if (checked) next.delete('rich_text'); else next.add('rich_text'); state.richTextEnabled = !!checked; state.lightweightDisabledFeatures = [...next]; state.lightweightMode = next.size > 0; updateLightweightModeControl();
@@ -220,11 +230,11 @@ async function toggleRichText(checked) {
   catch (error) { state.lightweightDisabledFeatures = previous; state.richTextEnabled = previousEnabled; state.lightweightMode = previous.length > 0; updateLightweightModeControl(); toast(`富文本设置保存失败：${error.message}`); }
 }
 
-function markdownFilePreview(text) {
+export function markdownFilePreview(text) {
   return markdown(text, false);
 }
 
-async function toggleLightweightFeature(feature, checked) {
+export async function toggleLightweightFeature(feature, checked) {
   if (!['tools', 'skills'].includes(feature) || state.chatRunId || state.abortController) return;
   if (!state.conversationId) await createConversation();
   const previous = [...state.lightweightDisabledFeatures];
@@ -254,7 +264,7 @@ async function toggleLightweightFeature(feature, checked) {
   }
 }
 
-async function handlePasteImage(event) {
+export async function handlePasteImage(event) {
   const items = (event.clipboardData && event.clipboardData.items) || [];
   const imageFiles = [];
   for (const item of items) {
@@ -270,7 +280,7 @@ async function handlePasteImage(event) {
   toast('已粘贴图片，可发送');
 }
 
-function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
+export function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
   if (conversationId !== state.conversationId) return;
   if (state.cancelRequested || state.cancelledRunIds.has(String(event.run_id || runId || ''))) return;
   const answer = row.querySelector('.answer-content');
@@ -578,7 +588,7 @@ function handleChatEvent(event, row, conversationId = state.conversationId, runI
   scrollToBottom();
 }
 
-function showChoiceButtons(choices, choiceGroups = []) {
+export function showChoiceButtons(choices, choiceGroups = []) {
   hideChoiceButtons();
   const composerWrap = $('.composer-wrap');
   const composer = $('#composerForm');
@@ -684,13 +694,13 @@ function showChoiceButtons(choices, choiceGroups = []) {
   scrollToBottom();
 }
 
-function hideChoiceButtons() {
+export function hideChoiceButtons() {
   const existing = $('#choiceButtons');
   if (existing) existing.remove();
   renderConversationRuleBar();
 }
 
-function fillComposer(text) {
+export function fillComposer(text) {
   // 把按钮拼好的内容放进输入框由用户确认，不自动发送。
   const input = $('#messageInput');
   if (!input) return;
@@ -701,7 +711,7 @@ function fillComposer(text) {
   input.focus();
 }
 
-async function approveTool(confirmId, runId = state.chatRunId) {
+export async function approveTool(confirmId, runId = state.chatRunId) {
   try {
     const confirmEl = document.querySelector(`[data-confirm-id="${confirmId}"]`);
     if (confirmEl) {
@@ -718,7 +728,7 @@ async function approveTool(confirmId, runId = state.chatRunId) {
   }
 }
 
-async function rejectTool(confirmId, runId = state.chatRunId) {
+export async function rejectTool(confirmId, runId = state.chatRunId) {
   try {
     const confirmEl = document.querySelector(`[data-confirm-id="${confirmId}"]`);
     if (confirmEl) {
@@ -733,7 +743,7 @@ async function rejectTool(confirmId, runId = state.chatRunId) {
   }
 }
 
-function setBusy(busy) {
+export function setBusy(busy) {
   state.chatBusy = busy;
   const mc = $('#messages');
   if (mc) mc.classList.toggle('conversation-running', busy);
@@ -757,7 +767,7 @@ function setBusy(busy) {
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
 }
 
-async function cancelCurrentRun() {
+export async function cancelCurrentRun() {
   if (state.cancelRequested) return;
   const runId = String(state.chatRunId || '');
   const conversationId = String(state.runConversationId || state.conversationId || '');
@@ -824,7 +834,7 @@ async function cancelCurrentRun() {
 
 // 显式刷新页面（内嵌 pywebview 无法 F5 时的退路，浏览器同样可用）。
 // URL 中的 token 与对话/工作区状态由后端持久化，reload 后可恢复。
-function reloadPage() {
+export function reloadPage() {
   if (state.runWatchdogTimer) stopRunWatchdog();
   if (state.elapsedTimer) clearElapsedStatus();
   window.location.reload();

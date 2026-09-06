@@ -2,9 +2,15 @@
 // 06-tasks-plans.js —— 拆分自 public/app.js 第 1606-1965 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
+import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
+import { markdown } from "./02-markdown.js";
+import { fileUrl } from "./03-media.js";
+import { renderRunTasks, syncCurrentConversation } from "./08-conversations.js";
+import { RUN_RECONNECT_COOLDOWN, clearElapsedStatus, resumeRun, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
+import { cancelCurrentRun, setBusy } from "./12-chat-input.js";
+export const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
 
-async function loadTasks() {
+export async function loadTasks() {
   if (state.taskPollInFlight || document.visibilityState === 'hidden') return;
   state.taskPollInFlight = true;
   try {
@@ -29,7 +35,7 @@ async function loadTasks() {
 // 轮询兜底恢复流：仅在处于"等待恢复/重连冷却已过"且前端无活动流时，
 // 探测后端是否仍有当前对话的活跃 Run，若有则 resumeRun 拉回流。
 // 只会在 runReconnectAt（>0 表示要恢复）且冷却已过时查询，避免每个轮询周期都打 /api/runs。
-async function maybeRecoverRunFromPoll() {
+export async function maybeRecoverRunFromPoll() {
   if (state.cancelRequested) return;
   if (state.abortController) return; // 已有活动流，无需兜底
   if (state.runRecovering) return;
@@ -71,7 +77,7 @@ async function maybeRecoverRunFromPoll() {
   }
 }
 
-function startTaskSync() {
+export function startTaskSync() {
   if (state.taskPolling) return;
   state.taskPolling = true;
   scheduleTaskSync(1500);
@@ -85,7 +91,7 @@ function startTaskSync() {
   });
 }
 
-function scheduleTaskSync(delay = null) {
+export function scheduleTaskSync(delay = null) {
   if (!state.taskPolling || document.visibilityState === 'hidden') return;
   if (state.taskTimer) window.clearTimeout(state.taskTimer);
   const active = state.checkRunEligible || state.tasks.some((task) => activeTaskStatuses.has(task.status));
@@ -97,17 +103,17 @@ function scheduleTaskSync(delay = null) {
   }, delay ?? interval);
 }
 
-function taskStatusLabel(status) {
+export function taskStatusLabel(status) {
   return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消' })[status] || status;
 }
 
-function currentPermissionMode() {
+export function currentPermissionMode() {
   const conversation = state.conversations.find((item) => item.id === state.conversationId);
   const mode = conversation?.permission_mode || 'auto';
   return ['confirm', 'auto', 'full'].includes(mode) ? mode : 'auto';
 }
 
-function renderPermissionModeSwitch() {
+export function renderPermissionModeSwitch() {
   const mode = currentPermissionMode();
   $$('#permissionModeSwitch [data-permission-mode]').forEach((button) => {
     const active = button.dataset.permissionMode === mode;
@@ -117,7 +123,7 @@ function renderPermissionModeSwitch() {
   });
 }
 
-async function switchPermissionMode(mode) {
+export async function switchPermissionMode(mode) {
   if (!state.conversationId || !['confirm', 'auto', 'full'].includes(mode) || mode === currentPermissionMode()) return;
   if (mode === 'full' && !confirm('完全访问会允许此对话的 Agent 无需逐次确认即可操作本机文件、命令、网络和 MCP。确认启用？')) {
     renderPermissionModeSwitch();
@@ -143,11 +149,11 @@ async function switchPermissionMode(mode) {
 
 // ---- 计划（Plan 模式） ----
 
-function planStatusLabel(status) {
+export function planStatusLabel(status) {
   return ({ prepare: '准备中', ready: '待确认', building: '执行中', finished: '已完成', failed: '执行失败', cancelled: '已取消' })[status] || status;
 }
 
-async function loadPlans() {
+export async function loadPlans() {
   const requestSeq = ++state.planLoadSeq;
   const conversationId = state.conversationId;
   if (!state.conversationId) {
@@ -168,7 +174,7 @@ async function loadPlans() {
   fillPlanCards();
 }
 
-function activePlan() {
+export function activePlan() {
   // Older plans are history and must not restore actions after the newest plan ends.
   const plan = state.plans[0];
   return plan && ['prepare', 'ready', 'building', 'failed', 'cancelled'].includes(plan.status)
@@ -176,7 +182,7 @@ function activePlan() {
     : null;
 }
 
-function renderPlanBar() {
+export function renderPlanBar() {
   const bar = $('#planBar');
   if (!bar) return;
   const plan = activePlan();
@@ -225,14 +231,14 @@ function renderPlanBar() {
     + `<span class="plan-bar-actions">${actions}</span>`;
 }
 
-function fillPlanCards() {
+export function fillPlanCards() {
   $$('[data-plan-card]').forEach((slot) => {
     const plan = state.plans.find((item) => item.id === slot.dataset.planCard);
     slot.innerHTML = plan ? planCardMarkup(plan) : '';
   });
 }
 
-function planCardMarkup(plan) {
+export function planCardMarkup(plan) {
   const steps = Array.isArray(plan.steps) ? plan.steps : [];
   const done = steps.filter((step) => step.status === 'done').length;
   const stepIcons = { pending: '○', running: '◌', done: '✓', failed: '✗' };
@@ -263,7 +269,7 @@ function planCardMarkup(plan) {
   </div>`;
 }
 
-async function executePlan(planId) {
+export async function executePlan(planId) {
   try {
     const run = await api(`/api/plans/${planId}/execute`, {
       method: 'POST',
@@ -291,7 +297,7 @@ async function executePlan(planId) {
   await loadPlans();
 }
 
-async function keepPlanning(planId) {
+export async function keepPlanning(planId) {
   try {
     await api(`/api/plans/${planId}/keep-planning`, { method: 'POST', body: {} });
     await loadPlans();
@@ -302,7 +308,7 @@ async function keepPlanning(planId) {
   }
 }
 
-async function cancelPlan(planId) {
+export async function cancelPlan(planId) {
   const plan = state.plans.find((item) => item.id === planId);
   if (plan?.status === 'prepare' && state.chatRunId) {
     await cancelCurrentRun();
@@ -315,7 +321,7 @@ async function cancelPlan(planId) {
   await loadPlans();
 }
 
-async function resolvePlanConfirmation(confirmId, approved) {
+export async function resolvePlanConfirmation(confirmId, approved) {
   const runId = String(activePlan()?.detail?.run_id || state.chatRunId || '');
   if (!runId) {
     toast('找不到该确认所属的 Run');
@@ -331,7 +337,7 @@ async function resolvePlanConfirmation(confirmId, approved) {
   await loadPlans();
 }
 
-function openPlanEditor(planId) {
+export function openPlanEditor(planId) {
   const plan = state.plans.find((item) => item.id === planId);
   if (!plan) return;
   state.planEditingId = planId;
@@ -341,7 +347,7 @@ function openPlanEditor(planId) {
   $('#planEditDialog').showModal();
 }
 
-async function savePlanEdit(event) {
+export async function savePlanEdit(event) {
   event.preventDefault();
   const planId = state.planEditingId;
   if (!planId) return;

@@ -2,7 +2,11 @@
 // 07-models-agents.js —— 拆分自 public/app.js 第 1966-2329 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function renderUpdateStatus(status) {
+import { $, api, state, toast } from "./01-core.js";
+import { renderSidebar } from "./08-conversations.js";
+import { renderSkills } from "./09-settings.js";
+import { appendPresetSkillsToComposer } from "./13-skill-refs.js";
+export function renderUpdateStatus(status) {
   const current = status.current_version || '开发版';
   $('#currentVersion').textContent = status.current_commit ? `${current} · ${status.current_commit.slice(0, 7)}` : current;
   const select = $('#updateVersionSelect');
@@ -85,7 +89,7 @@ function renderUpdateStatus(status) {
   $('#checkUpdate').disabled = ['checking', 'downloading', 'restarting'].includes(status.phase);
 }
 
-async function checkUpdate() {
+export async function checkUpdate() {
   const button = $('#checkUpdate');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
@@ -122,7 +126,7 @@ async function checkUpdate() {
   }
 }
 
-async function installUpdate() {
+export async function installUpdate() {
   const button = $('#installUpdate');
   const select = $('#updateVersionSelect');
   const tag = select.value;
@@ -148,7 +152,7 @@ async function installUpdate() {
   }
 }
 
-function populateModels() {
+export function populateModels() {
   const select = $('#modelSelect');
   const previous = select.value;
   const profiles = state.bootstrap.model_profiles || state.bootstrap.providers || [];
@@ -189,20 +193,20 @@ function populateModels() {
   updateUnloadModelButton();
 }
 
-function selectedProvider() {
+export function selectedProvider() {
   const value = $('#modelSelect')?.value || '';
   if (!value) return null;
   const profiles = state.bootstrap.model_profiles || state.bootstrap.providers || [];
   return profiles.find((p) => p.model_key === value) || null;
 }
 
-function localProviderKind(provider) {
+export function localProviderKind(provider) {
   if (!provider) return '';
   const requestFormat = String(provider.request_format || '').toLowerCase();
   return ['ollama', 'lm_studio'].includes(requestFormat) ? requestFormat : '';
 }
 
-function updateUnloadModelButton() {
+export function updateUnloadModelButton() {
   const busy = Boolean(state.chatRunId || state.taskSubmitting);
   const topButton = $('#unloadModel');
   const topKind = localProviderKind(selectedProvider());
@@ -223,7 +227,7 @@ function updateUnloadModelButton() {
   }
 }
 
-async function unloadProviderModel(provider) {
+export async function unloadProviderModel(provider) {
   const kind = localProviderKind(provider);
   if (!provider || !kind) {
     toast('当前供应商不是支持卸载的本地模型');
@@ -249,17 +253,17 @@ async function unloadProviderModel(provider) {
   }
 }
 
-async function unloadCurrentModel() {
+export async function unloadCurrentModel() {
   await unloadProviderModel(selectedProvider());
 }
 
-async function unloadConfiguredProviderModel() {
+export async function unloadConfiguredProviderModel() {
   const providerId = $('#providerId').value;
   const provider = (state.bootstrap.model_profiles || state.bootstrap.providers || []).find((item) => item.id === providerId);
   await unloadProviderModel(provider);
 }
 
-async function saveModelSelection() {
+export async function saveModelSelection() {
   const value = $('#modelSelect').value;
   const result = await api('/api/settings', { method: 'POST', body: { model_key: value } });
   Object.assign(state.bootstrap.settings, result.settings);
@@ -279,7 +283,7 @@ async function saveModelSelection() {
 }
 
 // 根据对话已保存的 model_key 恢复模型选择；未绑定或已删除时回退到全局默认
-function applyConversationModel(conversation) {
+export function applyConversationModel(conversation) {
   const select = $('#modelSelect');
   if (!select) return;
   const target = String(conversation?.model_key || '');
@@ -297,7 +301,7 @@ function applyConversationModel(conversation) {
   updateUnloadModelButton();
 }
 
-function renderAgents() {
+export function renderAgents() {
   const select = $('#agentSelect');
   if (!select) return;
   const agents = state.bootstrap?.agents || [];
@@ -318,7 +322,7 @@ function renderAgents() {
 }
 
 // 会话 Agent：首轮前可下拉选择；首轮固化工具集后只读展示（切换会破坏缓存，需新开对话）。
-function applyConversationAgent(conversation) {
+export function applyConversationAgent(conversation) {
   const select = $('#agentSelect');
   if (!select) return;
   const agents = state.bootstrap?.agents || [];
@@ -343,7 +347,7 @@ function applyConversationAgent(conversation) {
   renderSkills($('#skillSearch')?.value || '');
 }
 
-async function saveAgentSelection() {
+export async function saveAgentSelection() {
   const value = $('#agentSelect').value;
   if (!state.conversationId) {
     toast('请先打开或新建一个对话');

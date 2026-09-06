@@ -2,7 +2,12 @@
 // 09-settings.js —— 拆分自 public/app.js 第 3115-4672 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function renderSkills(filter = '') {
+import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
+import { applyConversationAgent, populateModels, renderAgents, updateUnloadModelButton } from "./07-models-agents.js";
+import { currentAgentFixedSkillIds } from "./08-conversations.js";
+import { skillList } from "./13-skill-refs.js";
+import { switchSettingsTab } from "./15-bind-events.js";
+export function renderSkills(filter = '') {
   if (!state.bootstrap) return;
   const query = filter.trim().toLowerCase();
   const fixed = new Set(currentAgentFixedSkillIds());
@@ -16,14 +21,14 @@ function renderSkills(filter = '') {
   updateSkillSummary();
 }
 
-function updateSkillSummary() {
+export function updateSkillSummary() {
   const fixedCount = currentAgentFixedSkillIds().length;
   $('#skillCount').textContent = `Skill ${state.bootstrap.skills.length}`;
   $('#skillPolicyHint').textContent = '点击某项即在输入框光标处插入 /技能 引用；发送后按“首轮注入 / 后续追加”注入';
   $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，当前 Agent 预设 ${fixedCount} 个（新建会话自动预填引用）`;
 }
 
-function renderProviders() {
+export function renderProviders() {
   const allProviders = state.bootstrap.model_profiles || state.bootstrap.providers || [];
   const providers = allProviders.filter((provider) => (provider.kind || 'online') === state.providerKindTab);
   $$('[data-provider-kind]').forEach((button) => {
@@ -45,7 +50,7 @@ function renderProviders() {
   }, { editing: false });
 }
 
-function showProviderForm(provider = {}, { editing = false, isNew = false } = {}) {
+export function showProviderForm(provider = {}, { editing = false, isNew = false } = {}) {
   $('#providerId').value = provider.id || '';
   if (isNew) {
     $('#providerSelect').insertAdjacentHTML('beforeend', '<option value="__new__">正在添加新供应商</option>');
@@ -80,7 +85,7 @@ function showProviderForm(provider = {}, { editing = false, isNew = false } = {}
   updateUnloadModelButton();
 }
 
-function syncProviderKindOptions(previousFormat = '') {
+export function syncProviderKindOptions(previousFormat = '') {
   const local = $('#providerKind').value === '1';
   const allowed = local ? ['lm_studio', 'ollama', 'llama_cpp', 'unsloth'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
   const format = $('#providerFormat');
@@ -95,7 +100,7 @@ function syncProviderKindOptions(previousFormat = '') {
   if (hint) hint.textContent = local ? '本地 API 可使用 llama.cpp、Unsloth、Ollama 或 LM Studio 服务。' : '在线 API 使用远程模型服务。';
 }
 
-function updateProviderFormatGuide() {
+export function updateProviderFormatGuide() {
   const guide = $('#providerFormatGuide');
   const format = $('#providerFormat').value;
   const guides = {
@@ -108,7 +113,7 @@ function updateProviderFormatGuide() {
   guide.hidden = !guides[format];
 }
 
-function updateProviderContextField() {
+export function updateProviderContextField() {
   const field = $('#providerContextField');
   const input = $('#providerContextWindow');
   const active = Boolean($('#providerId').value) || state.providerIsNew;
@@ -121,7 +126,7 @@ function updateProviderContextField() {
   });
 }
 
-function setProviderEditMode(editing, isNew = false) {
+export function setProviderEditMode(editing, isNew = false) {
   state.providerEditing = editing;
   state.providerIsNew = isNew;
   const active = Boolean($('#providerId').value) || isNew;
@@ -145,7 +150,7 @@ function setProviderEditMode(editing, isNew = false) {
   updateUnloadModelButton();
 }
 
-function setProviderModelOptions(models = [], current = '') {
+export function setProviderModelOptions(models = [], current = '') {
   const select = $('#providerModel');
   const unique = [];
   const seen = new Set();
@@ -173,7 +178,7 @@ function setProviderModelOptions(models = [], current = '') {
   $('#providerModelCustom').required = false;
 }
 
-function applyProviderModelCapabilities() {
+export function applyProviderModelCapabilities() {
   const model = $('#providerModel').value;
   const capability = state.providerModelCapabilities[model];
   if (!capability) return;
@@ -186,7 +191,7 @@ function applyProviderModelCapabilities() {
   updateProviderVisionHint();
 }
 
-function updateProviderVisionHint() {
+export function updateProviderVisionHint() {
   const hint = $('#providerVisionHint');
   const choice = $('#providerSupportsImages').value;
   if (choice === 'true') {
@@ -205,14 +210,14 @@ function updateProviderVisionHint() {
   hint.textContent = '自动检测会优先读取运行端能力；上传图片时才会执行最小图片探针。';
 }
 
-function toggleCustomModel() {
+export function toggleCustomModel() {
   const custom = $('#providerModel').value === '__custom__';
   $('#providerModelCustom').hidden = !custom;
   $('#providerModelCustom').required = custom;
   if (custom) $('#providerModelCustom').focus();
 }
 
-function providerFormValue() {
+export function providerFormValue() {
   const selectedModel = $('#providerModel').value;
   const kind = $('#providerKind').value === '1' ? 'local' : 'online';
   const numberOrUndefined = (selector) => {
@@ -237,7 +242,7 @@ function providerFormValue() {
   };
 }
 
-async function loadProviderModels({ automatic = false } = {}) {
+export async function loadProviderModels({ automatic = false } = {}) {
   if (!state.providerEditing) return;
   const values = providerFormValue();
   const localFormat = ['lm_studio', 'ollama', 'llama_cpp', 'unsloth'].includes(values.request_format);
@@ -266,13 +271,13 @@ async function loadProviderModels({ automatic = false } = {}) {
   }
 }
 
-let providerModelCheckTimer;
-function scheduleProviderModelCheck() {
+export let providerModelCheckTimer;
+export function scheduleProviderModelCheck() {
   clearTimeout(providerModelCheckTimer);
   providerModelCheckTimer = setTimeout(() => loadProviderModels({ automatic: true }), 350);
 }
 
-async function saveProvider(event) {
+export async function saveProvider(event) {
   event.preventDefault();
   try {
     const values = providerFormValue();
@@ -311,7 +316,7 @@ async function saveProvider(event) {
   }
 }
 
-function addProvider() {
+export function addProvider() {
   if (state.providerEditing) return;
   const local = state.providerKindTab === 'local';
   showProviderForm({
@@ -321,18 +326,18 @@ function addProvider() {
   $('#providerName').focus();
 }
 
-function editProvider() {
+export function editProvider() {
   if (!$('#providerId').value) return;
   setProviderEditMode(true, false);
   $('#providerName').focus();
 }
 
-function cancelProviderEdit() {
+export function cancelProviderEdit() {
   clearTimeout(providerModelCheckTimer);
   renderProviders();
 }
 
-async function testProvider() {
+export async function testProvider() {
   $('#providerError').textContent = '正在测试连接…';
   try {
     const result = await api('/api/providers/test', { method: 'POST', body: providerFormValue() });
@@ -353,7 +358,7 @@ async function testProvider() {
   }
 }
 
-async function toggleProviderKey() {
+export async function toggleProviderKey() {
   const input = $('#providerApiKey');
   const button = $('#toggleProviderKey');
   if (input.type === 'text') {
@@ -375,7 +380,7 @@ async function toggleProviderKey() {
   }
 }
 
-function populateRuntimeSettings() {
+export function populateRuntimeSettings() {
   const settings = state.bootstrap.settings;
   if ($('#commandTimeout')) $('#commandTimeout').value = settings.command_timeout;
   if ($('#workspaceDir')) $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
@@ -391,7 +396,7 @@ function populateRuntimeSettings() {
 }
 
 /* ---------- 网络代理（出站请求） ---------- */
-function proxyStateFromConfig(proxy) {
+export function proxyStateFromConfig(proxy) {
   if (!proxy) return { mode: 'system', url: '' };
   const url = String(proxy.url || '').trim();
   if (url) return { mode: 'manual', url };
@@ -400,7 +405,7 @@ function proxyStateFromConfig(proxy) {
   return proxy.use_system_fallback === false ? { mode: 'direct', url: '' } : { mode: 'system', url: '' };
 }
 
-function renderProxySettings() {
+export function renderProxySettings() {
   const settings = state.bootstrap.settings || {};
   const st = proxyStateFromConfig(settings.proxy);
   if ($('#proxySystem')) $('#proxySystem').checked = st.mode === 'system';
@@ -411,12 +416,12 @@ function renderProxySettings() {
   renderProxyStateHint(null);
 }
 
-function renderProxyRows() {
+export function renderProxyRows() {
   const row = $('#proxyManualRow');
   if (row) row.hidden = !Boolean($('#proxyManual')?.checked);
 }
 
-function renderProxyStateHint(result) {
+export function renderProxyStateHint(result) {
   const hint = $('#proxyStateHint');
   if (!hint) return;
   const stateInfo = (result && result.proxy_state) || state.bootstrap?.proxy_state || null;
@@ -430,12 +435,12 @@ function renderProxyStateHint(result) {
     : '尚未保存过代理开关：外部请求默认跟随系统代理；保存下方选择后立即生效。';
 }
 
-function renderImageCompressRow() {
+export function renderImageCompressRow() {
   const row = $('#imageCompressRow');
   if (row) row.hidden = Boolean($('#imageUploadOriginal')?.checked);
 }
 
-function formatBytes(bytes) {
+export function formatBytes(bytes) {
   const value = Number(bytes || 0);
   if (!value) return '0 B';
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -445,7 +450,7 @@ function formatBytes(bytes) {
   return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-async function cleanImageCache() {
+export async function cleanImageCache() {
   const btn = $('#cleanImageCache');
   if (!btn) return;
   const prev = btn.textContent;
@@ -464,7 +469,7 @@ async function cleanImageCache() {
   }
 }
 
-function renderWorkspaceControl() {
+export function renderWorkspaceControl() {
   const resolved = String(state.bootstrap?.resolved_workspace_dir || '').trim();
   const raw = String(state.bootstrap?.settings?.workspace_dir || 'workspace').trim() || 'workspace';
   const label = raw === 'workspace' ? 'workspace' : (raw.split(/[\\/]/).filter(Boolean).pop() || raw);
@@ -476,12 +481,12 @@ function renderWorkspaceControl() {
   if (input && document.activeElement !== input) input.value = raw === 'workspace' ? '' : raw;
 }
 
-function workspaceEntryMarkup(entry) {
+export function workspaceEntryMarkup(entry) {
   const icon = entry.kind === 'directory' ? '▸' : '·';
   return `<button type="button" class="workspace-entry ${entry.kind}" data-workspace-path="${escapeHtml(entry.path)}" data-workspace-kind="${entry.kind}"><span class="workspace-entry-icon">${icon}</span><span class="workspace-entry-name">${escapeHtml(entry.name)}</span>${entry.kind === 'file' && entry.size != null ? `<small>${Number(entry.size).toLocaleString()} B</small>` : ''}</button>`;
 }
 
-async function loadWorkspaceTree(path = '') {
+export async function loadWorkspaceTree(path = '') {
   const tree = $('#workspaceTree');
   if (!tree) return;
   tree.innerHTML = '<p class="activity">正在读取工作区…</p>';
@@ -502,14 +507,14 @@ async function loadWorkspaceTree(path = '') {
   } catch (error) { tree.innerHTML = `<p class="form-error">${escapeHtml(error.message)}</p>`; }
 }
 
-async function loadMcpServers() {
+export async function loadMcpServers() {
   const data = await api('/api/mcp');
   state.bootstrap.mcp_servers = data.servers || [];
   renderMcp();
   return state.bootstrap.mcp_servers;
 }
 
-function populateVisionSettings() {
+export function populateVisionSettings() {
   const settings = state.bootstrap.settings || {};
   const vision = settings.vision || {};
   const select = $('#visionProvider');
@@ -538,7 +543,7 @@ function populateVisionSettings() {
   const maxImages = $('#visionMaxImages'); if (maxImages) maxImages.value = vision.max_images || 4;
 }
 
-function populateSearchSettings() {
+export function populateSearchSettings() {
   const settings = state.bootstrap.settings || {};
   const search = settings.search || {};
   const profiles = searchProfiles(search);
@@ -563,7 +568,7 @@ function populateSearchSettings() {
   }
 }
 
-function searchProfiles(search = state.bootstrap?.settings?.search || {}) {
+export function searchProfiles(search = state.bootstrap?.settings?.search || {}) {
   if (Array.isArray(search.profiles) && search.profiles.length) {
     return search.profiles.map((profile) => ({ ...profile }));
   }
@@ -579,14 +584,14 @@ function searchProfiles(search = state.bootstrap?.settings?.search || {}) {
   return [];
 }
 
-function renderSearchProfileFields(profile) {
+export function renderSearchProfileFields(profile) {
   $('#searchProfileName').value = profile.name || '';
   $('#searchEndpoint').value = profile.endpoint || '';
   $('#searchApiKey').value = profile.api_key || '';
   $('#searchMaxResults').value = profile.max_results || 5;
 }
 
-function searchProfileFormValue(id = '') {
+export function searchProfileFormValue(id = '') {
   return {
     id: id || `search_${Date.now().toString(36)}`,
     name: $('#searchProfileName')?.value.trim() || '搜索 API',
@@ -596,7 +601,7 @@ function searchProfileFormValue(id = '') {
   };
 }
 
-async function saveVisionSettings(options = {}) {
+export async function saveVisionSettings(options = {}) {
   const payload = {
     vision: {
       provider_model_key: $('#visionProvider')?.value || '',
@@ -616,18 +621,18 @@ async function saveVisionSettings(options = {}) {
   }
 }
 
-function selectedVisionProvider() {
+export function selectedVisionProvider() {
   const key = $('#visionProvider')?.value || '';
   return (state.bootstrap.model_profiles || state.bootstrap.providers || [])
     .find((provider) => (provider.model_key || provider.id) === key) || null;
 }
 
-function openVisionProviderForm() {
+export function openVisionProviderForm() {
   switchSettingsTab('models');
   addProvider();
 }
 
-async function deleteVisionProvider() {
+export async function deleteVisionProvider() {
   const provider = selectedVisionProvider();
   if (!provider) return;
   if (!confirm(`删除 API 供应商“${provider.name || provider.id}”？这会同时移除模型配置。`)) return;
@@ -644,7 +649,7 @@ async function deleteVisionProvider() {
   }
 }
 
-async function persistSearchProfiles(profiles, providerId, quiet = false) {
+export async function persistSearchProfiles(profiles, providerId, quiet = false) {
   const payload = { search: { provider_id: providerId || '', profiles } };
   const result = await api('/api/settings', { method: 'POST', body: payload });
   Object.assign(state.bootstrap.settings, result.settings);
@@ -652,7 +657,7 @@ async function persistSearchProfiles(profiles, providerId, quiet = false) {
   if (!quiet) toast('搜索 API 已保存');
 }
 
-async function saveSearchSettings(options = {}) {
+export async function saveSearchSettings(options = {}) {
   const search = state.bootstrap.settings.search || {};
   const profiles = searchProfiles(search);
   let id = $('#searchProfileSelect')?.value || '';
@@ -664,7 +669,7 @@ async function saveSearchSettings(options = {}) {
   await persistSearchProfiles(profiles, id, options.quiet === true);
 }
 
-function addSearchProfile() {
+export function addSearchProfile() {
   const search = state.bootstrap.settings.search || {};
   const profiles = searchProfiles(search);
   const profile = { id: `search_${Date.now().toString(36)}`, name: '新搜索 API', endpoint: '', api_key: '', max_results: 5 };
@@ -674,7 +679,7 @@ function addSearchProfile() {
   $('#searchProfileName').select();
 }
 
-async function deleteSearchProfile() {
+export async function deleteSearchProfile() {
   const id = $('#searchProfileSelect')?.value || '';
   if (!id) return;
   const search = state.bootstrap.settings.search || {};
@@ -685,7 +690,7 @@ async function deleteSearchProfile() {
   await persistSearchProfiles(remaining, remaining[0]?.id || '');
 }
 
-async function testVisionCapability(probe) {
+export async function testVisionCapability(probe) {
   const el = $('#visionTestResult');
   if (el) el.textContent = '测试中…';
   try {
@@ -711,11 +716,11 @@ async function testVisionCapability(probe) {
   }
 }
 
-async function testVisionConnection() {
+export async function testVisionConnection() {
   return testVisionCapability('vision');
 }
 
-async function testSearchConnection() {
+export async function testSearchConnection() {
   const el = $('#searchTestResult');
   if (el) el.textContent = '测试中…';
   try {
@@ -731,13 +736,13 @@ async function testSearchConnection() {
 
 // ---- Agent 管理 ----
 
-async function refreshAgentsFromServer() {
+export async function refreshAgentsFromServer() {
   const data = await api('/api/agents');
   state.bootstrap.agents = data.agents || [];
   state.bootstrap.default_agent_id = data.default_agent_id || 'general';
 }
 
-function renderAgentManager() {
+export function renderAgentManager() {
   const list = $('#agentList');
   if (!list) return;
   const agents = state.bootstrap?.agents || [];
@@ -756,7 +761,7 @@ function renderAgentManager() {
     </div>`).join('') || '<p class="activity">尚未添加 Agent，点击下方按钮新增。</p>';
 }
 
-function renderAgentSkillPicker() {
+export function renderAgentSkillPicker() {
   const list = $('#agentSkillList');
   if (!list) return;
   const skills = state.bootstrap?.skills || [];
@@ -767,7 +772,7 @@ function renderAgentSkillPicker() {
     </label>`).join('') || '<p class="activity">暂无可用 Skill</p>';
 }
 
-function showAgentForm(agent = null) {
+export function showAgentForm(agent = null) {
   $('#agentFormId').value = agent?.id || '';
   $('#agentId').value = agent?.id || '';
   $('#agentId').disabled = Boolean(agent);
@@ -795,13 +800,13 @@ function showAgentForm(agent = null) {
 // JOB_CREATOR_TOOL_DEPS / 依赖闭包保持一致）。选中创建者时自动带上查询工具；
 // 取消某个查询工具时，若仍有选中的创建者依赖它，则同步取消该创建者，保证
 // “创建者被允许 ⇔ 其描述里让你查询的工具也被允许”的 invariant 不被打破。
-const AGENT_TOOL_DEP_RULES = {
+export const AGENT_TOOL_DEP_RULES = {
   run_in_background: ['job_output', 'job_status', 'job_wait', 'job_kill'],
   subagent: ['job_output'],
   comfyui_batch: ['job_output', 'job_status', 'job_wait'],
 };
 
-function applyAgentToolDependency(scope, changedTool, checked) {
+export function applyAgentToolDependency(scope, changedTool, checked) {
   const result = new Set(scope);
   if (checked) {
     result.add(changedTool);
@@ -819,7 +824,7 @@ function applyAgentToolDependency(scope, changedTool, checked) {
 
 // 把工具集补齐依赖闭包：选中创建者工具时自动带上它依赖的查询工具。
 // 与后端依赖闭包保持一致，保证这里勾选的状态就是运行时会放行的 allowed_tools。
-function normalizeToolScope(scope) {
+export function normalizeToolScope(scope) {
   const result = new Set(scope || []);
   for (const [creator, deps] of Object.entries(AGENT_TOOL_DEP_RULES)) {
     if (result.has(creator)) deps.forEach((dep) => result.add(dep));
@@ -828,7 +833,7 @@ function normalizeToolScope(scope) {
 }
 
 // 当前工具集是否恰好等于某个预设（用于高亮）；都不匹配则为「自定义」。
-function matchToolPreset() {
+export function matchToolPreset() {
   const presets = state.toolCatalog?.presets || [];
   const current = new Set(state.agentFormToolScope);
   return presets.find(
@@ -838,7 +843,7 @@ function matchToolPreset() {
 
 // 预设/模板相关 UI 全量刷新：头部状态标签 + 下拉框当前值 + 「存为模板」控件显隐。
 // 任何勾选变化（syncAgentToolCheckboxes）都会走到这里。
-function updateToolPresetUI() {
+export function updateToolPresetUI() {
   const matched = matchToolPreset();
   const unrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
   const label = $('#agentToolPresetState');
@@ -864,7 +869,7 @@ function updateToolPresetUI() {
   if (nameInput) nameInput.hidden = !canSaveTemplate;
 }
 
-function updateToolCounter() {
+export function updateToolCounter() {
   const total = (state.toolCatalog?.tools || []).length;
   const counter = $('#agentToolCount');
   if (counter) {
@@ -877,7 +882,7 @@ function updateToolCounter() {
 
 // 预设下拉框：选项 = 各内置预设 + 「自定义」。选预设=整组套用（仍走依赖闭包）；
 // 手动勾选下方工具后不再精确匹配任何预设，即进入「自定义」模式。
-function renderToolPresetSelect() {
+export function renderToolPresetSelect() {
   const select = $('#agentToolPresetSelect');
   if (!select) return;
   const presets = state.toolCatalog?.presets || [];
@@ -903,9 +908,9 @@ function renderToolPresetSelect() {
 // —— 自定义工具模板：把任意自定义组合存成命名模板（localStorage 全局保存），
 // 之后在别的 Agent 表单里点一下模板芯片即可一键复刻。——
 
-const TOOL_TEMPLATE_STORE = 'naiba.agentToolTemplates';
+export const TOOL_TEMPLATE_STORE = 'naiba.agentToolTemplates';
 
-function loadToolTemplates() {
+export function loadToolTemplates() {
   if (state.toolTemplatesLoaded) return state.toolTemplates;
   try {
     const raw = JSON.parse(localStorage.getItem(TOOL_TEMPLATE_STORE) || '[]');
@@ -917,24 +922,24 @@ function loadToolTemplates() {
   return state.toolTemplates;
 }
 
-function persistToolTemplates() {
+export function persistToolTemplates() {
   try {
     localStorage.setItem(TOOL_TEMPLATE_STORE, JSON.stringify(state.toolTemplates));
   } catch (_error) { /* localStorage 禁用/写满等异常：忽略，不打断表单操作 */ }
 }
 
-function knownToolNames() {
+export function knownToolNames() {
   return new Set((state.toolCatalog?.tools || []).map((tool) => tool.name));
 }
 
 // 模板里可能存过已被移除的工具名：复刻时只应用当前目录里还存在的。
-function usableTemplateTools(template) {
+export function usableTemplateTools(template) {
   const known = knownToolNames();
   return (template.tools || []).filter((name) => known.has(name));
 }
 
 // 一键复刻：把模板里的工具组合套用到当前表单（仍走依赖闭包 + 复选框同步）。
-function applyToolTemplate(templateId) {
+export function applyToolTemplate(templateId) {
   const template = loadToolTemplates().find((item) => item.id === templateId);
   if (!template) return;
   const tools = usableTemplateTools(template);
@@ -947,7 +952,7 @@ function applyToolTemplate(templateId) {
   toast(`已复刻模板「${template.name}」（${tools.length} 个工具）`);
 }
 
-function deleteToolTemplate(templateId) {
+export function deleteToolTemplate(templateId) {
   state.toolTemplates = loadToolTemplates().filter((item) => item.id !== templateId);
   persistToolTemplates();
   renderToolTemplates();
@@ -955,7 +960,7 @@ function deleteToolTemplate(templateId) {
 }
 
 // 把当前勾选收集为一条模板；模板名可先在输入框里填，留空则自动命名。
-function collectTemplateFromCurrent() {
+export function collectTemplateFromCurrent() {
   const nameInput = $('#agentToolTemplateName');
   const rawName = (nameInput?.value || '').trim();
   const now = new Date();
@@ -973,7 +978,7 @@ function collectTemplateFromCurrent() {
 }
 
 // 「我的模板」芯片行：点芯片=复刻，点 ✕=删除。事件在 bindEvents 里委托处理。
-function renderToolTemplates() {
+export function renderToolTemplates() {
   const row = $('#agentToolTemplateRow');
   const box = $('#agentToolTemplates');
   if (!row || !box) return;
@@ -1002,7 +1007,7 @@ function renderToolTemplates() {
 
 // 下拉框选择回调：内置预设 → 整组套用；「自定义」→ 若还是未限制旧配置，
 // 先把当前“全选”展示固化成显式列表（退出旧版未限制语义），方便手动删减。
-function onToolPresetSelect(value) {
+export function onToolPresetSelect(value) {
   const preset = (state.toolCatalog?.presets || []).find((item) => item.id === value);
   if (preset) {
     setAgentToolScope(normalizeToolScope(preset.tools || []));
@@ -1020,14 +1025,14 @@ function onToolPresetSelect(value) {
 
 // 用户主动改动工具集时才走这里：标记 touched，并结束“不限制”状态
 // （一旦手动选过，就按显式列表保存，不再退回空数组语义）。
-function setAgentToolScope(next) {
+export function setAgentToolScope(next) {
   state.agentFormToolScope = next;
   state.agentFormScopeTouched = true;
   state.agentFormUnrestricted = false;
 }
 
 // 旧配置里“当前未注册”的工具：保留并告知用户，可一键清除。
-function renderUnknownToolsHint() {
+export function renderUnknownToolsHint() {
   const box = $('#agentToolUnknownHint');
   if (!box) return;
   const unknown = state.agentFormUnknownTools || [];
@@ -1053,18 +1058,18 @@ function renderUnknownToolsHint() {
   }
 }
 
-function setToolGroupCollapsed(groupEl, collapsed) {
+export function setToolGroupCollapsed(groupEl, collapsed) {
   if (!groupEl) return;
   groupEl.classList.toggle('collapsed', collapsed);
   const grid = groupEl.querySelector('.permission-grid');
   if (grid) grid.hidden = collapsed;
 }
 
-function toggleToolGroup(groupEl) {
+export function toggleToolGroup(groupEl) {
   setToolGroupCollapsed(groupEl, !groupEl.classList.contains('collapsed'));
 }
 
-function updateGroupSelectAll(groupEl) {
+export function updateGroupSelectAll(groupEl) {
   if (!groupEl) return;
   const all = groupEl.querySelector('input.group-select-all');
   if (!all) return;
@@ -1077,7 +1082,7 @@ function updateGroupSelectAll(groupEl) {
   if (count) count.textContent = `${selected.length}/${toolCbs.length}`;
 }
 
-function syncAgentToolCheckboxes(list) {
+export function syncAgentToolCheckboxes(list) {
   if (!list) return;
   list.querySelectorAll('.permission-grid input[type="checkbox"]').forEach((cb) => {
     cb.checked = state.agentFormToolScope.includes(cb.value);
@@ -1088,7 +1093,7 @@ function syncAgentToolCheckboxes(list) {
   updateToolPresetUI();
 }
 
-async function renderAgentToolPicker() {
+export async function renderAgentToolPicker() {
   const list = $('#agentToolScope');
   if (!list) return;
   if (!state.toolCatalog) {
@@ -1217,7 +1222,7 @@ async function renderAgentToolPicker() {
 }
 
 // 「展开全部 / 收起全部」：一键切换所有分类。
-function toggleAllToolGroups() {
+export function toggleAllToolGroups() {
   const list = $('#agentToolScope');
   if (!list) return;
   const groupEls = [...list.querySelectorAll('.agent-tool-group')];
@@ -1227,13 +1232,13 @@ function toggleAllToolGroups() {
   if (btn) btn.textContent = expand ? '收起全部' : '展开全部';
 }
 
-function hideAgentForm() {
+export function hideAgentForm() {
   $('#agentForm').hidden = true;
   $('#addAgent').hidden = false;
   $('#agentError').textContent = '';
 }
 
-async function saveAgentForm() {
+export async function saveAgentForm() {
   // 旧 Agent 若原本是空 tool_scope（=不限制）且用户没动过勾选，就继续以空数组保存，
   // 保留“以后新增工具自动纳入”的语义，不要在这里被固化成一份死的工具名单。
   const keepUnrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
@@ -1259,7 +1264,7 @@ async function saveAgentForm() {
   }
 }
 
-async function deleteAgent(agentId) {
+export async function deleteAgent(agentId) {
   const agent = (state.bootstrap?.agents || []).find((item) => item.id === agentId);
   if (!confirm(`删除 Agent「${agent?.name || agentId}」？引用它的对话将回退到默认 Agent。`)) return;
   try {
@@ -1274,7 +1279,7 @@ async function deleteAgent(agentId) {
   }
 }
 
-async function saveRuntimeSettings() {
+export async function saveRuntimeSettings() {
   const mode = [...document.querySelectorAll('input[name="proxyMode"]')].find((el) => el.checked)?.value || 'system';
   let proxy;
   if (mode === 'manual') {
@@ -1315,7 +1320,7 @@ async function saveRuntimeSettings() {
   toast('运行参数已保存');
 }
 
-async function saveWorkspaceSettings() {
+export async function saveWorkspaceSettings() {
   const value = $('#workspaceDialogInput')?.value.trim() || '';
   try {
     const result = await api('/api/settings', { method: 'POST', body: { workspace_dir: value } });
@@ -1331,7 +1336,7 @@ async function saveWorkspaceSettings() {
   }
 }
 
-async function pickWorkspace(targetId = 'workspaceDialogInput') {
+export async function pickWorkspace(targetId = 'workspaceDialogInput') {
   try {
     const current = String($(targetId)?.value || '');
     const result = await api('/api/workspace/pick', { method: 'POST', body: { initial: current } });
@@ -1344,7 +1349,7 @@ async function pickWorkspace(targetId = 'workspaceDialogInput') {
   } catch (error) { toast(`目录选择失败：${error.message}`); }
 }
 
-async function saveAccessToken() {
+export async function saveAccessToken() {
   const value = $('#accessTokenInput').value.trim();
   if (!value) {
     toast('请输入新口令');
@@ -1364,7 +1369,7 @@ async function saveAccessToken() {
   toast('口令已更新，其他设备需用新口令登录');
 }
 
-function mcpServerState(server) {
+export function mcpServerState(server) {
   if (server.status === 'error' || server.error) return { text: '错误', color: '#e45e55' };
   if (server.activity === 'calling' || (server.active_calls && server.active_calls > 0)) return { text: '使用中', color: '#3ecf8e' };
   if (server.status === 'connecting' || server.status === 'reconnecting') return { text: '连接中', color: '#e0a13a' };
@@ -1372,7 +1377,7 @@ function mcpServerState(server) {
   return { text: '待机', color: '#7d867d' };
 }
 
-function renderMcp() {
+export function renderMcp() {
   const servers = state.bootstrap.mcp_servers || [];
   // Top-bar status light: priority error > in-use > connection-change > idle
   const mcpButton = $('#mcpStatus');
@@ -1437,7 +1442,7 @@ function renderMcp() {
   });
 }
 
-async function mcpAction(serverId, action) {
+export async function mcpAction(serverId, action) {
   try {
     const result = await api('/api/mcp/' + action, { method: 'POST', body: { server_id: serverId } });
     const server = state.bootstrap.mcp_servers.find((item) => item.id === serverId);
@@ -1457,7 +1462,7 @@ async function mcpAction(serverId, action) {
   }
 }
 
-async function removeMcpServer(serverId) {
+export async function removeMcpServer(serverId) {
   if (!confirm(`确定删除 MCP 服务「${serverId}」？`)) return;
   try {
     await api('/api/mcp/remove', { method: 'POST', body: { server_id: serverId } });
@@ -1469,7 +1474,7 @@ async function removeMcpServer(serverId) {
   }
 }
 
-async function saveMcpServer() {
+export async function saveMcpServer() {
   const id = $('#mcpNewId').value.trim();
   const command = $('#mcpNewCommand').value.trim();
   if (!id) { toast('请填写服务 ID'); return; }
@@ -1502,7 +1507,7 @@ async function saveMcpServer() {
 
 // 轻量轮询：仅刷新状态相关字段（status/connected/active_calls/activity/last_used_at），
 // 保留 bootstrap 中已有的 tools 与 error 信息，使"使用中/已就绪"状态实时反映。
-async function pollMcpStatus() {
+export async function pollMcpStatus() {
   if (state.mcpPollInFlight || document.visibilityState === 'hidden') return;
   state.mcpPollInFlight = true;
   try {
@@ -1533,7 +1538,7 @@ async function pollMcpStatus() {
   }
 }
 
-function startMcpPoll() {
+export function startMcpPoll() {
   if (state.mcpPolling) return;
   state.mcpPolling = true;
   scheduleMcpPoll(2000);
@@ -1547,7 +1552,7 @@ function startMcpPoll() {
   });
 }
 
-function scheduleMcpPoll(delay = null) {
+export function scheduleMcpPoll(delay = null) {
   if (!state.mcpPolling || document.visibilityState === 'hidden') return;
   if (state.mcpPollTimer) window.clearTimeout(state.mcpPollTimer);
   const servers = state.bootstrap?.mcp_servers || [];

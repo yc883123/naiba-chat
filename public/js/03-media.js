@@ -2,13 +2,17 @@
 // 03-media.js —— 拆分自 public/app.js 第 712-1211 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function fileUrl(source) {
+import { $, api, draggedFileCache, escapeHtml, state, toast } from "./01-core.js";
+import { markdown } from "./02-markdown.js";
+import { selectedProvider } from "./07-models-agents.js";
+import { renderPendingFiles } from "./10-upload.js";
+export function fileUrl(source) {
   const value = String(source || '');
   if (/^https?:\/\//i.test(value) && !/^https?:\/\/(?:127\.0\.0\.1|localhost):8188\//i.test(value)) return value;
   return `/api/file?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(value)}`;
 }
 
-function attachmentThumbPath(attachment) {
+export function attachmentThumbPath(attachment) {
   if (attachment.thumb_path) return attachment.thumb_path;
   const p = String(attachment.path || attachment.source || '');
   if (!p || /^https?:\/\//i.test(p)) return '';
@@ -16,13 +20,13 @@ function attachmentThumbPath(attachment) {
   return (dot > 0 ? p.slice(0, dot) : p) + '_thumb.webp';
 }
 
-function attachmentThumbUrl(attachment) {
+export function attachmentThumbUrl(attachment) {
   const thumb = attachmentThumbPath(attachment);
   const source = attachment.path || attachment.source || '';
   return thumb ? fileUrl(thumb) : fileUrl(source);
 }
 
-function openImageLightbox(largeUrl) {
+export function openImageLightbox(largeUrl) {
   const img = $('#imageLightboxImg');
   const box = $('#imageLightbox');
   if (!img || !box || !largeUrl) return;
@@ -32,7 +36,7 @@ function openImageLightbox(largeUrl) {
   box.hidden = false;
 }
 
-function closeImageLightbox() {
+export function closeImageLightbox() {
   const box = $('#imageLightbox');
   if (box) box.hidden = true;
   const img = $('#imageLightboxImg');
@@ -42,11 +46,11 @@ function closeImageLightbox() {
 // ---- 大图右键 → 复制图片到剪贴板 ----
 // pywebview（WebView2）默认关闭了浏览器右键菜单（AreDefaultContextMenusEnabled 仅 debug 开启），
 // 因此在 pywebview 窗口内自绘一个轻量菜单；真实浏览器保留其原生“复制图片”。
-function isPywebview() {
+export function isPywebview() {
   return Boolean(window.pywebview && window.pywebview.api);
 }
 
-function ensureImageContextMenu() {
+export function ensureImageContextMenu() {
   const menu = $('#imageContextMenu');
   if (menu) return menu;
   const m = document.createElement('div');
@@ -60,12 +64,12 @@ function ensureImageContextMenu() {
   return m;
 }
 
-function hideImageContextMenu() {
+export function hideImageContextMenu() {
   const menu = $('#imageContextMenu');
   if (menu) menu.hidden = true;
 }
 
-function showImageContextMenu(event) {
+export function showImageContextMenu(event) {
   const menu = ensureImageContextMenu();
   menu.hidden = false;
   const width = menu.offsetWidth;
@@ -75,7 +79,7 @@ function showImageContextMenu(event) {
   // 不自动聚焦按钮，避免图片失焦影响后续复制路径。
 }
 
-function bytesToBase64(bytes) {
+export function bytesToBase64(bytes) {
   let binary = '';
   const chunk = 0x8000;
   for (let i = 0; i < bytes.length; i += chunk) {
@@ -86,7 +90,7 @@ function bytesToBase64(bytes) {
 
 // 取当前大图的字节。优先同源 fetch（/api/file 由其自身服务，必然可读）；
 // 跨源或 fetch 失败时回退 canvas 转 PNG（跨源且未开 CORS 的图会被污染并抛错）。
-async function imageBytesFrom(img) {
+export async function imageBytesFrom(img) {
   const url = img.currentSrc || img.src;
   if (url) {
     try {
@@ -114,7 +118,7 @@ async function imageBytesFrom(img) {
   return { bytes, mime: 'image/png' };
 }
 
-async function copyLightboxImage() {
+export async function copyLightboxImage() {
   const img = $('#imageLightboxImg');
   if (!img) throw new Error('未找到图片');
   const { bytes, mime } = await imageBytesFrom(img);
@@ -137,7 +141,7 @@ async function copyLightboxImage() {
   throw new Error('当前环境不支持复制图片');
 }
 
-async function runImageContextAction(action) {
+export async function runImageContextAction(action) {
   try {
     if (action === 'copy') {
       const via = await copyLightboxImage();
@@ -212,7 +216,7 @@ document.addEventListener('click', (event) => {
   if (ta) ta.focus();
 });
 
-function mediaMarkup(attachments = []) {
+export function mediaMarkup(attachments = []) {
   if (!attachments.length) return '';
   const items = attachments.map((attachment) => {
     const source = attachment.source || attachment.path;
@@ -233,19 +237,19 @@ function mediaMarkup(attachments = []) {
   return `<div class="media-grid">${items}</div>`;
 }
 
-function toolRunMarkup(run = {}) {
+export function toolRunMarkup(run = {}) {
   return `<details class="tool-run">
     <summary>${run.success ? '已执行' : '执行失败'} · ${escapeHtml(run.tool)}${run.reason ? ` · ${escapeHtml(run.reason)}` : ''}</summary>
     <pre>${escapeHtml(JSON.stringify(run.arguments || {}, null, 2))}\n\n${escapeHtml(run.result || '')}</pre>
   </details>`;
 }
 
-function toolMarkup(runs = []) {
+export function toolMarkup(runs = []) {
   if (!runs.length) return '';
   return `<div class="tool-stack">${runs.map((run) => toolRunMarkup(run)).join('')}</div>`;
 }
 
-function activityMarkup(activity = []) {
+export function activityMarkup(activity = []) {
   if (!Array.isArray(activity) || !activity.length) return '';
   // 找出最后一段 reasoning（正式回复的思考），保持展开；其余工具思考折叠。
   let lastReasoningIndex = -1;
@@ -263,7 +267,7 @@ function activityMarkup(activity = []) {
   return html;
 }
 
-function reasoningMarkup(reasoning, finalOpen = false) {
+export function reasoningMarkup(reasoning, finalOpen = false) {
   const list = Array.isArray(reasoning) ? reasoning.filter(Boolean) : (reasoning ? [reasoning] : []);
   if (!list.length) return '';
   // 每次工具调用/思考段单独一行（可折叠）；正式回复的最后一段思考保持展开，不折叠。
@@ -279,7 +283,7 @@ function reasoningMarkup(reasoning, finalOpen = false) {
   }).join('');
 }
 
-function usageMarkup(usage) {
+export function usageMarkup(usage) {
   if (!usage || typeof usage !== 'object') return '';
   const input = Number(usage.input_tokens || 0);
   const output = Number(usage.output_tokens || 0);
@@ -309,7 +313,7 @@ function usageMarkup(usage) {
   return `${tokenLine}${laneLine}${warningLine}`;
 }
 
-function updateContextUsage(messages = null, message = null) {
+export function updateContextUsage(messages = null, message = null) {
   let target = message;
   if (!target && Array.isArray(messages)) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -323,7 +327,7 @@ function updateContextUsage(messages = null, message = null) {
   renderContextUsage();
 }
 
-function renderContextUsage() {
+export function renderContextUsage() {
   const button = $('#contextUsageButton');
   const ring = $('#contextUsageRing');
   const summary = $('#contextUsageSummary');
@@ -370,7 +374,7 @@ function renderContextUsage() {
   updateContextComposerLock(Boolean(state.chatBusy));
 }
 
-function updateContextComposerLock(busy = false) {
+export function updateContextComposerLock(busy = false) {
   const atCeiling = Boolean(state.contextAtCeiling);
   const input = $('#messageInput');
   const sendBtn = $('#sendButton');
@@ -394,7 +398,7 @@ function updateContextComposerLock(busy = false) {
 // providerContextSize remains only as a hidden legacy selector marker;
 // providerContextWindow is the active provider-scoped control.
 
-function positionContextUsagePopover() {
+export function positionContextUsagePopover() {
   const popover = $('#contextUsagePopover');
   const button = $('#contextUsageButton');
   if (!popover || !button || popover.hidden) return;
@@ -416,7 +420,7 @@ function positionContextUsagePopover() {
   popover.style.top = `${Math.round(top)}px`;
 }
 
-function toggleContextUsagePopover(event) {
+export function toggleContextUsagePopover(event) {
   event.stopPropagation();
   const popover = $('#contextUsagePopover');
   const button = $('#contextUsageButton');
@@ -427,7 +431,7 @@ function toggleContextUsagePopover(event) {
   if (open) positionContextUsagePopover();
 }
 
-function closeContextUsagePopover() {
+export function closeContextUsagePopover() {
   const popover = $('#contextUsagePopover');
   const button = $('#contextUsageButton');
   if (!popover || popover.hidden) return;
@@ -435,7 +439,7 @@ function closeContextUsagePopover() {
   button?.setAttribute('aria-expanded', 'false');
 }
 
-function skillMarkup(skills = []) {
+export function skillMarkup(skills = []) {
   if (!Array.isArray(skills) || !skills.length) return '';
   const parts = [];
   const user = skills.filter((s) => s?.source !== 'auto');
@@ -445,7 +449,7 @@ function skillMarkup(skills = []) {
   return parts.length ? `<div class="skill-usage">${parts.join('<br>')}</div>` : '';
 }
 
-function sourcesMarkup(sources = []) {
+export function sourcesMarkup(sources = []) {
   if (!Array.isArray(sources) || !sources.length) return '';
   const items = sources.map((source) => {
     const url = String(source?.url || '');
@@ -460,9 +464,9 @@ function sourcesMarkup(sources = []) {
 
 // 消息末尾「本轮修改的文件」总结。桌面端文件名可点 → 打开右侧文件面板；
 // 手机端（≤760px）由 CSS + openFilePanel 双重把关，仅展示、不可点。
-const FILE_CHIP_MEDIA_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg', '.mp4', '.webm', '.mov', '.m4v', '.ogv', '.wav', '.mp3', '.m4a', '.ogg', '.flac']);
+export const FILE_CHIP_MEDIA_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg', '.mp4', '.webm', '.mov', '.m4v', '.ogv', '.wav', '.mp3', '.m4a', '.ogg', '.flac']);
 
-function fileChangesSummaryMarkup(files = []) {
+export function fileChangesSummaryMarkup(files = []) {
   if (!Array.isArray(files) || !files.length) return '';
   let edited = 0;
   let created = 0;
@@ -491,7 +495,7 @@ function fileChangesSummaryMarkup(files = []) {
   return `<div class="file-changes"><div class="file-changes-label">本轮修改文件${opNote.length ? `（${opNote.join(' · ')}）` : ''}</div><div class="file-changes-list">${chips}</div></div>`;
 }
 
-function toolAvailabilityMarkup(tools = []) {
+export function toolAvailabilityMarkup(tools = []) {
   if (!Array.isArray(tools) || !tools.length) return '';
   const items = tools.map((tool) => {
     const name = typeof tool === 'string' ? tool : tool?.name;

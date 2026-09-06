@@ -2,20 +2,21 @@
 // 01-core.js —— 拆分自 public/app.js 第 1-397 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-const urlToken = new URLSearchParams(location.search).get('token') || '';
+import { resizeTextarea } from "./13-skill-refs.js";
+export const urlToken = new URLSearchParams(location.search).get('token') || '';
 if (urlToken) {
   localStorage.setItem('naibaChatToken', urlToken);
   history.replaceState(null, '', location.pathname);
 }
 
-const storedSkillIds = JSON.parse(localStorage.getItem('naibaChatSkillIds') || localStorage.getItem('lanSkillIds') || '[]');
-const storedSkillMode = localStorage.getItem('naibaChatSkillMode');
-const legacyAutoSkills = localStorage.getItem('naibaChatAutoSkills') ?? localStorage.getItem('lanAutoSkills');
-const initialSkillMode = ['auto', 'pinned', 'exclusive'].includes(storedSkillMode)
+export const storedSkillIds = JSON.parse(localStorage.getItem('naibaChatSkillIds') || localStorage.getItem('lanSkillIds') || '[]');
+export const storedSkillMode = localStorage.getItem('naibaChatSkillMode');
+export const legacyAutoSkills = localStorage.getItem('naibaChatAutoSkills') ?? localStorage.getItem('lanAutoSkills');
+export const initialSkillMode = ['auto', 'pinned', 'exclusive'].includes(storedSkillMode)
   ? storedSkillMode
   : (legacyAutoSkills === 'false' && storedSkillIds.length ? 'pinned' : 'auto');
 
-const state = {
+export const state = {
   token: urlToken || localStorage.getItem('naibaChatToken') || localStorage.getItem('lanSkillToken') || '',
   bootstrap: null,
   conversations: [],
@@ -105,14 +106,14 @@ const state = {
   // closed select; user choices made afterwards must still be preserved.
   updateAutoSelectLatest: false,
 };
-const draggedFileCache = new Map();
+export const draggedFileCache = new Map();
 
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
+export const $ = (selector) => document.querySelector(selector);
+export const $$ = (selector) => [...document.querySelectorAll(selector)];
 
-const emptyStateElement = $('#emptyState');
+export const emptyStateElement = $('#emptyState');
 
-async function api(path, options = {}) {
+export async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
   if (options.body && typeof options.body !== 'string') {
@@ -129,7 +130,7 @@ async function api(path, options = {}) {
   return payload;
 }
 
-function toast(message) {
+export function toast(message) {
   const element = $('#toast');
   element.textContent = message;
   if (typeof element.show === 'function' && !element.open) {
@@ -148,7 +149,7 @@ function toast(message) {
   }, 2200);
 }
 
-async function copyText(text) {
+export async function copyText(text) {
   if (navigator.clipboard?.writeText) {
     try {
       await navigator.clipboard.writeText(text);
@@ -170,14 +171,14 @@ async function copyText(text) {
   if (!copied) throw new Error('浏览器未允许访问剪贴板');
 }
 
-let contextMenuSelection = '';
-let contextMenuPreviousFocus = null;
-let contextMenuMode = 'selection'; // 'selection' | 'edit'
-let contextMenuTarget = null;
-let contextMenuRangeStart = 0;
-let contextMenuRangeEnd = 0;
+export let contextMenuSelection = '';
+export let contextMenuPreviousFocus = null;
+export let contextMenuMode = 'selection'; // 'selection' | 'edit'
+export let contextMenuTarget = null;
+export let contextMenuRangeStart = 0;
+export let contextMenuRangeEnd = 0;
 
-function editableElement(target) {
+export function editableElement(target) {
   if (!(target instanceof Element)) return null;
   const editable = target.closest('textarea, input, [contenteditable="true"]');
   if (!editable) return null;
@@ -188,7 +189,7 @@ function editableElement(target) {
   return editable;
 }
 
-function ensureContextMenu() {
+export function ensureContextMenu() {
   let menu = $('#textContextMenu');
   if (menu) return menu;
   menu = document.createElement('div');
@@ -201,7 +202,7 @@ function ensureContextMenu() {
   return menu;
 }
 
-function setContextMenuItems() {
+export function setContextMenuItems() {
   const menu = ensureContextMenu();
   if (contextMenuMode === 'edit') {
     menu.setAttribute('aria-label', '文本框操作');
@@ -221,12 +222,12 @@ function setContextMenuItems() {
   }
 }
 
-function hideTextContextMenu() {
+export function hideTextContextMenu() {
   const menu = $('#textContextMenu');
   if (menu) menu.hidden = true;
 }
 
-function showTextContextMenu(event, selection = '', mode = 'selection', target = null) {
+export function showTextContextMenu(event, selection = '', mode = 'selection', target = null) {
   const menu = ensureContextMenu();
   contextMenuSelection = selection;
   contextMenuMode = mode;
@@ -248,7 +249,7 @@ function showTextContextMenu(event, selection = '', mode = 'selection', target =
   // 不要自动聚焦菜单按钮，否则文本框会失焦，选中高亮会消失。
 }
 
-function focusContextTarget() {
+export function focusContextTarget() {
   const el = contextMenuTarget;
   if (!el) return;
   el.focus({ preventScroll: true });
@@ -259,7 +260,7 @@ function focusContextTarget() {
   }
 }
 
-function editableSelectedText() {
+export function editableSelectedText() {
   const el = contextMenuTarget;
   if (!el) return '';
   if (typeof el.value === 'string' && typeof el.selectionStart === 'number') {
@@ -269,7 +270,7 @@ function editableSelectedText() {
   return sel ? sel.toString() : '';
 }
 
-function insertTextIntoEditable(text) {
+export function insertTextIntoEditable(text) {
   const el = contextMenuTarget;
   if (!el) return false;
   if (typeof el.value === 'string' && typeof el.selectionStart === 'number') {
@@ -287,7 +288,7 @@ function insertTextIntoEditable(text) {
   return false;
 }
 
-async function runTextContextAction(action) {
+export async function runTextContextAction(action) {
   try {
     if (contextMenuMode === 'edit') {
       if (['undo', 'redo', 'cut', 'copy', 'paste', 'delete', 'select-all'].includes(action)) {
@@ -364,7 +365,7 @@ async function runTextContextAction(action) {
   }
 }
 
-function escapeHtml(value) {
+export function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -372,7 +373,7 @@ function escapeHtml(value) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#039;');
 }
-function restoreSafeHtml(escaped) {
+export function restoreSafeHtml(escaped) {
   if (!String(escaped || '').includes('&lt;')) return String(escaped || '');
   const colors = new Set(['black','silver','gray','white','maroon','red','purple','fuchsia','green','lime','olive','yellow','navy','blue','teal','aqua','orange','aliceblue','transparent']);
   const decode = (s) => String(s).replace(/&quot;/g, '"').replace(/&#039;/g, "'").replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
@@ -384,7 +385,7 @@ function restoreSafeHtml(escaped) {
 }
 
 // 语言别名归一化：把常见标识归到同一套规则。
-function normalizeLanguage(language) {
+export function normalizeLanguage(language) {
   const lang = String(language || '').toLowerCase().trim();
   if (/^(js|javascript|jsx|mjs|cjs)$/.test(lang)) return 'js';
   if (/^(ts|typescript|tsx)$/.test(lang)) return 'ts';

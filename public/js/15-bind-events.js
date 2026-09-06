@@ -2,7 +2,19 @@
 // 15-bind-events.js —— 拆分自 public/app.js 第 6658-7653 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function bindEvents() {
+import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast } from "./01-core.js";
+import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, hideImageContextMenu, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, toggleContextUsagePopover } from "./03-media.js";
+import { branchMessage, isNearBottom, startEditMessage, stickToBottom } from "./04-messages.js";
+import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
+import { switchPermissionMode } from "./06-tasks-plans.js";
+import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadCurrentModel, unloadProviderModel } from "./07-models-agents.js";
+import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
+import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
+import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
+import { cancelCurrentRun, handlePasteImage, openStarterPromptDialog, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleLightweightFeature, toggleRichText, updateDeepReasoningButton } from "./12-chat-input.js";
+import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
+import { activateFileTab, activeFileTab, applyFilePanelOpenClass, cancelFileEdit, closeFilePanel, closeSidebar, filePanelState, filePanelUsable, openFilePanel, openSidebar, removeFileTab, reopenFilePanel, restoreLeftSidebarCollapse, saveFileTab, setLeftSidebarCollapsed, sidebarDesktop, startFileEdit, updateFileTabsButton } from "./14-file-panel.js";
+export function bindEvents() {
   document.addEventListener('contextmenu', (event) => {
     hideTextContextMenu();
     const editable = editableElement(event.target);
@@ -688,21 +700,21 @@ function bindEvents() {
   $('#applyDataDir').addEventListener('click', applyAndMigrateDataDir);
 }
 
-function setSkillImportStatus(message, kind) {
+export function setSkillImportStatus(message, kind) {
   const el = $('#skillImportStatus');
   if (!el) return;
   el.textContent = message;
   el.className = 'skill-import-status' + (kind ? ' ' + kind : '');
 }
 
-function hasSkillFrontmatter(text) {
+export function hasSkillFrontmatter(text) {
   const m = text.match(/^---\s*\n([\s\S]*?)\n---/);
   if (!m) return false;
   const block = m[1];
   return /^\s*name\s*:/im.test(block) && /^\s*description\s*:/im.test(block);
 }
 
-async function skillImportFolderFiles(fileList) {
+export async function skillImportFolderFiles(fileList) {
   const files = [...fileList];
   if (!files.length) return;
   if (files.length > 2000) { setSkillImportStatus('文件夹内文件数量过多（超过 2000）', 'error'); return; }
@@ -726,7 +738,7 @@ async function skillImportFolderFiles(fileList) {
   }
 }
 
-async function skillImportZipFile(file) {
+export async function skillImportZipFile(file) {
   setSkillImportStatus(`正在上传 ${file.name}…`);
   try {
     const data = await readAsDataUrl(file);
@@ -741,7 +753,7 @@ async function skillImportZipFile(file) {
   }
 }
 
-async function skillImportMdFile(file) {
+export async function skillImportMdFile(file) {
   setSkillImportStatus(`正在读取 ${file.name}…`);
   try {
     const text = await file.text();
@@ -761,7 +773,7 @@ async function skillImportMdFile(file) {
   }
 }
 
-function readDirectoryEntry(entry) {
+export function readDirectoryEntry(entry) {
   const files = [];
   const walk = (ent, prefix) => new Promise((res) => {
     if (ent.isFile) {
@@ -780,7 +792,7 @@ function readDirectoryEntry(entry) {
   return walk(entry, '').then(() => files);
 }
 
-async function loadInstalledSkills(showToast) {
+export async function loadInstalledSkills(showToast) {
   try {
     const data = await api('/api/skills/scan', { method: 'POST', body: {} });
     if (data.configured) state.skillDirs = data.configured;
@@ -792,13 +804,13 @@ async function loadInstalledSkills(showToast) {
   }
 }
 
-let lastInstalledSkills = [];
+export let lastInstalledSkills = [];
 
-function isSkillBuiltin(skill) {
+export function isSkillBuiltin(skill) {
   return skill.source === 'builtin';
 }
 
-function renderInstalledSkills(skills) {
+export function renderInstalledSkills(skills) {
   lastInstalledSkills = skills || [];
   if (state.bootstrap) {
     state.bootstrap.skills = lastInstalledSkills;
@@ -843,7 +855,7 @@ function renderInstalledSkills(skills) {
   });
 }
 
-async function deleteInstalledSkill(skill) {
+export async function deleteInstalledSkill(skill) {
   const refs = (state.bootstrap.agents || [])
     .filter((a) => (a.skill_ids || []).map(String).includes(String(skill.id)))
     .map((a) => a.name);
@@ -865,7 +877,7 @@ async function deleteInstalledSkill(skill) {
   }
 }
 
-function renderHiddenSkills(hiddenSkills) {
+export function renderHiddenSkills(hiddenSkills) {
   const list = $('#hiddenSkillList');
   if (!list) return;
   const items = Array.isArray(hiddenSkills) ? hiddenSkills : [];
@@ -898,7 +910,7 @@ function renderHiddenSkills(hiddenSkills) {
   });
 }
 
-async function unhideSkill(skillId) {
+export async function unhideSkill(skillId) {
   if (!skillId) return;
   try {
     const result = await api('/api/skills/unhide', { method: 'POST', body: { skill_id: skillId } });
@@ -912,7 +924,7 @@ async function unhideSkill(skillId) {
   }
 }
 
-function renderDataMigration() {
+export function renderDataMigration() {
   const m = state.bootstrap?.data_migration || {};
   const configured = m.configured_data_dir || state.bootstrap?.settings?.resolved_data_dir || m.data_dir || '';
   if ($('#dataDir') && document.activeElement !== $('#dataDir')) $('#dataDir').value = configured;
@@ -929,7 +941,7 @@ function renderDataMigration() {
   $('#migrationBackup').textContent = m.backup_location || '-';
 }
 
-async function applyAndMigrateDataDir() {
+export async function applyAndMigrateDataDir() {
   const value = $('#dataDir')?.value.trim() || '';
   if (!value) {
     $('#migrationMessage').textContent = '请先填写目标数据目录';
@@ -957,7 +969,7 @@ async function applyAndMigrateDataDir() {
   }
 }
 
-async function loadDataMigrationHealth() {
+export async function loadDataMigrationHealth() {
   try {
     const m = await api('/api/migration/health');
     state.bootstrap.data_migration = m;
@@ -967,7 +979,7 @@ async function loadDataMigrationHealth() {
   }
 }
 
-async function backupData() {
+export async function backupData() {
   try {
     const r = await api('/api/migration/backup', { method: 'POST', body: {} });
     if (r.error) { $('#migrationMessage').textContent = '备份失败：' + r.error; return; }
@@ -980,7 +992,7 @@ async function backupData() {
   }
 }
 
-function switchSettingsTab(name) {
+export function switchSettingsTab(name) {
   $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsTab === name));
   $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
   if (name === 'agent') renderAgentManager();

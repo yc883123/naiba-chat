@@ -2,7 +2,16 @@
 // 08-conversations.js —— 拆分自 public/app.js 第 2330-3114 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-async function loadConversations() {
+import { $, api, escapeHtml, state, toast } from "./01-core.js";
+import { renderMessages } from "./04-messages.js";
+import { activeTaskStatuses, loadTasks, renderPermissionModeSwitch, taskStatusLabel } from "./06-tasks-plans.js";
+import { applyConversationAgent, applyConversationModel } from "./07-models-agents.js";
+import { readAsDataUrl } from "./10-upload.js";
+import { detachRunSubscription, resumeConversationRun } from "./11-run-stream.js";
+import { applyConversationLightweight, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
+import { prefillPresetSkillsInComposer } from "./13-skill-refs.js";
+import { closeFilePanel, closeSidebar } from "./14-file-panel.js";
+export async function loadConversations() {
   const result = await api('/api/conversations');
   state.conversations = result.conversations;
   renderSidebar();
@@ -15,7 +24,7 @@ async function loadConversations() {
   renderComposerWorkspace();
 }
 
-function formatRelativeTime(ts) {
+export function formatRelativeTime(ts) {
   if (!ts) return '';
   const d = new Date(String(ts).replace(' ', 'T'));
   if (isNaN(d.getTime())) return '';
@@ -34,23 +43,23 @@ function formatRelativeTime(ts) {
   return `${Math.floor(day / 365)}年`;
 }
 
-function currentConversationWorkspaceGroup() {
+export function currentConversationWorkspaceGroup() {
   const c = state.conversations.find((x) => x.id === state.conversationId);
   return c ? (c.workspace_group || '').trim() : '';
 }
 
 // ---- 侧栏虚拟化（懒加载）：只渲染可视范围内的行，滚动时按窗口重绘 ----
-let sidebarRowCache = [];
-let sidebarOffsetCache = [];
-let sidebarTotalH = 0;
-let sidebarMetrics = null;
-let sidebarScrollToActive = false;
-let sidebarScrollRaf = 0;
-let sidebarShowAll = new Set(); // 已“展开全部会话”的工作区名集合（默认全部折叠到 5 条）
-const SIDE_BUFFER = 240; // 视口上下预渲染缓冲（px）
-const SIDE_CONV_LIMIT = 5; // 每个展开工作区默认显示的最新会话数
+export let sidebarRowCache = [];
+export let sidebarOffsetCache = [];
+export let sidebarTotalH = 0;
+export let sidebarMetrics = null;
+export let sidebarScrollToActive = false;
+export let sidebarScrollRaf = 0;
+export let sidebarShowAll = new Set(); // 已“展开全部会话”的工作区名集合（默认全部折叠到 5 条）
+export const SIDE_BUFFER = 240; // 视口上下预渲染缓冲（px）
+export const SIDE_CONV_LIMIT = 5; // 每个展开工作区默认显示的最新会话数
 
-function sidebarMetricsNow() {
+export function sidebarMetricsNow() {
   if (sidebarMetrics) return sidebarMetrics;
   const holder = document.createElement('div');
   holder.style.cssText = 'position:fixed;left:-9999px;top:0;visibility:hidden;width:260px;';
@@ -68,7 +77,7 @@ function sidebarMetricsNow() {
   return sidebarMetrics;
 }
 
-function sidebarRowHeight(row) {
+export function sidebarRowHeight(row) {
   const m = sidebarMetricsNow();
   if (row.type === 'header') return m.header;
   if (row.type === 'newchat') return m.newchat;
@@ -76,14 +85,14 @@ function sidebarRowHeight(row) {
   return m.item;
 }
 
-function computeSidebarOffsets(rows) {
+export function computeSidebarOffsets(rows) {
   const offsets = new Array(rows.length);
   let y = 0;
   for (let i = 0; i < rows.length; i++) { offsets[i] = y; y += sidebarRowHeight(rows[i]); }
   return { offsets, totalH: y };
 }
 
-function sidebarRowAt(offsets, pos) {
+export function sidebarRowAt(offsets, pos) {
   let lo = 0, hi = offsets.length - 1, ans = 0;
   while (lo <= hi) {
     const mid = (lo + hi) >> 1;
@@ -92,7 +101,7 @@ function sidebarRowAt(offsets, pos) {
   return ans;
 }
 
-function sidebarRowHtml(row) {
+export function sidebarRowHtml(row) {
   if (row.type === 'header') {
     return `<div class="workspace-group ${row.isExp ? 'expanded' : ''}" data-workspace-name="${escapeHtml(row.wsName)}" data-workspace-dir="${escapeHtml(row.dir)}">
       <div class="workspace-group-header" data-action="toggle-group">
@@ -121,7 +130,7 @@ function sidebarRowHtml(row) {
   </div>`;
 }
 
-function renderSidebarWindow(targetScrollTop) {
+export function renderSidebarWindow(targetScrollTop) {
   const tree = $('#sidebarWorkspaceTree');
   if (!tree) return;
   if (!sidebarRowCache.length) {
@@ -146,17 +155,17 @@ function renderSidebarWindow(targetScrollTop) {
   if (tree.scrollTop !== st) tree.scrollTop = st;
 }
 
-function sidebarClampWidth(w) {
+export function sidebarClampWidth(w) {
   return Math.max(170, Math.min(Math.max(170, window.innerWidth * 0.3), w));
 }
 
-function restoreSidebarWidth() {
+export function restoreSidebarWidth() {
   const saved = parseFloat(localStorage.getItem('naibaChatSidebarW') || '');
   const base = (saved && !isNaN(saved)) ? saved : 272;
   document.documentElement.style.setProperty('--sidebar-w', sidebarClampWidth(base) + 'px');
 }
 
-function renderSidebar() {
+export function renderSidebar() {
   const tree = $('#sidebarWorkspaceTree');
   if (!tree) return;
   const search = (state.workspaceSearch || '').trim().toLowerCase();
@@ -231,7 +240,7 @@ function renderSidebar() {
   renderSidebarWindow(st);
 }
 
-function renderComposerWorkspace() {
+export function renderComposerWorkspace() {
   const select = $('#composerWorkspaceSelect');
   if (!select) return;
   const current = state.conversations.find((c) => c.id === state.conversationId);
@@ -241,7 +250,7 @@ function renderComposerWorkspace() {
   select.value = currentGroup;
 }
 
-async function onComposerWorkspaceChange(event) {
+export async function onComposerWorkspaceChange(event) {
   const id = state.conversationId;
   if (!id) return;
   const group = event.target.value || '';
@@ -259,7 +268,7 @@ async function onComposerWorkspaceChange(event) {
   }
 }
 
-async function onSidebarTreeClick(event) {
+export async function onSidebarTreeClick(event) {
   const actionEl = event.target.closest('[data-action]');
   if (actionEl) {
     const action = actionEl.dataset.action;
@@ -291,7 +300,7 @@ async function onSidebarTreeClick(event) {
   else if (event.target.closest('.conversation-open')) openConversation(item.dataset.conversationId);
 }
 
-async function pick_workspace_directory(initial = '') {
+export async function pick_workspace_directory(initial = '') {
   try {
     return await api('/api/workspace/pick', { method: 'POST', body: { initial } });
   } catch (error) {
@@ -300,7 +309,7 @@ async function pick_workspace_directory(initial = '') {
   }
 }
 
-async function createWorkspace() {
+export async function createWorkspace() {
   const result = await pick_workspace_directory();
   if (!result || result.cancelled || !result.path) return;
   const dir = result.resolved || result.path;
@@ -323,7 +332,7 @@ async function createWorkspace() {
   }
 }
 
-async function deleteWorkspace(name) {
+export async function deleteWorkspace(name) {
   if (!name) return;
   const count = state.conversations.filter((c) => (c.workspace_group || '').trim() === name).length;
   const hint = count ? `其下 ${count} 个对话将归档到「未分组」。` : '';
@@ -343,7 +352,7 @@ async function deleteWorkspace(name) {
   }
 }
 
-async function createConversation(workspaceGroup = '', workspaceDir = '', prefillSkills = false) {
+export async function createConversation(workspaceGroup = '', workspaceDir = '', prefillSkills = false) {
   detachRunSubscription();
   hideChoiceButtons();
   const knownAgentIds = new Set((state.bootstrap?.agents || []).map((a) => String(a.id)));
@@ -392,7 +401,7 @@ async function createConversation(workspaceGroup = '', workspaceDir = '', prefil
   $('#messageInput').focus();
 }
 
-async function openConversation(id) {
+export async function openConversation(id) {
   if (id !== state.conversationId) {
     detachRunSubscription();
     hideChoiceButtons();
@@ -434,13 +443,13 @@ async function openConversation(id) {
   closeSidebar();
 }
 
-function conversationSnapshot(conversation) {
+export function conversationSnapshot(conversation) {
   const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
   const last = messages.at(-1);
   return [conversation?.updated_at || '', messages.length, last?.id || '', last?.role || ''].join('|');
 }
 
-async function syncCurrentConversation() {
+export async function syncCurrentConversation() {
   if (state.syncInFlight || !state.conversationId || state.abortController) return;
   if (document.visibilityState === 'hidden') return;
   state.syncInFlight = true;
@@ -468,7 +477,7 @@ async function syncCurrentConversation() {
   }
 }
 
-function startConversationSync() {
+export function startConversationSync() {
   if (state.syncPolling) return;
   state.syncPolling = true;
   scheduleConversationSync(1800);
@@ -482,7 +491,7 @@ function startConversationSync() {
   });
 }
 
-function scheduleConversationSync(delay = null) {
+export function scheduleConversationSync(delay = null) {
   if (!state.syncPolling || document.visibilityState === 'hidden') return;
   if (state.syncTimer) window.clearTimeout(state.syncTimer);
   const activeTask = state.tasks.some((task) => activeTaskStatuses.has(task.status));
@@ -495,11 +504,11 @@ function scheduleConversationSync(delay = null) {
   }, delay ?? interval);
 }
 
-function taskModeLabel(task) {
+export function taskModeLabel(task) {
   return '普通';
 }
 
-function taskElapsed(task) {
+export function taskElapsed(task) {
   const start = Number(task.started_at || task.created_at || 0);
   const end = Number(task.finished_at || Date.now());
   if (!start || end < start) return '';
@@ -508,7 +517,7 @@ function taskElapsed(task) {
   return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`;
 }
 
-function renderRunTasks() {
+export function renderRunTasks() {
   const active = state.tasks.filter((task) => activeTaskStatuses.has(task.status));
   $('#taskCount').textContent = String(active.length);
   $('#openTasks').classList.toggle('has-active', active.length > 0);
@@ -535,7 +544,7 @@ function renderRunTasks() {
   }).join('');
 }
 
-function renderConversationRuleBar() {
+export function renderConversationRuleBar() {
   const bar = $('#conversationRuleBar');
   const text = $('#conversationRuleText');
   if (!bar || !text) return;
@@ -566,7 +575,7 @@ function renderConversationRuleBar() {
   }
 }
 
-async function importCharacterCard(file) {
+export async function importCharacterCard(file) {
   if (!file) return;
   try {
     const data = await readAsDataUrl(file);
@@ -598,7 +607,7 @@ async function importCharacterCard(file) {
   }
 }
 
-async function loadConversationPromptPresets() {
+export async function loadConversationPromptPresets() {
   try {
     const result = await api('/api/conversation-prompt-presets');
     state.conversationPromptPresets = Array.isArray(result.presets) ? result.presets : [];
@@ -610,14 +619,14 @@ async function loadConversationPromptPresets() {
   }
 }
 
-function renderConversationPromptPresetSelect() {
+export function renderConversationPromptPresetSelect() {
   const select = $('#conversationPromptPresetSelect');
   if (!select) return;
   select.innerHTML = '<option value="">选择快捷系统提示词…</option>'
     + state.conversationPromptPresets.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join('');
 }
 
-function renderConversationPromptPresets() {
+export function renderConversationPromptPresets() {
   const container = $('#conversationPromptPresetList');
   if (!container) return;
   const query = String($('#conversationPromptPresetSearch')?.value || '').trim().toLowerCase();
@@ -628,7 +637,7 @@ function renderConversationPromptPresets() {
   }).join('') : '<p class="hint">尚无快捷系统提示词。</p>';
 }
 
-function openConversationPromptPresetForm(id = '') {
+export function openConversationPromptPresetForm(id = '') {
   const item = state.conversationPromptPresets.find((preset) => preset.id === id) || {};
   state.editingConversationPromptPresetId = id;
   $('#conversationPromptPresetId').value = id;
@@ -638,12 +647,12 @@ function openConversationPromptPresetForm(id = '') {
   $('#conversationPromptPresetTitle').focus();
 }
 
-function closeConversationPromptPresetForm() {
+export function closeConversationPromptPresetForm() {
   state.editingConversationPromptPresetId = '';
   $('#conversationPromptPresetForm').hidden = true;
 }
 
-async function saveConversationPromptPreset(event) {
+export async function saveConversationPromptPreset(event) {
   event.preventDefault();
   const id = state.editingConversationPromptPresetId;
   const title = $('#conversationPromptPresetTitle').value;
@@ -656,7 +665,7 @@ async function saveConversationPromptPreset(event) {
   } catch (error) { toast(`保存失败：${error.message}`); }
 }
 
-async function importConversationPromptPresetCard(file) {
+export async function importConversationPromptPresetCard(file) {
   if (!file) return;
   try {
     const result = await api('/api/character-card/parse', { method: 'POST', body: { name: file.name, data: await readAsDataUrl(file) } });
@@ -666,7 +675,7 @@ async function importConversationPromptPresetCard(file) {
   } catch (error) { toast(`导入失败：${error.message}`); }
 }
 
-async function applyConversationPromptPreset(id) {
+export async function applyConversationPromptPreset(id) {
   const item = state.conversationPromptPresets.find((preset) => preset.id === id);
   const field = $('#conversationSystemPrompt');
   if (!item || !field) return;
@@ -678,7 +687,7 @@ async function applyConversationPromptPreset(id) {
   field.value = next;
 }
 
-function openConversationSettings(id) {
+export function openConversationSettings(id) {
   const conversation = state.conversations.find((item) => item.id === id);
   if (!conversation) return;
   state.conversationSettingsId = id;
@@ -689,7 +698,7 @@ function openConversationSettings(id) {
   $('#conversationSettingsDialog').showModal();
 }
 
-async function saveConversationSettings(event) {
+export async function saveConversationSettings(event) {
   event.preventDefault();
   const id = state.conversationSettingsId;
   if (!id) return;
@@ -720,7 +729,7 @@ async function saveConversationSettings(event) {
   }
 }
 
-async function clearConversationMessages() {
+export async function clearConversationMessages() {
   const id = state.conversationSettingsId;
   if (!id) return;
   if (!confirm('确定清空这个对话的全部消息和工具记录吗？此操作无法恢复。')) return;
@@ -736,7 +745,7 @@ async function clearConversationMessages() {
   }
 }
 
-async function clearTerminalTasks() {
+export async function clearTerminalTasks() {
   if (!confirm('清理所有已结束、失败、取消或中断的异步任务记录吗？运行中的任务不会受影响。')) return;
   try {
     const result = await api('/api/tasks/clear', { method: 'DELETE' });
@@ -747,7 +756,7 @@ async function clearTerminalTasks() {
   }
 }
 
-async function deleteConversation(id) {
+export async function deleteConversation(id) {
   if (id === state.conversationId && state.chatRunId) {
     toast('请先停止当前回复再删除对话');
     return;
@@ -770,7 +779,7 @@ async function deleteConversation(id) {
 }
 
 // 当前对话绑定的 Agent 的固定 Skill id 列表；未绑定或已删除时回退到默认 Agent
-function currentAgentFixedSkillIds() {
+export function currentAgentFixedSkillIds() {
   const agents = state.bootstrap?.agents || [];
   const conversation = state.conversations.find((item) => item.id === state.conversationId);
   let agentId = String(conversation?.agent_id || '');
@@ -783,7 +792,7 @@ function currentAgentFixedSkillIds() {
 }
 
 // 有效启用的 Skill = 仅当前会话 Agent 预设的固定 Skill（不再允许用户自行选择/切换模式）。
-function effectiveSkillIds() {
+export function effectiveSkillIds() {
   return [...new Set(currentAgentFixedSkillIds())];
 }
 

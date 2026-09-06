@@ -2,30 +2,33 @@
 // 14-file-panel.js —— 拆分自 public/app.js 第 6329-6657 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-const filePanelState = { open: false, activeKey: '', tabs: [] };
-const FILE_MD_NAME_RE = /\.(md|markdown|mdown)$/i;
+import { $, api, escapeHtml, state, toast } from "./01-core.js";
+import { renderSidebar } from "./08-conversations.js";
+import { markdownFilePreview } from "./12-chat-input.js";
+export const filePanelState = { open: false, activeKey: '', tabs: [] };
+export const FILE_MD_NAME_RE = /\.(md|markdown|mdown)$/i;
 
-function filePanelTabKey(raw) {
+export function filePanelTabKey(raw) {
   return String(raw || '').replace(/\\/g, '/').toLowerCase();
 }
 
-function filePanelUsable() {
+export function filePanelUsable() {
   return window.innerWidth > 760 && !!$('#filePanel');
 }
 
-function filePanelWidthPx() {
+export function filePanelWidthPx() {
   const saved = parseFloat(localStorage.getItem('naibaChatFilePanelW') || ''); const max = Math.max(300, Math.floor(window.innerWidth * 0.5));
   return Math.max(280, Math.min(max, Number.isFinite(saved) ? saved : Math.round(window.innerWidth * 0.36)));
 }
 
-function applyFilePanelOpenClass() {
+export function applyFilePanelOpenClass() {
   const shell = $('#appShell');
   if (!shell) return;
   shell.classList.toggle('file-panel-open', filePanelState.open);
   if (filePanelState.open) shell.style.setProperty('--file-panel-w', `${filePanelWidthPx()}px`);
 }
 
-function openFilePanel(rawPath) {
+export function openFilePanel(rawPath) {
   if (!filePanelUsable()) return false; // 手机端仅展示总结，不打开面板
   if (!rawPath) return false;
   if (!state.conversationId) {
@@ -40,7 +43,7 @@ function openFilePanel(rawPath) {
   return true;
 }
 
-function closeFilePanel(clearTabs = false) {
+export function closeFilePanel(clearTabs = false) {
   filePanelState.open = false;
   if (clearTabs) {
     filePanelState.tabs = [];
@@ -53,7 +56,7 @@ function closeFilePanel(clearTabs = false) {
   renderFilePanel();
 }
 
-function ensureFileTab(rawPath, activate = false) {
+export function ensureFileTab(rawPath, activate = false) {
   const key = filePanelTabKey(rawPath);
   let tab = filePanelState.tabs.find((item) => item.key === key);
   if (!tab) {
@@ -65,11 +68,11 @@ function ensureFileTab(rawPath, activate = false) {
   return tab;
 }
 
-function activeFileTab() {
+export function activeFileTab() {
   return filePanelState.tabs.find((item) => item.key === filePanelState.activeKey) || null;
 }
 
-async function loadFileTab(tab) {
+export async function loadFileTab(tab) {
   if (!tab || tab.loading || tab.info) return;
   tab.loading = true;
   tab.error = '';
@@ -87,7 +90,7 @@ async function loadFileTab(tab) {
   }
 }
 
-function activateFileTab(key) {
+export function activateFileTab(key) {
   const tab = filePanelState.tabs.find((item) => item.key === key);
   if (!tab) return;
   filePanelState.activeKey = key;
@@ -95,7 +98,7 @@ function activateFileTab(key) {
   if (!tab.info && !tab.loading && !tab.error) loadFileTab(tab);
 }
 
-function removeFileTab(key) {
+export function removeFileTab(key) {
   const index = filePanelState.tabs.findIndex((item) => item.key === key);
   if (index < 0) return;
   filePanelState.tabs.splice(index, 1);
@@ -107,7 +110,7 @@ function removeFileTab(key) {
   renderFilePanel();
 }
 
-function renderFilePanel() {
+export function renderFilePanel() {
   const panel = $('#filePanel');
   if (!panel) return;
   applyFilePanelOpenClass();
@@ -116,7 +119,7 @@ function renderFilePanel() {
   updateFileTabsButton();
 }
 
-function renderFilePanelTabs() {
+export function renderFilePanelTabs() {
   const tabsEl = $('#fileTabs');
   if (!tabsEl) return;
   if (!filePanelState.tabs.length) {
@@ -132,7 +135,7 @@ function renderFilePanelTabs() {
   if (activeEl && typeof activeEl.scrollIntoView === 'function') activeEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }
 
-function fileToolbarMeta(tab) {
+export function fileToolbarMeta(tab) {
   const info = tab.info || {};
   const parts = [];
   if (info.kind === 'image') parts.push('图片');
@@ -144,7 +147,7 @@ function fileToolbarMeta(tab) {
   return parts.join(' · ');
 }
 
-function renderFilePanelBody() {
+export function renderFilePanelBody() {
   const body = $('#filePanelBody');
   if (!body) return;
   if (!filePanelState.open) {
@@ -201,7 +204,7 @@ function renderFilePanelBody() {
   }
 }
 
-function fileContentViewHtml(tab) {
+export function fileContentViewHtml(tab) {
   const info = tab.info || {};
   if (tab.editing) {
     const value = tab.draft !== null && tab.draft !== undefined ? tab.draft : (info.content || '');
@@ -222,11 +225,11 @@ function fileContentViewHtml(tab) {
   return `<pre class="file-preview-text">${escapeHtml(text)}</pre>`;
 }
 
-function convFileRawUrl(path) {
+export function convFileRawUrl(path) {
   return `/api/conversations/${encodeURIComponent(state.conversationId)}/file/raw?token=${encodeURIComponent(state.token)}&path=${encodeURIComponent(String(path || ''))}`;
 }
 
-function startFileEdit(key) {
+export function startFileEdit(key) {
   const tab = filePanelState.tabs.find((item) => item.key === key);
   if (!tab || !tab.info || tab.info.kind !== 'text' || !tab.info.savable || tab.info.truncated) {
     toast('该文件不可编辑（仅支持编辑本会话改动过、工作区内且未截断的文本文件）');
@@ -237,7 +240,7 @@ function startFileEdit(key) {
   renderFilePanel();
 }
 
-function cancelFileEdit(key) {
+export function cancelFileEdit(key) {
   const tab = filePanelState.tabs.find((item) => item.key === key);
   if (!tab) return;
   tab.editing = false;
@@ -245,7 +248,7 @@ function cancelFileEdit(key) {
   renderFilePanel();
 }
 
-async function saveFileTab(key) {
+export async function saveFileTab(key) {
   const tab = filePanelState.tabs.find((item) => item.key === key);
   if (!tab || !tab.info) return;
   const textarea = $('#filePanelBody .file-edit-textarea');
@@ -266,29 +269,29 @@ async function saveFileTab(key) {
   }
 }
 
-function formatFileSize(bytes) {
+export function formatFileSize(bytes) {
   const size = Number(bytes || 0);
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function openSidebar() {
+export function openSidebar() {
   $('#sidebar').classList.add('open');
   $('#sidebarBackdrop').classList.add('open');
 }
 
-function closeSidebar() {
+export function closeSidebar() {
   $('#sidebar').classList.remove('open');
   $('#sidebarBackdrop').classList.remove('open');
 }
 
 // ---- 左右侧栏折叠 / 展开（桌面端；手机端侧栏保持抽屉式开关）----
-function sidebarDesktop() {
+export function sidebarDesktop() {
   return window.innerWidth > 760;
 }
 
-function setLeftSidebarCollapsed(collapsed) {
+export function setLeftSidebarCollapsed(collapsed) {
   const shell = $('#appShell');
   if (!shell) return;
   if (collapsed && !sidebarDesktop()) return; // 手机抽屉由 openSidebar/closeSidebar 管理
@@ -298,7 +301,7 @@ function setLeftSidebarCollapsed(collapsed) {
   renderSidebar();
 }
 
-function restoreLeftSidebarCollapse() {
+export function restoreLeftSidebarCollapse() {
   const shell = $('#appShell');
   if (!shell) return;
   const collapsed = sidebarDesktop() && localStorage.getItem('naibaChatSidebarCollapsed') === '1';
@@ -306,7 +309,7 @@ function restoreLeftSidebarCollapse() {
 }
 
 // 文件面板重开：右侧栏收起但标签还在时，从顶栏「文件 N」重新展开
-function reopenFilePanel() {
+export function reopenFilePanel() {
   if (!filePanelUsable()) return;
   // 仅当已点开过文件（存在保留的标签）时顶栏按钮才出现；空会话不展示入口
   if (!filePanelState.tabs.length) return;
@@ -315,7 +318,7 @@ function reopenFilePanel() {
   renderFilePanel();
 }
 
-function updateFileTabsButton() {
+export function updateFileTabsButton() {
   const button = $('#openFileTabs');
   if (!button) return;
   const hasTabs = filePanelState.tabs.length > 0;

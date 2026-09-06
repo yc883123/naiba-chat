@@ -2,7 +2,9 @@
 // 10-upload.js —— 拆分自 public/app.js 第 4673-4709 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-async function uploadFiles(files) {
+import { $, api, escapeHtml, state, toast } from "./01-core.js";
+import { attachmentThumbUrl, fileUrl } from "./03-media.js";
+export async function uploadFiles(files) {
   for (const file of files) {
     const chip = { name: file.name, uploading: true };
     state.pendingFiles.push(chip);
@@ -19,7 +21,7 @@ async function uploadFiles(files) {
   }
 }
 
-function readAsDataUrl(file) {
+export function readAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
@@ -28,7 +30,7 @@ function readAsDataUrl(file) {
   });
 }
 
-function renderPendingFiles() {
+export function renderPendingFiles() {
   $('#pendingFiles').innerHTML = state.pendingFiles.map((file, index) => {
     const isImage = /\.(png|jpe?g|webp|gif)$/i.test(file.name || '');
     const thumbUrl = attachmentThumbUrl(file);

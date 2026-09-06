@@ -2,12 +2,19 @@
 // 11-run-stream.js —— 拆分自 public/app.js 第 4710-5237 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-function clearRunReconnectTimers() {
+import { $, api, escapeHtml, state, toast } from "./01-core.js";
+import { messageElement, scrollToBottom, stickToBottom } from "./04-messages.js";
+import { loadTasks } from "./06-tasks-plans.js";
+import { createConversation, loadConversations, openConversation } from "./08-conversations.js";
+import { renderPendingFiles } from "./10-upload.js";
+import { handleChatEvent, hideChoiceButtons, setBusy } from "./12-chat-input.js";
+import { hideSkillPopup, parseSkillReferences, renderInputMirror, resizeTextarea, stripSkillReferences } from "./13-skill-refs.js";
+export function clearRunReconnectTimers() {
   state.runReconnectTimers.forEach((timer) => window.clearTimeout(timer));
   state.runReconnectTimers.clear();
 }
 
-function detachRunConnection() {
+export function detachRunConnection() {
   state.abortController?.abort();
   clearVisionProgress();
   stopRunWatchdog();
@@ -18,7 +25,7 @@ function detachRunConnection() {
   state.abortController = null;
 }
 
-function detachRunSubscription() {
+export function detachRunSubscription() {
   detachRunConnection();
   clearRunReconnectTimers();
   state.chatRunId = '';
@@ -36,23 +43,23 @@ function detachRunSubscription() {
 }
 
 // ---- Run 事件流看门狗 / 断线自动重连 / 轮询兜底 / 等待计时 ----
-const RUN_WATCHDOG_INTERVAL = 5000;          // 看门狗扫描周期
-const RUN_WATCHDOG_IDLE = 45000;             // 超 45s 无数据 → 判定为“可能是死流”（>3 次 heartbeat）
-const RUN_WATCHDOG_PROBE_MAX = 2;            // 连续判定空闲超过该次数才真正探针动作
-const RUN_RECONNECT_BASE = 500;              // 退避基准 ms
-const RUN_RECONNECT_MAX = 10000;             // 退避上限 ms
-const RUN_RECONNECT_ATTEMPTS = 3;            // 自动重连上限，超限交还轮询兜底
-const RUN_RECONNECT_COOLDOWN = 15000;        // “服死”后的保守重连冷却 ms，防风暴
-const RUN_STREAM_OPEN_TIMEOUT = 15000;       // 建流（流式 fetch 打开）超时护栏 ms
-const RUN_WAIT_STATUS_IDLE = 6000;           // 无任何新进展字节超过此阈值 → 显示“等待中 · 已等待 X 秒”
+export const RUN_WATCHDOG_INTERVAL = 5000;          // 看门狗扫描周期
+export const RUN_WATCHDOG_IDLE = 45000;             // 超 45s 无数据 → 判定为“可能是死流”（>3 次 heartbeat）
+export const RUN_WATCHDOG_PROBE_MAX = 2;            // 连续判定空闲超过该次数才真正探针动作
+export const RUN_RECONNECT_BASE = 500;              // 退避基准 ms
+export const RUN_RECONNECT_MAX = 10000;             // 退避上限 ms
+export const RUN_RECONNECT_ATTEMPTS = 3;            // 自动重连上限，超限交还轮询兜底
+export const RUN_RECONNECT_COOLDOWN = 15000;        // “服死”后的保守重连冷却 ms，防风暴
+export const RUN_STREAM_OPEN_TIMEOUT = 15000;       // 建流（流式 fetch 打开）超时护栏 ms
+export const RUN_WAIT_STATUS_IDLE = 6000;           // 无任何新进展字节超过此阈值 → 显示“等待中 · 已等待 X 秒”
 
-function backoffDelay(attempt) {
+export function backoffDelay(attempt) {
   const cap = Math.min(RUN_RECONNECT_MAX, RUN_RECONNECT_BASE * 2 ** Math.max(0, attempt - 1));
   return Math.min(cap, cap / 2 + Math.random() * (cap / 2));
 }
 
 // 校验当前仍处于“给定代际的连接所对应的活动流”。
-function isRunGenerationActive(generation, controller = null) {
+export function isRunGenerationActive(generation, controller = null) {
   if (state.cancelRequested) return false;
   if (state.runGeneration !== generation) return false;
   if (controller && state.abortController !== controller) return false;
@@ -60,7 +67,7 @@ function isRunGenerationActive(generation, controller = null) {
 }
 
 // 带超时的 fetch，避免建流永久挂起（carrier 不 fire onOpen 也不 return）。
-async function fetchRunEvents(runId, controller) {
+export async function fetchRunEvents(runId, controller) {
   let timeoutId = null;
   const timeout = new Promise((_, reject) => {
     timeoutId = window.setTimeout(
@@ -83,13 +90,13 @@ async function fetchRunEvents(runId, controller) {
 }
 
 // 连接状态去重设置（角标依据）。
-function setConnectionState(next) {
+export function setConnectionState(next) {
   if (state.connectionState === next) return;
   state.connectionState = next;
 }
 
 // 显示 “{base} · 已等待 X 秒” 到 #runtimeStatus，每秒刷新；先清除旧计时。
-function showElapsedStatus(base) {
+export function showElapsedStatus(base) {
   clearElapsedStatus();
   const since = Date.now();
   state.elapsedBase = String(base || '');
@@ -103,13 +110,13 @@ function showElapsedStatus(base) {
   state.elapsedTimer = window.setInterval(update, 1000);
 }
 
-function clearElapsedStatus() {
+export function clearElapsedStatus() {
   if (state.elapsedTimer) window.clearInterval(state.elapsedTimer);
   state.elapsedTimer = null;
   state.elapsedBase = '';
 }
 
-function stopRunWatchdog() {
+export function stopRunWatchdog() {
   if (state.runWatchdogTimer) window.clearInterval(state.runWatchdogTimer);
   state.runWatchdogTimer = null;
   if (state.runWaitTimer) window.clearInterval(state.runWaitTimer);
@@ -117,7 +124,7 @@ function stopRunWatchdog() {
   state.runProbeMisses = 0;
 }
 
-function startRunWatchdog() {
+export function startRunWatchdog() {
   stopRunWatchdog();
   state.runWatchdogTimer = window.setInterval(runWatchdogTick, RUN_WATCHDOG_INTERVAL);
   // 轻量等待计时：每秒检查“长时间无新进展”，用于显示“等待中 · 已等待 X 秒”。
@@ -128,7 +135,7 @@ function startRunWatchdog() {
 // 时显示“等待中 · 已等待 X 秒”，让用户明白“还在工作而非卡死”。
 // 用 runContentActivityAt（不含 heartbeat）作为依据，后台心跳不会重置计数；
 // 一有真实进展事件，runContentActivityAt 被刷新，本逻辑自动恢复展示前文本。
-function runWaitTick() {
+export function runWaitTick() {
   if (!state.abortController || !state.runContentActivityAt) return;
   if (state.connectionState === 'reconnecting') return;      // 重连中已单独提示
   if (state.elapsedBase) return;                             // 已有思考/工具计时在展示，不重复
@@ -151,7 +158,7 @@ function runWaitTick() {
 }
 
 // 看门狗：检测“流既不推数据也不报错”的死流，并用真实探针区分“流死/服死”。
-function runWatchdogTick() {
+export function runWatchdogTick() {
   if (state.cancelRequested) return;
   if (!state.abortController || !state.runLastActivityAt) return;
   if (state.runRecovering) return;
@@ -170,7 +177,7 @@ function runWatchdogTick() {
   void probeAndRecoverRun();
 }
 
-async function probeAndRecoverRun() {
+export async function probeAndRecoverRun() {
   if (state.cancelRequested) return;
   const controller = state.abortController;
   const conversationId = state.runConversationId || state.conversationId;
@@ -196,14 +203,14 @@ async function probeAndRecoverRun() {
   }
 }
 
-function enterReconnectCoolDown(showTimer = true) {
+export function enterReconnectCoolDown(showTimer = true) {
   setConnectionState('reconnecting');
   state.runReconnectAt = Date.now() + RUN_RECONNECT_COOLDOWN;
   if (showTimer) showElapsedStatus('重连中…');
 }
 
 // 断线自动重连：非 AbortError 且流仍当前时，指数退避 + 抖动后重建流。
-function scheduleRunReconnect(run, controller, generation) {
+export function scheduleRunReconnect(run, controller, generation) {
   if (state.cancelRequested || state.cancelledRunIds.has(String(run?.id || ''))) return;
   if (!run?.id) return;
   if (!isRunGenerationActive(generation, controller)) return;
@@ -229,13 +236,13 @@ function scheduleRunReconnect(run, controller, generation) {
   state.runReconnectTimers.add(timer);
 }
 
-function clearVisionProgress() {
+export function clearVisionProgress() {
   if (state.visionTimer) window.clearInterval(state.visionTimer);
   state.visionTimer = null;
   state.visionStartedAt = 0;
 }
 
-function renderVisionProgress(answer, event) {
+export function renderVisionProgress(answer, event) {
   clearVisionProgress();
   const startedAt = Number(event.started_at || Date.now());
   state.visionStartedAt = startedAt;
@@ -251,14 +258,14 @@ function renderVisionProgress(answer, event) {
   state.visionTimer = window.setInterval(update, 1000);
 }
 
-function clearStreamingAnswer(answer) {
+export function clearStreamingAnswer(answer) {
   if (!answer) return;
   answer.dataset.raw = '';
   answer.dataset.renderScheduled = '0';
   answer.replaceChildren();
 }
 
-function createStreamingReasoningBlock(answer) {
+export function createStreamingReasoningBlock(answer) {
   const block = document.createElement('details');
   block.className = 'reasoning-block';
   block.open = true;
@@ -269,7 +276,7 @@ function createStreamingReasoningBlock(answer) {
   return block;
 }
 
-function collapseToolReasoningBlock() {
+export function collapseToolReasoningBlock() {
   // 工具调用步骤的思考：坍缩为单行摘要，可点击展开（tool_start 到来时调用）。
   const block = state.streamingReasoningBlock;
   if (!block) return;
@@ -283,7 +290,7 @@ function collapseToolReasoningBlock() {
   state.streamingReasoningBlock = null;
 }
 
-function createRunRow(run) {
+export function createRunRow(run) {
   const row = messageElement({ role: 'assistant', content: '' }, true);
   row.dataset.runId = String(run.id || '');
   row.dataset.runKind = String(run.kind || 'chat');
@@ -294,7 +301,7 @@ function createRunRow(run) {
   return row;
 }
 
-async function consumeRunStream(response, row, conversationId, runId, controller, generation = state.runGeneration) {
+export async function consumeRunStream(response, row, conversationId, runId, controller, generation = state.runGeneration) {
   state.runLastActivityAt = Date.now();
   state.runContentActivityAt = Date.now();
   startRunWatchdog();
@@ -352,7 +359,7 @@ async function consumeRunStream(response, row, conversationId, runId, controller
   }
 }
 
-async function finishRunSubscription(conversationId, controller) {
+export async function finishRunSubscription(conversationId, controller) {
   if (state.abortController === controller) {
     stopRunWatchdog();
     clearElapsedStatus();
@@ -377,7 +384,7 @@ async function finishRunSubscription(conversationId, controller) {
   }
 }
 
-async function resumeRun(run, options = {}) {
+export async function resumeRun(run, options = {}) {
   const conversationId = String(run?.conversation_id || '');
   const runId = String(run?.id || '');
   if (!runId || conversationId !== state.conversationId) return;
@@ -422,7 +429,7 @@ async function resumeRun(run, options = {}) {
   })();
 }
 
-async function resumeConversationRun(conversationId) {
+export async function resumeConversationRun(conversationId) {
   if (!conversationId || conversationId !== state.conversationId || state.abortController || state.cancelRequested) return;
   try {
     const result = await api(`/api/runs?conversation_id=${encodeURIComponent(conversationId)}&active_only=1`);
@@ -435,7 +442,7 @@ async function resumeConversationRun(conversationId) {
   }
 }
 
-async function sendChatMessage(textOverride = '') {
+export async function sendChatMessage(textOverride = '') {
   const input = $('#messageInput');
   const inputText = String(input.value || '').trim();
   const buttonText = String(textOverride || '').trim();
@@ -515,7 +522,7 @@ async function sendChatMessage(textOverride = '') {
   }
 }
 
-const SKILL_INSTALL_PRESET =
+export const SKILL_INSTALL_PRESET =
   '用户希望在本应用内通过你安装一个 Skill。本会话已为你启用 install_skill / unpack_skill_archive（以及读取/编辑/写入文件）工具。'
   + '请按以下流程执行，并【先等待用户给出具体指令】：\n'
   + '1. 等待用户说明要安装来源。来源只支持：本地文件夹、单个 .md 文件、或一个 .zip 压缩包（rar/7z 暂不支持，提醒用户先转成 zip）。\n'
