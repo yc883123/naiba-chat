@@ -110,11 +110,21 @@ _STATIC_ASSET_VERSION: str | None = None
 
 
 def static_asset_version(public_dir: Path) -> str:
-    """静态资源版本哈希（lazy-once：首次计算后缓存，禁止每请求重算磁盘 I/O）。"""
+    """静态资源版本哈希（lazy-once：首次计算后缓存，禁止每请求重算磁盘 I/O）。
+
+    覆盖 public/js/*.js（阶段 5.1 拆分后的脚本集）与 styles.css；文件集排序稳定，
+    js/ 内任何文件变化都会改变版本号。
+    """
     global _STATIC_ASSET_VERSION
     if _STATIC_ASSET_VERSION is None:
         digest = hashlib.sha256()
-        for name in ("app.js", "styles.css"):
-            digest.update((public_dir / name).read_bytes())
+        js_dir = public_dir / "js"
+        if js_dir.is_dir():
+            script_names = sorted(path.name for path in js_dir.glob("*.js"))
+            for name in script_names:
+                digest.update((js_dir / name).read_bytes())
+        else:
+            digest.update((public_dir / "app.js").read_bytes())
+        digest.update((public_dir / "styles.css").read_bytes())
         _STATIC_ASSET_VERSION = digest.hexdigest()[:12]
     return _STATIC_ASSET_VERSION

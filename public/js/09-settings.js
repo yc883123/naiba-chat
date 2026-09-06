@@ -1,0 +1,1562 @@
+// ============================================================
+// 09-settings.js —— 拆分自 public/app.js 第 3115-4672 行（阶段 5.1 按域拆分，跨文件引用零改动）
+// ============================================================
+
+function renderSkills(filter = '') {
+  if (!state.bootstrap) return;
+  const query = filter.trim().toLowerCase();
+  const fixed = new Set(currentAgentFixedSkillIds());
+  const skills = state.bootstrap.skills.filter((skill) =>
+    !query || `${skill.name} ${skill.description} ${skill.ref || ''}`.toLowerCase().includes(query));
+  $('#skillList').innerHTML = skills.map((skill) => `
+    <button type="button" class="skill-item skill-click" data-skill-insert="${skill.id}">
+      <span><b>${escapeHtml(skill.name)}</b>${fixed.has(skill.id) ? '<em>预设</em>' : ''}<p>${escapeHtml(skill.description || '')}</p></span>
+      <span class="skill-tag" title="点击插入到输入框">/${escapeHtml(skill.ref || skill.name)}</span>
+    </button>`).join('');
+  updateSkillSummary();
+}
+
+function updateSkillSummary() {
+  const fixedCount = currentAgentFixedSkillIds().length;
+  $('#skillCount').textContent = `Skill ${state.bootstrap.skills.length}`;
+  $('#skillPolicyHint').textContent = '点击某项即在输入框光标处插入 /技能 引用；发送后按“首轮注入 / 后续追加”注入';
+  $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，当前 Agent 预设 ${fixedCount} 个（新建会话自动预填引用）`;
+}
+
+function renderProviders() {
+  const allProviders = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+  const providers = allProviders.filter((provider) => (provider.kind || 'online') === state.providerKindTab);
+  $$('[data-provider-kind]').forEach((button) => {
+    const active = button.dataset.providerKind === state.providerKindTab;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  const select = $('#providerSelect');
+  select.innerHTML = providers.length
+    ? providers.map((provider) => `<option value="${provider.id}">${escapeHtml(provider.name)}</option>`).join('')
+    : `<option value="">尚未添加${state.providerKindTab === 'local' ? '本地' : '在线'} API</option>`;
+  const currentId = $('#providerId').value;
+  const current = providers.find((provider) => provider.id === currentId)
+    || providers.find((provider) => provider.id === state.bootstrap.settings.provider_id)
+    || providers[0];
+  showProviderForm(current || {
+    kind: state.providerKindTab,
+    request_format: state.providerKindTab === 'local' ? 'lm_studio' : 'openai_chat',
+  }, { editing: false });
+}
+
+function showProviderForm(provider = {}, { editing = false, isNew = false } = {}) {
+  $('#providerId').value = provider.id || '';
+  if (isNew) {
+    $('#providerSelect').insertAdjacentHTML('beforeend', '<option value="__new__">正在添加新供应商</option>');
+    $('#providerSelect').value = '__new__';
+  } else {
+    $('#providerSelect').value = provider.id || '';
+  }
+  $('#providerName').value = provider.name || '';
+  $('#providerBaseUrl').value = provider.base_url || '';
+  const inferredKind = provider.kind || (['ollama', 'lm_studio', 'llama_cpp', 'unsloth'].includes(provider.request_format) ? 'local' : 'online');
+  $('#providerKind').value = inferredKind === 'local' ? '1' : '0';
+  $('#providerContextWindow').value = provider.context_window || provider.context_size || '';
+  $('#providerMaxOutputTokens').value = provider.max_output_tokens || '';
+  $('#providerTemperature').value = provider.temperature ?? '';
+  $('#providerReasoningEffort').value = provider.reasoning_effort || 'auto';
+  $('#providerSupportsImages').value = provider.supports_images_explicit === true
+    ? 'true'
+    : (provider.supports_images_explicit === false ? 'false' : 'auto');
+  setProviderModelOptions([], provider.model || '');
+  $('#providerFormat').value = provider.request_format || 'openai_chat';
+  $('#providerApiKey').value = '';
+  $('#providerApiKey').type = 'password';
+  $('#toggleProviderKey').textContent = '显示';
+  $('#toggleProviderKey').title = '显示 API Key';
+  $('#providerKeyStatus').textContent = provider.has_api_key ? '已配置' : '未配置';
+  $('#providerError').textContent = '';
+  setProviderEditMode(editing, isNew);
+  syncProviderKindOptions();
+  updateProviderFormatGuide();
+  updateProviderContextField();
+  updateProviderVisionHint();
+  updateUnloadModelButton();
+}
+
+function syncProviderKindOptions(previousFormat = '') {
+  const local = $('#providerKind').value === '1';
+  const allowed = local ? ['lm_studio', 'ollama', 'llama_cpp', 'unsloth'] : ['openai_chat', 'codex_responses', 'gemini', 'claude'];
+  const format = $('#providerFormat');
+  [...format.options].forEach((option) => { option.hidden = !allowed.includes(option.value); });
+  if (!allowed.includes(format.value)) {
+    // A legacy llama.cpp endpoint was commonly configured as an online
+    // OpenAI-compatible API. Switching its type to local must keep the
+    // /v1 protocol instead of silently redirecting it to LM Studio's /api/v1.
+    format.value = local && previousFormat === 'openai_chat' ? 'llama_cpp' : allowed[0];
+  }
+  const hint = $('#providerKindHint');
+  if (hint) hint.textContent = local ? '本地 API 可使用 llama.cpp、Unsloth、Ollama 或 LM Studio 服务。' : '在线 API 使用远程模型服务。';
+}
+
+function updateProviderFormatGuide() {
+  const guide = $('#providerFormatGuide');
+  const format = $('#providerFormat').value;
+  const guides = {
+    ollama: '先启动 Ollama。API URL 通常填写 http://127.0.0.1:11434/v1；API Key 可留空；模型名称可通过 ollama list 查看，然后点击“检查模型”。',
+    lm_studio: '先在 LM Studio 的 Developer / Local Server 页面启动服务并加载模型。API URL 通常填写 http://127.0.0.1:1234/v1；API Key 可留空，然后点击“检查模型”。',
+    llama_cpp: '先启动 llama.cpp server。API URL 通常填写 http://127.0.0.1:8080/v1；API Key 可留空，然后点击“检查模型”。',
+    unsloth: '先启动 Unsloth（桌面版或 unsloth studio）。API URL 通常填写 http://127.0.0.1:8000 或 http://127.0.0.1:8888；API Key 在 Unsloth Settings → API 创建（sk-unsloth-…）；上下文长度由启动参数 unsloth run -c <tokens> 决定。然后点击“检查模型”。',
+  };
+  guide.textContent = guides[format] || '';
+  guide.hidden = !guides[format];
+}
+
+function updateProviderContextField() {
+  const field = $('#providerContextField');
+  const input = $('#providerContextWindow');
+  const active = Boolean($('#providerId').value) || state.providerIsNew;
+  field.hidden = !active;
+  input.disabled = !state.providerEditing;
+  $('#providerMaxOutputField').hidden = !active;
+  $('#providerTemperatureField').hidden = !active;
+  ['#providerMaxOutputTokens', '#providerTemperature'].forEach((selector) => {
+    $(selector).disabled = !state.providerEditing;
+  });
+}
+
+function setProviderEditMode(editing, isNew = false) {
+  state.providerEditing = editing;
+  state.providerIsNew = isNew;
+  const active = Boolean($('#providerId').value) || isNew;
+  $$('.provider-field').forEach((element) => { element.hidden = !active; });
+  $('#providerEmpty').hidden = active;
+  [
+    '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
+    '#providerKind', '#providerModel', '#providerModelCustom', '#providerContextWindow',
+    '#providerMaxOutputTokens', '#providerTemperature', '#providerReasoningEffort',
+    '#providerSupportsImages',
+  ].forEach((selector) => { $(selector).disabled = !editing; });
+  $('#providerSelect').disabled = editing;
+  $('#addProvider').disabled = editing;
+  $('#deleteProvider').disabled = !$('#providerId').value || editing;
+  $('#loadProviderModels').disabled = !editing;
+  $('#testProvider').hidden = !active;
+  $('#editProvider').hidden = !active || editing;
+  $('#cancelProvider').hidden = !editing;
+  $('#saveProvider').hidden = !editing;
+  updateProviderContextField();
+  updateUnloadModelButton();
+}
+
+function setProviderModelOptions(models = [], current = '') {
+  const select = $('#providerModel');
+  const unique = [];
+  const seen = new Set();
+  models.forEach((model) => {
+    const id = String(model.id || '').trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    unique.push({ id, name: String(model.name || id) });
+    state.providerModelCapabilities[id] = {
+      context_window: model.context_window,
+      max_output_tokens: model.max_output_tokens,
+      supports_images: typeof model.supports_images === 'boolean' ? model.supports_images : undefined,
+    };
+  });
+  if (current && !seen.has(current)) unique.unshift({ id: current, name: current });
+  const prompt = unique.length > 1 && !current
+    ? `<option value="">请选择模型（${unique.length} 个可用）</option>`
+    : '';
+  select.innerHTML = unique.length
+    ? prompt + unique.map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.name)}</option>`).join('')
+    : '<option value="">填写连接信息后自动检查</option>';
+  select.insertAdjacentHTML('beforeend', '<option value="__custom__">手动输入模型名称…</option>');
+  select.value = current || (unique.length === 1 ? unique[0].id : '');
+  $('#providerModelCustom').hidden = true;
+  $('#providerModelCustom').required = false;
+}
+
+function applyProviderModelCapabilities() {
+  const model = $('#providerModel').value;
+  const capability = state.providerModelCapabilities[model];
+  if (!capability) return;
+  if (!$('#providerContextWindow').value && capability.context_window) {
+    $('#providerContextWindow').value = capability.context_window;
+  }
+  if (!$('#providerMaxOutputTokens').value && capability.max_output_tokens) {
+    $('#providerMaxOutputTokens').value = capability.max_output_tokens;
+  }
+  updateProviderVisionHint();
+}
+
+function updateProviderVisionHint() {
+  const hint = $('#providerVisionHint');
+  const choice = $('#providerSupportsImages').value;
+  if (choice === 'true') {
+    hint.textContent = '已强制设为支持图片；Naiba-chat 会把用户图片直接交给该模型。';
+    return;
+  }
+  if (choice === 'false') {
+    hint.textContent = '已强制设为纯文本；用户原图不会发送给该模型。';
+    return;
+  }
+  const capability = state.providerModelCapabilities[$('#providerModel').value];
+  if (typeof capability?.supports_images === 'boolean') {
+    hint.textContent = `模型目录报告：${capability.supports_images ? '支持图片' : '纯文本'}（仍保持自动检测，不写入强制配置）。`;
+    return;
+  }
+  hint.textContent = '自动检测会优先读取运行端能力；上传图片时才会执行最小图片探针。';
+}
+
+function toggleCustomModel() {
+  const custom = $('#providerModel').value === '__custom__';
+  $('#providerModelCustom').hidden = !custom;
+  $('#providerModelCustom').required = custom;
+  if (custom) $('#providerModelCustom').focus();
+}
+
+function providerFormValue() {
+  const selectedModel = $('#providerModel').value;
+  const kind = $('#providerKind').value === '1' ? 'local' : 'online';
+  const numberOrUndefined = (selector) => {
+    const raw = $(selector).value.trim();
+    return raw ? Number(raw) : undefined;
+  };
+  const imageChoice = $('#providerSupportsImages').value;
+  return {
+    id: $('#providerId').value,
+    name: $('#providerName').value.trim(),
+    base_url: $('#providerBaseUrl').value.trim(),
+    model: selectedModel === '__custom__' ? $('#providerModelCustom').value.trim() : selectedModel,
+    api_key: $('#providerApiKey').value.trim(),
+    kind,
+    local_backend: kind === 'local' ? $('#providerFormat').value : undefined,
+    request_format: $('#providerFormat').value,
+    context_window: numberOrUndefined('#providerContextWindow'),
+    max_output_tokens: numberOrUndefined('#providerMaxOutputTokens'),
+    temperature: numberOrUndefined('#providerTemperature'),
+    reasoning_effort: $('#providerReasoningEffort').value,
+    supports_images: imageChoice === 'auto' ? null : imageChoice === 'true',
+  };
+}
+
+async function loadProviderModels({ automatic = false } = {}) {
+  if (!state.providerEditing) return;
+  const values = providerFormValue();
+  const localFormat = ['lm_studio', 'ollama', 'llama_cpp', 'unsloth'].includes(values.request_format);
+  if (!values.base_url || (!values.api_key && !values.id && !localFormat)) {
+    if (!automatic) $('#providerError').textContent = '请先填写 API URL 和 API Key';
+    return;
+  }
+  const button = $('#loadProviderModels');
+  button.disabled = true;
+  button.textContent = '检查中…';
+  if (!automatic) $('#providerError').textContent = '正在获取可用模型…';
+  try {
+    const result = await api('/api/providers/models', { method: 'POST', body: values });
+    if (!result.models?.length) throw new Error('接口没有返回可用模型，请选择"手动输入模型名称"');
+    const current = $('#providerModel').value;
+    setProviderModelOptions(result.models, current && current !== '__custom__' ? current : '');
+    applyProviderModelCapabilities();
+    $('#providerError').textContent = '模型目录可访问；请继续点击“测试连接”验证实际推理。';
+    toast(`已找到 ${result.models.length} 个模型`);
+  } catch (error) {
+    $('#providerError').textContent = `模型检查失败：${error.message}`;
+    if (!$('#providerModel').value) setProviderModelOptions([], '');
+  } finally {
+    button.disabled = false;
+    button.textContent = '检查模型';
+  }
+}
+
+let providerModelCheckTimer;
+function scheduleProviderModelCheck() {
+  clearTimeout(providerModelCheckTimer);
+  providerModelCheckTimer = setTimeout(() => loadProviderModels({ automatic: true }), 350);
+}
+
+async function saveProvider(event) {
+  event.preventDefault();
+  try {
+    const values = providerFormValue();
+    if (values.model && (!values.context_window || !values.max_output_tokens)) {
+      try {
+        const result = await api('/api/providers/models', { method: 'POST', body: values });
+        const matched = (result.models || []).find((item) => String(item.id || '') === values.model);
+        if (matched?.context_window && !values.context_window) {
+          values.context_window = Number(matched.context_window);
+          $('#providerContextWindow').value = values.context_window;
+        }
+        if (matched?.max_output_tokens && !values.max_output_tokens) {
+          values.max_output_tokens = Number(matched.max_output_tokens);
+          $('#providerMaxOutputTokens').value = values.max_output_tokens;
+        }
+      } catch (_) {
+        // Capability metadata is optional; the provider may supply defaults.
+      }
+    }
+    const saved = await api('/api/providers', { method: 'POST', body: values });
+    ['providers', 'model_profiles'].forEach((key) => {
+      const list = state.bootstrap[key] || (state.bootstrap[key] = []);
+      const index = list.findIndex((item) => item.id === saved.id);
+      if (index >= 0) list[index] = saved;
+      else list.push(saved);
+    });
+    $('#providerId').value = saved.id;
+    renderProviders();
+    populateModels();
+    const visionSelect = $('#visionProvider');
+    if (visionSelect) delete visionSelect.dataset.populated;
+    populateVisionSettings();
+    toast('API 供应商已保存');
+  } catch (error) {
+    $('#providerError').textContent = error.message;
+  }
+}
+
+function addProvider() {
+  if (state.providerEditing) return;
+  const local = state.providerKindTab === 'local';
+  showProviderForm({
+    kind: state.providerKindTab,
+    request_format: local ? 'lm_studio' : 'openai_chat',
+  }, { editing: true, isNew: true });
+  $('#providerName').focus();
+}
+
+function editProvider() {
+  if (!$('#providerId').value) return;
+  setProviderEditMode(true, false);
+  $('#providerName').focus();
+}
+
+function cancelProviderEdit() {
+  clearTimeout(providerModelCheckTimer);
+  renderProviders();
+}
+
+async function testProvider() {
+  $('#providerError').textContent = '正在测试连接…';
+  try {
+    const result = await api('/api/providers/test', { method: 'POST', body: providerFormValue() });
+    const sourceLabels = {
+      explicit: '手动配置',
+      llama_props: 'llama.cpp /props',
+      ollama_show: 'Ollama capabilities',
+      lm_studio_models: 'LM Studio 模型目录',
+      image_probe: '真实图片探针',
+      model_name: '模型名推断（未确认）',
+    };
+    const vision = result.supports_images ? '支持图片' : '纯文本';
+    const source = sourceLabels[result.capability_source] || result.capability_source || '未知';
+    const proxyNote = result.proxy_state?.note ? `；${result.proxy_state.note}` : '';
+    $('#providerError').textContent = `推理连接成功：${result.response}；视觉：${vision}；来源：${source}${proxyNote}`;
+  } catch (error) {
+    $('#providerError').textContent = `模型目录可能可访问，但推理服务不可用：${error.message}`;
+  }
+}
+
+async function toggleProviderKey() {
+  const input = $('#providerApiKey');
+  const button = $('#toggleProviderKey');
+  if (input.type === 'text') {
+    input.type = 'password';
+    button.textContent = '显示';
+    button.title = '显示 API Key';
+    return;
+  }
+  try {
+    if (!input.value && $('#providerId').value) {
+      const result = await api(`/api/providers/${$('#providerId').value}/secret`);
+      input.value = result.api_key || '';
+    }
+    input.type = 'text';
+    button.textContent = '隐藏';
+    button.title = '隐藏 API Key';
+  } catch (error) {
+    $('#providerError').textContent = error.message;
+  }
+}
+
+function populateRuntimeSettings() {
+  const settings = state.bootstrap.settings;
+  if ($('#commandTimeout')) $('#commandTimeout').value = settings.command_timeout;
+  if ($('#workspaceDir')) $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
+  if ($('#resolvedWorkspaceDir')) $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  const imaging = settings.imaging || {};
+  if ($('#imageUploadOriginal')) $('#imageUploadOriginal').checked = Boolean(imaging.image_upload_original);
+  if ($('#imageMaxPixels')) $('#imageMaxPixels').value = Number(imaging.image_max_pixels || 2000000);
+  if ($('#thumbnailMaxPixels')) $('#thumbnailMaxPixels').value = Number(imaging.thumbnail_max_pixels || 500000);
+  renderImageCompressRow();
+  if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(Number(state.bootstrap.image_cache_bytes || 0));
+  renderProxySettings();
+  renderWorkspaceControl();
+}
+
+/* ---------- 网络代理（出站请求） ---------- */
+function proxyStateFromConfig(proxy) {
+  if (!proxy) return { mode: 'system', url: '' };
+  const url = String(proxy.url || '').trim();
+  if (url) return { mode: 'manual', url };
+  if (!proxy.enabled) return { mode: 'direct', url: '' };
+  // 开启代理但未填地址：按 use_system_fallback 决定跟随系统代理或直连。
+  return proxy.use_system_fallback === false ? { mode: 'direct', url: '' } : { mode: 'system', url: '' };
+}
+
+function renderProxySettings() {
+  const settings = state.bootstrap.settings || {};
+  const st = proxyStateFromConfig(settings.proxy);
+  if ($('#proxySystem')) $('#proxySystem').checked = st.mode === 'system';
+  if ($('#proxyDirect')) $('#proxyDirect').checked = st.mode === 'direct';
+  if ($('#proxyManual')) $('#proxyManual').checked = st.mode === 'manual';
+  if ($('#proxyUrl')) $('#proxyUrl').value = st.url || '';
+  renderProxyRows();
+  renderProxyStateHint(null);
+}
+
+function renderProxyRows() {
+  const row = $('#proxyManualRow');
+  if (row) row.hidden = !Boolean($('#proxyManual')?.checked);
+}
+
+function renderProxyStateHint(result) {
+  const hint = $('#proxyStateHint');
+  if (!hint) return;
+  const stateInfo = (result && result.proxy_state) || state.bootstrap?.proxy_state || null;
+  if (stateInfo && stateInfo.note) {
+    hint.textContent = `当前生效：${stateInfo.note}`;
+    return;
+  }
+  const hasProxy = Boolean((state.bootstrap.settings || {}).proxy);
+  hint.textContent = hasProxy
+    ? ''
+    : '尚未保存过代理开关：外部请求默认跟随系统代理；保存下方选择后立即生效。';
+}
+
+function renderImageCompressRow() {
+  const row = $('#imageCompressRow');
+  if (row) row.hidden = Boolean($('#imageUploadOriginal')?.checked);
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  if (!value) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let n = value;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i += 1; }
+  return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+async function cleanImageCache() {
+  const btn = $('#cleanImageCache');
+  if (!btn) return;
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '清理中…';
+  try {
+    const result = await api('/api/imaging/clean', { method: 'POST', body: {} });
+    state.bootstrap.image_cache_bytes = Number(result.size || 0);
+    $('#imageCacheSize').textContent = formatBytes(Number(result.size || 0));
+    toast(`已清理 ${formatBytes(Number(result.freed || 0))}（删除 ${Number(result.removed || 0)} 个文件）`);
+  } catch (error) {
+    toast(`清理失败：${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+}
+
+function renderWorkspaceControl() {
+  const resolved = String(state.bootstrap?.resolved_workspace_dir || '').trim();
+  const raw = String(state.bootstrap?.settings?.workspace_dir || 'workspace').trim() || 'workspace';
+  const label = raw === 'workspace' ? 'workspace' : (raw.split(/[\\/]/).filter(Boolean).pop() || raw);
+  const button = $('#workspaceLabel');
+  if (button) button.textContent = label;
+  const detail = $('#workspaceDialogResolved');
+  if (detail) detail.textContent = resolved || '保存后显示解析路径';
+  const input = $('#workspaceDialogInput');
+  if (input && document.activeElement !== input) input.value = raw === 'workspace' ? '' : raw;
+}
+
+function workspaceEntryMarkup(entry) {
+  const icon = entry.kind === 'directory' ? '▸' : '·';
+  return `<button type="button" class="workspace-entry ${entry.kind}" data-workspace-path="${escapeHtml(entry.path)}" data-workspace-kind="${entry.kind}"><span class="workspace-entry-icon">${icon}</span><span class="workspace-entry-name">${escapeHtml(entry.name)}</span>${entry.kind === 'file' && entry.size != null ? `<small>${Number(entry.size).toLocaleString()} B</small>` : ''}</button>`;
+}
+
+async function loadWorkspaceTree(path = '') {
+  const tree = $('#workspaceTree');
+  if (!tree) return;
+  tree.innerHTML = '<p class="activity">正在读取工作区…</p>';
+  try {
+    const result = await api('/api/workspace/browse?path=' + encodeURIComponent(path || ''));
+    state.workspaceBrowsePath = result.path || result.root || '';
+    $('#workspaceTreePath').textContent = state.workspaceBrowsePath || '-';
+    $('#workspaceTreeTitle').textContent = (state.workspaceBrowsePath.split(/[\\/]/).filter(Boolean).pop() || '当前工作区');
+    $('#workspaceUp').disabled = !result.parent;
+    tree.innerHTML = result.entries?.length ? result.entries.map(workspaceEntryMarkup).join('') : '<p class="activity">此目录为空</p>';
+    $$('#workspaceTree .workspace-entry').forEach((button) => button.addEventListener('dblclick', () => {
+      if (button.dataset.workspaceKind === 'directory') loadWorkspaceTree(button.dataset.workspacePath);
+    }));
+    $$('#workspaceTree .workspace-entry').forEach((button) => button.addEventListener('click', () => {
+      if (button.dataset.workspaceKind === 'directory') loadWorkspaceTree(button.dataset.workspacePath);
+      else { $('#workspaceDialogInput').value = result.root || ''; toast(`已选中文件：${button.querySelector('.workspace-entry-name')?.textContent || ''}`); }
+    }));
+  } catch (error) { tree.innerHTML = `<p class="form-error">${escapeHtml(error.message)}</p>`; }
+}
+
+async function loadMcpServers() {
+  const data = await api('/api/mcp');
+  state.bootstrap.mcp_servers = data.servers || [];
+  renderMcp();
+  return state.bootstrap.mcp_servers;
+}
+
+function populateVisionSettings() {
+  const settings = state.bootstrap.settings || {};
+  const vision = settings.vision || {};
+  const select = $('#visionProvider');
+  if (select) {
+    const providers = state.bootstrap.model_profiles || state.bootstrap.providers || [];
+    const previous = select.value;
+    select.replaceChildren(new Option('OVH 免费视觉链（默认）', ''));
+    for (const kind of ['online', 'local']) {
+      const list = providers.filter((p) => (p.kind || 'online') === kind);
+      if (!list.length) continue;
+      const group = document.createElement('optgroup');
+      group.label = kind === 'local' ? '本地 API / 模型' : '在线 API';
+      for (const provider of list) {
+        const option = new Option(`${provider.name || provider.id} · ${provider.model || ''}`, provider.model_key || provider.id);
+        group.append(option);
+      }
+      select.append(group);
+    }
+    const target = vision.provider_model_key || previous || '';
+    if ([...select.options].some((option) => option.value === target)) select.value = target;
+    const deleteButton = $('#deleteVisionProvider');
+    if (deleteButton) deleteButton.disabled = !select.value;
+  }
+  const auto = $('#visionAutoRoute'); if (auto) auto.checked = vision.auto_route !== false;
+  const timeout = $('#visionTimeout'); if (timeout) timeout.value = vision.timeout_ms || 180000;
+  const maxImages = $('#visionMaxImages'); if (maxImages) maxImages.value = vision.max_images || 4;
+}
+
+function populateSearchSettings() {
+  const settings = state.bootstrap.settings || {};
+  const search = settings.search || {};
+  const profiles = searchProfiles(search);
+  const select = $('#searchProfileSelect');
+  if (!select) return;
+  select.replaceChildren(...profiles.map((profile) => new Option(profile.name || profile.endpoint || '未命名搜索 API', profile.id)));
+  if (!profiles.length) select.append(new Option('尚未添加搜索 API', ''));
+  const target = profiles.some((profile) => profile.id === search.provider_id)
+    ? search.provider_id
+    : (profiles[0]?.id || '');
+  select.value = target;
+  renderSearchProfileFields(profiles.find((profile) => profile.id === target) || {});
+  $('#deleteSearchProfile').disabled = !target;
+  // web_search 可用性诊断：是否已配置端点 + 是否为当前会话工具集可用（只读提示）
+  const active = profiles.find((profile) => profile.id === target) || profiles[0] || null;
+  const endpointConfigured = Boolean(active?.endpoint?.trim());
+  const status = $('#searchAvailability');
+  if (status) {
+    status.textContent = endpointConfigured
+      ? `web_search 可用性：端点已配置 ✓（${(active.endpoint || '').slice(0, 48)}）。只要 Agent 工具集包含 web_search，模型即可调用。`
+      : `web_search 可用性：端点未配置 ✗ —— web_search 工具不会出现在工具清单中。请填写“端点 URL”并点击“测试搜索连接”。`;
+  }
+}
+
+function searchProfiles(search = state.bootstrap?.settings?.search || {}) {
+  if (Array.isArray(search.profiles) && search.profiles.length) {
+    return search.profiles.map((profile) => ({ ...profile }));
+  }
+  if (search.endpoint) {
+    return [{
+      id: 'legacy-search',
+      name: '搜索 API',
+      endpoint: search.endpoint,
+      api_key: search.api_key || '',
+      max_results: search.max_results || 5,
+    }];
+  }
+  return [];
+}
+
+function renderSearchProfileFields(profile) {
+  $('#searchProfileName').value = profile.name || '';
+  $('#searchEndpoint').value = profile.endpoint || '';
+  $('#searchApiKey').value = profile.api_key || '';
+  $('#searchMaxResults').value = profile.max_results || 5;
+}
+
+function searchProfileFormValue(id = '') {
+  return {
+    id: id || `search_${Date.now().toString(36)}`,
+    name: $('#searchProfileName')?.value.trim() || '搜索 API',
+    endpoint: $('#searchEndpoint')?.value.trim() || '',
+    api_key: $('#searchApiKey')?.value.trim() || '',
+    max_results: Number($('#searchMaxResults')?.value || 5),
+  };
+}
+
+async function saveVisionSettings(options = {}) {
+  const payload = {
+    vision: {
+      provider_model_key: $('#visionProvider')?.value || '',
+      auto_route: $('#visionAutoRoute')?.checked !== false,
+      timeout_ms: Number($('#visionTimeout')?.value || 180000),
+      max_images: Number($('#visionMaxImages')?.value || 4),
+    },
+  };
+  try {
+    const result = await api('/api/settings', { method: 'POST', body: payload });
+    Object.assign(state.bootstrap.settings, result.settings);
+    const deleteButton = $('#deleteVisionProvider');
+    if (deleteButton) deleteButton.disabled = !payload.vision.provider_model_key;
+    if (!options.quiet) toast('视觉设置已保存');
+  } catch (error) {
+    toast(`视觉设置保存失败：${error.message}`);
+  }
+}
+
+function selectedVisionProvider() {
+  const key = $('#visionProvider')?.value || '';
+  return (state.bootstrap.model_profiles || state.bootstrap.providers || [])
+    .find((provider) => (provider.model_key || provider.id) === key) || null;
+}
+
+function openVisionProviderForm() {
+  switchSettingsTab('models');
+  addProvider();
+}
+
+async function deleteVisionProvider() {
+  const provider = selectedVisionProvider();
+  if (!provider) return;
+  if (!confirm(`删除 API 供应商“${provider.name || provider.id}”？这会同时移除模型配置。`)) return;
+  try {
+    await api(`/api/providers/${encodeURIComponent(provider.id)}`, { method: 'DELETE' });
+    const data = await api('/api/bootstrap');
+    state.bootstrap = { ...state.bootstrap, ...data };
+    populateModels();
+    renderProviders();
+    populateVisionSettings();
+    toast('API 供应商已删除');
+  } catch (error) {
+    toast(`删除 API 失败：${error.message}`);
+  }
+}
+
+async function persistSearchProfiles(profiles, providerId, quiet = false) {
+  const payload = { search: { provider_id: providerId || '', profiles } };
+  const result = await api('/api/settings', { method: 'POST', body: payload });
+  Object.assign(state.bootstrap.settings, result.settings);
+  populateSearchSettings();
+  if (!quiet) toast('搜索 API 已保存');
+}
+
+async function saveSearchSettings(options = {}) {
+  const search = state.bootstrap.settings.search || {};
+  const profiles = searchProfiles(search);
+  let id = $('#searchProfileSelect')?.value || '';
+  const profile = searchProfileFormValue(id);
+  id = profile.id;
+  const index = profiles.findIndex((item) => item.id === id);
+  if (index >= 0) profiles[index] = profile;
+  else profiles.push(profile);
+  await persistSearchProfiles(profiles, id, options.quiet === true);
+}
+
+function addSearchProfile() {
+  const search = state.bootstrap.settings.search || {};
+  const profiles = searchProfiles(search);
+  const profile = { id: `search_${Date.now().toString(36)}`, name: '新搜索 API', endpoint: '', api_key: '', max_results: 5 };
+  profiles.push(profile);
+  state.bootstrap.settings.search = { provider_id: profile.id, profiles };
+  populateSearchSettings();
+  $('#searchProfileName').select();
+}
+
+async function deleteSearchProfile() {
+  const id = $('#searchProfileSelect')?.value || '';
+  if (!id) return;
+  const search = state.bootstrap.settings.search || {};
+  const profiles = searchProfiles(search);
+  const current = profiles.find((profile) => profile.id === id);
+  if (!confirm(`删除搜索 API“${current?.name || ''}”？`)) return;
+  const remaining = profiles.filter((profile) => profile.id !== id);
+  await persistSearchProfiles(remaining, remaining[0]?.id || '');
+}
+
+async function testVisionCapability(probe) {
+  const el = $('#visionTestResult');
+  if (el) el.textContent = '测试中…';
+  try {
+    const result = await api('/api/vision/test', {
+      method: 'POST',
+      body: { provider_model_key: $('#visionProvider')?.value || '', probe },
+    });
+    if (el) {
+      const label = '视觉识别';
+      const errors = {
+        connection: '服务连接失败',
+        text_inference: '文本推理失败',
+        image_load: '图片加载失败',
+        vision_capability: '视觉能力不可用',
+        unknown: '未知错误',
+      };
+      el.textContent = result.ok
+        ? `${label}可用（延迟 ${result.latency_ms ?? '?'}ms，${result.backend || result.model || ''}）`
+        : `${label}不可用 [${errors[result.error_kind] || errors.unknown}]：${result.reason || ''}${result.hint ? `；${result.hint}` : ''}`;
+    }
+  } catch (error) {
+    if (el) el.textContent = `测试失败：${error.message}`;
+  }
+}
+
+async function testVisionConnection() {
+  return testVisionCapability('vision');
+}
+
+async function testSearchConnection() {
+  const el = $('#searchTestResult');
+  if (el) el.textContent = '测试中…';
+  try {
+    const result = await api('/api/search/test', {
+      method: 'POST',
+      body: searchProfileFormValue($('#searchProfileSelect')?.value || ''),
+    });
+    if (el) el.textContent = result.ok ? `可用（provider=${result.provider || ''}）` : `不可用：${result.reason || ''}`;
+  } catch (error) {
+    if (el) el.textContent = `测试失败：${error.message}`;
+  }
+}
+
+// ---- Agent 管理 ----
+
+async function refreshAgentsFromServer() {
+  const data = await api('/api/agents');
+  state.bootstrap.agents = data.agents || [];
+  state.bootstrap.default_agent_id = data.default_agent_id || 'general';
+}
+
+function renderAgentManager() {
+  const list = $('#agentList');
+  if (!list) return;
+  const agents = state.bootstrap?.agents || [];
+  const defaultId = String(state.bootstrap?.default_agent_id || '');
+  list.innerHTML = agents.map((agent) => `
+    <div class="agent-item ${agent.id === defaultId ? 'default' : ''}">
+      <div class="agent-item-info">
+        <b>${escapeHtml(agent.name)}${agent.id === defaultId ? '<em>默认</em>' : ''}${agent.built_in ? '<em>内置</em>' : ''}</b>
+        <small>${agent.skill_ids?.length ? `${agent.skill_ids.length} 个固定 Skill` : '无固定 Skill'}</small>
+        ${agent.system_prompt ? `<p>${escapeHtml(agent.system_prompt)}</p>` : ''}
+      </div>
+      <div class="agent-item-actions">
+        <button class="control-button" data-agent-edit="${escapeHtml(agent.id)}" type="button">编辑</button>
+        ${agent.built_in ? '' : `<button class="danger-button" data-agent-delete="${escapeHtml(agent.id)}" type="button">删除</button>`}
+      </div>
+    </div>`).join('') || '<p class="activity">尚未添加 Agent，点击下方按钮新增。</p>';
+}
+
+function renderAgentSkillPicker() {
+  const list = $('#agentSkillList');
+  if (!list) return;
+  const skills = state.bootstrap?.skills || [];
+  list.innerHTML = skills.map((skill) => `
+    <label class="skill-item">
+      <input type="checkbox" value="${skill.id}" ${state.agentFormSkillIds.includes(skill.id) ? 'checked' : ''}>
+      <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
+    </label>`).join('') || '<p class="activity">暂无可用 Skill</p>';
+}
+
+function showAgentForm(agent = null) {
+  $('#agentFormId').value = agent?.id || '';
+  $('#agentId').value = agent?.id || '';
+  $('#agentId').disabled = Boolean(agent);
+  $('#agentName').value = agent?.name || '';
+  $('#agentSystemPromptEdit').value = agent?.system_prompt || '';
+  state.agentFormSkillIds = agent?.skill_ids ? [...agent.skill_ids] : [];
+  state.agentFormIsNew = !agent;
+  state.agentFormToolScope = agent?.tool_scope ? [...agent.tool_scope] : [];
+  state.agentFormUnknownTools = [];
+  // 旧 Agent 的 tool_scope 为空 = 不限制（运行时全放行，且以后新增的工具自动纳入）。
+  // 界面上按“全选”展示，但只要用户没动过勾选就仍以空数组保存，避免被固化成死列表。
+  state.agentFormUnrestricted = Boolean(agent) && !state.agentFormToolScope.length;
+  state.agentFormScopeTouched = false;
+  // 表单每次打开由 renderAgentToolPicker 重建预设下拉框与模板行；
+  // 「存为模板」控件随下方勾选实时显隐（自定义组合时出现）。
+  renderAgentSkillPicker();
+  renderAgentToolPicker();
+  $('#agentError').textContent = '';
+  $('#addAgent').hidden = true;
+  $('#agentForm').hidden = false;
+  $('#agentName').focus();
+}
+
+// Agent 设置：工具选择的联动规则。创建者工具依赖其查询工具（与后端
+// JOB_CREATOR_TOOL_DEPS / 依赖闭包保持一致）。选中创建者时自动带上查询工具；
+// 取消某个查询工具时，若仍有选中的创建者依赖它，则同步取消该创建者，保证
+// “创建者被允许 ⇔ 其描述里让你查询的工具也被允许”的 invariant 不被打破。
+const AGENT_TOOL_DEP_RULES = {
+  run_in_background: ['job_output', 'job_status', 'job_wait', 'job_kill'],
+  subagent: ['job_output'],
+  comfyui_batch: ['job_output', 'job_status', 'job_wait'],
+};
+
+function applyAgentToolDependency(scope, changedTool, checked) {
+  const result = new Set(scope);
+  if (checked) {
+    result.add(changedTool);
+    const deps = AGENT_TOOL_DEP_RULES[changedTool];
+    if (deps) deps.forEach((dep) => result.add(dep));
+  } else {
+    result.delete(changedTool);
+    // 取消的若是某创建者必需的查询工具，则把这些创建者也一并取消。
+    for (const [creator, deps] of Object.entries(AGENT_TOOL_DEP_RULES)) {
+      if (deps.includes(changedTool) && result.has(creator)) result.delete(creator);
+    }
+  }
+  return [...result];
+}
+
+// 把工具集补齐依赖闭包：选中创建者工具时自动带上它依赖的查询工具。
+// 与后端依赖闭包保持一致，保证这里勾选的状态就是运行时会放行的 allowed_tools。
+function normalizeToolScope(scope) {
+  const result = new Set(scope || []);
+  for (const [creator, deps] of Object.entries(AGENT_TOOL_DEP_RULES)) {
+    if (result.has(creator)) deps.forEach((dep) => result.add(dep));
+  }
+  return [...result];
+}
+
+// 当前工具集是否恰好等于某个预设（用于高亮）；都不匹配则为「自定义」。
+function matchToolPreset() {
+  const presets = state.toolCatalog?.presets || [];
+  const current = new Set(state.agentFormToolScope);
+  return presets.find(
+    (preset) => preset.tools.length === current.size && preset.tools.every((t) => current.has(t)),
+  ) || null;
+}
+
+// 预设/模板相关 UI 全量刷新：头部状态标签 + 下拉框当前值 + 「存为模板」控件显隐。
+// 任何勾选变化（syncAgentToolCheckboxes）都会走到这里。
+function updateToolPresetUI() {
+  const matched = matchToolPreset();
+  const unrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
+  const label = $('#agentToolPresetState');
+  if (label) {
+    if (unrestricted) {
+      label.textContent = '当前：未限制（等同全能，以后新增的工具自动包含）';
+      label.classList.remove('custom');
+    } else if (matched) {
+      label.textContent = `当前：${matched.name}`;
+      label.classList.remove('custom');
+    } else {
+      label.textContent = '当前：自定义';
+      label.classList.add('custom');
+    }
+  }
+  const select = $('#agentToolPresetSelect');
+  if (select) select.value = unrestricted ? '__custom__' : (matched ? matched.id : '__custom__');
+  // 「存为模板」只服务自定义组合：未限制旧配置、恰好等于某预设、或没勾任何工具时都不出现。
+  const canSaveTemplate = !unrestricted && !matched && state.agentFormToolScope.length > 0;
+  const saveButton = $('#agentToolTemplateSave');
+  const nameInput = $('#agentToolTemplateName');
+  if (saveButton) saveButton.hidden = !canSaveTemplate;
+  if (nameInput) nameInput.hidden = !canSaveTemplate;
+}
+
+function updateToolCounter() {
+  const total = (state.toolCatalog?.tools || []).length;
+  const counter = $('#agentToolCount');
+  if (counter) {
+    const unrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
+    counter.textContent = unrestricted
+      ? `全部 ${total} 个（未限制）`
+      : `已选 ${state.agentFormToolScope.length} / ${total} 个工具`;
+  }
+}
+
+// 预设下拉框：选项 = 各内置预设 + 「自定义」。选预设=整组套用（仍走依赖闭包）；
+// 手动勾选下方工具后不再精确匹配任何预设，即进入「自定义」模式。
+function renderToolPresetSelect() {
+  const select = $('#agentToolPresetSelect');
+  if (!select) return;
+  const presets = state.toolCatalog?.presets || [];
+  select.innerHTML = '';
+  const presetGroup = document.createElement('optgroup');
+  presetGroup.label = '预设 · 一键套用';
+  for (const preset of presets) {
+    const opt = document.createElement('option');
+    opt.value = preset.id;
+    opt.textContent = `${preset.name} · ${(preset.tools || []).length} 个工具`;
+    presetGroup.append(opt);
+  }
+  const customGroup = document.createElement('optgroup');
+  customGroup.label = '手动组合';
+  const customOpt = document.createElement('option');
+  customOpt.value = '__custom__';
+  customOpt.textContent = '自定义（勾选下方工具组成）';
+  customGroup.append(customOpt);
+  select.append(presetGroup, customGroup);
+  updateToolPresetUI();
+}
+
+// —— 自定义工具模板：把任意自定义组合存成命名模板（localStorage 全局保存），
+// 之后在别的 Agent 表单里点一下模板芯片即可一键复刻。——
+
+const TOOL_TEMPLATE_STORE = 'naiba.agentToolTemplates';
+
+function loadToolTemplates() {
+  if (state.toolTemplatesLoaded) return state.toolTemplates;
+  try {
+    const raw = JSON.parse(localStorage.getItem(TOOL_TEMPLATE_STORE) || '[]');
+    state.toolTemplates = Array.isArray(raw) ? raw : [];
+  } catch (_error) {
+    state.toolTemplates = [];
+  }
+  state.toolTemplatesLoaded = true;
+  return state.toolTemplates;
+}
+
+function persistToolTemplates() {
+  try {
+    localStorage.setItem(TOOL_TEMPLATE_STORE, JSON.stringify(state.toolTemplates));
+  } catch (_error) { /* localStorage 禁用/写满等异常：忽略，不打断表单操作 */ }
+}
+
+function knownToolNames() {
+  return new Set((state.toolCatalog?.tools || []).map((tool) => tool.name));
+}
+
+// 模板里可能存过已被移除的工具名：复刻时只应用当前目录里还存在的。
+function usableTemplateTools(template) {
+  const known = knownToolNames();
+  return (template.tools || []).filter((name) => known.has(name));
+}
+
+// 一键复刻：把模板里的工具组合套用到当前表单（仍走依赖闭包 + 复选框同步）。
+function applyToolTemplate(templateId) {
+  const template = loadToolTemplates().find((item) => item.id === templateId);
+  if (!template) return;
+  const tools = usableTemplateTools(template);
+  if (!tools.length) {
+    toast('该模板里的工具当前都已不存在，未应用');
+    return;
+  }
+  setAgentToolScope(normalizeToolScope(tools));
+  syncAgentToolCheckboxes($('#agentToolScope'));
+  toast(`已复刻模板「${template.name}」（${tools.length} 个工具）`);
+}
+
+function deleteToolTemplate(templateId) {
+  state.toolTemplates = loadToolTemplates().filter((item) => item.id !== templateId);
+  persistToolTemplates();
+  renderToolTemplates();
+  toast('模板已删除');
+}
+
+// 把当前勾选收集为一条模板；模板名可先在输入框里填，留空则自动命名。
+function collectTemplateFromCurrent() {
+  const nameInput = $('#agentToolTemplateName');
+  const rawName = (nameInput?.value || '').trim();
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const name = rawName || `自定义组合 ${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+  const known = knownToolNames();
+  const tools = state.agentFormToolScope.filter((tool) => known.has(tool));
+  const template = { id: String(Date.now()), name, tools, created: now.toISOString() };
+  loadToolTemplates().unshift(template);
+  if (state.toolTemplates.length > 30) state.toolTemplates.length = 30;
+  persistToolTemplates();
+  if (nameInput) nameInput.value = '';
+  renderToolTemplates();
+  return template;
+}
+
+// 「我的模板」芯片行：点芯片=复刻，点 ✕=删除。事件在 bindEvents 里委托处理。
+function renderToolTemplates() {
+  const row = $('#agentToolTemplateRow');
+  const box = $('#agentToolTemplates');
+  if (!row || !box) return;
+  const templates = loadToolTemplates();
+  box.innerHTML = '';
+  row.hidden = templates.length === 0;
+  for (const template of templates) {
+    const chip = document.createElement('span');
+    chip.className = 'tool-template-chip';
+    chip.dataset.templateApply = template.id;
+    chip.title = `一键复刻「${template.name}」的工具组合`;
+    const name = document.createElement('b');
+    name.textContent = template.name;
+    const count = document.createElement('em');
+    count.textContent = `${(template.tools || []).length} 个工具`;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'tool-template-del';
+    del.textContent = '✕';
+    del.title = `删除模板「${template.name}」`;
+    del.dataset.templateDel = template.id;
+    chip.append(name, count, del);
+    box.append(chip);
+  }
+}
+
+// 下拉框选择回调：内置预设 → 整组套用；「自定义」→ 若还是未限制旧配置，
+// 先把当前“全选”展示固化成显式列表（退出旧版未限制语义），方便手动删减。
+function onToolPresetSelect(value) {
+  const preset = (state.toolCatalog?.presets || []).find((item) => item.id === value);
+  if (preset) {
+    setAgentToolScope(normalizeToolScope(preset.tools || []));
+    syncAgentToolCheckboxes($('#agentToolScope'));
+    return;
+  }
+  if (state.agentFormUnrestricted && !state.agentFormScopeTouched) {
+    const catalog = state.toolCatalog?.tools || [];
+    setAgentToolScope(catalog.map((tool) => tool.name));
+    syncAgentToolCheckboxes($('#agentToolScope'));
+    return;
+  }
+  updateToolPresetUI();
+}
+
+// 用户主动改动工具集时才走这里：标记 touched，并结束“不限制”状态
+// （一旦手动选过，就按显式列表保存，不再退回空数组语义）。
+function setAgentToolScope(next) {
+  state.agentFormToolScope = next;
+  state.agentFormScopeTouched = true;
+  state.agentFormUnrestricted = false;
+}
+
+// 旧配置里“当前未注册”的工具：保留并告知用户，可一键清除。
+function renderUnknownToolsHint() {
+  const box = $('#agentToolUnknownHint');
+  if (!box) return;
+  const unknown = state.agentFormUnknownTools || [];
+  if (!unknown.length) {
+    box.hidden = true;
+    box.textContent = '';
+    return;
+  }
+  box.hidden = false;
+  box.textContent = `旧配置里有 ${unknown.length} 个当前未注册的工具（${unknown.join('、')}），已原样保留，不影响使用。`;
+  let btn = box.querySelector('button');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'control-button tiny';
+    btn.textContent = '清除';
+    btn.addEventListener('click', () => {
+      state.agentFormUnknownTools = [];
+      state.agentFormScopeTouched = true;
+      renderUnknownToolsHint();
+    });
+    box.append(btn);
+  }
+}
+
+function setToolGroupCollapsed(groupEl, collapsed) {
+  if (!groupEl) return;
+  groupEl.classList.toggle('collapsed', collapsed);
+  const grid = groupEl.querySelector('.permission-grid');
+  if (grid) grid.hidden = collapsed;
+}
+
+function toggleToolGroup(groupEl) {
+  setToolGroupCollapsed(groupEl, !groupEl.classList.contains('collapsed'));
+}
+
+function updateGroupSelectAll(groupEl) {
+  if (!groupEl) return;
+  const all = groupEl.querySelector('input.group-select-all');
+  if (!all) return;
+  const toolCbs = [...groupEl.querySelectorAll('.permission-grid input[type="checkbox"]')];
+  const selected = toolCbs.filter((cb) => state.agentFormToolScope.includes(cb.value));
+  all.checked = toolCbs.length > 0 && selected.length === toolCbs.length;
+  // 半选态：该分类下只有部分工具被勾选。
+  all.indeterminate = toolCbs.length > 0 && selected.length > 0 && selected.length < toolCbs.length;
+  const count = groupEl.querySelector('.group-count');
+  if (count) count.textContent = `${selected.length}/${toolCbs.length}`;
+}
+
+function syncAgentToolCheckboxes(list) {
+  if (!list) return;
+  list.querySelectorAll('.permission-grid input[type="checkbox"]').forEach((cb) => {
+    cb.checked = state.agentFormToolScope.includes(cb.value);
+  });
+  // 同步各分类的“全选”框状态（含半选）与计数。
+  list.querySelectorAll('.agent-tool-group').forEach(updateGroupSelectAll);
+  updateToolCounter();
+  updateToolPresetUI();
+}
+
+async function renderAgentToolPicker() {
+  const list = $('#agentToolScope');
+  if (!list) return;
+  if (!state.toolCatalog) {
+    try {
+      state.toolCatalog = await api('/api/tool_catalog', { method: 'GET' });
+    } catch (error) {
+      state.toolCatalog = {};
+    }
+  }
+  const catalog = state.toolCatalog?.tools || [];
+  const groups = state.toolCatalog?.groups || [];
+  // 兼容旧配置：挑出当前工具目录里已不存在的名字（老版本移除的工具、临时掉线的
+  // MCP 工具等）单独保留。它们不参与勾选、计数与预设匹配，但保存时原样写回，
+  // 这样旧 Agent 打开就能看到原本的勾选，不用重新配一遍。
+  if (state.agentFormToolScope.length) {
+    const knownNames = new Set(catalog.map((tool) => tool.name));
+    state.agentFormUnknownTools = [...new Set(
+      state.agentFormToolScope.filter((name) => !knownNames.has(name)),
+    )];
+    state.agentFormToolScope = state.agentFormToolScope.filter((name) => knownNames.has(name));
+  }
+  // 仍未选择时：新 Agent 用后端默认选中集（=标准模式）；旧 Agent（空 tool_scope=不限制）按全选展示。
+  if (!state.agentFormToolScope.length) {
+    state.agentFormToolScope = state.agentFormIsNew
+      ? catalog.filter((t) => t.default_selected).map((t) => t.name)
+      : catalog.map((t) => t.name);
+  }
+  // 初始加载也应用依赖联动，让显示状态与运行时放行的 allowed_tools 一致。
+  // 这里不置 touched：自动补依赖不算用户改配置，未限制的旧 Agent 仍按“不限制”保存。
+  state.agentFormToolScope = normalizeToolScope(state.agentFormToolScope);
+  renderToolPresetSelect();
+  renderToolTemplates();
+  renderUnknownToolsHint();
+  const toolMap = new Map(catalog.map((tool) => [tool.name, tool]));
+  list.innerHTML = '';
+  for (const group of groups) {
+    const tools = (group.tools || []).map((name) => toolMap.get(name)).filter(Boolean);
+    if (!tools.length) continue;
+    const groupEl = document.createElement('div');
+    groupEl.className = 'agent-tool-group collapsed';
+    groupEl.dataset.group = group.name;
+
+    const head = document.createElement('div');
+    head.className = 'agent-tool-group-head';
+    head.setAttribute('role', 'button');
+    head.tabIndex = 0;
+    head.title = '点击展开/收起，展开后可逐个勾选';
+
+    const caret = document.createElement('span');
+    caret.className = 'group-caret';
+    caret.textContent = '▸';
+
+    // 分类级“全选”：点击一次勾选/取消该分类所有工具（沿用依赖联动）。
+    const allCb = document.createElement('input');
+    allCb.type = 'checkbox';
+    allCb.className = 'group-select-all';
+    allCb.setAttribute('data-group', group.name);
+    allCb.title = `全选/取消全选「${group.name}」分类下的所有工具`;
+    allCb.addEventListener('click', (e) => e.stopPropagation());
+    allCb.addEventListener('change', () => {
+      let scope = state.agentFormToolScope;
+      for (const tool of tools) {
+        scope = applyAgentToolDependency(scope, tool.name, allCb.checked);
+      }
+      setAgentToolScope(scope);
+      // 勾上分类时自动展开，让用户看到自己到底开了什么。
+      if (allCb.checked) setToolGroupCollapsed(groupEl, false);
+      syncAgentToolCheckboxes(list);
+    });
+
+    const title = document.createElement('span');
+    title.className = 'group-title';
+    title.textContent = group.name;
+    const count = document.createElement('span');
+    count.className = 'group-count';
+    const desc = document.createElement('small');
+    desc.className = 'group-desc';
+    desc.textContent = group.desc || '';
+    head.append(caret, allCb, title, count, desc);
+    head.addEventListener('click', () => toggleToolGroup(groupEl));
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        toggleToolGroup(groupEl);
+      }
+    });
+    groupEl.append(head);
+
+    const grid = document.createElement('div');
+    grid.className = 'permission-grid';
+    grid.hidden = true;
+    for (const tool of tools) {
+      const label = document.createElement('label');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = tool.name;
+      cb.checked = state.agentFormToolScope.includes(tool.name);
+      if (tool.model_target === 'vision') {
+        cb.title = '针对支持看图的视觉模型（多模态大脑）：直接读取图片。';
+      } else if (tool.model_target === 'text') {
+        cb.title = '针对文本模型：通过视觉车道解读图片。';
+      }
+      cb.addEventListener('change', (e) => {
+        setAgentToolScope(applyAgentToolDependency(
+          state.agentFormToolScope, tool.name, e.target.checked,
+        ));
+        syncAgentToolCheckboxes(list);
+      });
+      const span = document.createElement('span');
+      const b = document.createElement('b');
+      b.textContent = tool.name;
+      if (AGENT_TOOL_DEP_RULES[tool.name]) {
+        b.title = '选中后会自动带上其依赖的查询工具（job_output/job_status/job_wait/job_kill 等）。';
+      }
+      const small = document.createElement('small');
+      small.textContent = tool.description || '';
+      span.append(b, small);
+      label.append(cb, span);
+      grid.append(label);
+    }
+    groupEl.append(grid);
+    list.append(groupEl);
+  }
+  // 初始渲染后同步一次，让各分类“全选”框进入正确的勾选/半选状态。
+  syncAgentToolCheckboxes(list);
+}
+
+// 「展开全部 / 收起全部」：一键切换所有分类。
+function toggleAllToolGroups() {
+  const list = $('#agentToolScope');
+  if (!list) return;
+  const groupEls = [...list.querySelectorAll('.agent-tool-group')];
+  const expand = groupEls.some((el) => el.classList.contains('collapsed'));
+  groupEls.forEach((el) => setToolGroupCollapsed(el, !expand));
+  const btn = $('#toggleAllToolGroups');
+  if (btn) btn.textContent = expand ? '收起全部' : '展开全部';
+}
+
+function hideAgentForm() {
+  $('#agentForm').hidden = true;
+  $('#addAgent').hidden = false;
+  $('#agentError').textContent = '';
+}
+
+async function saveAgentForm() {
+  // 旧 Agent 若原本是空 tool_scope（=不限制）且用户没动过勾选，就继续以空数组保存，
+  // 保留“以后新增工具自动纳入”的语义，不要在这里被固化成一份死的工具名单。
+  const keepUnrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
+  const payload = {
+    id: $('#agentId').value.trim(),
+    name: $('#agentName').value.trim(),
+    system_prompt: $('#agentSystemPromptEdit').value,
+    skill_ids: state.agentFormSkillIds,
+    tool_scope: keepUnrestricted
+      ? []
+      : [...new Set([...state.agentFormToolScope, ...state.agentFormUnknownTools])],
+  };
+  try {
+    await api('/api/agents', { method: 'POST', body: payload });
+    await refreshAgentsFromServer();
+    hideAgentForm();
+    renderAgents();
+    renderAgentManager();
+    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
+    toast('Agent 已保存');
+  } catch (error) {
+    $('#agentError').textContent = error.message;
+  }
+}
+
+async function deleteAgent(agentId) {
+  const agent = (state.bootstrap?.agents || []).find((item) => item.id === agentId);
+  if (!confirm(`删除 Agent「${agent?.name || agentId}」？引用它的对话将回退到默认 Agent。`)) return;
+  try {
+    await api(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
+    await refreshAgentsFromServer();
+    renderAgents();
+    renderAgentManager();
+    applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
+    toast('Agent 已删除');
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
+}
+
+async function saveRuntimeSettings() {
+  const mode = [...document.querySelectorAll('input[name="proxyMode"]')].find((el) => el.checked)?.value || 'system';
+  let proxy;
+  if (mode === 'manual') {
+    const url = String($('#proxyUrl')?.value || '').trim();
+    if (!url) {
+      toast('手动代理需要填写代理地址（如 http://127.0.0.1:7890）');
+      return;
+    }
+    proxy = { enabled: true, url, use_system_fallback: false };
+  } else if (mode === 'direct') {
+    proxy = { enabled: false, url: '', use_system_fallback: false };
+  } else {
+    proxy = { enabled: true, url: '', use_system_fallback: true };
+  }
+  const payload = {
+    command_timeout: Number($('#commandTimeout')?.value || 120),
+    workspace_dir: $('#workspaceDir')?.value.trim() || '',
+    imaging: {
+      image_upload_original: Boolean($('#imageUploadOriginal')?.checked),
+      image_max_pixels: Number($('#imageMaxPixels')?.value || 2000000),
+      thumbnail_max_pixels: Number($('#thumbnailMaxPixels')?.value || 500000),
+    },
+    proxy,
+  };
+  const result = await api('/api/settings', { method: 'POST', body: payload });
+  Object.assign(state.bootstrap.settings, result.settings);
+  state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
+  if ($('#resolvedWorkspaceDir')) $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
+  if (result.image_cache_bytes !== undefined) {
+    state.bootstrap.image_cache_bytes = result.image_cache_bytes;
+    if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(Number(result.image_cache_bytes || 0));
+  }
+  if (result.proxy_state) {
+    state.bootstrap.proxy_state = result.proxy_state;
+    renderProxyStateHint(result);
+  }
+  renderWorkspaceControl();
+  toast('运行参数已保存');
+}
+
+async function saveWorkspaceSettings() {
+  const value = $('#workspaceDialogInput')?.value.trim() || '';
+  try {
+    const result = await api('/api/settings', { method: 'POST', body: { workspace_dir: value } });
+    Object.assign(state.bootstrap.settings, result.settings);
+    state.bootstrap.resolved_workspace_dir = result.resolved_workspace_dir || state.bootstrap.resolved_workspace_dir;
+    state.workspaceBrowsePath = state.bootstrap.resolved_workspace_dir;
+    if ($('#workspaceDir')) $('#workspaceDir').value = value;
+    renderWorkspaceControl();
+    if ($('#workspaceDialog')) $('#workspaceDialog').close();
+    toast('工作区已保存');
+  } catch (error) {
+    toast(`工作区保存失败：${error.message}`);
+  }
+}
+
+async function pickWorkspace(targetId = 'workspaceDialogInput') {
+  try {
+    const current = String($(targetId)?.value || '');
+    const result = await api('/api/workspace/pick', { method: 'POST', body: { initial: current } });
+    if (result.cancelled) return;
+    const input = $('#' + targetId);
+    if (input) input.value = result.path || '';
+    if (targetId === 'workspaceDir' && $('#resolvedWorkspaceDir')) {
+      $('#resolvedWorkspaceDir').textContent = result.resolved || '-';
+    }
+  } catch (error) { toast(`目录选择失败：${error.message}`); }
+}
+
+async function saveAccessToken() {
+  const value = $('#accessTokenInput').value.trim();
+  if (!value) {
+    toast('请输入新口令');
+    return;
+  }
+  if (value.length < 4) {
+    toast('口令至少 4 位');
+    return;
+  }
+  const result = await api('/api/settings', { method: 'POST', body: { access_token: value } });
+  Object.assign(state.bootstrap.settings, result.settings);
+  // 更新本会话使用的口令，避免保存后立即失效
+  state.token = value;
+  localStorage.setItem('naibaChatToken', value);
+  $('#accessTokenInput').value = '';
+  $('#accessTokenInput').placeholder = '口令已更新（输入可再次修改）';
+  toast('口令已更新，其他设备需用新口令登录');
+}
+
+function mcpServerState(server) {
+  if (server.status === 'error' || server.error) return { text: '错误', color: '#e45e55' };
+  if (server.activity === 'calling' || (server.active_calls && server.active_calls > 0)) return { text: '使用中', color: '#3ecf8e' };
+  if (server.status === 'connecting' || server.status === 'reconnecting') return { text: '连接中', color: '#e0a13a' };
+  if (server.connected) return { text: '已就绪', color: '#3ecf8e' };
+  return { text: '待机', color: '#7d867d' };
+}
+
+function renderMcp() {
+  const servers = state.bootstrap.mcp_servers || [];
+  // Top-bar status light: priority error > in-use > connection-change > idle
+  const mcpButton = $('#mcpStatus');
+  const dot = mcpButton.querySelector('i');
+  const label = mcpButton.querySelector('span');
+  const anyError = servers.some((s) => s.status === 'error' || s.error);
+  const anyCalling = servers.some((s) => s.activity === 'calling' || (s.active_calls && s.active_calls > 0));
+  const anyConnecting = servers.some((s) => s.status === 'connecting' || s.status === 'reconnecting');
+  let topText;
+  if (anyError) {
+    mcpButton.classList.remove('connected', 'calling', 'connecting'); mcpButton.classList.add('error');
+    if (dot) dot.style.background = '#e45e55'; topText = 'MCP · 错误';
+  } else if (anyCalling) {
+    mcpButton.classList.remove('error', 'connecting'); mcpButton.classList.add('calling');
+    if (dot) dot.style.background = '#3ecf8e'; topText = 'MCP · 使用中';
+  } else if (anyConnecting) {
+    mcpButton.classList.remove('error', 'calling'); mcpButton.classList.add('connecting');
+    if (dot) dot.style.background = '#e0a13a'; topText = 'MCP · 连接中';
+  } else {
+    mcpButton.classList.remove('error', 'calling', 'connecting');
+    if (servers.length && servers.every((s) => s.connected)) {
+      mcpButton.classList.add('connected');
+      if (dot) dot.style.background = '#3ecf8e'; topText = 'MCP · 已就绪';
+    } else {
+      if (dot) dot.style.background = '#7d867d'; topText = servers.length ? 'MCP · 待机' : 'MCP';
+    }
+  }
+  if (label) label.textContent = topText;
+
+  $('#mcpList').innerHTML = servers.map((server) => {
+    const st = mcpServerState(server);
+    const detail = server.connected
+      ? `${server.tools?.length ?? 0} 个工具`
+      : (server.status === 'idle' ? '仅在本轮激活的 Skill 需要 MCP 时连接' : escapeHtml(server.error || st.text));
+    return `<div class="connection-item">
+      <span><b>${escapeHtml(server.id)} · ${st.text}</b><small>${detail}</small></span>
+      <span class="status-mark" style="background:${st.color}"></span>
+    </div>`;
+  }).join('') || '<p class="activity">没有注册 MCP 服务</p>';
+  $$('#mcpList .connection-item').forEach((item, index) => {
+    const server = servers[index];
+    if (!server) return;
+    const actions = document.createElement('span');
+    actions.className = 'mcp-actions';
+    const test = document.createElement('button');
+    test.className = 'control-button mcp-test';
+    test.type = 'button';
+    test.textContent = '测试';
+    test.addEventListener('click', () => mcpAction(server.id, 'test'));
+    const reconnect = document.createElement('button');
+    reconnect.className = 'control-button mcp-reconnect';
+    reconnect.type = 'button';
+    reconnect.textContent = '重连';
+    reconnect.addEventListener('click', () => mcpAction(server.id, 'reconnect'));
+    const remove = document.createElement('button');
+    remove.className = 'control-button mcp-remove';
+    remove.type = 'button';
+    remove.textContent = '删除';
+    remove.addEventListener('click', () => removeMcpServer(server.id));
+    actions.append(test, reconnect, remove);
+    item.append(actions);
+  });
+}
+
+async function mcpAction(serverId, action) {
+  try {
+    const result = await api('/api/mcp/' + action, { method: 'POST', body: { server_id: serverId } });
+    const server = state.bootstrap.mcp_servers.find((item) => item.id === serverId);
+    if (server) Object.assign(server, result);
+    renderMcp();
+    if (action === 'test') {
+      const parts = ['MCP 测试完成'];
+      if (result.connected !== undefined) parts.push(result.connected ? '已就绪' : '未连接');
+      if (result.comfyui_reachable !== undefined) parts.push(result.comfyui_reachable ? 'ComfyUI 可达' : 'ComfyUI 不可达');
+      if (result.error) parts.push('错误：' + result.error);
+      toast(parts.join(' · '));
+    } else {
+      toast('MCP 已重新连接');
+    }
+  } catch (error) {
+    toast('MCP 操作失败：' + error.message);
+  }
+}
+
+async function removeMcpServer(serverId) {
+  if (!confirm(`确定删除 MCP 服务「${serverId}」？`)) return;
+  try {
+    await api('/api/mcp/remove', { method: 'POST', body: { server_id: serverId } });
+    state.bootstrap.mcp_servers = (state.bootstrap.mcp_servers || []).filter((item) => item.id !== serverId);
+    renderMcp();
+    toast(`MCP 服务「${serverId}」已删除`);
+  } catch (error) {
+    toast('删除 MCP 服务失败：' + error.message);
+  }
+}
+
+async function saveMcpServer() {
+  const id = $('#mcpNewId').value.trim();
+  const command = $('#mcpNewCommand').value.trim();
+  if (!id) { toast('请填写服务 ID'); return; }
+  if (!command) { toast('请填写命令（command）'); return; }
+  const env = {};
+  const comfyBin = $('#mcpNewComfyBin').value.trim();
+  if (comfyBin) env.COMFY_BIN = comfyBin;
+  const extraRaw = $('#mcpNewEnvJson').value.trim();
+  if (extraRaw) {
+    let extra;
+    try { extra = JSON.parse(extraRaw); }
+    catch (_e) { toast('环境变量 JSON 格式不正确'); return; }
+    if (!extra || typeof extra !== 'object' || Array.isArray(extra)) { toast('环境变量 JSON 必须是对象'); return; }
+    Object.assign(env, extra);
+  }
+  try {
+    await api('/api/mcp/register', { method: 'POST', body: { id, command, args: [], env, enabled: true } });
+    $('#mcpNewId').value = '';
+    $('#mcpNewCommand').value = '';
+    $('#mcpNewComfyBin').value = '';
+    $('#mcpNewEnvJson').value = '';
+    $('#mcpAddForm').open = false;
+    state.bootstrap.mcp_servers = await loadMcpServers();
+    renderMcp();
+    toast(`MCP 服务「${id}」已注册`);
+  } catch (error) {
+    toast('注册 MCP 服务失败：' + error.message);
+  }
+}
+
+// 轻量轮询：仅刷新状态相关字段（status/connected/active_calls/activity/last_used_at），
+// 保留 bootstrap 中已有的 tools 与 error 信息，使"使用中/已就绪"状态实时反映。
+async function pollMcpStatus() {
+  if (state.mcpPollInFlight || document.visibilityState === 'hidden') return;
+  state.mcpPollInFlight = true;
+  try {
+    const data = await api('/api/mcp/status/light');
+    const servers = data.servers || [];
+    const prev = state.bootstrap.mcp_servers || [];
+    const byId = {};
+    for (const s of prev) byId[s.id] = s;
+    for (const s of servers) {
+      const cur = byId[s.id];
+      if (!cur) {
+        // 后端出现了本地快照中不存在的 MCP 服务（例如对话内 agent 刚注册的）。
+        // light 接口不含工具明细，升级为全量刷新以完整展示。
+        await loadMcpServers();
+        return;
+      }
+      cur.status = s.status;
+      cur.connected = s.connected;
+      cur.active_calls = s.active_calls;
+      cur.activity = s.activity;
+      cur.last_used_at = s.last_used_at;
+    }
+    renderMcp();
+  } catch (_error) {
+    /* 轮询失败不阻断界面 */
+  } finally {
+    state.mcpPollInFlight = false;
+  }
+}
+
+function startMcpPoll() {
+  if (state.mcpPolling) return;
+  state.mcpPolling = true;
+  scheduleMcpPoll(2000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      if (state.mcpPollTimer) window.clearTimeout(state.mcpPollTimer);
+      state.mcpPollTimer = null;
+    } else {
+      scheduleMcpPoll(0);
+    }
+  });
+}
+
+function scheduleMcpPoll(delay = null) {
+  if (!state.mcpPolling || document.visibilityState === 'hidden') return;
+  if (state.mcpPollTimer) window.clearTimeout(state.mcpPollTimer);
+  const servers = state.bootstrap?.mcp_servers || [];
+  const active = servers.some((server) => Number(server.active_calls || 0) > 0 || server.status === 'connecting');
+  const interval = active ? 2000 : 15000;
+  state.mcpPollTimer = window.setTimeout(async () => {
+    state.mcpPollTimer = null;
+    if (document.visibilityState === 'visible') await pollMcpStatus();
+    scheduleMcpPoll();
+  }, delay ?? interval);
+}
+
