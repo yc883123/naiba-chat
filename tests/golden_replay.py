@@ -39,6 +39,8 @@ from naiba.core.history import build_model_history  # noqa: E402
 from naiba.mcp import MCPRegistry  # noqa: E402
 from naiba.run.manager import ConversationRunManager  # noqa: E402
 from naiba.tools.executor import ToolExecutor  # noqa: E402
+from naiba.tools.providers.core import CoreToolProvider, ToolContext  # noqa: E402
+from naiba.tools.registry import build_tool_registry  # noqa: E402
 
 GOLDEN_DIR = Path(__file__).resolve().parent / "golden"
 GOLDEN_NAMES = ("cancel_race", "tool_confirm", "history_images")
@@ -258,8 +260,28 @@ TOOL_INPUTS = {
 
 def scenario_tool_confirm(tmp_root: Path) -> dict:
     rows = []
-    executor = ToolExecutor(tmp_root, sys.executable, 60, MCPRegistry([]),
-                            permission_mode="confirm")
+    mcp_reg = MCPRegistry([])
+    registry = build_tool_registry()
+    registry.bind_mcp(mcp_reg)
+    registry.register_provider(
+        CoreToolProvider(
+            ToolContext(
+                workspace=tmp_root,
+                python_executable=sys.executable,
+                command_timeout=60,
+                mcp_registry=mcp_reg,
+                mcp_register=None,
+            )
+        )
+    )
+
+    def _make(mode: str) -> ToolExecutor:
+        executor = ToolExecutor(tmp_root, sys.executable, 60, mcp_reg, permission_mode=mode)
+        executor.set_def_resolver(registry.get)
+        executor.set_alias_resolver(registry.resolve)
+        return executor
+
+    executor = _make("confirm")
     target = Path(TOOL_INPUTS["target"].replace("<TMP>", str(tmp_root)))
     seed = Path(TOOL_INPUTS["seed_file"].replace("<TMP>", str(tmp_root)))
     seed.write_text("seed", encoding="utf-8")
@@ -296,8 +318,7 @@ def scenario_tool_confirm(tmp_root: Path) -> dict:
            extra={"pending_count": len(executor.pending_confirmation)})
 
     # T4: deny 模式直接拒绝
-    deny_executor = ToolExecutor(tmp_root, sys.executable, 60, MCPRegistry([]),
-                                 permission_mode="deny")
+    deny_executor = _make("deny")
     ok6, out6 = deny_executor.execute("write_file", {"path": str(target), "content": "x"}, [])
     record("deny-mode", ok6, out6, file_exists=target.exists())
 

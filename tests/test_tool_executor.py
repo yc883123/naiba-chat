@@ -13,8 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from naiba.mcp import MCPRegistry  # noqa: E402
-from naiba.tools.executor import ToolExecutor  # noqa: E402
+from tool_testkit import wired_executor  # noqa: E402
 
 
 class ToolExecutorConfirmTests(unittest.TestCase):
@@ -22,9 +21,7 @@ class ToolExecutorConfirmTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         (self.root / "b.txt").write_text("x", encoding="utf-8")
-        self.executor = ToolExecutor(
-            self.root, sys.executable, 60, MCPRegistry([]), permission_mode="confirm"
-        )
+        self.executor = wired_executor(self.root, mode="confirm")
 
     def tearDown(self):
         self.tmp.cleanup()

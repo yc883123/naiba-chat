@@ -1,17 +1,14 @@
-"""统一工具系统（单一定义重构进行中：声明/执行/策略同源）。
+"""统一工具系统（单轨形态：声明/执行/策略同源）。
 
 - 声明：``ToolSpec``（名称/参数/side_effect/retryable/timeout/permission/execute/summarize/
   aliases/policy/system/metadata），按域由 ``build_*_tool_specs`` / ``ToolProvider`` 提供；
-- 分发：``ToolRegistry.execute`` 别名归一后，优先 def.execute（system 直调 / 非 system 经引擎），
-  未绑定 execute 的 def 回退双轨路径（executor._tool_* / system_handlers / MCP 动态）；
-- 既有工具：核心 11 个（read_file/write_file/list_directory/search_files/glob_files/edit_file/
-  pwsh/run_skill_script/http_request/register_mcp/call_mcp）+ Harness 兼容别名 5 个 +
-  任务/子 Agent、comfyui、capability、vision、search、recall 系统工具；
-  MCP 工具以 ``mcp__<server>__<tool>`` 动态注册（元数据 + 分发处理器）。
+- 分发：``ToolRegistry.execute`` 别名归一后单插槽执行——system 工具直调 def.execute，
+  常规工具经注入引擎（策略/确认/模式包装），引擎兜底 def.execute；
+- 工具实现与权限策略均在各域 provider（``def.execute`` / ``def.policy``），
+  MCP 动态工具（``mcp__<server>__<tool>``）同构注册（execute 绑 mcp.call，policy 读 annotations）。
 
-``ToolRegistry`` 自身不持有执行逻辑：它保存元数据，并把执行委托给注入的
-``executor``（引擎：权限策略与确认）、def.execute 或 ``system_handlers``（系统工具）。
-Agent Loop 仅通过它查询 ``side_effect`` / ``retryable`` / ``permission`` 等策略信息。
+``ToolRegistry`` 自身不持有执行逻辑：它保存单一定义并分发；Agent Loop 仅通过它查询
+``side_effect`` / ``retryable`` / ``permission`` 等策略信息。
 """
 from __future__ import annotations
 
@@ -80,23 +77,22 @@ def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bo
     return f"{tool} {'成功' if success else '失败'}: {head}"
 
 
-def _http_request_policy(
-    tool: str,
-    arguments: dict[str, Any],
-    active_skills: list[dict[str, Any]],
-    permission_mode: str,
-    run_context: dict[str, Any] | None,
-) -> str:
-    """http_request 按 method 判定副作用（行为优化 Phase 2）：
+def _mcp_tool_policy(annotations: dict[str, Any]) -> ToolPolicyFn:
+    """MCP 工具 def 级权限策略：readOnlyHint 免确认；auto 且非 destructive 放行；否则确认。"""
 
-    GET/HEAD 免确认（无副作用）；其余方法在 confirm 模式需确认，auto 模式放行。
-    """
-    method = str((arguments or {}).get("method") or "GET").upper()
-    if method in {"GET", "HEAD"}:
-        return ""
-    if permission_mode == "auto":
-        return ""
-    return "发送HTTP请求"
+    def policy(
+        tool: str,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        permission_mode: str,
+        run_context: dict[str, Any] | None,
+    ) -> str:
+        if bool(annotations.get("readOnlyHint")):
+            return ""
+        if permission_mode == "auto" and not bool(annotations.get("destructiveHint")):
+            return ""
+        return f"调用MCP工具：{tool}"
+    return policy
 
 
 class ToolRegistry:
@@ -107,7 +103,6 @@ class ToolRegistry:
         self._alias_map: dict[str, str] = {}
         self._executor: Any = None
         self._mcp_registry: Any = None
-        self._system_handlers: dict[str, ToolExecuteFn] = {}
 
     def bind_mcp(self, mcp_registry: Any) -> None:
         """注入 MCPRegistry，用于 mcp__<server>__<tool> 工具分发。"""
@@ -134,6 +129,7 @@ class ToolRegistry:
                 timeout=620,
                 permission="confirm",
                 annotations=annotations,
+                policy=_mcp_tool_policy(annotations),
                 execute=lambda args, skills, ctx, s=server_id, n=str(tool.get("name") or ""): self._mcp_registry.call(s, n, args),
             )
             self.register(spec)
@@ -180,12 +176,8 @@ class ToolRegistry:
         return self._alias_map.get(str(name or ""), str(name or ""))
 
     def bind_executor(self, executor: Any) -> None:
-        """注入常规工具执行器（``ToolExecutor`` 实例）。"""
+        """注入常规工具引擎（``ToolExecutor`` 实例）：非 system 工具的确认与执行。"""
         self._executor = executor
-
-    def register_system_handler(self, name: str, handler: ToolExecuteFn) -> None:
-        """注册由 JobRegistry / SubAgentManager 处理的系统工具。"""
-        self._system_handlers[name] = handler
 
     # ---- 查询 ----
     def get(self, name: str) -> ToolSpec | None:
@@ -257,32 +249,27 @@ class ToolRegistry:
         active_skills: list[dict[str, Any]],
         run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
-        """统一分发：别名归一 → def.execute（优先）→ 引擎（策略/确认）→ 系统处理器 → 执行器兜底。
+        """统一分发（单轨 Phase 5）：别名归一 → def 查询 → 系统工具直调 / 常规工具经引擎。
 
-        单一定义语义（Phase 1 起）：
-        - def.execute 已绑定且非 system：经引擎执行（权限策略、确认、ReadOnly/Craft 包装在此生效）；
-        - def.execute 已绑定且 system：直调（系统级工具自带策略，与既有 system_handlers 语义一致）；
-        - 无 def.execute：回退既有双轨路径（mcp__ 前缀 / system_handlers / executor），行为不变。
+        - system=True：def.execute 直调（系统工具自带策略与确认，与旧 system_handlers 语义一致）；
+        - 常规工具：经注入引擎（策略评估、NEED_CONFIRM、ReadOnly/Craft 包装在此生效），
+          引擎若无注入则直接调 def.execute；
+        - 无条件可执行时明确报错（工具缺实现而非静默成功）。
         """
         name = self.resolve(tool)
         spec = self._specs.get(name)
-        if spec is not None and spec.execute is not None:
-            if not spec.system:
-                executor = self._run_executor(run_context)
-                if executor is not None:
-                    return executor.execute(name, arguments, active_skills, run_context)
+        if spec is None:
+            return False, f"未知工具：{name}"
+        if spec.system:
+            if spec.execute is None:
+                return False, f"系统工具缺少实现：{name}"
             return spec.execute(arguments, active_skills, run_context)
         executor = self._run_executor(run_context)
-        if name.startswith("mcp__") and executor is not None:
+        if executor is not None:
             return executor.execute(name, arguments, active_skills, run_context)
-        if name in self._system_handlers:
-            return self._system_handlers[name](arguments, active_skills, run_context)
-        if name in self._specs and executor is not None:
-            return executor.execute(name, arguments, active_skills, run_context)
-        # MCP 工具形如 server.tool，ToolExecutor 内部处理
-        if "." in name and executor is not None:
-            return executor.execute(name, arguments, active_skills, run_context)
-        return False, f"未知工具：{name}"
+        if spec.execute is not None:
+            return spec.execute(arguments, active_skills, run_context)
+        return False, f"工具缺少执行实现：{name}"
 
     def summarize(self, tool: str, args: dict[str, Any], result: str, success: bool) -> str:
         spec = self._specs.get(tool)
@@ -461,12 +448,12 @@ def build_core_tool_specs() -> list[ToolSpec]:
                 },
                 "required": ["url"],
             },
-            # GET/HEAD 无副作用且可重试；写方法不可重试。确认行为由 _http_request_policy 按 method 细化
+            # GET/HEAD 无副作用且可重试；写方法不可重试。确认行为由 core Provider 的
+            # _http_request_policy（def 级）按 method 细化；声明侧不再持有策略实现。
             side_effect=True,
             retryable=True,
             timeout=60,
             permission="confirm",
-            policy=_http_request_policy,
         ),
         ToolSpec(
             name="register_mcp",

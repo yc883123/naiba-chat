@@ -22,7 +22,7 @@ from typing import Any, Callable
 
 from naiba import net as net_io
 from naiba.core.paths import path_within
-from naiba.tools.registry import ToolSpec, build_core_tool_specs
+from naiba.tools.registry import ToolSpec, build_core_tool_specs, build_harness_alias_specs
 
 POWERSHELL_UTF8_PREFIX = (
     "$utf8 = [System.Text.UTF8Encoding]::new($false); "
@@ -494,6 +494,121 @@ def _tool_register_mcp(ctx: ToolContext, args: dict[str, Any], active_skills: li
     return json.dumps(ctx.mcp_register(args), ensure_ascii=False, indent=2)
 
 
+# ---- 权限策略（Phase 5：引擎内建确认逻辑收敛到 def 级 policy） ----
+
+_READ_FAMILY = {"read_file", "list_directory", "search_files", "glob_files"}
+_CORE_CONFIRM_REASONS = {
+    "pwsh": "执行 PowerShell 命令",
+    "run_skill_script": "运行技能脚本",
+    "register_mcp": "注册MCP服务",
+}
+
+
+def _http_request_policy(
+    tool: str,
+    arguments: dict[str, Any],
+    active_skills: list[dict[str, Any]],
+    permission_mode: str,
+    run_context: dict[str, Any] | None,
+) -> str:
+    """http_request 按 method 判定副作用（行为优化 Phase 2）：GET/HEAD 免确认；其余 auto 放行。"""
+    method = str((arguments or {}).get("method") or "GET").upper()
+    if method in {"GET", "HEAD"}:
+        return ""
+    if permission_mode == "auto":
+        return ""
+    return "发送HTTP请求"
+
+
+def _make_read_policy(ctx: ToolContext) -> Any:
+    def policy(
+        tool: str,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        permission_mode: str,
+        run_context: dict[str, Any] | None,
+    ) -> str:
+        # 只读检查非破坏性：工作区内免确认（任意模式），越界必确认（不因 auto 放行）
+        path = _resolve_read_path(ctx, arguments.get("path"), active_skills, tool != "read_file")
+        if not any(path_within(path, root) for root in _read_roots(ctx, active_skills)):
+            return "读取工作区外路径：" + str(path)
+        return ""
+    return policy
+
+
+def _make_write_policy(ctx: ToolContext) -> Any:
+    def policy(
+        tool: str,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        permission_mode: str,
+        run_context: dict[str, Any] | None,
+    ) -> str:
+        path = _resolve_tool_path(ctx, arguments.get("path"))
+        if permission_mode == "auto" and path_within(path, ctx.workspace):
+            return ""
+        return f"写入文件：{path}"
+    return policy
+
+
+def _make_dangerous_policy(reason: str) -> Any:
+    def policy(
+        tool: str,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        permission_mode: str,
+        run_context: dict[str, Any] | None,
+    ) -> str:
+        if permission_mode == "auto":
+            return ""
+        return reason
+    return policy
+
+
+def _make_call_mcp_policy(ctx: ToolContext) -> Any:
+    def policy(
+        tool: str,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        permission_mode: str,
+        run_context: dict[str, Any] | None,
+    ) -> str:
+        # Legacy Skills may wrap local read-only tools in call_mcp：与直接只读工具同样
+        # 的路径边界检查。
+        server = str((arguments or {}).get("server") or "").strip()
+        nested_tool = str((arguments or {}).get("tool") or "").strip()
+        nested_args = (arguments or {}).get("arguments") or {}
+        if (
+            server in {"naiba-chat", "comfyui"}
+            and nested_tool in {"read_file", "list_directory", "search_files"}
+            and isinstance(nested_args, dict)
+        ):
+            path = _resolve_read_path(ctx, nested_args.get("path"), active_skills, nested_tool != "read_file")
+            if not any(path_within(path, root) for root in _read_roots(ctx, active_skills)):
+                return f"读取工作区外路径：{path}"
+            return ""
+        if permission_mode == "auto":
+            return ""
+        return "调用MCP工具"
+    return policy
+
+
+def _make_core_policy(ctx: ToolContext, name: str) -> Any:
+    """core 工具 def 级权限策略；None 表示走引擎默认（不应发生，防御性）。"""
+    if name in _READ_FAMILY:
+        return _make_read_policy(ctx)
+    if name in {"write_file", "edit_file"}:
+        return _make_write_policy(ctx)
+    if name == "http_request":
+        return _http_request_policy
+    if name == "call_mcp":
+        return _make_call_mcp_policy(ctx)
+    reason = _CORE_CONFIRM_REASONS.get(name)
+    if reason:
+        return _make_dangerous_policy(reason)
+    return None
+
+
 # ---- bind 绑定 ----
 
 _STR_TOOL_FNS: dict[str, Callable[..., Any]] = {
@@ -509,6 +624,22 @@ _STR_TOOL_FNS: dict[str, Callable[..., Any]] = {
     "register_mcp": _tool_register_mcp,
 }
 _TUPLE_TOOL_FNS: dict[str, Callable[..., Any]] = {"call_mcp": _tool_call_mcp}
+
+# Harness 兼容别名的实现与策略（别名 def 与 canonical 同实现、同策略；查询层 resolve 归一）
+_ALIAS_IMPLS: dict[str, Callable[..., Any]] = {
+    "read": _tool_read_file,
+    "write": _tool_write_file,
+    "edit": _tool_edit_file,
+    "glob": _tool_glob_files,
+    "grep": _tool_search_files,
+}
+_ALIAS_CANONICAL: dict[str, str] = {
+    "read": "read_file",
+    "write": "write_file",
+    "edit": "edit_file",
+    "glob": "glob_files",
+    "grep": "search_files",
+}
 
 
 def _make_str_execute(ctx: ToolContext, fn: Callable[..., Any]) -> Any:
@@ -538,5 +669,21 @@ class CoreToolProvider:
                 execute = _make_str_execute(self._context, _STR_TOOL_FNS[spec.name])
             else:
                 continue
-            results.append(dataclasses.replace(spec, execute=execute))
+            results.append(
+                dataclasses.replace(
+                    spec,
+                    execute=execute,
+                    policy=_make_core_policy(self._context, spec.name),
+                )
+            )
+        # Harness 兼容别名 def：与 canonical 同实现、同策略（单一定义，别名只存在于查询层归一）
+        for spec in build_harness_alias_specs():
+            canonical = _ALIAS_CANONICAL[spec.name]
+            results.append(
+                dataclasses.replace(
+                    spec,
+                    execute=_make_str_execute(self._context, _ALIAS_IMPLS[spec.name]),
+                    policy=_make_core_policy(self._context, canonical),
+                )
+            )
         return results

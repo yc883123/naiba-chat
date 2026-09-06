@@ -159,8 +159,9 @@ class NaibaChatApp:
         self.tool_registry = build_tool_registry()
         self.tool_registry.bind_executor(self.executor)
         self.tool_registry.bind_mcp(self.mcp)
-        # 权限同源（Phase 2）：引擎从注册表解析 def 级 policy/元数据
+        # 权限同源（Phase 2）：引擎从注册表解析 def 级 policy/元数据；别名经查询层归一
         self.executor.set_def_resolver(self.tool_registry.get)
+        self.executor.set_alias_resolver(self.tool_registry.resolve)
         # core 域 Provider（Phase 3 双轨）：def 绑定新实现函数；引擎仍走旧 _tool_* 方法，行为不变
         from naiba.tools.providers.core import CoreToolProvider, ToolContext
 
