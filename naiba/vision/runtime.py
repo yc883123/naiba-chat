@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+from naiba.core.contracts import AppContext
+
 import base64
 import hashlib
 import io
@@ -212,7 +214,7 @@ def _read_rgb(path: str):
 class VisionRouter:
     """视觉后端调用 + 自动路由 + 像素级视觉工具。"""
 
-    def __init__(self, app: Any):
+    def __init__(self, app: AppContext):
         self.app = app
         # 独立 ModelRuntime，避免污染大脑（app.models）的 last_usage / last_reasoning 线程状态。
         self._runtime = ModelRuntime()

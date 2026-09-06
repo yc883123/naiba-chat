@@ -9,7 +9,7 @@ SQLite 保存权威状态，同时把计划归档到配置工作区的 `.naiba-c
 """
 from __future__ import annotations
 
-from naiba.core.contracts import RunContext
+from naiba.core.contracts import AppContext, RunContext
 
 import json
 import re
@@ -262,7 +262,7 @@ class PlanManager:
     EXECUTABLE_STATUSES = {"ready", "failed", "cancelled"}
     EDITABLE_STATUSES = {"prepare", "ready", "failed", "cancelled"}
 
-    def __init__(self, app: Any, step_runner: Callable[..., str] | None = None):
+    def __init__(self, app: AppContext, step_runner: Callable[..., str] | None = None):
         self.app = app
         self._lock = threading.RLock()
         self._cancel_events: dict[str, threading.Event] = {}

@@ -11,7 +11,96 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, TypedDict
+from typing import Any, Protocol, TypedDict, runtime_checkable
+
+import threading  # noqa: F401  (供 run_context 键类型引用；协议成员注解用)
+
+RUN_CONTEXT_KEYS: tuple[str, ...] = (
+    "run_id", "job_id", "conversation_id", "owner_session_id", "parent_job_id",
+    "depth", "allowed_tools", "skill_policy", "job_registry", "executor",
+    "cancel_event", "vision_budget", "interaction_mode", "routing_message",
+    "mcp_active", "trace_messages", "plan_exit_content", "plan_step_title",
+)
+
+# 运行期保持 dict 形态（零行为变化）；"带默认值/校验"经由工厂与校验函数落地，
+# 避免把 TypedDict 硬切成 dataclass 的改写型手术风险（哲学⑥ 守则④）。
+def default_run_context() -> dict[str, Any]:
+    """构造带默认值的 RunContext（缺失键由消费方按需读取，字段按类型入位）。"""
+    return {
+        "run_id": "",
+        "job_id": "",
+        "conversation_id": "",
+        "owner_session_id": "",
+        "parent_job_id": "",
+        "depth": 0,
+        "allowed_tools": [],
+        "skill_policy": {},
+        "job_registry": None,
+        "executor": None,
+        "cancel_event": None,
+        "vision_budget": None,
+        "interaction_mode": "craft",
+        "routing_message": "",
+        "mcp_active": False,
+        "trace_messages": [],
+        "plan_exit_content": "",
+        "plan_step_title": "",
+    }
+
+
+def validate_run_context(ctx: Any) -> list[str]:
+    """校验 RunContext：返回非法键清单（空列表=合法）。
+
+    只做白名单与键名检查；类型错误由各消费方按既有防御式读取兜底（不改变运行行为）。
+    """
+    if not isinstance(ctx, dict):
+        return ["<not-a-dict>"]
+    return sorted(set(ctx.keys()) - set(RUN_CONTEXT_KEYS))
+
+
+@runtime_checkable
+class ConfigView(Protocol):
+    """运行时对 config 的最小访问面（构建时校验；成员 ⊆ ConfigStore 实际面）。"""
+
+    data: dict[str, Any]
+    lock: Any
+
+    def profile(self, model_key: str) -> dict[str, Any]: ...
+    def resolve_data_dir(self, raw: str | None = None) -> Any: ...
+    def resolve_workspace_dir(self, raw: str | None = None) -> Any: ...
+    def resolve_managed_skills_dir(self, raw: str | None = None) -> Any: ...
+    def get_agent(self, agent_id: str) -> dict[str, Any] | None: ...
+    def default_agent_id(self) -> str: ...
+    def workspace_dir_for_group(self, name: str) -> str: ...
+    def get_hidden_skill_ids(self) -> list[str]: ...
+    def public_agents(self) -> list[dict[str, Any]]: ...
+    def update_settings(self, body: dict[str, Any]) -> dict[str, Any]: ...
+    def save(self) -> None: ...
+
+
+@runtime_checkable
+class AppContext(Protocol):
+    """组装根的最小访问面（NaibaChatApp 实例即满足；运行时模块按此注入而非 Any）。"""
+
+    config: ConfigView
+    paths: Any
+    storage: Any
+    runs: Any
+    tasks: Any
+    jobs: Any
+    plans: Any
+    catalog: Any
+    vision: Any
+    web_search: Any
+    models: Any
+    executor: Any
+    tool_registry: Any
+    updater: Any
+    capabilities: Any
+    mcp: Any
+    listener_host: str
+    update_restart_callback: Any
+    data_migration: dict[str, Any]
 
 
 class RunContext(TypedDict, total=False):

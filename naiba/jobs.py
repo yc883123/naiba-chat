@@ -20,6 +20,8 @@ ComfyUI 生成任务使用专用 Worker（见 ``_run_comfyui``）。
 """
 from __future__ import annotations
 
+from naiba.core.contracts import AppContext
+
 import json
 import subprocess
 import threading
@@ -72,7 +74,7 @@ class CheckSpec:
 
 
 class JobRegistry:
-    def __init__(self, app: Any):
+    def __init__(self, app: AppContext):
         self.app = app
         self._lock = threading.RLock()
         self._conditions: dict[str, threading.Condition] = {}

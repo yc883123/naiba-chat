@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+from naiba.core.contracts import AppContext
+
 import json
 import logging
 import re
@@ -26,7 +28,7 @@ logger = logging.getLogger("naiba.web_search")
 class WebSearchRuntime:
     """联网搜索执行：读 app.config.data["search"]，归一化结果并降级。"""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: AppContext) -> None:
         self.app = app
 
     def config(self, override: dict[str, Any] | None = None) -> dict[str, Any]:

@@ -7,7 +7,7 @@ ConversationRunManager：每会话一轮 Run 的调度器与注册表——提�
 
 from __future__ import annotations
 
-from naiba.core.contracts import RunContext
+from naiba.core.contracts import AppContext, RunContext
 
 import json
 import re
@@ -43,7 +43,7 @@ class ConversationRunManager:
     ACTIVE = {"queued", "running", "waiting", "cancelling"}
     TERMINAL = {"completed", "failed", "cancelled"}
 
-    def __init__(self, app: Any):
+    def __init__(self, app: AppContext):
         self.app = app
         self._lock = threading.RLock()
         self._submit_lock = threading.RLock()
@@ -796,7 +796,7 @@ class ConversationRunManager:
             }
             # 消息末尾"修改文件"总结：仅在本轮确实有文件落盘时携带，避免空数组刷屏。
             if changed_files:
-                metadata["files"] = changed_files
+                metadata[MetadataKeys.FILES] = changed_files
             with self._submit_lock:
                 current = self.app.storage.get_background_task(run_id)
                 if (cancel_event.is_set() or not current or current.get("cancel_requested")
@@ -1122,7 +1122,7 @@ class ConversationRunManager:
             ),
         }
         if changed_files:
-            metadata["files"] = changed_files
+            metadata[MetadataKeys.FILES] = changed_files
         try:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
         except Exception:
@@ -1226,7 +1226,7 @@ class ConversationRunManager:
             ),
         }
         if changed_files:
-            metadata["files"] = changed_files
+            metadata[MetadataKeys.FILES] = changed_files
         try:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
         except Exception:
@@ -1323,7 +1323,7 @@ class ConversationRunManager(ConversationRunMixin):
     ACTIVE = {"queued", "running", "waiting", "cancelling"}
     TERMINAL = {"completed", "failed", "cancelled"}
 
-    def __init__(self, app: Any):
+    def __init__(self, app: AppContext):
         self.app = app
         self._lock = threading.RLock()
         self._submit_lock = threading.RLock()

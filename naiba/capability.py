@@ -1,7 +1,7 @@
 """Generic capability tools: safe local Skill installation / unpack / inspection."""
 from __future__ import annotations
 
-from naiba.core.contracts import RunContext
+from naiba.core.contracts import AppContext, RunContext
 
 import json
 from pathlib import Path
@@ -13,7 +13,7 @@ from skill_runtime import validate_and_install_skill, validate_and_extract_archi
 class CapabilityRuntime:
     """Expose the runtime's capability tools (install / unpack / inspect skill)."""
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: AppContext) -> None:
         self.app = app
 
     def install_skill(

@@ -15,7 +15,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from naiba.core.contracts import EventType, MetadataKeys, RunContext  # noqa: E402
+from naiba.core.contracts import (  # noqa: E402
+    AppContext, ConfigView, EventType, MetadataKeys, RunContext,
+    RUN_CONTEXT_KEYS, default_run_context, validate_run_context,
+)
 
 
 class EventContractTests(unittest.TestCase):
@@ -59,6 +62,35 @@ class EventContractTests(unittest.TestCase):
         # 键值必须与契约一致（若改契约值，此处立即失败）。
         self.assertEqual(MetadataKeys.ATTACHMENTS, "attachments")
         self.assertEqual(MetadataKeys.TRACE, "trace")
+
+    def test_run_context_default_factory_and_validation(self):
+        default = default_run_context()
+        self.assertEqual(default["interaction_mode"], "craft")
+        self.assertEqual(default["depth"], 0)
+        self.assertEqual(validate_run_context(default), [])
+        self.assertEqual(validate_run_context({}), [])
+        # 非法键必须被标记（防新增裸键逃逸）。
+        self.assertIn("typo_key", validate_run_context({"typo_key": 1}))
+        self.assertGreater(len(validate_run_context("not-a-dict")), 0)
+        self.assertEqual(set(RUN_CONTEXT_KEYS), set(RunContext.__annotations__))
+
+    def test_config_view_and_app_context_protocols(self):
+        # runtime_checkable：ConfigStore / NaibaChatApp 真实实例必须满足注入协议。
+        import tempfile
+        from pathlib import Path as P
+
+        from naiba.app import NaibaChatApp
+        from naiba.config import ConfigStore
+        from naiba.paths import PathContext
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = P(tmp)
+            paths = PathContext.local(root, root / "config.json")
+            store = ConfigStore(root / "config.json", paths=paths)
+            self.assertIsInstance(store, ConfigView)
+            app = NaibaChatApp(paths=paths)
+            self.assertIsInstance(app, AppContext)
+            self.assertIsInstance(app.config, ConfigView)
 
 
 if __name__ == "__main__":

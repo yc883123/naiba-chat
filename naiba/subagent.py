@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 
-from naiba.core.contracts import RunContext
+from naiba.core.contracts import AppContext, RunContext
 
 import traceback
 from typing import Any, Callable
@@ -48,7 +48,7 @@ SUBAGENT_BLOCKED_TOOLS = {
 
 
 def run_subagent_agent(
-    app: Any,
+    app: AppContext,
     job_id: str,
     spec: JobSpec,
     cancel: Any,
@@ -141,7 +141,7 @@ def run_subagent_agent(
         app.storage.update_job(job_id, result={"error": str(exc)})
 
 
-def subagent_handler_factory(app: Any) -> Callable[..., tuple[bool, str]]:
+def subagent_handler_factory(app: AppContext) -> Callable[..., tuple[bool, str]]:
     """构造 ``subagent`` 系统工具处理器。"""
 
     def handler(
@@ -196,7 +196,7 @@ def subagent_handler_factory(app: Any) -> Callable[..., tuple[bool, str]]:
     return handler
 
 
-def job_tool_handler_factory(app: Any) -> dict[str, Callable[..., tuple[bool, str]]]:
+def job_tool_handler_factory(app: AppContext) -> dict[str, Callable[..., tuple[bool, str]]]:
     """构造 run_in_background / job_output / job_status / job_wait / job_kill 处理器。"""
     jobs: JobRegistry = app.jobs
 

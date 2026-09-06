@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from naiba.core.contracts import AppContext
+
 import re
 from typing import Any
 
@@ -41,7 +43,7 @@ JOB_CREATOR_TOOL_DEPS = {
 
 
 def resolve_allowed_tools(
-    app: Any,
+    app: AppContext,
     mode: str,
     agent: dict[str, Any],
     web_search_enabled: bool,
@@ -109,7 +111,7 @@ def resolve_allowed_tools(
     return allowed_tools
 
 
-def all_tool_names(app: Any) -> list[str]:
+def all_tool_names(app: AppContext) -> list[str]:
     """全部可用的工具 id（含别名），用于旧会话/未配置 agent 的"全激活"固化。"""
     schemas = (
         app.tool_registry.schemas()
@@ -120,7 +122,7 @@ def all_tool_names(app: Any) -> list[str]:
 
 
 def bake_session_tool_ids(
-    app: Any, conversation: dict[str, Any], agent: dict[str, Any]
+    app: AppContext, conversation: dict[str, Any], agent: dict[str, Any]
 ) -> list[str]:
     """固化某会话的启用工具集（会话启动时写死，之后不可改）。
 
@@ -142,7 +144,7 @@ def bake_session_tool_ids(
 
 
 def enable_conversation_tools(
-    app: Any, conversation_id: str, tool_ids: list[str]
+    app: AppContext, conversation_id: str, tool_ids: list[str]
 ) -> dict[str, Any]:
     """向指定会话"追加/保底注入"若干工具到其固化的启用工具集。
 
