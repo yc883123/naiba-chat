@@ -31,6 +31,16 @@ from typing import Any
 import net_io
 from model_runtime import ModelRuntime
 from naiba.storage.media import _process_uploaded_image
+from naiba.vision.images import (
+    IMAGE_MEDIA_TYPES,
+    MAX_EDGE,
+    TARGET_BYTES,
+    _encode_image_bytes,
+    _image_size,
+    _make_probe_jpeg_b64,
+    _read_rgb,
+    encode_image_file,
+)
 
 logger = logging.getLogger("naiba.vision_runtime")
 
@@ -47,26 +57,9 @@ DEFAULT_VISION_CHAIN = [
 # The valid 32x32 RGB JPEG probe is created below with Pillow.  Some
 # llama-server builds reject a 1x1 transparent PNG before model inference.
 
-
-def _make_probe_jpeg_b64() -> str:
-    """Create a small valid RGB JPEG without depending on a file asset."""
-    from PIL import Image
-
-    buffer = io.BytesIO()
-    Image.new("RGB", (32, 32), (80, 120, 160)).save(buffer, format="JPEG", quality=85, optimize=True)
-    return base64.b64encode(buffer.getvalue()).decode("ascii")
-
-
 PROBE_JPEG_B64 = _make_probe_jpeg_b64()
 
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
-IMAGE_MEDIA_TYPES = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".webp": "image/webp",
-    ".gif": "image/gif",
-}
 
 # 视觉工具名（与 tool_registry / plan_runtime.ALL_TOOLS 保持一致）。
 VISION_TOOL_NAMES = (
@@ -86,8 +79,6 @@ VISION_BRAIN_HINTS = (
     "omni", "step-1v", "qwen3.5", "mistral-small-3.2",
 )
 
-MAX_EDGE = 1600
-TARGET_BYTES = 900 * 1024
 DEFAULT_TIMEOUT_SECONDS = 180
 
 
@@ -137,78 +128,6 @@ def _default_vision_config() -> dict[str, Any]:
         "cache_max_entries": 200,
         "max_images": 4,
     }
-
-
-def _encode_image_bytes(raw: bytes, media_type: str, name: str = "") -> dict[str, Any] | None:
-    """Decode every image and normalize it to a bounded RGB JPEG payload."""
-    try:
-        from PIL import Image, ImageOps
-    except ImportError:
-        return None
-    try:
-        with Image.open(io.BytesIO(raw)) as opened:
-            image = ImageOps.exif_transpose(opened).convert("RGB")
-        image.thumbnail((MAX_EDGE, MAX_EDGE))
-        encoded = b""
-        for quality in (85, 78, 70, 62):
-            buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=quality, optimize=True)
-            encoded = buffer.getvalue()
-            if len(encoded) <= TARGET_BYTES:
-                break
-        while len(encoded) > TARGET_BYTES and max(image.size) > 768:
-            image = image.resize(
-                tuple(max(1, int(value * 0.85)) for value in image.size),
-                Image.Resampling.LANCZOS,
-            )
-            buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=62, optimize=True)
-            encoded = buffer.getvalue()
-        return {
-            "type": "image",
-            "media_type": "image/jpeg",
-            "data": base64.b64encode(encoded).decode("ascii"),
-            "name": name,
-        }
-    except (OSError, ValueError):
-        return None
-
-
-def encode_image_file(path: str) -> dict[str, Any] | None:
-    p = Path(path).expanduser()
-    if not p.is_file():
-        return None
-    media_type = IMAGE_MEDIA_TYPES.get(p.suffix.lower())
-    if not media_type or p.stat().st_size > 30 * 1024 * 1024:
-        return None
-    part = _encode_image_bytes(p.read_bytes(), media_type, p.name)
-    if part is not None:
-        part["path"] = str(p.resolve())
-    return part
-
-
-def _image_size(path: str) -> tuple[int, int] | None:
-    try:
-        from PIL import Image
-
-        with Image.open(path) as image:
-            return image.size
-    except (ImportError, OSError, ValueError):
-        return None
-
-
-def _read_rgb(path: str):
-    from PIL import Image
-
-    image = Image.open(path)
-    if image.mode not in {"RGB", "L"}:
-        background = Image.new("RGB", image.size, "white")
-        if "A" in image.getbands():
-            background.paste(image, mask=image.getchannel("A"))
-        else:
-            background.paste(image)
-        return background
-    return image.convert("RGB")
 
 
 class VisionRouter:
