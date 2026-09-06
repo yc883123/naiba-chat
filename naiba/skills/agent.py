@@ -238,6 +238,12 @@ class SkillAgent:
              if isinstance(item.get("content"), list) else str(item.get("content") or ""))
             for item in (history or [])
         )
+        # 实时防幻觉守卫的历史证据（本轮回复引用历史 ID/连接凭据时豁免——引用历史 ≠ 编造）。
+        history_evidence = "\n".join(
+            self._content_text(item.get("content") or "")
+            for item in (history or [])
+            if isinstance(item, dict)
+        )
 
         def skill_content_signature(content: str) -> str:
             normalized = content.strip()
@@ -474,6 +480,9 @@ class SkillAgent:
         selected_history = self._select_history(
             history, profile, options, system
         )
+        # 防幻觉守卫的历史证据：按顺序累积"已处理消息"的全文（不包含当前消息自身，
+        # 否则内容里自引的 ID 会自证豁免、让守卫失效）。ID/连接凭据命中即豁免（引用历史 ≠ 编造）。
+        seen_evidence_parts: list[str] = []
         for item in selected_history:
             if not isinstance(item, dict):
                 continue
@@ -490,15 +499,20 @@ class SkillAgent:
                 # so a fabricated submission claim is not replayed verbatim just
                 # because the message also carries image parts.
                 if self._unsupported_comfyui_submission_claim(
-                    routing_message, self._content_text(history_content), history_runs
+                    routing_message,
+                    self._content_text(history_content),
+                    history_runs,
+                    evidence_text="\n".join(seen_evidence_parts),
                 ):
                     message["content"] = (
-                        "[系统校正：这条历史回复声称已提交 ComfyUI/Job，但没有成功提交工具证据。"
-                        "视为从未提交，禁止使用其中的任务 ID；必须重新构建并真实调用提交工具。]"
+                        "[系统校验：此条历史回复提及的提交记录（Job ID/任务 ID）在该消息的工具结果及"
+                        "更早的历史中均无对应证据；引用时请用 job_output/job_status 核实其真实状态，"
+                        "不要当作已确认的提交事实。]"
                     )
                 if message.get("reasoning_content") is not None:
                     message["reasoning_content"] = str(message["reasoning_content"])
                 message.pop("metadata", None)
+            seen_evidence_parts.append(self._content_text(history_content or ""))
             messages.append(message)
         if not messages or messages[-1].get("role") != "user":
             messages.append({"role": "user", "content": user_message})
@@ -639,21 +653,23 @@ class SkillAgent:
                     event({"type": "step_finished", "step": step})
                     continue
                 content = str(action.get("content") or raw or "任务已完成").strip()
-                if self._unsupported_comfyui_connection_claim(routing_message, content, runs):
+                if self._unsupported_comfyui_connection_claim(
+                    routing_message, content, runs, history_evidence
+                ):
                     if unsupported_claim_retries < 1:
                         unsupported_claim_retries += 1
                         event({"type": "response_retracted", "reason": "ComfyUI 连接结论缺少工具证据"})
                         messages.append(assistant_message(content))
                         if "http_request" in allowed:
                             correction = (
-                                "你刚才声称 ComfyUI 已连接或正常运行，但本轮没有成功的连接检查工具证据。"
-                                "请立即调用 http_request，对 http://127.0.0.1:8188/system_stats 执行 GET；"
-                                "只有 HTTP 200 后才能确认。也不要把 HTTP API 称为 MCP 接口。"
+                                "[系统校验（非用户消息）] 你提到的 ComfyUI 连接结论在本轮工具结果与"
+                                "历史记录中均无对应证据；请调用 http_request 对 http://127.0.0.1:8188/system_stats "
+                                "执行 GET，只有 HTTP 200 后才能确认，否则请撤回该结论并如实说明尚未验证。"
                             )
                         else:
                             correction = (
-                                "你刚才声称 ComfyUI 已连接或正常运行，但本轮没有成功工具证据，"
-                                "且当前没有可用的 HTTP 检查工具。请撤回该结论并如实说明尚未验证。"
+                                "[系统校验（非用户消息）] 你提到的 ComfyUI 连接结论在本轮与历史中均无证据，"
+                                "且当前没有可用的 HTTP 检查工具；请撤回该结论并如实说明尚未验证。"
                             )
                         messages.append({"role": "user", "content": correction})
                         event({
@@ -663,8 +679,10 @@ class SkillAgent:
                         })
                         event({"type": "step_finished", "step": step})
                         continue
-                    content = "尚未验证 ComfyUI 是否已连接：本轮没有成功的 HTTP 或 MCP 状态检查结果。"
-                if self._unsupported_comfyui_submission_claim(routing_message, content, runs):
+                    content = "尚未验证 ComfyUI 是否已连接：本轮与历史均无成功的连接检查结果。"
+                if self._unsupported_comfyui_submission_claim(
+                    routing_message, content, runs, history_evidence
+                ):
                     if unsupported_submission_retries < 1:
                         unsupported_submission_retries += 1
                         event({"type": "response_retracted", "reason": "ComfyUI 提交结论缺少工具证据"})
@@ -679,8 +697,8 @@ class SkillAgent:
                         messages.append({
                             "role": "user",
                             "content": (
-                                "你刚才声称已提交 ComfyUI 任务，但本轮没有任何成功的提交工具证据，"
-                                "任务 ID 不能自行编造。"
+                                "[系统校验（非用户消息）] 你提到的提交记录（Job ID/任务 ID）在本轮工具结果"
+                                "与历史记录中均无对应证据，不能当作已提交事实陈述；"
                                 + ("请立即调用可用的 comfyui_batch，或通过 http_request/pwsh 对 /prompt 执行真实 POST；"
                                    "拿到真实 Job ID 或 prompt_id 后继续等待并验证结果。"
                                    if (("comfyui_batch" in allowed) and ({"http_request", "pwsh"} & allowed)) else submit_hint)
@@ -696,7 +714,7 @@ class SkillAgent:
                         })
                         event({"type": "step_finished", "step": step})
                         continue
-                    content = "尚未提交 ComfyUI 任务：本轮没有成功的 /prompt、comfyui_batch 或等价提交工具结果。"
+                    content = "尚未确认 ComfyUI 提交：本轮与历史记录中均无对应提交证据；如需提交请先调用可用工具。"
                 if reasoning:
                     event({"type": "reasoning", "content": reasoning})
                 # 不要把最终答复截断在 2000 字符：assistant_response / run_completed 是
@@ -877,10 +895,41 @@ class SkillAgent:
             event({"type": "step_finished", "step": step})
 
     @staticmethod
+    def _comfyui_evidence_covered(content: str, evidence_text: str) -> bool:
+        """内容中引用的 ID/连接凭据是否能在历史证据中找到（引用历史 ≠ 编造）。
+
+        误判来源：模型常复述"上一轮已提交的 Job ID / ComfyUI 地址与版本"——
+        这些是历史真实证据，不是本轮编造。命中历史证据即豁免防幻觉判定。
+        """
+        normalized = re.sub(r"\s+", "", str(content or "")).lower()
+        evidence = re.sub(r"\s+", "", str(evidence_text or "")).lower()
+        if not evidence or not normalized:
+            return False
+        # Job ID（16+ 位十六进制串）与 prompt_id UUID
+        identifiers = sorted(set(
+            re.findall(r"[0-9a-f]{16,}", normalized, re.IGNORECASE)
+            + [m.lower() for m in re.findall(
+                r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+                normalized, re.IGNORECASE,
+            )]
+        ))
+        if any(identifier in evidence for identifier in identifiers):
+            return True
+        # 连接凭据：URL 与版本号（如 http://127.0.0.1:8188、0.34.0）
+        urls = re.findall(r"http://[^\s，。；、)]+", normalized)
+        if any(url in evidence for url in urls):
+            return True
+        versions = re.findall(r"\b\d+\.\d+\.\d+\b", normalized)
+        if any(version in evidence for version in versions):
+            return True
+        return False
+
+    @staticmethod
     def _unsupported_comfyui_connection_claim(
         routing_message: str,
         content: str,
         runs: list[dict[str, Any]],
+        evidence_text: str = "",
     ) -> bool:
         if "comfyui" not in str(routing_message or "").lower():
             return False
@@ -911,6 +960,9 @@ class SkillAgent:
             ):
                 if any(marker in result for marker in ('"connected": true', '"comfyui_reachable": true', '"status": "connected"')):
                     return False
+        # 引用历史连接证据（地址/版本/探测文本）→ 豁免（防"复述已验证事实被当编造"）。
+        if SkillAgent._comfyui_evidence_covered(content, evidence_text):
+            return False
         return True
 
     @staticmethod
@@ -918,6 +970,7 @@ class SkillAgent:
         routing_message: str,
         content: str,
         runs: list[dict[str, Any]],
+        evidence_text: str = "",
     ) -> bool:
         route = re.sub(r"\s+", "", str(routing_message or "").lower())
         if not any(marker in route for marker in (
@@ -930,7 +983,7 @@ class SkillAgent:
             "已创建任务", "任务已创建",
         )
         claimed_identifier = bool(re.search(
-            r"(?:任务id|任务编号|prompt_id|promptid)[：:=`]*[a-z0-9][a-z0-9-]{5,}",
+            r"(?:任务id|任务编号|jobid|job_id|prompt_id|promptid)[：:=`]*[a-z0-9][a-z0-9-]{5,}",
             normalized,
             re.IGNORECASE,
         ))
@@ -971,6 +1024,9 @@ class SkillAgent:
                 marker in tool for marker in ("queue_prompt", "submit", "generate", "run_workflow")
             ) and result.strip():
                 return False
+        # 引用历史提交证据（上一轮真实 Job ID/prompt_id）→ 豁免（防"复述已提交事实被当编造"）。
+        if SkillAgent._comfyui_evidence_covered(content, evidence_text):
+            return False
         return True
 
     @staticmethod
