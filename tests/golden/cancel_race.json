@@ -1,0 +1,216 @@
+{
+  "inputs": {
+    "abort_events": [
+      {
+        "type": "reasoning_start"
+      },
+      {
+        "content": "先分析",
+        "type": "reasoning_delta"
+      },
+      {
+        "content": "再执行",
+        "type": "reasoning_delta"
+      },
+      {
+        "type": "reasoning_end"
+      },
+      {
+        "result": "文件内容摘要",
+        "success": true,
+        "tool": "read_file",
+        "type": "tool_result"
+      },
+      {
+        "result": "命令输出",
+        "success": true,
+        "tool": "pwsh",
+        "type": "tool_result"
+      },
+      {
+        "content": "写到一半的回复",
+        "type": "delta"
+      }
+    ],
+    "conversation_id": "CONV-ID-X",
+    "emit_sequence": [
+      {
+        "message": "开始执行",
+        "type": "status"
+      },
+      {
+        "tool": "pwsh",
+        "type": "tool_start"
+      },
+      {
+        "arguments": {
+          "content": "x",
+          "path": "<TMP>/w.txt"
+        },
+        "confirm_id": "c1",
+        "tool_desc": "写文件",
+        "tool_name": "write_file",
+        "type": "tool_confirm"
+      },
+      {
+        "tool": "pwsh",
+        "type": "tool_result"
+      },
+      {
+        "skills": [
+          {
+            "id": "s1",
+            "name": "演示技能"
+          }
+        ],
+        "type": "skills"
+      }
+    ],
+    "existing_aborted": {
+      "aborted": true,
+      "content": "（已中止）",
+      "run_id": "RUN-ID-X"
+    },
+    "freeze_emit": {
+      "message": "不应改写状态",
+      "type": "status"
+    },
+    "run_id": "RUN-ID-X",
+    "skills": [
+      {
+        "id": "s1",
+        "name": "演示技能"
+      }
+    ]
+  },
+  "record": {
+    "abort_idempotent": {
+      "add_message_count": 0,
+      "returned": null
+    },
+    "abort_rebuild": {
+      "add_message_count": 1,
+      "content": "写到一半的回复",
+      "metadata": {
+        "aborted": true,
+        "activity": [
+          {
+            "text": "先分析再执行",
+            "type": "reasoning"
+          },
+          {
+            "run": {
+              "result": "文件内容摘要",
+              "success": true,
+              "tool": "read_file"
+            },
+            "type": "tool"
+          },
+          {
+            "run": {
+              "result": "命令输出",
+              "success": true,
+              "tool": "pwsh"
+            },
+            "type": "tool"
+          },
+          {
+            "text": "写到一半的回复",
+            "type": "prose"
+          }
+        ],
+        "attachments": [],
+        "reasoning": [
+          "先分析再执行"
+        ],
+        "run_id": "RUN-ID-X",
+        "skills": [
+          {
+            "id": "s1",
+            "name": "演示技能"
+          }
+        ],
+        "tool_runs": [
+          {
+            "result": "文件内容摘要",
+            "success": true,
+            "tool": "read_file"
+          },
+          {
+            "result": "命令输出",
+            "success": true,
+            "tool": "pwsh"
+          }
+        ],
+        "trace": []
+      }
+    },
+    "cancel_freeze": {
+      "status": null,
+      "type": "status",
+      "updates_count": 1
+    },
+    "emit_mapping": [
+      {
+        "detail_message": "开始执行",
+        "status": "running",
+        "type": "status"
+      },
+      {
+        "detail_message": "正在执行 pwsh",
+        "status": "running",
+        "type": "tool_start"
+      },
+      {
+        "detail_message": "等待工具确认",
+        "status": "waiting",
+        "type": "tool_confirm"
+      },
+      {
+        "detail_message": "工具 pwsh 执行完毕",
+        "status": "running",
+        "type": "tool_result"
+      },
+      {
+        "detail_message": "已启用 Skill",
+        "status": null,
+        "type": "skills"
+      }
+    ],
+    "watchdog": {
+      "add_message_count": 1,
+      "cancelled_events": [
+        {
+          "aborted_message": {
+            "content": "（已中止）",
+            "conversation_id": "CONV-ID-X",
+            "id": "MSG-1",
+            "metadata": {
+              "aborted": true,
+              "activity": [],
+              "attachments": [],
+              "reasoning": [],
+              "run_id": "RUN-ID-X",
+              "skills": [],
+              "tool_runs": [],
+              "trace": []
+            },
+            "role": "assistant"
+          },
+          "message": "任务已取消",
+          "run_id": "RUN-ID-X",
+          "sequence": 1,
+          "type": "cancelled"
+        }
+      ],
+      "cancelled_updates": [
+        {
+          "detail": {
+            "message": "任务已取消"
+          },
+          "status": "cancelled"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "inputs": {
+    "content": "Hello golden",
+    "invalid_id": "00000000-0000-0000-0000-000000000000",
+    "seed_file": "<TMP>/seed.txt",
+    "target": "<TMP>/w1.txt"
+  },
+  "record": {
+    "rows": [
+      {
+        "file_exists": false,
+        "ok": false,
+        "out": "NEED_CONFIRM:<CONFIRM_ID>:写入文件：<TMP>\\w1.txt:{\"path\": \"<TMP>\\\\w1.txt\", \"content\": \"Hello golden\"}",
+        "pending_count": 1,
+        "step": "confirm-request"
+      },
+      {
+        "file_content": "Hello golden",
+        "file_exists": true,
+        "ok": true,
+        "out": "已写入 <TMP>\\w1.txt（12 字符）",
+        "pending_count": 0,
+        "step": "confirm-accept"
+      },
+      {
+        "ok": false,
+        "out": "确认ID无效或已过期",
+        "step": "confirm-second-consumption"
+      },
+      {
+        "file_exists": false,
+        "ok": false,
+        "out": "用户拒绝执行：write_file",
+        "pending_count": 0,
+        "step": "confirm-reject"
+      },
+      {
+        "file_exists": false,
+        "ok": false,
+        "out": "权限被拒绝：写入文件：<TMP>\\w1.txt（工具：write_file）",
+        "step": "deny-mode"
+      },
+      {
+        "ok": false,
+        "out": "确认ID无效或已过期",
+        "step": "invalid-id"
+      },
+      {
+        "ok": true,
+        "out": "FILE seed.txt",
+        "step": "readonly-auto"
+      }
+    ]
+  }
+}
