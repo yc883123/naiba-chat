@@ -252,13 +252,14 @@ class ToolExecutor:
                 f"NEED_CONFIRM:{confirm_id}:{reason}:"
                 f"{json.dumps(arguments, ensure_ascii=False)[:500]}"
             )
-        return self._execute_unchecked(tool, arguments, active_skills)
+        return self._execute_unchecked(tool, arguments, active_skills, run_context)
 
     def _execute_unchecked(
         self,
         tool: str,
         arguments: dict[str, Any],
         active_skills: list[dict[str, Any]],
+        run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         try:
             tool = self.TOOL_ALIASES.get(tool, tool)
@@ -272,6 +273,10 @@ class ToolExecutor:
                     server_id, mcp_tool = tool.split(".", 1)
                     if self.mcp_registry.connection(server_id) is not None:
                         return self.mcp_registry.call(server_id, mcp_tool, arguments)
+                # def.execute 兜底（单一定义 Phase 4）：无 _tool_ 方法时执行 def 绑定实现
+                spec = self._def_resolver(tool) if self._def_resolver is not None else None
+                if spec is not None and getattr(spec, "execute", None) is not None:
+                    return spec.execute(arguments, active_skills, run_context)
                 return False, f"未知工具：{tool}"
             if tool == "run_skill_script":
                 return True, handler(arguments, active_skills)

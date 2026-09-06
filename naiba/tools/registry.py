@@ -114,7 +114,11 @@ class ToolRegistry:
         self._mcp_registry = mcp_registry
 
     def register_mcp_tools(self, server_id: str, tools: list[dict[str, Any]]) -> None:
-        """将 MCP 工具以 mcp__<server>__<tool> 名称注册（元数据 + 分发处理器）。"""
+        """将 MCP 工具以 mcp__<server>__<tool> 名称注册为单一定义 def。
+
+        Phase 4 起：execute 直接绑定 ``mcp_registry.call`` 闭包（与内置工具同构，单一执行通道），
+        不再注册影子系统处理器（旧双路径已废除）。
+        """
         if self._mcp_registry is None:
             return
         for tool in tools or []:
@@ -130,21 +134,14 @@ class ToolRegistry:
                 timeout=620,
                 permission="confirm",
                 annotations=annotations,
+                execute=lambda args, skills, ctx, s=server_id, n=str(tool.get("name") or ""): self._mcp_registry.call(s, n, args),
             )
             self.register(spec)
-            server = server_id
-            tool_name = tool.get("name")
-            self.register_system_handler(
-                name,
-                lambda args, skills, ctx, s=server, t=tool_name: self._mcp_registry.call(s, t, args),
-            )
 
     def deregister_mcp_tools(self, server_id: str) -> None:
         prefix = f"mcp__{server_id}__"
         for key in [k for k in self._specs if k.startswith(prefix)]:
             self._specs.pop(key, None)
-        for key in [k for k in self._system_handlers if k.startswith(prefix)]:
-            self._system_handlers.pop(key, None)
 
     # ---- 注册 ----
     def register(self, spec: ToolSpec) -> None:
