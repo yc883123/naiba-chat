@@ -8,8 +8,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
-import json
 import re
 import secrets
 import shutil
@@ -30,14 +28,13 @@ from naiba.config import (
     built_in_agent_ids, validate_skills_dir,
 )
 from naiba.core.cards import parse_sillytavern_card
-from naiba.core.contracts import RunContext
 from naiba.core.migration import (
     _copy_legacy_data, _database_has_conversations, _merge_data_tree,
     _sync_bundled_skills, migrate_legacy_data,
 )
 from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
-from naiba.jobs import JobRegistry, JobSpec
+from naiba.jobs import JobRegistry
 from naiba.llm.runtime import ModelRuntime
 from naiba.mcp import MCPRegistry
 from naiba.paths import PathContext, default_path_context
@@ -48,7 +45,7 @@ from naiba.skills.catalog import SkillCatalog
 from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
 from naiba.storage.media import _process_uploaded_image, _uploads_total_bytes
 from naiba.storage.store import ChatStorage
-from naiba.subagent import job_tool_handler_factory, run_subagent_agent, subagent_handler_factory
+from naiba.subagent import run_subagent_agent
 from naiba.tools.executor import ToolExecutor
 from naiba.tools.registry import build_tool_registry
 from naiba.updater import UpdateManager
@@ -194,8 +191,10 @@ class NaibaChatApp:
         from naiba.tools.providers.jobs import JobToolProvider
 
         self.tool_registry.register_provider(JobToolProvider(self))
-        self.tool_registry.register_system_handler("comfyui_prepare_workflow", self._comfyui_prepare_workflow_handler)
-        self.tool_registry.register_system_handler("comfyui_batch", self._comfyui_batch_handler)
+        # comfyui 域 Provider（Phase 4）：工作流检查/批量作业单一定义
+        from naiba.tools.providers.comfyui import ComfyUIProvider
+
+        self.tool_registry.register_provider(ComfyUIProvider(self))
         from naiba.capability import CapabilityRuntime
 
         self.capabilities = CapabilityRuntime(self)
@@ -234,154 +233,6 @@ class NaibaChatApp:
         self.plans.shutdown()
         self.jobs.shutdown()
         self.mcp.stop()
-
-    def _comfyui_batch_handler(
-        self,
-        args: dict[str, Any],
-        _skills: Any,
-        run_context: RunContext | None = None,
-    ) -> tuple[bool, str]:
-        """Submit a batch of API-format workflows through the durable JobRegistry."""
-        from naiba.jobs import JobSpec
-
-        ctx = run_context or {}
-        conversation_id = str(ctx.get("conversation_id") or "")
-        if not conversation_id:
-            return False, "无法确定当前对话，不能创建 ComfyUI Job"
-        values = args or {}
-        workflows = values.get("workflows")
-        if isinstance(workflows, str):
-            try:
-                workflows = json.loads(workflows)
-            except json.JSONDecodeError as exc:
-                return False, f"workflows 字符串不是合法 JSON：{exc}"
-        workflow_paths = values.get("workflow_paths")
-        if workflows is None and isinstance(workflow_paths, list) and workflow_paths:
-            workflows = []
-            for raw_path in workflow_paths:
-                try:
-                    workflow = self._load_comfyui_workflow(str(raw_path))
-                except (OSError, ValueError, json.JSONDecodeError) as exc:
-                    return False, f"工作流文件读取失败：{exc}"
-                workflows.append(workflow)
-        if workflows is None:
-            one = values.get("workflow")
-            shots = values.get("shots", 1)
-            if not isinstance(one, dict):
-                return False, "需要 workflows 数组，或提供 workflow 对象"
-            try:
-                count = max(1, min(int(shots), 200))
-            except (TypeError, ValueError):
-                return False, "shots 必须是正整数"
-            workflows = [one for _ in range(count)]
-        if not isinstance(workflows, list) or not workflows or not all(isinstance(item, dict) for item in workflows):
-            return False, "workflows 必须是非空的 API 工作流对象数组"
-        if len(workflows) > 200:
-            return False, "单次最多提交 200 个工作流"
-        try:
-            workflows = [self._normalize_comfyui_runtime_workflow(item) for item in workflows]
-        except ValueError as exc:
-            return False, str(exc)
-        owner = str(ctx.get("owner_session_id") or conversation_id)
-        spec = JobSpec(
-            kind="comfyui",
-            conversation_id=conversation_id,
-            params={
-                "comfyui_url": str(values.get("comfyui_url") or "http://127.0.0.1:8188"),
-                "workflows": workflows,
-                "wait_timeout": max(1, min(int(values.get("timeout", 7200)), 86400)),
-            },
-            label="ComfyUI 批量生成",
-            parent_job_id=str(ctx.get("run_id") or ctx.get("job_id") or "") or None,
-            owner_session_id=owner,
-            resumable=True,
-        )
-        job_id = self.jobs.start(spec, owner=owner)
-        if bool(values.get("wait")):
-            snapshot = self.jobs.wait(job_id, float(spec.params["wait_timeout"]), owner=owner)
-            return True, json.dumps(snapshot or {"id": job_id}, ensure_ascii=False)
-        return True, json.dumps({"job_id": job_id, "status": "queued", "total": len(workflows)}, ensure_ascii=False)
-
-    @staticmethod
-    def _normalize_comfyui_runtime_workflow(value: Any) -> dict[str, Any]:
-        """Normalize an API workflow and replace invalid negative random seeds."""
-        workflow = NaibaChatApp._normalize_comfyui_workflow(value)
-        normalized = json.loads(json.dumps(workflow, ensure_ascii=False))
-        for node in normalized.values():
-            inputs = node.get("inputs") if isinstance(node, dict) else None
-            if not isinstance(inputs, dict):
-                continue
-            for key in ("seed", "noise_seed"):
-                raw = inputs.get(key)
-                if isinstance(raw, (int, float)) and raw < 0:
-                    inputs[key] = secrets.randbelow(2 ** 63)
-        return normalized
-
-    @staticmethod
-    def _load_comfyui_workflow(raw_path: str) -> dict[str, Any]:
-        path_text = str(raw_path or "").strip()
-        if not path_text:
-            raise ValueError("工作流路径为空")
-        path = Path(path_text).expanduser().resolve()
-        if not path.is_file():
-            raise FileNotFoundError(path)
-        if path.suffix.lower() != ".json":
-            raise ValueError("工作流文件必须是 .json")
-        if path.stat().st_size > 20 * 1024 * 1024:
-            raise ValueError("工作流文件超过 20 MB")
-        value = json.loads(path.read_text(encoding="utf-8"))
-        return NaibaChatApp._normalize_comfyui_workflow(value)
-
-    @staticmethod
-    def _normalize_comfyui_workflow(value: Any) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            raise ValueError("工作流 JSON 必须是对象")
-        # Accept the common {prompt: {...}} wrapper produced by API clients.
-        candidate = value.get("prompt") if isinstance(value.get("prompt"), dict) else value
-        # UI exports contain a nodes array and links; they are not POST /prompt payloads.
-        if isinstance(candidate.get("nodes"), list) or isinstance(candidate.get("links"), list):
-            raise ValueError("检测到 ComfyUI UI JSON，请先导出 API 格式工作流")
-        if not candidate:
-            raise ValueError("工作流为空")
-        invalid = [key for key, node in candidate.items() if not isinstance(node, dict)]
-        if invalid:
-            raise ValueError(f"API 工作流节点值必须是对象：{', '.join(map(str, invalid[:5]))}")
-        return candidate
-
-    def _comfyui_prepare_workflow_handler(
-        self,
-        args: dict[str, Any],
-        _skills: Any,
-        _run_context: RunContext | None = None,
-    ) -> tuple[bool, str]:
-        values = args or {}
-        try:
-            if isinstance(values.get("workflow"), dict):
-                raw = values["workflow"]
-            else:
-                raw = json.loads(Path(str(values.get("path") or "")).expanduser().resolve().read_text(encoding="utf-8"))
-            normalized = self._normalize_comfyui_workflow(raw)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            text = json.dumps({"valid": False, "error": str(exc)}, ensure_ascii=False)
-            return False, text
-        nodes = []
-        for node_id, node in list(normalized.items())[:2000]:
-            inputs = node.get("inputs") if isinstance(node, dict) else {}
-            nodes.append({
-                "id": str(node_id),
-                "class_type": str(node.get("class_type") or ""),
-                "input_count": len(inputs) if isinstance(inputs, dict) else 0,
-            })
-        result: dict[str, Any] = {
-            "valid": True,
-            "format": "api",
-            "node_count": len(normalized),
-            "nodes": nodes,
-            "has_output_node": any(str(item.get("class_type") or "").lower().startswith(("save", "video", "preview")) for item in nodes),
-        }
-        if bool(values.get("include_workflow")):
-            result["workflow"] = normalized
-        return True, json.dumps(result, ensure_ascii=False)
 
     def register_mcp_server(self, values: dict[str, Any]) -> dict[str, Any]:
         config = self.config.upsert_mcp_server(values)
