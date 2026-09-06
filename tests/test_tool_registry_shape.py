@@ -319,7 +319,7 @@ class ToolPolicyUnificationTests(unittest.TestCase):
         registry = registry_mod.ToolRegistry()
         seen: list[str] = []
 
-        def policy(tool, arguments, active_skills, permission_mode, run_context):
+        def policy(tool, arguments, active_skills, permission_mode, run_context, workspace=None):
             seen.append(permission_mode)
             return "自定义确认" if permission_mode == "confirm" else ""
 
@@ -350,7 +350,7 @@ class ToolPolicyUnificationTests(unittest.TestCase):
         root = Path(tempfile.mkdtemp(prefix="naiba-toolpolicy-"))
         registry = registry_mod.ToolRegistry()
 
-        def boom(tool, arguments, active_skills, permission_mode, run_context):
+        def boom(tool, arguments, active_skills, permission_mode, run_context, workspace=None):
             raise RuntimeError("策略炸了")
 
         registry.register(
@@ -375,7 +375,7 @@ class ToolPolicyUnificationTests(unittest.TestCase):
         root = Path(tempfile.mkdtemp(prefix="naiba-toolpolicy-"))
         registry = registry_mod.ToolRegistry()
 
-        def strict(tool, arguments, active_skills, permission_mode, run_context):
+        def strict(tool, arguments, active_skills, permission_mode, run_context, workspace=None):
             return "永远确认"
 
         registry.register(
@@ -390,6 +390,52 @@ class ToolPolicyUnificationTests(unittest.TestCase):
         executor.set_def_resolver(registry.get)
         self.assertEqual(executor._confirmation_reason("t_full", {}, []), "")
 
+    def test_policy_uses_engine_workspace_not_assembly_config(self) -> None:
+        """回归：策略必须使用「当前运行（引擎级）工作区」，而非 provider 装配期配置。
+
+        会话级工作区切换后（executor.workspace 被 run 快照覆盖）：
+        引擎工作区内子目录免确认；装配期配置区（现已非运行工作区）按越界确认。
+        """
+        import tempfile as _tf
+
+        from naiba.mcp import MCPRegistry
+        from naiba.tools.executor import ToolExecutor
+        from naiba.tools.providers import core as core_provider
+
+        base = Path(_tf.mkdtemp(prefix="naiba-ws-policy-"))
+        assembly_ws = base / "assembly"
+        run_ws = base / "run"
+        assembly_ws.mkdir()
+        run_ws.mkdir()
+        (run_ws / "inside.txt").write_text("in", encoding="utf-8")
+        (assembly_ws / "other.txt").write_text("out", encoding="utf-8")
+
+        ctx = core_provider.ToolContext(
+            workspace=assembly_ws,
+            python_executable=sys.executable,
+            command_timeout=60,
+            mcp_registry=None,
+        )
+        registry = registry_mod.ToolRegistry()
+        registry.register(
+            registry_mod.ToolSpec(
+                name="read_file",
+                description="dummy",
+                parameters={"type": "object", "properties": {}},
+                side_effect=False,
+                policy=core_provider._make_core_policy(ctx, "read_file"),
+            )
+        )
+        executor = ToolExecutor(run_ws, sys.executable, 60, MCPRegistry([]), permission_mode="confirm")
+        executor.set_def_resolver(registry.get)
+        self.assertEqual(
+            executor._confirmation_reason("read_file", {"path": str(run_ws / "inside.txt")}, []),
+            "",
+            "当前运行工作区内文件被误判越界（装配期配置泄露到策略）",
+        )
+        reason = executor._confirmation_reason("read_file", {"path": str(assembly_ws / "other.txt")}, [])
+        self.assertIn("工作区外", reason)
+        self.assertIn(str(assembly_ws / "other.txt"), reason, "确认理由应显示越界路径（装配区现不属于运行工作区）")
 
 if __name__ == "__main__":
     unittest.main()

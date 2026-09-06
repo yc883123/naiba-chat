@@ -46,20 +46,23 @@ class ToolContext:
     extra: dict[str, Any] = field(default_factory=dict)
 
 
-# ---- 路径解析（自 ToolExecutor 原样抽取） ----
+# ---- 路径解析（自 ToolExecutor 原样抽取；workspace 参数采用当前运行工作区，缺省回退 ctx。防止装配期配置漂移） ----
 
-def _resolve_tool_path(ctx: ToolContext, raw: Any, default_workspace: bool = False) -> Path:
+def _resolve_tool_path(
+    ctx: ToolContext, raw: Any, default_workspace: bool = False, workspace: Path | None = None,
+) -> Path:
+    ws = workspace if workspace is not None else ctx.workspace
     value = str(raw or "").strip()
     if not value and default_workspace:
-        return ctx.workspace
+        return ws
     path = Path(value).expanduser()
     if not path.is_absolute():
-        path = ctx.workspace / path
+        path = ws / path
     return path.resolve()
 
 
-def _read_roots(ctx: ToolContext, active_skills: list[dict[str, Any]]) -> list[Path]:
-    roots = [ctx.workspace]
+def _read_roots(workspace: Path, active_skills: list[dict[str, Any]]) -> list[Path]:
+    roots = [workspace]
     for skill in active_skills:
         value = str(skill.get("root") or "").strip()
         if not value:
@@ -75,19 +78,21 @@ def _resolve_read_path(
     raw: Any,
     active_skills: list[dict[str, Any]] | None = None,
     default_workspace: bool = False,
+    workspace: Path | None = None,
 ) -> Path:
     """Resolve relative paths against an active Skill before workspace."""
+    ws = workspace if workspace is not None else ctx.workspace
     value = str(raw or "").strip()
     if not value and default_workspace:
-        return ctx.workspace
+        return ws
     path = Path(value).expanduser()
     if path.is_absolute():
         return path.resolve()
-    workspace_candidate = (ctx.workspace / path).resolve()
+    workspace_candidate = (ws / path).resolve()
     if workspace_candidate.exists():
         return workspace_candidate
     matches: list[Path] = []
-    for root in _read_roots(ctx, active_skills or [])[1:]:
+    for root in _read_roots(ws, active_skills or [])[1:]:
         candidate = (root / path).resolve()
         if path_within(candidate, root) and candidate.exists():
             matches.append(candidate)
@@ -510,6 +515,7 @@ def _http_request_policy(
     active_skills: list[dict[str, Any]],
     permission_mode: str,
     run_context: dict[str, Any] | None,
+    workspace: Path | None = None,
 ) -> str:
     """http_request 按 method 判定副作用（行为优化 Phase 2）：GET/HEAD 免确认；其余 auto 放行。"""
     method = str((arguments or {}).get("method") or "GET").upper()
@@ -527,10 +533,13 @@ def _make_read_policy(ctx: ToolContext) -> Any:
         active_skills: list[dict[str, Any]],
         permission_mode: str,
         run_context: dict[str, Any] | None,
+        workspace: Path | None = None,
     ) -> str:
-        # 只读检查非破坏性：工作区内免确认（任意模式），越界必确认（不因 auto 放行）
-        path = _resolve_read_path(ctx, arguments.get("path"), active_skills, tool != "read_file")
-        if not any(path_within(path, root) for root in _read_roots(ctx, active_skills)):
+        # 只读检查非破坏性：工作区内免确认（任意模式），越界必确认（不因 auto 放行）。
+        # 工作区必须是"当前运行（会话级）工作区"（引擎传入），不得用装配期配置。
+        ws = workspace if workspace is not None else ctx.workspace
+        path = _resolve_read_path(ctx, arguments.get("path"), active_skills, tool != "read_file", ws)
+        if not any(path_within(path, root) for root in _read_roots(ws, active_skills)):
             return "读取工作区外路径：" + str(path)
         return ""
     return policy
@@ -543,9 +552,11 @@ def _make_write_policy(ctx: ToolContext) -> Any:
         active_skills: list[dict[str, Any]],
         permission_mode: str,
         run_context: dict[str, Any] | None,
+        workspace: Path | None = None,
     ) -> str:
-        path = _resolve_tool_path(ctx, arguments.get("path"))
-        if permission_mode == "auto" and path_within(path, ctx.workspace):
+        ws = workspace if workspace is not None else ctx.workspace
+        path = _resolve_tool_path(ctx, arguments.get("path"), workspace=ws)
+        if permission_mode == "auto" and path_within(path, ws):
             return ""
         return f"写入文件：{path}"
     return policy
@@ -558,6 +569,7 @@ def _make_dangerous_policy(reason: str) -> Any:
         active_skills: list[dict[str, Any]],
         permission_mode: str,
         run_context: dict[str, Any] | None,
+        workspace: Path | None = None,
     ) -> str:
         if permission_mode == "auto":
             return ""
@@ -572,9 +584,11 @@ def _make_call_mcp_policy(ctx: ToolContext) -> Any:
         active_skills: list[dict[str, Any]],
         permission_mode: str,
         run_context: dict[str, Any] | None,
+        workspace: Path | None = None,
     ) -> str:
         # Legacy Skills may wrap local read-only tools in call_mcp：与直接只读工具同样
-        # 的路径边界检查。
+        # 的路径边界检查（工作区取当前运行工作区）。
+        ws = workspace if workspace is not None else ctx.workspace
         server = str((arguments or {}).get("server") or "").strip()
         nested_tool = str((arguments or {}).get("tool") or "").strip()
         nested_args = (arguments or {}).get("arguments") or {}
@@ -583,8 +597,8 @@ def _make_call_mcp_policy(ctx: ToolContext) -> Any:
             and nested_tool in {"read_file", "list_directory", "search_files"}
             and isinstance(nested_args, dict)
         ):
-            path = _resolve_read_path(ctx, nested_args.get("path"), active_skills, nested_tool != "read_file")
-            if not any(path_within(path, root) for root in _read_roots(ctx, active_skills)):
+            path = _resolve_read_path(ctx, nested_args.get("path"), active_skills, nested_tool != "read_file", ws)
+            if not any(path_within(path, root) for root in _read_roots(ws, active_skills)):
                 return f"读取工作区外路径：{path}"
             return ""
         if permission_mode == "auto":

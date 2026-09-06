@@ -59,9 +59,11 @@ def normalize(value, tmp_root: str) -> object:
     如 NEED_CONFIRM 参数段或 untrusted_tool_result 内的结果 JSON；
     按转义层级从高到低逐一替换，保证换临时根回放不会误报漂移。
     """
-    tmp_variants = [str(tmp_root)]
+    tmp_variants = [str(tmp_root), str(tmp_root).replace(":", "：")]
     for times in (2, 3, 4):
-        tmp_variants.append(str(tmp_root).replace("\\", "\\" * times))
+        raw = str(tmp_root).replace("\\", "\\" * times)
+        tmp_variants.append(raw)
+        tmp_variants.append(raw.replace(":", "："))
     if isinstance(value, str):
         text = value
         for variant in tmp_variants:

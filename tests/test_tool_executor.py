@@ -41,6 +41,24 @@ class ToolExecutorConfirmTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("b.txt", out)
 
+    def test_need_confirm_reason_survives_colon_split(self):
+        """回归：NEED_CONFIRM 协议以半角冒号分三段（agent.py split(":", 3)），
+
+        Windows 盘符路径（C:\\…）含半角冒号曾把确认描述截断为「写入文件：C」；
+        生成端已把确认理由冒号全角化，此处复刻解析端行为验证不截断。
+        """
+        target = self.root / "a.txt"
+        ok, out = self.executor.execute("write_file", {"path": str(target), "content": "x"}, [])
+        self.assertFalse(ok)
+        self.assertTrue(out.startswith("NEED_CONFIRM:"), out)
+        parts = out.split(":", 3)
+        self.assertGreaterEqual(len(parts), 4, "协议段数异常")
+        self.assertEqual(parts[0], "NEED_CONFIRM")
+        self.assertIn("写入文件", parts[2], "确认描述缺失")
+        # 生成端对确认理由做了半角冒号→全角归一（防盘符截断）；还原后应含完整路径
+        normalized_desc = parts[2].replace("：", ":")
+        self.assertIn(str(target), normalized_desc, "确认描述被盘符冒号截断（描述应含完整路径）")
+
 
 if __name__ == "__main__":
     unittest.main()

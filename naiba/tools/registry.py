@@ -23,11 +23,12 @@ ToolExecuteFn = Callable[[dict[str, Any], list[dict[str, Any]], dict[str, Any] |
 # 结果摘要：(tool, arguments, result, success) -> short_summary
 ToolSummarizeFn = Callable[[str, dict[str, Any], str, bool], str]
 # 权限策略（单一定义 Phase 2+）：
-# (tool_name, arguments, active_skills, permission_mode, run_context) -> 确认理由；
+# (tool_name, arguments, active_skills, permission_mode, run_context, workspace) -> 确认理由；
 # 返回空串表示无需用户确认，非空串为展示给用户的确认理由（与 NEED_CONFIRM 协议对齐）。
-# permission_mode 由引擎透传（confirm/auto/full/deny），策略内部按模式细化；
+# permission_mode 由引擎透传（confirm/auto/full/deny）；workspace 为**当前运行（会话级）工作区**，
+# 由引擎在评估时传入（policy 不得闭包捕获装配期配置，否则会话工作区切换后判定漂移）。
 # 引擎在 full 模式下不评估策略（full 语义 = 永不询问）。
-ToolPolicyFn = Callable[[str, dict[str, Any], list[dict[str, Any]], str, dict[str, Any] | None], str]
+ToolPolicyFn = Callable[[str, dict[str, Any], list[dict[str, Any]], str, dict[str, Any] | None, Any], str]
 
 
 @dataclass
@@ -86,6 +87,7 @@ def _mcp_tool_policy(annotations: dict[str, Any]) -> ToolPolicyFn:
         active_skills: list[dict[str, Any]],
         permission_mode: str,
         run_context: dict[str, Any] | None,
+        workspace: Any = None,
     ) -> str:
         if bool(annotations.get("readOnlyHint")):
             return ""

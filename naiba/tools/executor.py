@@ -111,7 +111,9 @@ class ToolExecutor:
         if spec is not None and getattr(spec, "policy", None) is not None:
             try:
                 return str(
-                    spec.policy(tool, arguments, active_skills, self.permission_mode, run_context) or ""
+                    spec.policy(
+                        tool, arguments, active_skills, self.permission_mode, run_context, self.workspace,
+                    ) or ""
                 )
             except Exception as exc:
                 # 策略异常按需确认处理（fail-closed，不静默放行）
@@ -146,8 +148,11 @@ class ToolExecutor:
                     "active_skills": active_skills,
                     "processing": False,
                 }
+            # NEED_CONFIRM 协议以半角冒号分三段解析（agent.py split(":", 3)）；确认理由中
+            # 的 Windows 盘符（C:\…）含半角冒号会截断描述文本，故仅对确认理由做全角化。
+            reason_safe = str(reason or "").replace(":", "：")
             return False, (
-                f"NEED_CONFIRM:{confirm_id}:{reason}:"
+                f"NEED_CONFIRM:{confirm_id}:{reason_safe}:"
                 f"{json.dumps(arguments, ensure_ascii=False)[:500]}"
             )
         return self.execute_unchecked(tool, arguments, active_skills, run_context)

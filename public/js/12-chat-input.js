@@ -491,8 +491,8 @@ export function handleChatEvent(event, row, conversationId = state.conversationI
           ${toolArguments ? `<div class="tool-confirm-args"><pre>${escapeHtml(toolArguments)}</pre></div>` : ''}
         </div>
         <div class="tool-confirm-actions">
-          <button class="tool-confirm-btn tool-confirm-reject" onclick="rejectTool('${escapeHtml(confirmId)}', '${escapeHtml(event.run_id || runId)}')">拒绝</button>
-          <button class="tool-confirm-btn tool-confirm-approve" onclick="approveTool('${escapeHtml(confirmId)}', '${escapeHtml(event.run_id || runId)}')">允许执行</button>
+          <button class="tool-confirm-btn tool-confirm-reject" data-confirm-id="${escapeHtml(confirmId)}" data-run-id="${escapeHtml(event.run_id || runId)}">拒绝</button>
+          <button class="tool-confirm-btn tool-confirm-approve" data-confirm-id="${escapeHtml(confirmId)}" data-run-id="${escapeHtml(event.run_id || runId)}">允许执行</button>
         </div>
       </div>`;
     answer.insertAdjacentHTML('beforebegin', confirmMarkup);
@@ -742,6 +742,21 @@ export async function rejectTool(confirmId, runId = state.chatRunId) {
     toast(`拒绝失败：${error.message}`);
   }
 }
+
+// 确认卡按钮事件委托：模块（ESM）作用域函数不能经内联 onclick 访问（全局查找 ReferenceError），
+// 统一在模块内委托分派（import 绑定只读红线：不做跨文件赋值）。
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('.tool-confirm-btn');
+  if (!button || !button.dataset.confirmId) return;
+  event.preventDefault();
+  const confirmId = button.dataset.confirmId;
+  const runId = button.dataset.runId || state.chatRunId;
+  if (button.classList.contains('tool-confirm-reject')) {
+    rejectTool(confirmId, runId);
+  } else if (button.classList.contains('tool-confirm-approve')) {
+    approveTool(confirmId, runId);
+  }
+});
 
 export function setBusy(busy) {
   state.chatBusy = busy;
