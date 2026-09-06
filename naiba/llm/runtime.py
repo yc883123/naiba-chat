@@ -981,9 +981,13 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                     if status:
                         status({"type": "status", "message": "当前接口不支持流式 usage 参数，已切换兼容请求"})
                     continue
-                tool_rejection = any(
-                    marker in detail.lower()
-                    for marker in ("tools", "tool_choice", "functioncalling", "function calling", "unknown field", "unsupported")
+                tool_rejection = bool(
+                    re.search(
+                        r"(tool_choice|test_tools|function\s?calling|unknown field|invalid field|"
+                        r"does not support|do not support|unsupported\s+tools|tools?\s+(are|is)\s+not\s+supported|"
+                        r"no such tool|invalid tool)",  # 精确词组，避免匹配用户/历史文本中的普通 "tools" 词
+                        detail.lower(),
+                    )
                 )
                 if native_tools and not tool_fallback_used and exc.code in {400, 404, 422} and tool_rejection:
                     fallback_payload = dict(payload)
