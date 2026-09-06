@@ -1,11 +1,16 @@
 {
   "repository": "yc883123/naiba-chat",
-  "version": "1.7.9-beta",
+  "version": "2.0.0-beta",
   "commit": "a7f77b19668fa5dc16a694098f5c533914c214a2",
   "asset": "naiba-chat.exe",
   "sha256": "d7c07dc07699788ce34e9104754d87b25e764617bd986e24b8941db6064fd369",
   "published_at": "2026-09-05T00:00:00.0000000Z",
   "release_notes": [
+    "Naiba Chat 2.0.0 Beta 更新：完成后端全面模块化重构（阶段 0-4）——核心代码迁入 naiba/ 包、依赖图单向无环、server.py 收口为 136 行门面，HTTP 层仅剩薄包装与传输职责，业务逻辑全部下沉至 NaibaChatApp 与领域模块；HTTP API 与事件协议版式不变，前端零配合。",
+    "路径与配置：PathContext 统一管理源码/冻结双模式目录（冻结版固定 %LOCALAPPDATA%\\NaibaChat，旧数据迁移与自定义数据目录切换语义保留）；ConfigStore 迁入 naiba/config.py；静态资源版本哈希改为 lazy-once。",
+    "契约化：RunContext（18 键+校验工厂）/EventType（47 种，与前端反查对齐）/MetadataKeys 显式化；AppContext/ConfigView Protocol 注入收窄（14 处 app: Any 改为 AppContext）。",
+    "修复与清理：模型测试连接 NameError（@staticmethod 与 self 错配）与上传 500（self.app 残留引用）等搬移期缺陷；诊断开关兜底统一；死代码清理（MCP 诊断管道、废弃插话等）。",
+    "守门测试与回归：新增权限矩阵（full/confirm/auto/deny 全模式）、装饰器-绑定一致性、self.app 残留引用扫描等守门，共 83 个单测；全量功能回归（11 域 48 项）通过。",
     "Naiba Chat 1.7.9 Beta 更新：顶栏「对话设置」改为左侧常驻文字按钮更易发现，文件面板重开保留最近打开的文件，输入区按钮尺寸统一，设置页与移动端导航优化。",
     "对话设置入口前置：顶栏「对话设置」从右侧操作区的齿轮图标改为左侧常驻文字按钮，一眼可见、一键直达，不用再在操作区图标里找；移动端窄屏不占位。",
     "文件面板记忆最近文件：收起右侧文件面板不再清空当前打开的标签，重新打开（顶栏「文件 N」）时自动显示最近打开的文件，关闭面板不再丢失浏览位置。",

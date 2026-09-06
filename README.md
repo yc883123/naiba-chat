@@ -1,15 +1,17 @@
-# Naiba Chat 1.7.9 Beta
+# Naiba Chat 2.0.0 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉路由和文件产物统一到一个对话界面中。
 
-1.7.9 Beta 在 1.7.8 的快捷提示词预设基础上迭代：顶栏「对话设置」改为左侧常驻文字按钮更易发现，文件面板收起后重开自动回到最近打开的文件，并统一输入区按钮尺寸、精简设置页导航入口。
+2.0.0 Beta（重构版）在 1.7.9 的基础上完成后端全面模块化重构：核心代码迁入 `naiba/` 包、依赖图单向无环、`server.py` 收口为门面、契约（RunContext/EventType/MetadataKeys）显式化；HTTP API 与事件协议版式不变，前端零配合。详见下方「2.0.0 Beta 主要能力」。
 
-## 1.7.9 Beta 主要能力
+## 2.0.0 Beta 主要能力
 
-- **对话设置入口前置**：顶栏「对话设置」从右侧操作区的齿轮图标改为左侧常驻文字按钮，一眼可见、一键直达；移动端窄屏不占位。
-- **文件面板记忆最近文件**：收起右侧文件面板不再清空当前打开的标签，重新打开（顶栏「文件 N」）时自动显示最近打开的文件，关闭面板不再丢失浏览位置。
-- **输入区按钮统一**：发送与工具图标按钮统一为 38×38、图标 20px 尺寸，视觉更规整；「轻量」按钮改为图标+文字并排展示，富文本开关配色与字号更轻。
-- **设置页导航精简**：设置导航「对话快捷系统提示词」入口简写为「快捷提示词」（悬停 title 显示全名）；移动端设置页 tab 改为横向滚动布局，不再多列挤压、可滑动切换。
+- **后端全面模块化重构（阶段 0–4）**：原先约 2.4 万行堆叠在根目录的后端代码迁入 `naiba/` 包（组装根/传输层/配置/存储/运行/工具/技能/模型/视觉/网络等领域分层），依赖图单向无环、机械可验证（DAG 守门测试）；`server.py` 收口为 136 行门面，HTTP 层仅剩薄包装与传输职责，业务逻辑全部下沉至 `NaibaChatApp` 与领域模块。
+- **路径与配置**：`PathContext` 统一管理源码/冻结双模式目录（冻结版固定 `%LOCALAPPDATA%\NaibaChat`，旧数据迁移与自定义数据目录切换语义保留）；`ConfigStore` 迁入 `naiba/config.py`；静态资源版本哈希改为 lazy-once。
+- **契约化**：`RunContext`（18 键 + 校验工厂）/`EventType`（47 种，与前端反查对齐）/`MetadataKeys` 显式化；`AppContext`/`ConfigView` Protocol 注入收窄（14 处 `app: Any` → `AppContext`）。
+- **修复与清理**：模型测试连接 `NameError`（`@staticmethod`+`self` 错配）与上传 500（`self.app` 残留引用）等搬移期缺陷；诊断开关兜底统一；死代码清理（MCP 诊断管道、废弃插话等）。
+- **守门测试**：新增权限矩阵（full/confirm/auto/deny 全模式）、装饰器-绑定一致性、`self.app` 残留引用扫描等网格化守门，共 83 个单测；全量功能回归（11 域 48 项）通过。
+- **行为兼容**：对外 HTTP API 路径、事件流协议与前端完全不改；13 个根模块保留兼容 shim（`from naiba.X import *`）；`launcher.py`/PyInstaller spec 零改动。
 
 ### 历史能力（1.7.8 及更早）
 
@@ -103,7 +105,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-1.7.9-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-2.0.0-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -191,13 +193,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-1.7.9-beta-windows-x64.zip`
+- `naiba-chat-2.0.0-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 1.7.9 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 2.0.0 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -210,7 +212,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 node --check public/app.js
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "1.7.9-beta"
+$env:NAIBA_BUILD_VERSION = "2.0.0-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
