@@ -49,7 +49,7 @@
    - 机器字段剥离清单：vision_analyze/vision_read_folder 装载形态（note+图片名）、artifact_report（name+size+errors，剥 sha/绝对路径）、vision_image_ops（剥 path/heatmap）；修改必须同步「模型上下文三通道」（native `role:tool`、兼容 `<untrusted_tool_result>`、历史兜底 `_content_read_tool_outputs`）与前端事实源。
    - 截断必有「已截断：原文 N 字符」标记；`metadata.tool_runs` 存展示形态（前端历史渲染 + 兜底注入数据源，注入时再剥 arguments）。
 4. **工具行为终态（read_file 双预算/失败语义/确定性枚举，接手勿改）**：
-   - read_file：按行读取，50 行×30000 字符双预算（先触达者截断）；截断标记含「文件共 N 行，已返回第 A-B 行；如需继续请用 start_line=…」；单行超预算时按字符截断该行且续读起点回到该行；空文件/越界 start_line 显式提示。
+   - read_file：按行读取，50 行×30000 字符双预算（先触达者截断）；**max_chars 对模型隐藏**（schema 不含该参数，执行层封顶 30000 防浪费）；截断标记含「文件共 N 行，已返回第 A-B 行；如需继续请用 start_line=…」；单行超预算时按字符截断该行且续读起点回到该行；空文件/越界 start_line 显式提示。
    - 失败语义：`_result_success`（core.py）——pwsh/run_skill_script 非零退出码、http_request ≥400 → success=False（模型失败路径正确触发）；判定为纯函数，勿在别处另写。
    - 枚举确定性：glob_files/list_directory 按名称排序、输出绝对路径、超限附 start_after 续枚举提示；search_files 默认区分大小写（ignore_case 对子串/正则统一生效）、超大文件跳过与命中总数计入汇总。
    - job_output 增量：输出尾部回传推进后的 cursor（模型凭它读取后续增量）。
