@@ -1,6 +1,7 @@
 [
   "Naiba Chat 2.0.0 Beta 更新：完成后端全面模块化重构（阶段 0-4）——核心代码迁入 naiba/ 包、依赖图单向无环、server.py 收口为 136 行门面，HTTP 层仅剩薄包装与传输职责，业务逻辑全部下沉至 NaibaChatApp 与领域模块；HTTP API 与事件协议版式不变，前端零配合。",
   "Naiba Chat 2.0.0 Beta 补充：工具系统增强（含破坏性变更）\n① 视觉工具单入口重构：8 个视觉工具合并为 vision_analyze（唯一识图入口，按会话模型能力自动提供「视觉后端分析」或「图片装载」，工具名恒定、模型无需自省）与 vision_image_ops（本地图像计算：主色/裁剪/像素对比）；原 vision_describe/vision_ground/vision_detect/vision_ocr/vision_colors/vision_crop/vision_pixel_diff/vision_read_folder 已移除——旧配置自动迁移至新入口，旧调用返回替换引导提示。\n② call_mcp 网关已移除：MCP 工具以 mcp__<server>__<tool> 直接暴露，请直接调用对应工具；旧配置自动清理，旧调用返回引导提示。\n③ 工具集不再按模型能力区分：多模态/文本模型看到相同的视觉工具集，模型能力差异由会话化工具形态（RunContext.tool_defs）处理。",
+  "Naiba Chat 2.0.0 Beta 补充：DeepSeek 思考模式工具轮兼容修复\n修复 deepseek-v4-flash / v4-pro（Responses API + thinking）工具调用轮次 400：\n「The reasoning_text in the thinking mode must be passed back to the API」。\n根因：携带 tools 的请求必须完整回传历史 reasoning，实测确证的合法形态为\n`{\"type\":\"reasoning\",\"content\":[{\"type\":\"reasoning_text\",\"text\":\"…\"}]}`（块数组）；\n`reasoning_text` 字段与明文 content 均不被接受。另：vision-exp 在服务端不校验 thinking 回传\n（两模型客户端行为一致，属服务端特性，无需适配）；超时兜底——若仍遇该 400，自动移除 tools\n重试一次以保证对话不中断。",
   "路径与配置：PathContext 统一管理源码/冻结双模式目录（冻结版固定 %LOCALAPPDATA%\\NaibaChat，旧数据迁移与自定义数据目录切换语义保留）；ConfigStore 迁入 naiba/config.py；静态资源版本哈希改为 lazy-once。",
   "契约化：RunContext（18 键+校验工厂）/EventType（47 种，与前端反查对齐）/MetadataKeys 显式化；AppContext/ConfigView Protocol 注入收窄（14 处 app: Any 改为 AppContext）。",
   "修复与清理：模型测试连接 NameError（@staticmethod 与 self 错配）与上传 500（self.app 残留引用）等搬移期缺陷；诊断开关兜底统一；死代码清理（MCP 诊断管道、废弃插话等）。",
