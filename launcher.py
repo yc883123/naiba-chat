@@ -84,7 +84,7 @@ class Launcher:
 
     # ---- HTTP 服务（后台线程） ----
     def _run_server(self, host: str, port: int) -> None:
-        self.httpd = ThreadingHTTPServer((host, port), srv.RequestHandler)
+        self.httpd = srv.AppHTTPServer((host, port), srv.RequestHandler, srv.APP)
         self.httpd.daemon_threads = True
         srv.write_status(host, port, str(srv.APP.config.data["access_token"]))
         try:

@@ -48,6 +48,8 @@ from naiba.vision.runtime import VisionRouter
 class NaibaChatApp:
     def __init__(self, paths: PathContext | None = None):
         self._paths = paths or default_path_context()
+        # 公开访问别名（同对象引用：rebind_data_dir 会就地更新字段）
+        self.paths = self._paths
         # 冻结版首次启动：从 EXE 相邻旧目录迁移配置与数据到 %LOCALAPPDATA%\NaibaChat。
         initial_data_dir = self._paths.data_dir.resolve()
         self.data_migration = migrate_legacy_data(self._paths)
