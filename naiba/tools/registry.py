@@ -1,18 +1,16 @@
-"""Harness 级统一工具系统。
+"""统一工具系统（单一定义重构进行中：声明/执行/策略同源）。
 
-以现有 ``ToolExecutor`` 的执行能力为基础，增加声明式的 ``ToolRegistry``：
-每个工具必须提供名称、参数 JSON Schema、是否有副作用、是否允许重试、
-默认超时、所需权限、执行函数与结果摘要函数。
-
-- 保留现有 9 个工具：``read_file`` / ``write_file`` / ``list_directory`` /
-  ``search_files`` / ``pwsh`` / ``run_skill_script`` / ``http_request`` /
-  ``register_mcp`` / ``call_mcp``。
-- 新增通用任务工具：``run_in_background`` / ``job_output`` / ``job_status`` /
-  ``job_wait`` / ``job_kill`` / ``subagent``。这些工具由 JobRegistry / SubAgentManager
-  处理，不经由 ``ToolExecutor``。
+- 声明：``ToolSpec``（名称/参数/side_effect/retryable/timeout/permission/execute/summarize/
+  aliases/policy/system/metadata），按域由 ``build_*_tool_specs`` / ``ToolProvider`` 提供；
+- 分发：``ToolRegistry.execute`` 别名归一后，优先 def.execute（system 直调 / 非 system 经引擎），
+  未绑定 execute 的 def 回退双轨路径（executor._tool_* / system_handlers / MCP 动态）；
+- 既有工具：核心 11 个（read_file/write_file/list_directory/search_files/glob_files/edit_file/
+  pwsh/run_skill_script/http_request/register_mcp/call_mcp）+ Harness 兼容别名 5 个 +
+  任务/子 Agent、comfyui、capability、vision、search、recall 系统工具；
+  MCP 工具以 ``mcp__<server>__<tool>`` 动态注册（元数据 + 分发处理器）。
 
 ``ToolRegistry`` 自身不持有执行逻辑：它保存元数据，并把执行委托给注入的
-``executor``（处理常规工具）或 ``system_handlers``（处理任务/子 Agent 工具）。
+``executor``（引擎：权限策略与确认）、def.execute 或 ``system_handlers``（系统工具）。
 Agent Loop 仅通过它查询 ``side_effect`` / ``retryable`` / ``permission`` 等策略信息。
 """
 from __future__ import annotations
@@ -20,13 +18,16 @@ from __future__ import annotations
 from naiba.core.contracts import RunContext
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 # 执行函数签名：(arguments, active_skills, run_context) -> (success, result_text)
 # run_context 为可选，承载当前运行上下文（job_id / depth / owner 等），供子 Agent 等系统工具使用
 ToolExecuteFn = Callable[[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None], tuple[bool, str]]
 # 结果摘要：(tool, arguments, result, success) -> short_summary
 ToolSummarizeFn = Callable[[str, dict[str, Any], str, bool], str]
+# 权限策略（单一定义 Phase 1+）：(tool_name, arguments, active_skills, run_context) -> 确认理由；
+# 返回空串表示无需用户确认，非空串为展示给用户的确认理由（与 NEED_CONFIRM 协议对齐）
+ToolPolicyFn = Callable[[str, dict[str, Any], list[dict[str, Any]], dict[str, Any] | None], str]
 
 
 @dataclass
@@ -43,6 +44,32 @@ class ToolSpec:
     summarize: ToolSummarizeFn | None = None
     # 来自 MCP 工具的 annotations（readOnlyHint / destructiveHint 等）
     annotations: dict[str, Any] = field(default_factory=dict)
+    # ---- 单一定义扩展（工具系统重构 Phase 1 引入）----
+    # 本 def 的别名（注册时并入 registry 别名表；查询层 resolve 归一，不进执行层）
+    aliases: tuple[str, ...] = ()
+    # 自定义权限策略；None 时由 side_effect/permission/annotations 推导（Phase 2 接入引擎）
+    policy: ToolPolicyFn | None = None
+    # system=True：系统级工具（job/capability/vision/search 等），策略与确认由自身负责，
+    # 分发时直调 execute，绕过注入引擎（与既有 system_handlers 语义一致）
+    system: bool = False
+    # 通用扩展位（默认空）：为未来自定义工具预留展示/分组等附加元数据；不进入 schemas() 输出
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+class ToolProvider(Protocol):
+    """按域提供工具定义的 Provider 契约：``tools() -> list[ToolSpec]``。"""
+
+    def tools(self) -> list[ToolSpec]: ...
+
+
+# Harness 兼容别名（与 ToolExecutor.TOOL_ALIASES 同源；Phase 5 收敛到此处唯一）
+HARNESS_ALIASES = {
+    "read": "read_file",
+    "write": "write_file",
+    "edit": "edit_file",
+    "glob": "glob_files",
+    "grep": "search_files",
+}
 
 
 def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bool) -> str:
@@ -51,10 +78,11 @@ def _default_summarize(tool: str, args: dict[str, Any], result: str, success: bo
 
 
 class ToolRegistry:
-    """声明式工具表。执行委托给 ``executor`` 或 ``system_handlers``。"""
+    """声明式工具表。执行委托给 def.execute（单一定义）或注入的 executor / system_handlers。"""
 
     def __init__(self) -> None:
         self._specs: dict[str, ToolSpec] = {}
+        self._alias_map: dict[str, str] = {}
         self._executor: Any = None
         self._mcp_registry: Any = None
         self._system_handlers: dict[str, ToolExecuteFn] = {}
@@ -101,10 +129,36 @@ class ToolRegistry:
         if not spec.summarize:
             spec.summarize = _default_summarize
         self._specs[spec.name] = spec
+        # def 级别名并入别名表（查询层 resolve 归一）
+        for alias in spec.aliases:
+            self.register_alias(alias, spec.name)
 
     def register_many(self, specs: list[ToolSpec]) -> None:
         for spec in specs:
             self.register(spec)
+
+    def register_provider(self, provider: Any) -> None:
+        """注入一个 ToolProvider（``tools() -> list[ToolSpec]`` 或直接为可迭代列表）。
+
+        与 ``register_many`` 同义；Provider 只提供定义，不持有执行逻辑。
+        """
+        specs = provider.tools() if hasattr(provider, "tools") else provider
+        self.register_many(list(specs))
+
+    def register_alias(self, alias: str, target: str) -> None:
+        """登记别名（查询层解析）。alias 与 target 相同或为空时忽略。"""
+        alias = str(alias or "").strip()
+        target = str(target or "").strip()
+        if alias and target and alias != target:
+            self._alias_map[alias] = target
+
+    def register_alias_map(self, mapping: dict[str, str]) -> None:
+        for alias, target in mapping.items():
+            self.register_alias(alias, target)
+
+    def resolve(self, name: str) -> str:
+        """别名归一化：查询层解析，不进执行层；未登记别名原样返回。"""
+        return self._alias_map.get(str(name or ""), str(name or ""))
 
     def bind_executor(self, executor: Any) -> None:
         """注入常规工具执行器（``ToolExecutor`` 实例）。"""
@@ -171,6 +225,12 @@ class ToolRegistry:
         return rows
 
     # ---- 执行 ----
+    def _run_executor(self, run_context: RunContext | None) -> Any:
+        """取当前运行使用的引擎：优先 run_context.executor（ReadOnly/Craft 包装），否则注入的执行器。"""
+        if isinstance(run_context, dict) and run_context.get("executor") is not None:
+            return run_context["executor"]
+        return self._executor
+
     def execute(
         self,
         tool: str,
@@ -178,19 +238,32 @@ class ToolRegistry:
         active_skills: list[dict[str, Any]],
         run_context: RunContext | None = None,
     ) -> tuple[bool, str]:
-        executor = self._executor
-        if isinstance(run_context, dict) and run_context.get("executor") is not None:
-            executor = run_context["executor"]
-        if tool.startswith("mcp__") and executor is not None:
-            return executor.execute(tool, arguments, active_skills)
-        if tool in self._system_handlers:
-            return self._system_handlers[tool](arguments, active_skills, run_context)
-        if tool in self._specs and executor is not None:
-            return executor.execute(tool, arguments, active_skills)
+        """统一分发：别名归一 → def.execute（优先）→ 引擎（策略/确认）→ 系统处理器 → 执行器兜底。
+
+        单一定义语义（Phase 1 起）：
+        - def.execute 已绑定且非 system：经引擎执行（权限策略、确认、ReadOnly/Craft 包装在此生效）；
+        - def.execute 已绑定且 system：直调（系统级工具自带策略，与既有 system_handlers 语义一致）；
+        - 无 def.execute：回退既有双轨路径（mcp__ 前缀 / system_handlers / executor），行为不变。
+        """
+        name = self.resolve(tool)
+        spec = self._specs.get(name)
+        if spec is not None and spec.execute is not None:
+            if not spec.system:
+                executor = self._run_executor(run_context)
+                if executor is not None:
+                    return executor.execute(name, arguments, active_skills)
+            return spec.execute(arguments, active_skills, run_context)
+        executor = self._run_executor(run_context)
+        if name.startswith("mcp__") and executor is not None:
+            return executor.execute(name, arguments, active_skills)
+        if name in self._system_handlers:
+            return self._system_handlers[name](arguments, active_skills, run_context)
+        if name in self._specs and executor is not None:
+            return executor.execute(name, arguments, active_skills)
         # MCP 工具形如 server.tool，ToolExecutor 内部处理
-        if "." in tool and executor is not None:
-            return executor.execute(tool, arguments, active_skills)
-        return False, f"未知工具：{tool}"
+        if "." in name and executor is not None:
+            return executor.execute(name, arguments, active_skills)
+        return False, f"未知工具：{name}"
 
     def summarize(self, tool: str, args: dict[str, Any], result: str, success: bool) -> str:
         spec = self._specs.get(tool)
@@ -906,4 +979,6 @@ def build_tool_registry() -> ToolRegistry:
     registry.register_many(build_vision_tool_specs())
     registry.register_many(build_search_tool_specs())
     registry.register_many(build_recall_tool_specs())
+    # 别名表在查询层归一（Phase 5 后唯一来源；当前与 ToolExecutor.TOOL_ALIASES 双轨一致）
+    registry.register_alias_map(HARNESS_ALIASES)
     return registry

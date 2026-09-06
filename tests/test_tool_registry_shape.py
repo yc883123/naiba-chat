@@ -190,5 +190,116 @@ class ToolRegistryShapeTests(unittest.TestCase):
         self.assertEqual(len(self.rows), len(self.registry.names()))
 
 
+class ToolRegistryUnifiedFieldsTests(unittest.TestCase):
+    """Phase 1：单一定义字段（aliases/policy/system/metadata）与 Provider 骨架守门。"""
+
+    def test_schema_row_key_set_stable(self) -> None:
+        """schemas() 输出键集冻结（metadata/aliases/policy 不进模型可见行）。"""
+        registry = registry_mod.build_tool_registry()
+        expected = {
+            "name", "description", "parameters", "side_effect",
+            "retryable", "timeout", "permission", "annotations",
+        }
+        for row in registry.schemas():
+            with self.subTest(tool=row["name"]):
+                self.assertEqual(set(row.keys()), expected, "schemas() 行键集漂移")
+
+    def test_alias_resolution_in_query_layer(self) -> None:
+        registry = registry_mod.build_tool_registry()
+        for alias, target in registry_mod.HARNESS_ALIASES.items():
+            with self.subTest(alias=alias):
+                self.assertEqual(registry.resolve(alias), target)
+                self.assertEqual(registry.resolve(target), target)
+        self.assertEqual(registry.resolve("no_such_tool"), "no_such_tool")
+
+    def test_provider_registration_and_metadata(self) -> None:
+        registry = registry_mod.ToolRegistry()
+
+        class FakeProvider:
+            def tools(self) -> list[Any]:
+                return [
+                    registry_mod.ToolSpec(
+                        name="t_provider",
+                        description="provider 注入的测试工具",
+                        parameters={"type": "object", "properties": {}},
+                        metadata={"icon": "wrench"},
+                    )
+                ]
+
+        registry.register_provider(FakeProvider())
+        spec = registry.get("t_provider")
+        self.assertIsNotNone(spec, "Provider 工具未注册成功")
+        self.assertEqual(spec.metadata, {"icon": "wrench"}, "metadata 未保留")
+        self.assertEqual(spec.metadata, registry.get("t_provider").metadata)
+        self.assertIsNone(spec.policy, "policy 默认应为 None")
+        self.assertFalse(spec.system, "system 默认应为 False")
+
+    def test_execute_prefers_system_def_execute(self) -> None:
+        """system=True 的 def.execute 直调，绕过引擎。"""
+        registry = registry_mod.ToolRegistry()
+        calls: list[int] = []
+
+        def handler(arguments: dict[str, Any], skills: list[Any], ctx: Any) -> tuple[bool, str]:
+            calls.append(1)
+            return True, "system-ok"
+
+        registry.register(
+            registry_mod.ToolSpec(
+                name="t_sys",
+                description="系统级工具",
+                parameters={"type": "object", "properties": {}},
+                execute=handler,
+                system=True,
+            )
+        )
+        ok, result = registry.execute("t_sys", {}, [])
+        self.assertTrue(ok)
+        self.assertEqual(result, "system-ok")
+        self.assertEqual(len(calls), 1)
+
+    def test_execute_def_routes_through_engine_when_present(self) -> None:
+        """非 system 的 def.execute：有引擎（run_context.executor）时经引擎，无引擎时直调。"""
+        registry = registry_mod.ToolRegistry()
+
+        def handler(arguments: dict[str, Any], skills: list[Any], ctx: Any) -> tuple[bool, str]:
+            return True, "def-ok"
+
+        registry.register(
+            registry_mod.ToolSpec(
+                name="t_reg",
+                description="常规工具",
+                parameters={"type": "object", "properties": {}},
+                execute=handler,
+            )
+        )
+
+        class FakeEngine:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def execute(self, name: str, arguments: dict[str, Any], active_skills: list[Any]) -> tuple[bool, str]:
+                self.calls.append(name)
+                return True, "engine-ok"
+
+        engine = FakeEngine()
+        ok, result = registry.execute("t_reg", {}, [], {"executor": engine})
+        self.assertTrue(ok)
+        self.assertEqual(result, "engine-ok", "有引擎时必须经引擎执行（策略/确认在引擎侧）")
+        self.assertEqual(engine.calls, ["t_reg"])
+        ok2, result2 = registry.execute("t_reg", {}, [])
+        self.assertTrue(ok2)
+        self.assertEqual(result2, "def-ok", "无引擎时直调 def.execute")
+
+    def test_alias_map_frozen(self) -> None:
+        """别名表与 ToolExecutor.TOOL_ALIASES 一致（双轨期间互为镜像）。"""
+        from naiba.tools.executor import ToolExecutor
+
+        self.assertEqual(
+            dict(registry_mod.HARNESS_ALIASES),
+            dict(ToolExecutor.TOOL_ALIASES),
+            "HARNESS_ALIASES 与 ToolExecutor.TOOL_ALIASES 漂移（Phase 5 只保留其一）",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
