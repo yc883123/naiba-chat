@@ -15,11 +15,10 @@ from typing import Any
 
 from naiba.core.exceptions import TaskCancelled
 
-# 推理流流式期缓冲阈值：仅作"落库频率"的短窗聚合（512 字符 或 0.1s），保证前端
-# 流式显示实时平滑；run 结束后由收尾合流（chat.py「终态压缩」）把该 run 的事件
-# 重新整理为整段 reasoning（与存量压缩迁移 v14 同口径），历史库不膨胀。
-REASONING_STREAM_CHARS = 512
-REASONING_STREAM_SECS = 0.1
+# 推理流采用「流式即刻落库 + 终态合流」：reasoning_delta 到达即落库并推送（保留
+# 模型一个词一个词的实时显示节奏）；run 结束后由收尾合流（chat.py「终态压缩」
+# → store.compress_run_events）把该 run 的 delta 事件重新整理为整段 reasoning
+# （与存量压缩迁移 v14 同口径），历史库不膨胀。
 
 
 def _safe_activity(
@@ -112,9 +111,7 @@ class _RunEventSink:
         self.run_id = run_id
         self.cancel_event = cancel_event
         self._delta = ""
-        self._reasoning = ""
         self._last_flush = time.monotonic()
-        self._last_reasoning_flush = time.monotonic()
         self._announced_tools: set[str] = set()
         self.failure_message: str | None = None
         # Guard the delta buffer so the run thread and the watchdog thread can both
@@ -132,12 +129,9 @@ class _RunEventSink:
                 self.flush()
             return
         if str(payload.get("type") or "") == "reasoning_delta":
-            # 流式期短窗缓冲：既保证前端逐块平滑显示（0.1s 内可见），又避免逐 token
-            # 落库的极端行数；最终形态由 run 收尾的终态合流整理为整段 reasoning。
-            self._reasoning += str(payload.get("content") or "")
-            now = time.monotonic()
-            if len(self._reasoning) >= REASONING_STREAM_CHARS or now - self._last_reasoning_flush >= REASONING_STREAM_SECS:
-                self.flush_reasoning()
+            # 流式即刻落库：保留"一个词一个词"的实时推送节奏（落库即推送，
+            # _stream_run 每事件 flush）；最终形态由 run 收尾的终态合流整理。
+            self.manager.emit(self.run_id, payload)
             return
         self.flush()
         kind = str(payload.get("type") or "")
@@ -163,8 +157,6 @@ class _RunEventSink:
         self.manager.emit(self.run_id, payload)
 
     def flush(self) -> None:
-        # 先落推理、再落正文：推理发生在正文之前，事件顺序与流式语义一致。
-        self.flush_reasoning()
         with self._flush_lock:
             if not self._delta:
                 return
@@ -174,14 +166,3 @@ class _RunEventSink:
         # Emit outside the lock: the content is already claimed above, so a
         # concurrent flush sees an empty buffer and returns without duplicating.
         self.manager.emit(self.run_id, {"type": "delta", "content": content})
-
-    def flush_reasoning(self) -> None:
-        """把缓冲的推理文本落库为 ``reasoning_delta`` 块（流式态；终态合流另行整理）。"""
-        with self._flush_lock:
-            if not self._reasoning:
-                return
-            content = self._reasoning
-            self._reasoning = ""
-            self._last_reasoning_flush = time.monotonic()
-        # Emit outside the lock（与 flush 相同理由）。
-        self.manager.emit(self.run_id, {"type": "reasoning_delta", "content": content})

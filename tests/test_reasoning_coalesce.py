@@ -23,7 +23,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from naiba.run.stream import (  # noqa: E402
-    REASONING_STREAM_CHARS,
     _RunEventSink,
 )
 from naiba.storage.store import ChatStorage  # noqa: E402
@@ -43,25 +42,13 @@ class ReasoningStreamTests(unittest.TestCase):
         self.manager = RecordingManager()
         self.sink = _RunEventSink(self.manager, "r1", threading.Event())
 
-    def test_deltas_buffered_until_flush_signal(self):
-        for i in range(10):  # 10 * 20 字符 = 200 < 512：未达阈值不落库
-            self.sink({"type": "reasoning_delta", "content": "字" * 20})
-        self.assertEqual(self.manager.events, [], "未达阈值不应落库")
-        self.sink({"type": "reasoning_end"})
-        self.assertEqual(len(self.manager.events), 2)
-        self.assertEqual(self.manager.events[0]["type"], "reasoning_delta", "流式块保持 delta 形态")
-        self.assertEqual(self.manager.events[0]["content"], "字" * 200)
-        self.assertEqual(self.manager.events[1]["type"], "reasoning_end")
-
-    def test_char_threshold_flushes_mid_stream(self):
-        piece = "x" * (REASONING_STREAM_CHARS // 2)
-        self.sink({"type": "reasoning_delta", "content": piece})
-        self.sink({"type": "reasoning_delta", "content": piece})  # 累计 512 >= 阈值即 flush
-        self.assertEqual(len(self.manager.events), 1)
-        self.assertEqual(self.manager.events[0]["type"], "reasoning_delta")
-        self.assertEqual(self.manager.events[0]["content"], piece * 2)
-        self.sink({"type": "reasoning_end"})
-        self.assertEqual(len(self.manager.events), 2)
+    def test_deltas_emitted_immediately(self):
+        # 流式期：reasoning_delta 到达即落库（保持逐词实时推送节奏），不做缓冲
+        for i in range(3):
+            self.sink({"type": "reasoning_delta", "content": f"词{i}"})
+        self.assertEqual([e["type"] for e in self.manager.events], ["reasoning_delta"] * 3)
+        self.assertEqual(self.manager.events[0]["content"], "词0")
+        self.assertEqual(self.manager.events[2]["content"], "词2")
 
     def test_reasoning_before_delta_ordering(self):
         self.sink({"type": "reasoning_delta", "content": "思考"})
@@ -75,7 +62,8 @@ class ReasoningStreamTests(unittest.TestCase):
         self.assertEqual(len(self.manager.events), 1)
         self.assertEqual(self.manager.events[0]["type"], "reasoning")
 
-    def test_flush_reasoning_on_cancel_path(self):
+    def test_reasoning_emitted_without_flush(self):
+        # 收尾 flush 只刷正文缓冲；推理已即刻落库，flush 不产生额外推理事件。
         self.sink({"type": "reasoning_delta", "content": "未完成思考"})
         self.sink.flush()
         self.assertEqual(len(self.manager.events), 1)
