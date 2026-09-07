@@ -727,6 +727,13 @@ class ConversationRunMixin:
                     run_id,
                     {"type": "choice", "choices": choice_groups[0]["choices"], "choice_groups": choice_groups},
                 )
+            # 首轮上下文在终态事件之前落盘：前端收到 done 即拉取 first_turn，
+            # 抢先落盘消除"卡闪一下后消失"的竞态（finally 仍兜底幂等重写）。
+            if snapshot.get("is_first_turn"):
+                try:
+                    self._persist_first_turn_context(run_id, snapshot, run_context)
+                except Exception:
+                    traceback.print_exc()
             self.emit(run_id, {
                 "type": "done",
                 "message": saved,
@@ -750,6 +757,11 @@ class ConversationRunMixin:
             cancelled_payload: dict[str, Any] = {"type": "cancelled", "message": "任务已取消"}
             if aborted_message:
                 cancelled_payload["aborted_message"] = aborted_message
+            if snapshot.get("is_first_turn"):
+                try:
+                    self._persist_first_turn_context(run_id, snapshot, run_context)
+                except Exception:
+                    traceback.print_exc()
             self.emit(run_id, cancelled_payload)
         except Exception as exc:
             sink.flush()
@@ -781,6 +793,11 @@ class ConversationRunMixin:
             error_payload: dict[str, Any] = {"type": "error", "message": error_message}
             if partial_message:
                 error_payload["partial_message"] = partial_message
+            if snapshot.get("is_first_turn"):
+                try:
+                    self._persist_first_turn_context(run_id, snapshot, run_context)
+                except Exception:
+                    traceback.print_exc()
             self.emit(run_id, error_payload)
         finally:
             # 首轮上下文（first_turn）收尾统一落盘：完整系统提示词（含 Skill 注入块）、
