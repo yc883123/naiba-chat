@@ -637,7 +637,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                 "model": model,
                 "input": ModelRuntime._responses_input([
                     item for item in messages if item.get("role") != "system"
-                ]),
+                ], deepseek=ModelRuntime._is_deepseek_profile(profile)),
                 "stream": stream_enabled,
             }
             if temperature is not None:

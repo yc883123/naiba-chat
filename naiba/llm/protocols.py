@@ -104,7 +104,7 @@ class ProtocolMixins:
 
 
     @staticmethod
-    def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _responses_input(messages: list[dict[str, Any]], deepseek: bool = False) -> list[dict[str, Any]]:
         converted = []
         for item in messages:
             role = str(item.get("role") or "user")
@@ -118,20 +118,26 @@ class ProtocolMixins:
             if role == "assistant":
                 # DeepSeek 思考模式：携带 tools 的请求，历史轮次推理必须回传，否则 400
                 # "The reasoning_text in the thinking mode must be passed back"。
-                # 实测确证的合法形态：独立 `{"type":"reasoning","content":[{"type":
-                # "reasoning_text","text":"…"}]}`（content 必须为内容块数组——明文字符串会被
-                # serde 拒绝 "invalid type: string ... expected a sequence"；assistant 消息上的
-                # reasoning_text 字段不被识别为回传）。
+                # 形态以官方文档为准：reasoning item 的 content 为明文（"明文 content 归并到
+                # 相邻 assistant 消息"）；块数组 [{type:reasoning_text,…}] 在多轮工具链实测仍
+                # 400（2026-09-07 用户 12 轮工具调用实测）→ DeepSeek 走明文；OpenAI 原生
+                # Responses API 保留官方 reasoning_text 块数组形态（尚未实测，按官方规格保留）。
                 reasoning_text = item.get("reasoning_content")
                 if reasoning_text is None:
                     reasoning_text = item.get("reasoning")
                 if reasoning_text is not None and str(reasoning_text).strip():
-                    converted.append({
-                        "type": "reasoning",
-                        "content": [
-                            {"type": "reasoning_text", "text": str(reasoning_text)}
-                        ],
-                    })
+                    if deepseek:
+                        converted.append({
+                            "type": "reasoning",
+                            "content": str(reasoning_text),
+                        })
+                    else:
+                        converted.append({
+                            "type": "reasoning",
+                            "content": [
+                                {"type": "reasoning_text", "text": str(reasoning_text)}
+                            ],
+                        })
                 if isinstance(item.get("tool_calls"), list):
                     # reasoning/assistant/function_call 相邻成组；function_call 与
                     # function_call_output 保持相邻配对（中间不可插入 item）。
