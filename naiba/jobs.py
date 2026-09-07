@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from naiba import net as net_io
+from naiba.events import EventBus
 from naiba.tools.providers.core import POWERSHELL_UTF8_PREFIX
 
 JOB_TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
@@ -77,8 +78,8 @@ class CheckSpec:
 class JobRegistry:
     def __init__(self, app: AppContext):
         self.app = app
+        self.bus = getattr(app, "event_bus", None) or EventBus(app)
         self._lock = threading.RLock()
-        self._conditions: dict[str, threading.Condition] = {}
         self._cancel: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
         # 由 app 接线注入：运行子 Agent 的函数 (job_id, spec, cancel, sink) -> None
@@ -93,20 +94,19 @@ class JobRegistry:
 
     # ---- 内部工具 ----
     def _condition(self, job_id: str) -> threading.Condition:
-        with self._lock:
-            return self._conditions.setdefault(job_id, threading.Condition(self._lock))
+        """唤醒条件（实现见 naiba/events.py EventBus.ensure：run/job 共用条件池）。"""
+        return self.bus.ensure(job_id)
 
     def _now(self) -> int:
         return int(time.time() * 1000)
 
     def _emit(self, job_id: str, payload: dict[str, Any]) -> None:
+        """事件发射（实现见 naiba/events.py EventBus）：单点写入 + 唤醒。
+        job 通道保持容错语义（记录违规告警，事件写失败仅打堆栈，不打断 worker）。"""
         try:
-            self.app.storage.append_run_event(job_id, payload)
+            self.bus.emit(job_id, payload, raise_on_error=False)
         except Exception:
             traceback.print_exc()
-        condition = self._condition(job_id)
-        with condition:
-            condition.notify_all()
 
     def _snapshot(self, job: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -287,14 +287,8 @@ class JobRegistry:
         )
         new_id = self.start(spec, owner=job["owner_session_id"])
         if new_id:
-            # 在新 Job 的增量输出里写入一条来源说明，UI 与 job_output 均可见。
-            try:
-                self.app.storage.append_run_event(
-                    new_id,
-                    {"type": "output", "line": f"（本 Job 由 Job {job_id} 恢复/重试）"},
-                )
-            except Exception:
-                traceback.print_exc()
+            # 在新 Job 的增量输出里写入一条来源说明，job_output 与记录均可见。
+            self._emit(new_id, {"type": "output", "line": f"（本 Job 由 Job {job_id} 恢复/重试）"})
         return new_id
 
     def retry(self, job_id: str, owner: str | None = None) -> str | None:

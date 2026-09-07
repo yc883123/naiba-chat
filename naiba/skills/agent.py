@@ -671,7 +671,7 @@ class SkillAgent:
             parallel_results: dict[int, tuple[bool, str]] = {}
             if parallel_safe:
                 for call in normalized_calls:
-                    event({"type": "tool_requested", "tool": str(call.get("tool") or ""), "arguments": call.get("arguments") or {}, "reason": call.get("reason", "")})
+                    event({"type": "tool_requested", "tool": str(call.get("tool") or ""), "arguments": call.get("arguments") or {}, "reason": call.get("reason", "")})  # noqa: event-internal
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(normalized_calls))) as pool:
                     futures = {
                         index: pool.submit(
@@ -693,7 +693,7 @@ class SkillAgent:
                     event({"type": "run_failed", "error": "工具调用解析失败：缺少工具名或参数"})
                     return "工具调用解析失败，已停止执行。", runs, reasonings, self._summarize_usage(usages)
                 if not parallel_safe:
-                    event({"type": "tool_requested", "tool": tool, "arguments": arguments, "reason": call.get("reason", "")})
+                    event({"type": "tool_requested", "tool": tool, "arguments": arguments, "reason": call.get("reason", "")})  # noqa: event-internal
                 if cancel_event and cancel_event.is_set():
                     abort_run()
 
@@ -845,7 +845,7 @@ class SkillAgent:
         否则退回 ``ToolExecutor`` 直接执行。
         """
         if tool not in allowed:
-            event({"type": "tool_started", "tool": tool})
+            event({"type": "tool_started", "tool": tool})  # noqa: event-internal
             if tool.startswith("mcp__"):
                 # 会话工具集在首条消息时固化。MCP 服务即使已连接，其具体工具若不在
                 # 固化集合里，本会话也无法使用——不要让模型在会话内反复尝试，而是明确
@@ -856,7 +856,7 @@ class SkillAgent:
                     "（或其对应的 mcp__ 工具）后，才能在本会话使用这些 MCP 工具。不要在会话内反复重试。"
                 )
             return False, f"Agent 设置已禁用工具：{tool}"
-        event({"type": "tool_started", "tool": tool})
+        event({"type": "tool_started", "tool": tool})  # noqa: event-internal
 
         def _dispatch() -> tuple[bool, str]:
             if tool_registry is not None:

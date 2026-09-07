@@ -160,16 +160,16 @@ class EventType(str, Enum):
     DEBUG_CACHE = "debug_cache"
     HEARTBEAT = "heartbeat"
 
-    # ---- Job 事件流（任务弹窗）----
+    # ---- Job 域（字段动态展开，宽松）----
     JOB_STATUS = "job_status"
     JOB_FINISHED = "job_finished"
     JOB_LOG = "job_log"
     JOB_CHECK = "job_check"
+    OUTPUT = "output"
 
     # ---- Agent 循环内部事件 ----
     STEP_STARTED = "step_started"
     STEP_FINISHED = "step_finished"
-    PARSE_ERROR = "parse_error"
     RETRY = "retry"
     MODEL_REQUEST = "model_request"
     RUN_COMPLETED = "run_completed"
@@ -200,6 +200,9 @@ class EventPayload(TypedDict, total=False):
     used: int
     budget: int
     reason: str
+    lightweight_mode: bool
+    followup_run_id: str
+    partial_message: dict[str, Any]
     # 工具流
     tool: str
     tool_name: str
@@ -232,6 +235,50 @@ class EventPayload(TypedDict, total=False):
     response: str
     error: str
     result: str
+
+
+# 事件 type → 允许的负载键（不含公共键 type/run_id/sequence/created_at；None = 宽松，
+# 仅校验 type 存在性——job 域字段经 **fields/dict 动态展开，无法静态钉死）。
+# 权威来源：各发射点取证（阶段 2 契约收口），守门 tests/test_events_contract.py 强制。
+EVENT_PAYLOAD_KEYS: dict[str, frozenset[str] | None] = {
+    # ---- 对话流（前端 handleChatEvent 可处置）----
+    "run_started": frozenset({"run_id", "lightweight_mode"}),
+    "status": frozenset({"message"}),
+    "skills": frozenset({"skills"}),
+    "skill_warning": frozenset({"message"}),
+    "tools_available": frozenset({"tools"}),
+    "delta": frozenset({"content"}),
+    "reasoning_start": frozenset(),
+    "reasoning_delta": frozenset({"content"}),
+    "reasoning_end": frozenset(),
+    "reasoning": frozenset({"content"}),
+    "tool_start": frozenset({"tool", "arguments", "reason"}),
+    "tool_result": frozenset({"tool", "success", "result", "arguments", "reason"}),
+    "tool_confirm": frozenset({"tool_name", "tool_desc", "arguments", "confirm_id"}),
+    "choice": frozenset({"choices", "choice_groups"}),
+    "cancelled": frozenset({"message", "aborted_message"}),
+    "run_failed": frozenset({"error"}),
+    "context_full": frozenset({"limit", "used", "budget"}),
+    "done": frozenset({"message", "followup_run_id", "plan"}),
+    "error": frozenset({"message", "partial_message"}),
+    "debug_cache": frozenset({"label", "lines"}),
+    "heartbeat": frozenset(),
+    # ---- Agent 循环记录事件（落库供审计/工具读取，前端不消费）----
+    "step_started": frozenset({"step"}),
+    "step_finished": frozenset({"step"}),
+    "retry": frozenset({"attempt", "reason", "tool"}),
+    "model_request": frozenset({"step"}),
+    "run_completed": frozenset({"message"}),
+    "run_cancelled": frozenset({"reason"}),
+    "subagent_result": frozenset({"response"}),
+    "subagent_cancelled": frozenset(),
+    # ---- Job 域（字段动态展开，宽松）----
+    "job_status": None,
+    "job_finished": None,
+    "job_log": frozenset({"line"}),
+    "job_check": None,
+    "output": frozenset({"line"}),
+}
 
 
 # 已迁往 naiba.core.messages（收官线 ③；保留 re-export 兼容，既有导入零改动）。

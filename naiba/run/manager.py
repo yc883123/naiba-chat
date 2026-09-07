@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from naiba.events import EventBus, status_sync_for
 from naiba.run.stream import _RunEventSink
 from naiba.run.session import (
     all_tool_names,
@@ -35,11 +36,11 @@ class ConversationRunManager(ConversationRunMixin):
 
     def __init__(self, app: AppContext):
         self.app = app
+        self.bus = getattr(app, "event_bus", None) or EventBus(app)
         self._lock = threading.RLock()
         self._submit_lock = threading.RLock()
         self._events: dict[str, threading.Event] = {}
         self._threads: dict[str, threading.Thread] = {}
-        self._conditions: dict[str, threading.Condition] = {}
         self._executors: dict[str, Any] = {}
         self._sinks: dict[str, _RunEventSink] = {}
         self._sinks_lock = threading.Lock()
@@ -72,8 +73,8 @@ class ConversationRunManager(ConversationRunMixin):
         return enable_conversation_tools(self.app, conversation_id, tool_ids)
 
     def _condition(self, run_id: str) -> threading.Condition:
-        with self._lock:
-            return self._conditions.setdefault(run_id, threading.Condition(self._lock))
+        """唤醒条件（实现见 naiba/events.py EventBus.ensure：run/job 共用条件池）。"""
+        return self.bus.ensure(run_id)
 
     @staticmethod
     def _generation_options(config: Any, model_key: str = "") -> dict[str, Any]:
@@ -124,52 +125,27 @@ class ConversationRunManager(ConversationRunMixin):
         thread.start()
 
     def emit(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
-        event = self.app.storage.append_run_event(run_id, payload)
-        kind = str(payload.get("type") or "")
-        detail: dict[str, Any] | None = None
-        status: str | None = None
-        if kind == "skills":
-            detail = {"message": "已启用 Skill", "skills": payload.get("skills") or []}
-        elif kind == "status":
-            detail = {"message": str(payload.get("message") or "正在执行")}
-            status = "running"
-        elif kind == "tool_start":
-            detail = {
-                "message": f"正在执行 {payload.get('tool') or '工具'}",
-                "tool": str(payload.get("tool") or ""),
-            }
-            status = "running"
-        elif kind == "tool_confirm":
-            detail = {
-                "message": "等待工具确认",
-                "tool": str(payload.get("tool_name") or ""),
-                "tool_desc": str(payload.get("tool_desc") or ""),
-                "arguments": payload.get("arguments") or {},
-                "confirm_id": str(payload.get("confirm_id") or ""),
-            }
-            status = "waiting"
-        elif kind == "tool_result":
-            detail = {"message": f"工具 {payload.get('tool') or ''} 执行完毕"}
-            status = "running"
-        current = self.app.storage.get_background_task(run_id)
-        if current and current.get("status") == "cancelling":
-            status = None
-        if detail is not None or status is not None:
+        """事件发射（实现见 naiba/events.py EventBus）：单点写入 + 唤醒，
+        并按策略表同步 background_tasks.status/detail（终态由收尾路径显式维护）。"""
+        event = self.bus.emit(run_id, payload)
+        sync = status_sync_for(str(payload.get("type") or ""), payload)
+        if sync is not None:
+            status, detail = sync
+            current = self.app.storage.get_background_task(run_id)
+            if current and current.get("status") == "cancelling":
+                status = None
             self.app.storage.update_background_task(run_id, status=status, detail=detail)
-        condition = self._condition(run_id)
-        with condition:
-            condition.notify_all()
         return event
 
     def _finish(self, run_id: str) -> None:
         condition = self._condition(run_id)
         with condition:
-            condition.notify_all()
+            condition.notify_all()  # 唤醒可能仍在等待的 http 流线程（随后读终态事件退出）
         with self._lock:
             self._events.pop(run_id, None)
             self._threads.pop(run_id, None)
-            self._conditions.pop(run_id, None)
             self._executors.pop(run_id, None)
+        self.bus.drop(run_id)
         self._unregister_sink(run_id)
 
     def list(self, conversation_id: str = "", active_only: bool = False) -> list[dict[str, Any]]:
@@ -181,17 +157,19 @@ class ConversationRunManager(ConversationRunMixin):
     def events_after(self, run_id: str, after: int = 0) -> list[dict[str, Any]]:
         return self.app.storage.list_run_events(run_id, after)
 
-    def wait_for_events(self, run_id: str, after: int, timeout: float = 15.0) -> list[dict[str, Any]]:
-        events = self.events_after(run_id, after)
+    def wait_for_events(self, run_id: str, after: int = 0, timeout: float = 15.0) -> list[dict[str, Any]]:
+        """拉取 after 之后的事件；无则等条件唤醒（15s 超时兜底）。
+
+        run 已不存在或处于终态时不再等待（终态后无新事件，直接返回）。
+        等待段实现见 EventBus.wait_for_events。
+        """
+        events = self.app.storage.list_run_events(run_id, after)
         if events:
             return events
         run = self.get(run_id)
         if not run or run.get("status") in self.TERMINAL:
             return []
-        condition = self._condition(run_id)
-        with condition:
-            condition.wait(timeout=max(0.1, timeout))
-        return self.events_after(run_id, after)
+        return self.bus.wait_for_events(run_id, after, timeout)
 
     def cancel(self, run_id: str) -> dict[str, Any] | None:
         with self._submit_lock:

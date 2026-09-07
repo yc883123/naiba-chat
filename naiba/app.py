@@ -86,6 +86,10 @@ class NaibaChatApp:
             self._paths.rebind_data_dir(configured_data_dir)
         self._paths.data_dir.mkdir(parents=True, exist_ok=True)
         self.storage = ChatStorage(self._paths.data_dir / "chat.db")
+        # 统一事件总线：run/job 共用单点「写事件 + 唤醒」，装配根出口（阶段 2）。
+        from naiba.events import EventBus
+
+        self.event_bus = EventBus(self)
         repaired_bindings = self.storage.synchronize_workspace_bindings(
             self.config.workspace_bindings()
         )
