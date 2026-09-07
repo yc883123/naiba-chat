@@ -324,9 +324,15 @@ export function usageMarkup(usage, createdAt = null) {
     ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存命中率 ${rate}%（命中 ${cached.toLocaleString()} / 重算 ${miss.toLocaleString()}）${detailsHtml}</div>`
     : '';
   const durationMs = Number(performance.total_ms || 0);
+  const elapsedMs = Number(usage.elapsed_ms || 0);
   const when = formatDateTime(createdAt);
-  const durationLine = (durationMs > 0 || requests > 1)
-    ? `<div class="usage-line usage-duration">本轮总耗时 ${(durationMs / 1000).toFixed(1)}s，共 ${requests} 次请求${when ? `。${when}` : ''}</div>`
+  // 进行中（流式 usage 事件带 elapsed_ms、无终态 total_ms）显示"本轮已耗时"；
+  // 完成后（终态 metadata.usage）显示汇总"本轮总耗时 + 完成日期"。
+  const durationLabel = durationMs > 0
+    ? `本轮总耗时 ${(durationMs / 1000).toFixed(1)}s`
+    : (elapsedMs > 0 ? `本轮已耗时 ${(elapsedMs / 1000).toFixed(1)}s` : '');
+  const durationLine = durationLabel
+    ? `<div class="usage-line usage-duration">${durationLabel}，共 ${requests} 次请求${durationMs > 0 && when ? `。${when}` : ''}</div>`
     : '';
   // 只保留视觉 lane（聊天"lane 耗时"是最后一次请求的诊断值，与"本轮总耗时"重复且易误导，已移除）。
   const laneLine = (visualMs || visionCacheHit)

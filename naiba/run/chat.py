@@ -361,6 +361,16 @@ class ConversationRunMixin:
                     for item in payload["skills"]
                     if isinstance(item, dict)
                 ]
+            if payload.get("type") == "usage" and isinstance(payload.get("usage"), dict):
+                # 流式期间的"本轮已耗时"由 run 线程计时注入（elapsed_ms）：
+                # 终态由 metadata.usage.performance.total_ms 提供汇总值，两者互斥使用。
+                payload = {
+                    **payload,
+                    "usage": {
+                        **payload["usage"],
+                        "elapsed_ms": round((time.perf_counter() - run_started) * 1000, 1),
+                    },
+                }
             sink(payload)
 
         try:
