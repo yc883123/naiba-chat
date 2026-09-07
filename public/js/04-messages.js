@@ -255,6 +255,23 @@ export function moveBottomProseInline(row, answer) {
   answer.replaceChildren();
 }
 
+export function firstTurnCardMarkup(firstTurn) {
+  if (!firstTurn || !firstTurn.prompt) return '';
+  const tools = Array.isArray(firstTurn.tools) ? firstTurn.tools : [];
+  const skills = Array.isArray(firstTurn.skills) ? firstTurn.skills : [];
+  const toolChips = tools.map((tool) => `<div class="ft-tool" title="${escapeHtml(tool.description || '')}"><code>${escapeHtml(tool.name || '')}</code></div>`).join('');
+  const skillChips = skills.map((skill) => `<span class="ft-chip">${escapeHtml(skill.name || skill.id || '')}</span>`).join('');
+  return `<details class="first-turn-card">
+    <summary>首次请求上下文 · ${escapeHtml(firstTurn.agent_name || 'Agent')} · ${escapeHtml(firstTurn.model_key || '')} · 工具 ${tools.length} 个</summary>
+    <div class="ft-body">
+      <div class="ft-meta">${skillChips ? `技能：${skillChips}` : '技能：无'}</div>
+      <div class="ft-tools">${toolChips || '<span class="ft-note">（未启用工具）</span>'}</div>
+      <div class="ft-prompt-label">发送给模型的系统提示词：</div>
+      <pre class="ft-prompt">${escapeHtml(firstTurn.prompt)}</pre>
+    </div>
+  </details>`;
+}
+
 export function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
@@ -270,6 +287,14 @@ export function renderMessages(messages) {
     const visibleMessages = messages;
     empty.hidden = visibleMessages.length > 0;
     container.append(empty);
+    // 首轮上下文折叠卡：固定在最顶部（第一条消息上方），展示第一轮发送给模型的
+    // 系统提示词与工具集（默认折叠）。
+    const firstTurnMarkup = state.firstTurnInfo ? firstTurnCardMarkup(state.firstTurnInfo) : '';
+    if (firstTurnMarkup) {
+      const template = document.createElement('template');
+      template.innerHTML = firstTurnMarkup.trim();
+      container.append(template.content.firstElementChild);
+    }
     if (visibleMessages.length) {
       visibleMessages.forEach((message) => container.append(messageElement(message)));
       scrollToBottom();

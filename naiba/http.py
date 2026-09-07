@@ -262,6 +262,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": f"文件不存在或已被移动：{exc}"}, HTTPStatus.NOT_FOUND)
             except (OSError, ValueError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+        elif path.endswith("/first_turn"):
+            conversation_id = path.split("/")[-2]
+            info = self.app._first_turn_info(conversation_id)
+            self._json(info or {}, HTTPStatus.OK)
         elif path.startswith("/api/conversations/"):
             conversation_id = path.rsplit("/", 1)[-1]
             conversation = self.app.storage.get_conversation(conversation_id)

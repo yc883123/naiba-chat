@@ -434,6 +434,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-sources time { margin-left: 8px; font-size: 11px; }
 .message-sources p { margin: 2px 0 0; line-height: 1.45; }
 .skill-usage { margin: 0 0 8px; color: var(--accent); font-size: 12px; }
+/* 首轮上下文折叠卡：会话顶部展示第一轮发送给模型的系统提示词与工具集 */
+.first-turn-card { margin: 0 0 14px; border: 1px solid var(--line); border-radius: var(--r-md, 8px); background: var(--surface-2, rgba(128,128,128,0.04)); padding: 8px 12px; }
+.first-turn-card summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); }
+.first-turn-card summary:hover { color: var(--text); }
+.first-turn-card .ft-body { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.first-turn-card .ft-meta { font-size: 11px; color: var(--muted); }
+.first-turn-card .ft-chip { margin-right: 6px; padding: 1px 7px; border-radius: 10px; background: rgba(128, 128, 128, 0.12); font-size: 11px; }
+.first-turn-card .ft-tools { display: flex; flex-wrap: wrap; gap: 5px; }
+.first-turn-card .ft-tool code { padding: 1px 7px; border-radius: 6px; background: var(--line, rgba(128,128,128,0.15)); color: var(--text); font-size: 11px; }
+.first-turn-card .ft-note { font-size: 11px; color: var(--muted); }
+.first-turn-card .ft-prompt-label { margin-top: 4px; font-size: 11px; color: var(--muted); }
+.first-turn-card .ft-prompt { margin: 2px 0 0; max-height: 300px; overflow-y: auto; font-size: 12px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; color: var(--text); }
 .reasoning-block { margin: 8px 0 12px; border: 1px solid var(--line); border-left: 3px solid var(--violet-deep); background: var(--reasoning-bg); border-radius: var(--r-md); padding: 6px 10px; }
 .reasoning-block summary { cursor: pointer; color: var(--reasoning-text); font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }

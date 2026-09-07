@@ -423,6 +423,13 @@ export async function openConversation(id) {
   if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...conversation };
   state.conversationSnapshot = conversationSnapshot(conversation);
   console.log('[naiba] openConversation', id.slice(0, 8), '服务器返回消息数=', (conversation.messages || []).length);
+  // 首轮上下文（系统提示词 + 工具集）折叠卡：单独拉取，失败静默（老会话无此数据）。
+  try {
+    const firstTurn = await api(`/api/conversations/${id}/first_turn`);
+    state.firstTurnInfo = (firstTurn && typeof firstTurn === 'object' && firstTurn.prompt) ? firstTurn : null;
+  } catch (_) {
+    state.firstTurnInfo = null;
+  }
   // 若打开的会话处于“最新 5 条”预览之外，自动展开该工作区的全部会话以便其在侧栏可见。
   const visGroup = currentConversationWorkspaceGroup();
   if (visGroup) {

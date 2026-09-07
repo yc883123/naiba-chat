@@ -1351,6 +1351,36 @@ class ChatStorage:
             value = {}
         return value if isinstance(value, dict) else {}
 
+    def update_run_snapshot(self, run_id: str, updates: dict[str, Any]) -> dict[str, Any]:
+        """合并更新 run 快照（读取-合并-写回；快照是冻结基线的运行时补充键，如 first_turn）。"""
+        current = self.get_run_snapshot(run_id) or {}
+        if not isinstance(updates, dict) or not updates:
+            return current
+        merged = {**current, **updates}
+        with self._connect() as db:
+            db.execute(
+                "UPDATE background_tasks SET snapshot = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(merged, ensure_ascii=False), int(time.time() * 1000), run_id),
+            )
+        return merged
+
+    def first_chat_run_snapshot(self, conversation_id: str) -> dict[str, Any] | None:
+        """该会话最早的 chat run 快照（首轮固化的 first_turn 上下文来源）。"""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT id, snapshot FROM background_tasks "
+                "WHERE conversation_id = ? AND kind = 'chat' "
+                "ORDER BY created_at, rowid LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            value = json.loads(row["snapshot"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            value = {}
+        return value if isinstance(value, dict) else {}
+
     def append_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = int(time.time() * 1000)
         event_type = str(payload.get("type") or "event")

@@ -226,6 +226,9 @@ class ConversationRunMixin:
                 "lightweight_disabled_features": sorted(disabled_features),
                 "allowed_tools": allowed_tools,
                 "permission_mode": str(conversation.get("permission_mode") or "confirm"),
+                # 首轮标记（与 skill 冻结集同判据）：_run_chat 拼好最终 prompt 后写回
+                # first_turn（系统提示词 + 工具集），供前端会话顶部折叠卡展示。
+                "is_first_turn": not (conversation.get("messages") or []),
             }
             try:
                 run, _ = self.app.storage.create_chat_run(
@@ -507,6 +510,44 @@ class ConversationRunMixin:
             prompt = (prompt + "\n\n图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径；"
                        "图片已作为原图直接可见时（多模态模型）无需调用；仅当用户明确要求裁剪、OCR、坐标、像素比较等"
                        "新操作时才调用 vision_image_ops。").strip()
+            if snapshot.get("is_first_turn"):
+                # 首轮固化的"第一轮发送上下文"落盘（供前端展示）：系统提示词原文 +
+                # 模型可见工具集（名称+描述）与模型/Agent/技能信息。失败不阻断主链。
+                try:
+                    frozen_policy = snapshot.get("skill_policy") or {}
+                    first_turn_skill_ids = [
+                        str(item) for item in (frozen_policy.get("skill_ids") or []) if str(item).strip()
+                    ]
+                    catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
+                    catalog_rows = catalog_getter() if callable(catalog_getter) else []
+                    catalog_map = (
+                        catalog_rows
+                        if isinstance(catalog_rows, dict)
+                        else {str(row.get("id") or ""): row for row in catalog_rows if isinstance(row, dict)}
+                    )
+                    first_turn: dict[str, Any] = {
+                        "prompt": prompt,
+                        "tools": [
+                            {
+                                "name": str(spec.get("name") or ""),
+                                "description": str(spec.get("description") or ""),
+                            }
+                            for spec in tool_schemas
+                            if spec.get("name")
+                        ],
+                        "model_key": model_key,
+                        "agent_name": str(agent.get("name") or ""),
+                        "skills": [
+                            {
+                                "id": skill_id,
+                                "name": str((catalog_map.get(skill_id) or {}).get("name") or skill_id),
+                            }
+                            for skill_id in first_turn_skill_ids
+                        ],
+                    }
+                    self.app.storage.update_run_snapshot(run_id, {"first_turn": first_turn})
+                except Exception:
+                    traceback.print_exc()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
             run_context: RunContext = {
                 "run_id": run_id,

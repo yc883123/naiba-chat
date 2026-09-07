@@ -61,6 +61,8 @@ export const state = {
   syncPolling: false,
   updatePollTimer: null,
   conversationSnapshot: '',
+  // 首轮上下文（系统提示词 + 工具集）折叠卡数据；切换会话时由 openConversation 拉取
+  firstTurnInfo: null,
   agentFormSkillIds: [],
   agentFormToolScope: [],
   agentFormIsNew: false,
