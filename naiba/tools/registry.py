@@ -301,12 +301,12 @@ def build_core_tool_specs() -> list[ToolSpec]:
     return [
         ToolSpec(
             name="read_file",
-            description="读取文本文件（图片之外）：按行返回，默认最多 50 行或 30000 字符；截断时告知行区间与续读起点。",
+            description="读取文本文件（图片之外）：按行返回，行数不限，单次最多 30000 字符；截断时告知行区间与续读起点。",
             parameters={
                 "type": "object",
                 "properties": {
                     "path": _string("文件绝对路径"),
-                    "max_lines": {"type": "integer", "description": "最多读取行数（默认 50；字符预算 30000 兜底）", "default": 50},
+                    "max_lines": {"type": "integer", "description": "最多读取行数（缺省不限；字符预算 30000 封顶）"},
                     "start_line": {"type": "integer", "description": "从第几行开始读取（1 起始；截断提示中的续读起点）", "default": 1},
                     "end_line": {"type": "integer", "description": "读取到第几行（含该行；缺省读满预算）"},
                     "with_line_numbers": {"type": "boolean", "description": "是否输出行号前缀（精确引用行时用）", "default": False},

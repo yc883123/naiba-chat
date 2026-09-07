@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import fnmatch
 import json
+import os
 import re
 import subprocess
 import sys
@@ -109,11 +110,11 @@ def _resolve_read_path(
 # ---- 实现函数（自 ToolExecutor._tool_* 原样抽取） ----
 
 def _tool_read_file(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
-    """按行读取文本文件，行数/字符双预算截断并返回可续读提示。
+    """按行读取文本文件：行数不设默认上限，字符预算 30000 截断并返回可续读提示。
 
-    预算：max_lines（默认 50 行）与 max_chars（默认 30000 字符）任一触达即截断——
-    行数优先（50 行以内不超预算就不多读），单行超过字符预算时按字符截断该行。
-    截断时尾部标记实际返回的行区间与续读起点（start_line），模型无需猜测。
+    预算：max_chars（默认/硬上限 30000 字符）唯一强制上限——内容不超预算时无论多少行
+    都全量返回；模型显式传入 max_lines 时保留行数限制（兼容旧调用）。单行超过字符预算
+    时按字符截断该行。截断时尾部标记实际返回的行区间与续读起点（start_line），模型无需猜测。
     """
     path = _resolve_read_path(ctx, args.get("path"), active_skills)
     try:
@@ -122,10 +123,13 @@ def _tool_read_file(ctx: ToolContext, args: dict[str, Any], active_skills: list[
         max_chars = min(max(int(args.get("max_chars", 30000)), 100), 30000)
     except (TypeError, ValueError):
         max_chars = 30000
+    # max_lines 缺省不限：内容 ≤ 30000 字符时全量返回（用户实测：>50 行但 <30000 字符
+    # 的文件被行数上限截断，模型被迫多次续读）。显式传参时仍生效（1..5000）。
     try:
-        max_lines = min(max(int(args.get("max_lines", 50)), 1), 5000)
+        max_lines_raw = args.get("max_lines")
+        max_lines = None if max_lines_raw in (None, "") else min(max(int(max_lines_raw), 1), 5000)
     except (TypeError, ValueError):
-        max_lines = 50
+        max_lines = None
     try:
         start_line = max(1, int(args.get("start_line") or 1))
     except (TypeError, ValueError):
@@ -155,7 +159,7 @@ def _tool_read_file(ctx: ToolContext, args: dict[str, Any], active_skills: list[
     truncated = False
     cut_line_no = 0
     for idx in range(start_line - 1, limit_idx):
-        if len(chosen) >= max_lines:
+        if max_lines is not None and len(chosen) >= max_lines:
             truncated = True
             break
         remaining = max_chars - chars
@@ -533,6 +537,10 @@ def _tool_run_skill_script(ctx: ToolContext, args: dict[str, Any], active_skills
     else:
         command = [str(script), *map(str, raw_args)]
     timeout = min(max(int(args.get("timeout", ctx.command_timeout)), 1), 900)
+    # Windows 管道下 Python 子进程默认用 locale 编码（GBK）输出 stdout/stderr，
+    # 父进程按 UTF-8 解码会得到乱码（实测：中文路径参数/报错信息变 �）。强制子进程
+    # UTF-8 运行时（PYTHONIOENCODING+PYTHONUTF8），输出与 argv 均为 UTF-8，解码匹配。
+    env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     completed = subprocess.run(
         command,
         cwd=str(root),
@@ -541,6 +549,7 @@ def _tool_run_skill_script(ctx: ToolContext, args: dict[str, Any], active_skills
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        env=env,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     output = (completed.stdout + ("\n" + completed.stderr if completed.stderr else "")).strip()

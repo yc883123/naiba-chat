@@ -44,9 +44,19 @@ class ReadFileTests(unittest.TestCase):
         target.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return target
 
-    def test_line_budget_truncates_at_50_and_marks_resume(self) -> None:
+    def test_many_lines_within_char_budget_reads_all(self) -> None:
+        """行数不设默认上限：内容 ≤ 30000 字符时全量返回（用户实测：>50 行的小文件
+        曾被行数上限截断、模型被迫多次续读）。"""
         target = self._make([f"line-{i:03d}" for i in range(1, 61)])
         out = core_provider._tool_read_file(self.ctx, {"path": str(target)}, None)
+        self.assertIn("line-001", out)
+        self.assertIn("line-060", out)
+        self.assertNotIn("已达读取上限", out)
+
+    def test_explicit_max_lines_still_limits(self) -> None:
+        """显式传 max_lines 仍生效（兼容旧调用）；截断标记行区间 + 续读起点。"""
+        target = self._make([f"line-{i:03d}" for i in range(1, 61)])
+        out = core_provider._tool_read_file(self.ctx, {"path": str(target), "max_lines": 50}, None)
         self.assertIn("line-001", out)
         self.assertIn("line-050", out)
         self.assertNotIn("line-051", out)
@@ -55,7 +65,7 @@ class ReadFileTests(unittest.TestCase):
 
     def test_resume_from_marker_returns_remaining(self) -> None:
         target = self._make([f"line-{i:03d}" for i in range(1, 61)])
-        first = core_provider._tool_read_file(self.ctx, {"path": str(target)}, None)
+        first = core_provider._tool_read_file(self.ctx, {"path": str(target), "max_lines": 50}, None)
         resume = int(first.rsplit("start_line=", 1)[1].split()[0].rstrip("）"))
         out = core_provider._tool_read_file(self.ctx, {"path": str(target), "start_line": resume}, None)
         self.assertIn("line-051", out)
@@ -236,6 +246,30 @@ class JobOutputCursorTests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("hello", out)
         self.assertIn("cursor=7", out)
+
+
+class RunSkillScriptEncodingTests(unittest.TestCase):
+    def test_chinese_arg_preserved(self) -> None:
+        """run_skill_script 传中文路径参数必须原样传给子进程；子进程以 UTF-8 运行时
+        输出（PYTHONIOENCODING/PYTHONUTF8），父进程 UTF-8 解码不再乱码（Windows 实测）。"""
+        tmp = Path(tempfile.mkdtemp(prefix="naiba-skill-"))
+        (tmp / "scripts").mkdir()
+        script = tmp / "scripts" / "echo_arg.py"
+        script.write_text("import sys\nprint(sys.argv[1])\n", encoding="utf-8")
+        ctx = _ctx(tmp)
+        active = [{"name": "批量生成30s_h3_nsfw_i2v提示词", "id": "skill-x", "root": str(tmp), "path": str(tmp)}]
+        result = core_provider._tool_run_skill_script(
+            ctx,
+            {
+                "skill": "批量生成30s_h3_nsfw_i2v提示词",
+                "script": "scripts/echo_arg.py",
+                "args": [r"C:\Users\ylxia\Desktop\临时提示词\_pending_entry.json"],
+            },
+            active,
+        )
+        self.assertIn("exit_code=0", result)
+        self.assertIn("临时提示词", result)
+        self.assertIn("_pending_entry.json", result)
 
 
 if __name__ == "__main__":
