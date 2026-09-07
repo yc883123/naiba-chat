@@ -41,7 +41,6 @@ def _todo_write_handler(
         todos.append({"id": str(item.get("id") or index), "content": content[:1000], "status": status})
     if active > 1:
         return False, "同时最多只能有一个 in_progress 任务"
-    app.storage.append_run_event(run_id, {"type": "todo_state", "todos": todos})
     return True, json.dumps({"saved": True, "todos": todos}, ensure_ascii=False)
 
 

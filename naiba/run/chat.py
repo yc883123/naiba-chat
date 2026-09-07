@@ -426,7 +426,7 @@ class ConversationRunMixin:
                 vision_timeout = max(1.0, int(vision_config.get("timeout_ms", 180000)) / 1000)
             except (TypeError, ValueError):
                 vision_timeout = 180.0
-            vision_budget = VisionBudget(vision_timeout, event=event)
+            vision_budget = VisionBudget(vision_timeout)
             try:
                 history, vision_note = self.app.vision.prepare_history(
                     history, profile, cancel_event=cancel_event, vision_budget=vision_budget

@@ -242,13 +242,6 @@ export function clearVisionProgress() {
   state.visionStartedAt = 0;
 }
 
-export function clearStreamingAnswer(answer) {
-  if (!answer) return;
-  answer.dataset.raw = '';
-  answer.dataset.renderScheduled = '0';
-  answer.replaceChildren();
-}
-
 export function createStreamingReasoningBlock(answer) {
   const block = document.createElement('details');
   block.className = 'reasoning-block';

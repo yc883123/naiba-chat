@@ -10,7 +10,7 @@ import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation, renderConversationRuleBar } from "./08-conversations.js";
 import { uploadFiles } from "./10-upload.js";
-import { SKILL_INSTALL_PRESET, clearElapsedStatus, clearRunReconnectTimers, clearStreamingAnswer, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
+import { SKILL_INSTALL_PRESET, clearElapsedStatus, clearRunReconnectTimers, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
 import { renderInputMirror, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
 export async function startSkillInstall() {
   if (state.chatRunId || state.abortController) {
@@ -323,12 +323,6 @@ export function handleChatEvent(event, row, conversationId = state.conversationI
     };
     tick();
     state.elapsedTimer = window.setInterval(tick, 1000);
-  } else if (event.type === 'response_retracted') {
-    clearStreamingAnswer(answer);
-    row.querySelectorAll('.reasoning-block').forEach((block) => block.remove());
-    row.querySelectorAll('.stream-prose').forEach((seg) => seg.remove());
-    delete row.dataset.reasoningStreamed;
-    setActivity(event.reason || '正在核验执行结果');
   } else if (event.type === 'skills') {
     const user = (event.skills || []).filter((s) => s?.source !== 'auto');
     const auto = (event.skills || []).filter((s) => s?.source === 'auto');
@@ -425,17 +419,6 @@ export function handleChatEvent(event, row, conversationId = state.conversationI
     answer.before(details);
     // 让新插入的工具块始终位于末尾（紧贴 answer），从而保持时间顺序。
     scrollToBottom();
-  } else if (event.type === 'tool_start_legacy') {
-    if (row.dataset.sawTool !== 'true') {
-      moveBottomProseInline(row, answer);
-      row.dataset.sawTool = 'true';
-    }
-    collapseToolReasoningBlock();
-    answer.insertAdjacentHTML(
-      'beforebegin',
-      `<div class="tool-run">正在执行 · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</div>`
-    );
-    scrollToBottom();
   } else if (event.type === 'tool_result') {
     const toolRuns = row.querySelectorAll('.tool-run');
     const last = toolRuns[toolRuns.length - 1];
@@ -450,10 +433,6 @@ export function handleChatEvent(event, row, conversationId = state.conversationI
       if (!pre.parentNode) last.appendChild(pre);
       last.open = false;
     }
-  } else if (event.type === 'tool_result_legacy') {
-    const toolRuns = row.querySelectorAll('.tool-run');
-    const last = toolRuns[toolRuns.length - 1];
-    if (last) last.textContent = `${event.success ? '已完成' : '失败'} · ${event.tool}`;
   } else if (event.type === 'tool_confirm') {
     clearElapsedStatus();
     if (row.dataset.sawTool !== 'true') {

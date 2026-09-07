@@ -633,10 +633,9 @@ class SkillAgent:
                 content = str(action.get("content") or raw or "任务已完成").strip()
                 if reasoning:
                     event({"type": "reasoning", "content": reasoning})
-                # 不要把最终答复截断在 2000 字符：assistant_response / run_completed 是
-                # 前端用于重建最终答复正文的事件源，截断会让长答复（如 H3 多段提示词）在
+                # 不要把最终答复截断在 2000 字符：done 事件的 message（完整 assistant
+                # 消息）是前端重建最终答复正文的事件源，截断会让长答复（如 H3 多段提示词）在
                 # “正文到某处就消失、只显示到冒号”的 bug 中显示不全。
-                event({"type": "assistant_response", "content": content, "is_tool": False})
                 event({"type": "step_finished", "step": step})
                 event({"type": "run_completed", "message": content})
                 # 让 trace 成为这一轮发给模型的完整字节序列：把最终答复也纳入 messages，
@@ -672,7 +671,6 @@ class SkillAgent:
             parallel_results: dict[int, tuple[bool, str]] = {}
             if parallel_safe:
                 for call in normalized_calls:
-                    event({"type": "assistant_response", "is_tool": True, "tool": str(call.get("tool") or "")})
                     event({"type": "tool_requested", "tool": str(call.get("tool") or ""), "arguments": call.get("arguments") or {}, "reason": call.get("reason", "")})
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(normalized_calls))) as pool:
                     futures = {
@@ -695,7 +693,6 @@ class SkillAgent:
                     event({"type": "run_failed", "error": "工具调用解析失败：缺少工具名或参数"})
                     return "工具调用解析失败，已停止执行。", runs, reasonings, self._summarize_usage(usages)
                 if not parallel_safe:
-                    event({"type": "assistant_response", "is_tool": True, "tool": tool})
                     event({"type": "tool_requested", "tool": tool, "arguments": arguments, "reason": call.get("reason", "")})
                 if cancel_event and cancel_event.is_set():
                     abort_run()

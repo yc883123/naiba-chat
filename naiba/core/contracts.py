@@ -148,9 +148,7 @@ class EventType(str, Enum):
     SKILL_WARNING = "skill_warning"
     TOOLS_AVAILABLE = "tools_available"
     TOOL_START = "tool_start"
-    TOOL_START_LEGACY = "tool_start_legacy"
     TOOL_RESULT = "tool_result"
-    TOOL_RESULT_LEGACY = "tool_result_legacy"
     TOOL_CONFIRM = "tool_confirm"
     CHOICE = "choice"
     CANCELLED = "cancelled"
@@ -159,9 +157,6 @@ class EventType(str, Enum):
     CONTEXT_FULL = "context_full"
     DONE = "done"
     ERROR = "error"
-    USER_GUIDANCE = "user_guidance"
-    INTERJECTION_CONSUMED = "interjection_consumed"
-    RESPONSE_RETRACTED = "response_retracted"
     DEBUG_CACHE = "debug_cache"
     HEARTBEAT = "heartbeat"
 
@@ -217,7 +212,6 @@ class EventPayload(TypedDict, total=False):
     choices: list[str]
     choice_groups: list[dict[str, Any]]
     plan: dict[str, Any]
-    todos: list[dict[str, Any]]
     aborted_message: dict[str, Any]
     # 诊断
     label: str

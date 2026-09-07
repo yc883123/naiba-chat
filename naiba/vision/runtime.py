@@ -69,9 +69,8 @@ DEFAULT_TIMEOUT_SECONDS = 180
 class VisionBudget:
     """Run-scoped visual request cache and counter with a per-call timeout."""
 
-    def __init__(self, timeout_seconds: float, event: Any = None):
+    def __init__(self, timeout_seconds: float):
         self.timeout_seconds = max(1.0, float(timeout_seconds))
-        self.event = event
         self.calls = 0
         self.cache: dict[str, str] = {}
         self._lock = threading.RLock()
@@ -79,25 +78,17 @@ class VisionBudget:
     def cached(self, key: str) -> str | None:
         with self._lock:
             value = self.cache.get(key)
-        if value is not None:
-            self._emit("vision_cache_hit", {"calls": self.calls})
         return value
 
     def begin(self, key: str) -> float:
         del key
         with self._lock:
             self.calls += 1
-            calls = self.calls
-        self._emit("vision_request", {"calls": calls, "timeout_seconds": self.timeout_seconds})
         return self.timeout_seconds
 
     def store(self, key: str, value: str) -> None:
         with self._lock:
             self.cache[key] = value
-
-    def _emit(self, kind: str, payload: dict[str, Any]) -> None:
-        if callable(self.event):
-            self.event({"type": kind, **payload})
 
 
 def _default_vision_config() -> dict[str, Any]:
