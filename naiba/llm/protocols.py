@@ -121,26 +121,19 @@ class ProtocolMixins:
                 # "The reasoning_text in the thinking mode must be passed back"。
                 # 形态为官方 schema：reasoning item 的 content 为 reasoning_text 内容块列表
                 # （"以明文承载思维链内容"；content 传字符串会被 serde 拒 "expected a sequence"），
-                # 且 output item 带唯一 id（OpenAI 规范 input 侧 reasoning.id required）——
-                # 服务端实测：无 id 块数组多轮长链 400（2026-09-07 用户 12 轮实测）。
-                # id 优先用流式解析捕获的服务端真实 id（reasoning_id）；旧持久化历史无 id 时
-                # 合成确定性 id（rs_h_ 前缀，跨轮字节稳定）。
+                # 且 output item 带唯一 id（OpenAI 规范 input 侧 reasoning.id required）。
+                # 实测铁证（2026-09-07 19:56 payload 取证）：服务端可能返回"无 CoT 的工具调用轮"
+                # （reasoning_content 为空），若该轮不回传 reasoning item，下一轮请求必然 400——
+                # 因此**带 tool_calls 的 assistant 消息无条件产出 reasoning item**（无文本时空块
+                # 占位 + 合成稳定 id），结构完整性优先于内容。
                 reasoning_text = item.get("reasoning_content")
                 if reasoning_text is None:
                     reasoning_text = item.get("reasoning")
-                if reasoning_text is not None and str(reasoning_text).strip():
-                    reasoning_id = str(item.get("reasoning_id") or "")
-                    if not reasoning_id:
-                        digest = hashlib.sha1(str(reasoning_text).encode("utf-8")).hexdigest()
-                        reasoning_id = f"rs_h_{digest[:16]}"
-                    converted.append({
-                        "type": "reasoning",
-                        "id": reasoning_id,
-                        "content": [
-                            {"type": "reasoning_text", "text": str(reasoning_text)}
-                        ],
-                    })
                 if isinstance(item.get("tool_calls"), list):
+                    if reasoning_text is not None and str(reasoning_text).strip():
+                        converted.append(ProtocolMixins._reasoning_item(reasoning_text, item))
+                    else:
+                        converted.append(ProtocolMixins._reasoning_item("", item))
                     # reasoning/assistant/function_call 相邻成组；function_call 与
                     # function_call_output 保持相邻配对（中间不可插入 item）。
                     converted.append({
@@ -154,6 +147,8 @@ class ProtocolMixins:
                         "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
                     } for call in item["tool_calls"] if isinstance(call, dict))
                     continue
+                if reasoning_text is not None and str(reasoning_text).strip():
+                    converted.append(ProtocolMixins._reasoning_item(reasoning_text, item))
                 converted.append({
                     "role": role,
                     "content": ProtocolMixins._responses_content(item.get("content"), role),
@@ -798,6 +793,32 @@ class ProtocolMixins:
         return urllib.parse.urlunsplit(
             (parsed.scheme, parsed.netloc, target_path, parsed.query, parsed.fragment)
         )
+
+
+    @staticmethod
+    def _reasoning_item(reasoning_text: Any, source_item: dict[str, Any]) -> dict[str, Any]:
+        """构造回传用 reasoning item：content 为 reasoning_text 内容块列表（明文承载）。
+
+        id 优先服务端真实 id（流式 output_item.added / delta item_id 捕获，非流式 output
+        提取）；无 id 时合成确定性 id（rs_h_ + sha1，key 取推理文本或工具调用签名，
+        跨轮 trace 重放字节稳定）。
+        """
+        reasoning_id = str(source_item.get("reasoning_id") or "")
+        text = str(reasoning_text or "")
+        if not reasoning_id:
+            if text:
+                digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
+            else:
+                tools_signature = json.dumps(
+                    source_item.get("tool_calls") or [], ensure_ascii=False, sort_keys=True,
+                )
+                digest = hashlib.sha1(tools_signature.encode("utf-8")).hexdigest()
+            reasoning_id = f"rs_h_{digest[:16]}"
+        return {
+            "type": "reasoning",
+            "id": reasoning_id,
+            "content": [{"type": "reasoning_text", "text": text}],
+        }
 
 
     @staticmethod

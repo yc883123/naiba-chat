@@ -44,8 +44,10 @@ class LlmProtocolTests(unittest.TestCase):
         ])
         self.assertEqual(out[0]["type"], "function_call_output")
         self.assertEqual(out[0]["call_id"], "c1")
-        self.assertEqual(out[1]["role"], "assistant")
-        self.assertEqual(out[2]["type"], "function_call")
+        # 无推理文本的工具轮也产出占位 reasoning item（服务端校验要求，否则 400）
+        self.assertEqual(out[1]["type"], "reasoning")
+        self.assertEqual(out[2]["role"], "assistant")
+        self.assertEqual(out[3]["type"], "function_call")
 
     def test_responses_input_reasoning_passback(self):
         """回归：DeepSeek 思考模式（携带 tools）要求历史 reasoning 以独立 reasoning item
@@ -76,6 +78,17 @@ class LlmProtocolTests(unittest.TestCase):
         self.assertEqual(out2[1]["role"], "assistant")
         self.assertEqual(out2[2]["type"], "function_call")
         self.assertEqual(out2[2]["call_id"], "c1")
+        # 无 reasoning 的工具轮（服务端未返回 CoT）：仍必须产出空文本占位 reasoning item
+        # （实测铁证：缺该项下一轮请求 400 "must be passed back"）
+        out_empty = P._responses_input([
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c9", "name": "pwsh", "arguments": {"command": "ping"}}]},
+        ])
+        self.assertEqual(out_empty[0]["type"], "reasoning")
+        self.assertEqual(out_empty[0]["content"], [{"type": "reasoning_text", "text": ""}])
+        self.assertTrue(str(out_empty[0]["id"] or "").startswith("rs_h_"))
+        self.assertEqual(out_empty[1]["role"], "assistant")
+        self.assertEqual(out_empty[2]["type"], "function_call")
         # 无 reasoning 时：不产生 reasoning item（仅 assistant 消息）
         out3 = P._responses_input([{"role": "assistant", "content": "回答"}])
         self.assertEqual(out3[0].get("role"), "assistant")
