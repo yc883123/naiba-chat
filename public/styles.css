@@ -457,18 +457,19 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 /* 流式把每次工具调用作为独立兄弟节点插入（与思考块按时间交错），
    不再包在 .tool-stack 里；这里给它补上原本由 .tool-stack 提供的琥珀色左栏。 */
 .message-body > .tool-run { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 16px; }
-/* 活动时间线请求分割线（极简版）：每次新请求的开始块顶部画一条淡色横线，
-   与其上方块分隔——风格与界面分隔线（var(--line)）一致，蓝紫描边随块（accent
-   淡色段）呼应主题；条目统一左缩进 16px 为横线留空间。 */
+/* 活动时间线请求分割线（极简版）：每次新请求的开始块上方一条淡色横线。
+   absolute 定位悬挂在块上缘之外（top:-8px），不占块内高度（块不变高）、
+   横线与块之间预留 8px 垂直距离；margin-top 为横线留出空隙。 */
 .reasoning-block, .tool-run, .stream-prose { position: relative; }
+.reasoning-block.request-start, .tool-run.request-start, .stream-prose.request-start { margin-top: 14px; }
 .reasoning-block.request-start::before,
 .tool-run.request-start::before,
 .stream-prose.request-start::before {
   content: '';
-  display: block;
+  position: absolute;
+  left: -16px; right: 0;
+  top: -8px;
   height: 1px;
-  width: calc(100% + 16px);
-  margin: 2px 0 10px -16px;
   background: var(--line);
 }
 .tool-confirm { margin: 10px 0; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--amber-soft); padding: 12px; }
