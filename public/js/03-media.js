@@ -283,7 +283,24 @@ export function reasoningMarkup(reasoning, finalOpen = false) {
   }).join('');
 }
 
-export function usageMarkup(usage) {
+export function formatDateTime(ms) {
+  const date = new Date(Number(ms) || 0);
+  if (!date.getTime()) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function usageRequestLine(item) {
+  const input = Math.max(0, Number(item.input_tokens || 0));
+  const output = Math.max(0, Number(item.output_tokens || 0));
+  const cached = Math.max(0, Number(item.cached_tokens || 0));
+  const total = Math.max(0, Number(item.total_tokens || 0)) || input + output;
+  const rate = input ? (cached / input * 100).toFixed(1) : '0.0';
+  const ms = Number(item.request_ms || 0);
+  return `<div class="usage-request-line">第 ${Number(item.index || 0)} 次请求：输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 总 ${total.toLocaleString()} · 命中率 ${rate}%（命中 ${cached.toLocaleString()} / 重算 ${Math.max(0, input - cached).toLocaleString()}）${ms > 0 ? ` · 耗时 ${(ms / 1000).toFixed(1)}s` : ''}</div>`;
+}
+
+export function usageMarkup(usage, createdAt = null) {
   if (!usage || typeof usage !== 'object') return '';
   const input = Number(usage.input_tokens || 0);
   const output = Number(usage.output_tokens || 0);
@@ -291,26 +308,29 @@ export function usageMarkup(usage) {
   const total = Number(usage.total_tokens || input + output);
   const performance = usage.performance || {};
   const vision = performance.vision || usage.lanes?.vision || {};
-  const chat = performance.chat || usage.lanes?.chat || {};
   const visualMs = Number(vision.total_ms || vision.diagnostics?.total_ms || 0);
-  const chatMs = Number(chat.total_ms || 0);
   const visionCacheHit = Boolean(vision.cache_hit);
-  const requestCount = Number(vision.requests || 0) + Number(usage.requests || 0);
-  if (!input && !output && !visualMs && !chatMs) {
+  if (!input && !output && !visualMs && !visionCacheHit) {
     return '<div class="usage-line">Token / 缓存命中率：供应商未返回</div>';
   }
   const rate = input ? Number(usage.cache_hit_rate ?? (cached / input * 100)).toFixed(1) : '0.0';
-  const requests = Number(usage.requests || 1);
+  const requests = Math.max(1, Number(usage.requests || 1));
   const miss = Math.max(0, Number(usage.uncached_tokens ?? (input - cached)));
+  const details = Array.isArray(usage.requests_detail) ? usage.requests_detail : [];
+  const detailsHtml = details.length
+    ? `<button class="usage-toggle-btn" type="button" data-usage-toggle aria-expanded="false" aria-label="查看逐次请求明细">请求明细 <span class="usage-toggle-arrow">▸</span></button><div class="usage-requests" hidden>${details.map((item) => usageRequestLine(item)).join('')}</div>`
+    : '';
   const tokenLine = (input || output)
-    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存命中率 ${rate}%（命中 ${cached.toLocaleString()} / 重算 ${miss.toLocaleString()}）</div>`
+    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存命中率 ${rate}%（命中 ${cached.toLocaleString()} / 重算 ${miss.toLocaleString()}）${detailsHtml}</div>`
     : '';
   const durationMs = Number(performance.total_ms || 0);
-  const durationLine = durationMs > 0
-    ? `<div class="usage-line usage-duration">本轮总耗时 ${(durationMs / 1000).toFixed(1)}s</div>`
+  const when = formatDateTime(createdAt);
+  const durationLine = (durationMs > 0 || requests > 1)
+    ? `<div class="usage-line usage-duration">本轮总耗时 ${(durationMs / 1000).toFixed(1)}s，共 ${requests} 次请求${when ? `。${when}` : ''}</div>`
     : '';
-  const laneLine = (visualMs || chatMs || visionCacheHit)
-    ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : (visualMs ? `视觉 ${(visualMs / 1000).toFixed(1)}s` : '')}${(visionCacheHit || visualMs) && chatMs ? ' → ' : ''}${chatMs ? `聊天 ${(chatMs / 1000).toFixed(1)}s` : ''} · 共 ${requestCount || requests} 次请求</div>`
+  // 只保留视觉 lane（聊天"lane 耗时"是最后一次请求的诊断值，与"本轮总耗时"重复且易误导，已移除）。
+  const laneLine = (visualMs || visionCacheHit)
+    ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : ''}${(visionCacheHit && visualMs) ? ' · ' : ''}${visualMs ? `视觉 ${(visualMs / 1000).toFixed(1)}s` : ''}</div>`
     : '';
   const warnings = Array.isArray(performance.warnings) ? performance.warnings : [];
   const warningLine = warnings.map((item) => `<div class="usage-warning">${escapeHtml(item)}</div>`).join('');

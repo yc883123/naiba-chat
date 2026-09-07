@@ -812,6 +812,19 @@ document.addEventListener('click', (event) => {
   }
 });
 
+// 用量"请求明细"展开/收起（与确认卡同模式：data-* + 模块内委托）。
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-usage-toggle]');
+  if (!button) return;
+  const scope = button.closest('.usage-stream, .message-body');
+  const box = scope && scope.querySelector('.usage-requests');
+  if (!box) return;
+  box.hidden = !box.hidden;
+  button.setAttribute('aria-expanded', String(!box.hidden));
+  const arrow = button.querySelector('.usage-toggle-arrow');
+  if (arrow) arrow.textContent = box.hidden ? '▸' : '▾';
+});
+
 export function setBusy(busy) {
   state.chatBusy = busy;
   const mc = $('#messages');

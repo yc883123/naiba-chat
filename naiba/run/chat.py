@@ -539,8 +539,7 @@ class ConversationRunMixin:
                     reasonings.append(direct_reasoning)
                 usage = dict(getattr(self.app.models, "last_usage", {}) or {})
                 if usage:
-                    live = SkillAgent._summarize_usage([usage])
-                    live["request_ms"] = direct_request_ms
+                    live = SkillAgent._summarize_usage([{**usage, "request_ms": direct_request_ms}])
                     event({"type": "usage", "usage": live})
                 chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
             else:

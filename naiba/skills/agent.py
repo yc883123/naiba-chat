@@ -563,11 +563,10 @@ class SkillAgent:
             reasoning_id = getattr(model_runtime, "last_reasoning_id", "") if model_runtime else ""
             usage = getattr(model_runtime, "last_usage", {}) if model_runtime else {}
             if usage:
-                usages.append(usage)
+                usages.append({**usage, "request_ms": request_ms})
                 # 实时用量：每完成一次请求即推送最新汇总（最后一次请求口径的命中率 +
-                # 累计请求次数与本次请求耗时），前端在流式末尾的用量框就地更新。
+                # 累计请求次数、本次请求耗时与逐次明细），前端在流式末尾的用量框就地更新。
                 live = self._summarize_usage(usages)
-                live["request_ms"] = request_ms
                 event({"type": "usage", "usage": live})
                 logger.info(
                     "[per-request] step=%s in=%s cached=%s out=%s appended=%s",
@@ -927,6 +926,21 @@ class SkillAgent:
         summary["cache_hit_rate"] = (
             round(cached_tokens / input_tokens * 100, 1) if input_tokens else 0.0
         )
+        # 逐次请求明细（前端"请求明细"展开用）：每次请求的 token/命中率/耗时；
+        # 旧数据 record 无 request_ms 时缺省 0（展示为 —）。
+        summary["requests_detail"] = [
+            {
+                "index": index + 1,
+                "input_tokens": max(0, int(record.get("input_tokens") or 0)),
+                "output_tokens": max(0, int(record.get("output_tokens") or 0)),
+                "cached_tokens": max(0, int(record.get("cached_tokens") or 0)),
+                "total_tokens": max(0, int(record.get("total_tokens") or 0))
+                or max(0, int(record.get("input_tokens") or 0))
+                + max(0, int(record.get("output_tokens") or 0)),
+                "request_ms": int(record.get("request_ms") or 0),
+            }
+            for index, record in enumerate(records)
+        ]
         return summary
 
     @classmethod

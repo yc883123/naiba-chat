@@ -47,7 +47,7 @@ export function messageElement(message, temporary = false) {
           ${temporary ? '' : sourcesMarkup(metadata.sources)}
           ${mediaMarkup(metadata.attachments)}
           ${temporary ? '' : fileChangesSummaryMarkup(metadata.files)}
-          ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance })}
+          ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance }, message.created_at)}
           ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
         </div>
       </div>`;
