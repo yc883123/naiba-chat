@@ -13,6 +13,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 - **守门测试**：新增权限矩阵（full/confirm/auto/deny 全模式）、装饰器-绑定一致性、`self.app` 残留引用扫描等网格化守门，共 83 个单测；全量功能回归（11 域 48 项）通过。
 - **工具系统增强**：视觉类工具单入口（vision_analyze 按会话模型能力自动分流 + vision_image_ops 本地图像计算）；移除 call_mcp 网关；多模态/文本模型同一工具集，退役工具自动迁移/提示；DeepSeek 思考模式工具轮兼容修复（reasoning item 按官方 Schema 回传：`reasoning_text` 内容块列表 + 服务端唯一 id，旧历史无 id 自动合成兜底）；Harness 兼容别名（read/write/edit/grep）从模型可见工具清单隐藏（执行兼容保留）；工具返回对模型可见性统一（机器字段剥离、截断带标记、前端展示与模型上下文同源；vision_image_ops 产物路径对模型保留，供其引用裁剪/热力图产物）；glob_files 并入 list_directory（单入口枚举）。
 - **行为兼容**：对外 HTTP API 路径、事件流协议与前端完全不改；13 个根模块保留兼容 shim（`from naiba.X import *`）；`launcher.py`/PyInstaller spec 零改动。
+- **历史数据管理**：推理流保持逐词实时显示、回复完成后自动整理为整段思考（事件流不再逐 token 累积）；终态任务快照自动收缩；升级时自动压缩存量历史数据（迁移前先整库备份到 `data/backups`）；设置页「历史数据管理」可查看数据库占用并一键压缩回收空间；实测 400MB 存量库压缩至 ~90MB，继续会话发送给模型的历史消息逐字节不变（前缀缓存命中不受影响）。
 
 ### 历史能力（1.7.8 及更早）
 
