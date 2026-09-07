@@ -984,13 +984,18 @@ class NaibaChatApp:
         """会话首轮「第一轮发送上下文」（系统提示词原文 + 工具集 + 模型/技能信息）。
 
         数据来源：该会话最早的 chat run 快照里的 first_turn 键（_run_chat 首轮落盘）。
-        老会话（快照无该键）返回 None，前端不显示折叠卡。
+        老会话（快照无该键）返回 None，前端不显示折叠卡；旧版落盘结构（prompt 字段
+        而非 system）在此归一兼容——前端仅认 system。
         """
         snapshot = self.storage.first_chat_run_snapshot(conversation_id)
         if not snapshot:
             return None
         info = snapshot.get("first_turn")
-        return info if isinstance(info, dict) and info else None
+        if not isinstance(info, dict) or not info:
+            return None
+        if not info.get("system") and info.get("prompt"):
+            info = {**info, "system": str(info.get("prompt") or "")}
+        return info
 
     def _reject_tool(self, body: dict[str, Any]) -> None:
         confirm_id = str(body.get("confirm_id") or "").strip()

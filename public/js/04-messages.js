@@ -256,7 +256,8 @@ export function moveBottomProseInline(row, answer) {
 }
 
 export function firstTurnCardMarkup(firstTurn) {
-  if (!firstTurn || !firstTurn.system) return '';
+  const systemText = String((firstTurn && (firstTurn.system || firstTurn.prompt)) || '');
+  if (!systemText) return '';
   const tools = Array.isArray(firstTurn.tools) ? firstTurn.tools : [];
   const skills = Array.isArray(firstTurn.skills) ? firstTurn.skills : [];
   const options = firstTurn.options || {};
@@ -278,16 +279,16 @@ export function firstTurnCardMarkup(firstTurn) {
       ${optionText ? `<div class="ft-options">生成参数：${escapeHtml(optionText)}</div>` : ''}
       <details class="ft-section">
         <summary>系统提示词（发送给模型的 system 原文）</summary>
-        <pre class="ft-prompt">${escapeHtml(firstTurn.system)}</pre>
+        <pre class="ft-prompt">${escapeHtml(systemText)}</pre>
       </details>
-      <details class="ft-section">
-        <summary>工具定义（完整 JSON Schema）</summary>
+      ${tools.length ? `<details class="ft-section">
+        <summary>工具定义（${tools.length} 个，JSON）</summary>
         <pre class="ft-prompt">${escapeHtml(JSON.stringify(tools, null, 2))}</pre>
-      </details>
-      <details class="ft-section">
+      </details>` : ''}
+      ${fullMessages.length ? `<details class="ft-section">
         <summary>完整请求消息（除首发用户消息外）</summary>
         <pre class="ft-prompt">${escapeHtml(JSON.stringify(fullMessages, null, 2))}</pre>
-      </details>
+      </details>` : ''}
     </div>
   </details>`;
 }
