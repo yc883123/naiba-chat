@@ -4,6 +4,7 @@ import json
 import re
 import shutil
 import sqlite3
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -12,7 +13,10 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
+
+# 自该版本起存在"数据改写型"迁移（v14 起），执行前自动备份整库。
+FIRST_DATA_WRITING_MIGRATION = 14
 
 
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
@@ -241,6 +245,157 @@ def _migrate_to_v13(db: sqlite3.Connection) -> None:
     db.execute("DROP TABLE IF EXISTS tool_runs")
 
 
+# 推理流合流的窗口常量（存量压缩与写入端《run/stream.py》保持一致口径）。
+_REASONING_MIGRATE_FLUSH_CHARS = 2048
+_REASONING_MIGRATE_FLUSH_MS = 1000
+
+
+def _coalesce_reasoning_deltas(db: sqlite3.Connection) -> int:
+    """把存量 ``reasoning_delta`` 事件按窗口合流为整段 ``reasoning``（幂等）。
+
+    与写入端 sink 相同口径：缓冲累计 ≥2048 字符、或距上一段 ≥1s 时切段；
+    每段以原首条 sequence 落库（行序保留、允许 sequence 空洞），删除被合流行。
+    返回处理的行数；已合流（无 delta 行）时返回 0。
+    """
+    rows = db.execute(
+        "SELECT run_id, sequence, payload, created_at FROM run_events "
+        "WHERE event_type = 'reasoning_delta' ORDER BY run_id, sequence"
+    )
+    pending_run: str | None = None
+    pending: list[str] = []
+    pending_bytes = 0
+    pending_seq = 0
+    pending_created = 0
+    pending_last = 0
+    segments: list[tuple[str, int, int, str]] = []
+    processed = 0
+
+    def flush_segment() -> None:
+        nonlocal pending, pending_bytes
+        if pending:
+            segments.append((pending_run, pending_seq, pending_created, "".join(pending)))
+        pending = []
+        pending_bytes = 0
+
+    for row in rows:
+        run_id = str(row[0])
+        if run_id != pending_run:
+            flush_segment()
+            pending_run = run_id
+            pending_seq = int(row[1])
+            pending_created = int(row[3] or 0)
+            pending_last = pending_created
+        try:
+            text = str(json.loads(row[2] or "{}").get("content") or "")
+        except (json.JSONDecodeError, TypeError):
+            text = ""
+        processed += 1
+        if not text:
+            continue
+        created = int(row[3] or 0)
+        if pending and (pending_bytes + len(text) >= _REASONING_MIGRATE_FLUSH_CHARS
+                        or (pending_last and created - pending_last >= _REASONING_MIGRATE_FLUSH_MS)):
+            flush_segment()
+            pending_seq = int(row[1])
+            pending_created = created
+        pending.append(text)
+        pending_bytes += len(text)
+        pending_last = created
+    flush_segment()
+
+    if not segments:
+        return 0
+    # 按 run 分组：删除 delta 行 + 插入合流行（同事务，原子）。
+    by_run: dict[str, list[tuple[str, int, int, str]]] = {}
+    for run_id, seq, created, text in segments:
+        by_run.setdefault(run_id, []).append((run_id, seq, created, text))
+    for run_id, items in by_run.items():
+        db.execute(
+            "DELETE FROM run_events WHERE run_id = ? AND event_type = 'reasoning_delta'",
+            (run_id,),
+        )
+        for run_id2, seq, created, text in items:
+            db.execute(
+                "INSERT INTO run_events(run_id, sequence, event_type, payload, created_at) "
+                "VALUES (?, ?, 'reasoning', ?, ?)",
+                (run_id2, seq, json.dumps({"type": "reasoning", "content": text}, ensure_ascii=False), created),
+            )
+    return processed
+
+
+def _slim_terminal_event_payloads(db: sqlite3.Connection) -> int:
+    """done/cancelled 事件载荷去掉 message 与 aborted_message（幂等）。
+
+    这两个键携带完整消息对象（content + metadata + trace…），与 messages 表重复；
+    仅前端在运行结束即时渲染用；run 终态后再无读取方。返回处理行数。
+    """
+    updated = 0
+    for run_id, sequence, payload in db.execute(
+        "SELECT run_id, sequence, payload FROM run_events WHERE event_type IN ('done', 'cancelled')"
+    ):
+        try:
+            obj = json.loads(payload or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        if "message" not in obj and "aborted_message" not in obj:
+            continue
+        obj.pop("message", None)
+        obj.pop("aborted_message", None)
+        db.execute(
+            "UPDATE run_events SET payload = ? WHERE run_id = ? AND sequence = ?",
+            (json.dumps(obj, ensure_ascii=False), run_id, sequence),
+        )
+        updated += 1
+    return updated
+
+
+def _slim_terminal_snapshots(db: sqlite3.Connection) -> int:
+    """终态（completed/failed/cancelled）Run 的 snapshot 去掉 conversation_messages（幂等）。
+
+    该键只在运行期与 interrupted 恢复期被读取（快照语义：run 线程与 HTTP 线程隔离），
+    终态后无读取方；interrupted 保留。返回处理行数。
+    """
+    updated = 0
+    for task_id, snapshot_text in db.execute(
+        "SELECT id, snapshot FROM background_tasks "
+        "WHERE status IN ('completed', 'failed', 'cancelled')"
+    ):
+        try:
+            obj = json.loads(snapshot_text or "{}")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(obj, dict) or "conversation_messages" not in obj:
+            continue
+        obj.pop("conversation_messages", None)
+        db.execute(
+            "UPDATE background_tasks SET snapshot = ? WHERE id = ?",
+            (json.dumps(obj, ensure_ascii=False), task_id),
+        )
+        updated += 1
+    return updated
+
+
+def _migrate_to_v14(db: sqlite3.Connection) -> None:
+    """存量历史数据压缩（三个重复存储源，全部幂等）+ VACUUM 物理收缩。
+
+    - reasoning_delta 逐 token 事件（存量 87 万行、run_events 行数 96.6%）→ 窗口合流；
+    - done/cancelled 事件携带的完整消息对象与 messages 表重复 → 载荷瘦身；
+    - 终态 snapshot 固化的完整会话消息列表（O(N²) 累积，实测 81 MB）→ 键收缩；
+    - VACUUM 释放物理空间。内容改写失败会让迁移整体失败（用户可见、可重试）；
+      VACUUM 属空间优化，失败仅记录诊断（stderr）并允许迁移继续。
+    """
+    _coalesce_reasoning_deltas(db)
+    _slim_terminal_event_payloads(db)
+    _slim_terminal_snapshots(db)
+    db.commit()
+    try:
+        db.execute("VACUUM")
+    except sqlite3.OperationalError as exc:  # 空间不足/文件锁等：内容迁移已成功
+        print(f"[naiba-storage] 迁移 v14 内容完成，VACUUM 未执行：{exc}", file=sys.stderr)
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -256,6 +411,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     11: _migrate_to_v11,
     12: _migrate_to_v12,
     13: _migrate_to_v13,
+    14: _migrate_to_v14,
 }
 
 
@@ -470,6 +626,18 @@ class ChatStorage:
 
     def apply_pending_migrations(self) -> None:
         """依次应用尚未执行的迁移，直到 user_version == CURRENT_SCHEMA_VERSION。"""
+        # 数据改写型迁移（v14 起：合并/收缩存量行）执行前自动整库备份到 data/backups，
+        # 保证可回滚；全新库（user_version=0）无存量数据无需备份。备份失败仅记录诊断
+        # 并继续（被删除数据均有等价替代：合流保留全文、done 消息与 snapshot 历史
+        # 均可在 messages 表重建语义等价内容）。
+        current_version = self.get_user_version()
+        if 0 < current_version < FIRST_DATA_WRITING_MIGRATION:
+            backup = self.backup_for_migration(self.data_dir / "backups")
+            if backup.get("error"):
+                print(
+                    f"[naiba-storage] 迁移前备份失败（继续迁移）：{backup['error']}",
+                    file=sys.stderr,
+                )
         with self._connect() as db:
             while int(db.execute("PRAGMA user_version").fetchone()[0]) < CURRENT_SCHEMA_VERSION:
                 target = int(db.execute("PRAGMA user_version").fetchone()[0]) + 1
@@ -1180,7 +1348,36 @@ class ChatStorage:
             )
             if cursor.rowcount == 0:
                 return None
+            if finished and str(values.get("status") or "") in {"completed", "failed", "cancelled"}:
+                # 终态收口：收缩 snapshot 的 conversation_messages（存量累积 O(N²) 的主因）。
+                self._slim_run_snapshot(db, task_id)
         return self.get_background_task(task_id)
+
+    def _slim_run_snapshot(self, db: sqlite3.Connection, task_id: str) -> None:
+        """终态 Run 收缩 snapshot：去掉 conversation_messages（仅运行期/中断恢复需要）。
+
+        每轮 Run 提交时会把完整会话消息列表固化进 snapshot（快照语义：run 线程与
+        HTTP 主线程隔离、防中途改会话造成历史漂移）；该键只在运行期
+        （chat.py build_model_history）与 interrupted 恢复期被读取。任务进入终态后
+        再无读取方，收缩可避免历史累积 O(N²) 重复存储（实测存量库该键占 81 MB）。
+        interrupted 保留（恢复重建需要）。
+        """
+        row = db.execute(
+            "SELECT snapshot FROM background_tasks WHERE id = ?", (task_id,)
+        ).fetchone()
+        if not row:
+            return
+        try:
+            snapshot = json.loads(row["snapshot"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return
+        if not isinstance(snapshot, dict) or "conversation_messages" not in snapshot:
+            return
+        snapshot.pop("conversation_messages", None)
+        db.execute(
+            "UPDATE background_tasks SET snapshot = ? WHERE id = ?",
+            (json.dumps(snapshot, ensure_ascii=False), task_id),
+        )
 
     def update_job(
         self,

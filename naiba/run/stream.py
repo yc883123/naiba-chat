@@ -15,6 +15,12 @@ from typing import Any
 
 from naiba.core.exceptions import TaskCancelled
 
+# 推理流合流阈值：与正文 delta 同机制，防止逐 token 落库（存量库曾见 87 万行
+# reasoning_delta、占 run_events 96.6% 行数）。字符串缓冲是“未完成段”，
+# 落库形态为整段 ``reasoning`` 事件（rebuild 与前端均兼容两种事件）。
+REASONING_FLUSH_CHARS = 2048
+REASONING_FLUSH_SECS = 1.0
+
 
 def _safe_activity(
     events: list[dict[str, Any]], reasonings: list[str], runs: list[dict[str, Any]]
@@ -106,7 +112,9 @@ class _RunEventSink:
         self.run_id = run_id
         self.cancel_event = cancel_event
         self._delta = ""
+        self._reasoning = ""
         self._last_flush = time.monotonic()
+        self._last_reasoning_flush = time.monotonic()
         self._announced_tools: set[str] = set()
         self.failure_message: str | None = None
         # Guard the delta buffer so the run thread and the watchdog thread can both
@@ -122,6 +130,14 @@ class _RunEventSink:
             now = time.monotonic()
             if len(self._delta) >= 4096 or now - self._last_flush >= 0.1:
                 self.flush()
+            return
+        if str(payload.get("type") or "") == "reasoning_delta":
+            # 推理 delta 同机制合流：缓冲到整段 reasoning 事件再落库（与正文
+            # delta 共用 flush 阈值通道，但按各自缓冲分别 flush，保证事件顺序）。
+            self._reasoning += str(payload.get("content") or "")
+            now = time.monotonic()
+            if len(self._reasoning) >= REASONING_FLUSH_CHARS or now - self._last_reasoning_flush >= REASONING_FLUSH_SECS:
+                self.flush_reasoning()
             return
         self.flush()
         kind = str(payload.get("type") or "")
@@ -147,6 +163,8 @@ class _RunEventSink:
         self.manager.emit(self.run_id, payload)
 
     def flush(self) -> None:
+        # 先落推理、再落正文：推理发生在正文之前，事件顺序与流式语义一致。
+        self.flush_reasoning()
         with self._flush_lock:
             if not self._delta:
                 return
@@ -156,3 +174,14 @@ class _RunEventSink:
         # Emit outside the lock: the content is already claimed above, so a
         # concurrent flush sees an empty buffer and returns without duplicating.
         self.manager.emit(self.run_id, {"type": "delta", "content": content})
+
+    def flush_reasoning(self) -> None:
+        """把缓冲的推理段落库为整段 ``reasoning`` 事件（与正文 delta 互相独立）。"""
+        with self._flush_lock:
+            if not self._reasoning:
+                return
+            content = self._reasoning
+            self._reasoning = ""
+            self._last_reasoning_flush = time.monotonic()
+        # Emit outside the lock（与 flush 相同理由）。
+        self.manager.emit(self.run_id, {"type": "reasoning", "content": content})
