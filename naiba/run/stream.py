@@ -15,11 +15,11 @@ from typing import Any
 
 from naiba.core.exceptions import TaskCancelled
 
-# 推理流合流阈值：与正文 delta 同机制，防止逐 token 落库（存量库曾见 87 万行
-# reasoning_delta、占 run_events 96.6% 行数）。字符串缓冲是“未完成段”，
-# 落库形态为整段 ``reasoning`` 事件（rebuild 与前端均兼容两种事件）。
-REASONING_FLUSH_CHARS = 2048
-REASONING_FLUSH_SECS = 1.0
+# 推理流流式期缓冲阈值：仅作"落库频率"的短窗聚合（512 字符 或 0.1s），保证前端
+# 流式显示实时平滑；run 结束后由收尾合流（chat.py「终态压缩」）把该 run 的事件
+# 重新整理为整段 reasoning（与存量压缩迁移 v14 同口径），历史库不膨胀。
+REASONING_STREAM_CHARS = 512
+REASONING_STREAM_SECS = 0.1
 
 
 def _safe_activity(
@@ -132,11 +132,11 @@ class _RunEventSink:
                 self.flush()
             return
         if str(payload.get("type") or "") == "reasoning_delta":
-            # 推理 delta 同机制合流：缓冲到整段 reasoning 事件再落库（与正文
-            # delta 共用 flush 阈值通道，但按各自缓冲分别 flush，保证事件顺序）。
+            # 流式期短窗缓冲：既保证前端逐块平滑显示（0.1s 内可见），又避免逐 token
+            # 落库的极端行数；最终形态由 run 收尾的终态合流整理为整段 reasoning。
             self._reasoning += str(payload.get("content") or "")
             now = time.monotonic()
-            if len(self._reasoning) >= REASONING_FLUSH_CHARS or now - self._last_reasoning_flush >= REASONING_FLUSH_SECS:
+            if len(self._reasoning) >= REASONING_STREAM_CHARS or now - self._last_reasoning_flush >= REASONING_STREAM_SECS:
                 self.flush_reasoning()
             return
         self.flush()
@@ -176,7 +176,7 @@ class _RunEventSink:
         self.manager.emit(self.run_id, {"type": "delta", "content": content})
 
     def flush_reasoning(self) -> None:
-        """把缓冲的推理段落库为整段 ``reasoning`` 事件（与正文 delta 互相独立）。"""
+        """把缓冲的推理文本落库为 ``reasoning_delta`` 块（流式态；终态合流另行整理）。"""
         with self._flush_lock:
             if not self._reasoning:
                 return
@@ -184,4 +184,4 @@ class _RunEventSink:
             self._reasoning = ""
             self._last_reasoning_flush = time.monotonic()
         # Emit outside the lock（与 flush 相同理由）。
-        self.manager.emit(self.run_id, {"type": "reasoning", "content": content})
+        self.manager.emit(self.run_id, {"type": "reasoning_delta", "content": content})

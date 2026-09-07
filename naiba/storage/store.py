@@ -250,17 +250,25 @@ _REASONING_MIGRATE_FLUSH_CHARS = 2048
 _REASONING_MIGRATE_FLUSH_MS = 1000
 
 
-def _coalesce_reasoning_deltas(db: sqlite3.Connection) -> int:
-    """把存量 ``reasoning_delta`` 事件按窗口合流为整段 ``reasoning``（幂等）。
+def _coalesce_reasoning_deltas(db: sqlite3.Connection, run_id: str | None = None) -> int:
+    """把 ``reasoning_delta`` 事件按窗口合流为整段 ``reasoning``（幂等）。
 
     与写入端 sink 相同口径：缓冲累计 ≥2048 字符、或距上一段 ≥1s 时切段；
     每段以原首条 sequence 落库（行序保留、允许 sequence 空洞），删除被合流行。
-    返回处理的行数；已合流（无 delta 行）时返回 0。
+    ``run_id`` 为空时对全库执行（迁移 v14）；指定时只压缩该 run（运行时终态合流）。
+    返回处理的行数；无可合流行时返回 0。
     """
-    rows = db.execute(
-        "SELECT run_id, sequence, payload, created_at FROM run_events "
-        "WHERE event_type = 'reasoning_delta' ORDER BY run_id, sequence"
-    )
+    if run_id:
+        rows = db.execute(
+            "SELECT run_id, sequence, payload, created_at FROM run_events "
+            "WHERE event_type = 'reasoning_delta' AND run_id = ? ORDER BY run_id, sequence",
+            (run_id,),
+        )
+    else:
+        rows = db.execute(
+            "SELECT run_id, sequence, payload, created_at FROM run_events "
+            "WHERE event_type = 'reasoning_delta' ORDER BY run_id, sequence"
+        )
     pending_run: str | None = None
     pending: list[str] = []
     pending_bytes = 0
@@ -710,6 +718,16 @@ class ChatStorage:
             "snapshot_chars": int(snapshots[0] or 0),
             "message_count": int(messages[0]),
         }
+
+    def compress_run_events(self, run_id: str) -> int:
+        """run 终态后压缩该 run 的事件流：流式期逐块落库的 reasoning_delta 合流为整段。
+
+        与迁移 v14 同口径（2048 字符 / 1s 窗口）；幂等。合流发生在终态事件
+        （done/cancelled/error）落库之后，前端收到终态即停止轮询，安全。
+        不执行 VACUUM（空间回收走设置页「压缩数据库」）。返回处理行数。
+        """
+        with self._connect() as db:
+            return _coalesce_reasoning_deltas(db, run_id=run_id)
 
     def compact_database(self) -> dict[str, Any]:
         """VACUUM 物理收缩数据库（回收已清理历史数据占用的磁盘空间）。

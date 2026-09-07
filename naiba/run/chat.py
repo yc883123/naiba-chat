@@ -734,6 +734,12 @@ class ConversationRunMixin:
                 error_payload["partial_message"] = partial_message
             self.emit(run_id, error_payload)
         finally:
+            # 终态合流（推理流式期逐块落库 → 整段 reasoning）：放在全部收尾事件落库
+            # 之后，前端收到终态即停止轮询，无并发读；整理失败不阻断收尾。
+            try:
+                self.app.storage.compress_run_events(run_id)
+            except Exception:
+                traceback.print_exc()
             self._finish(run_id)
 
     def _run_plan(self, run_id: str, cancel_event: threading.Event) -> None:
@@ -786,6 +792,10 @@ class ConversationRunMixin:
             )
             self.emit(run_id, {"type": "error", "message": str(exc)})
         finally:
+            try:
+                self.app.storage.compress_run_events(run_id)
+            except Exception:
+                traceback.print_exc()
             self._finish(run_id)
 
     def _all_run_events(self, run_id: str) -> list[dict[str, Any]]:
