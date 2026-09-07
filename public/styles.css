@@ -457,27 +457,19 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 /* 流式把每次工具调用作为独立兄弟节点插入（与思考块按时间交错），
    不再包在 .tool-stack 里；这里给它补上原本由 .tool-stack 提供的琥珀色左栏。 */
 .message-body > .tool-run { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 16px; }
-/* 活动时间线左侧轨道（mac 风格）：淡色竖线贯穿条目；每次新请求（request-start）
-   的开始块在轨道上显示柔和绿点——所有条目统一缩进 16px，不再参差歪斜。 */
+/* 活动时间线左侧请求断点（极简版）：仅在新请求的开始块左侧显示垂直居中的
+   实心柔和绿点——无轨道线、无光晕；条目统一左缩进 16px 留出点位置。 */
 .reasoning-block, .tool-run, .stream-prose { position: relative; }
-.reasoning-block::before, .tool-run::before, .stream-prose::before {
-  content: '';
-  position: absolute;
-  left: -12px; top: 3px; bottom: 3px;
-  width: 2px;
-  border-radius: 1px;
-  background: rgba(128, 128, 128, 0.16);
-}
 .reasoning-block.request-start::after,
 .tool-run.request-start::after,
 .stream-prose.request-start::after {
   content: '';
   position: absolute;
-  left: -15px; top: 9px;
+  left: -13px; top: 50%;
+  transform: translateY(-50%);
   width: 8px; height: 8px;
   border-radius: 50%;
   background: #7fd8a8;
-  box-shadow: 0 0 0 3px rgba(127, 216, 168, 0.22);
 }
 .tool-confirm { margin: 10px 0; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--amber-soft); padding: 12px; }
 .tool-confirm-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
