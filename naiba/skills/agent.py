@@ -538,16 +538,13 @@ class SkillAgent:
             # 让中止后的 AI 也能精确重放这轮轨迹。
             if isinstance(run_context, dict):
                 run_context["trace_messages"] = messages[trace_start:]
-            event({"type": "run_cancelled", "reason": "用户取消"})
             raise TaskCancelled("任务已取消")
 
         while True:
             if cancel_event and cancel_event.is_set():
                 abort_run()
             step += 1
-            event({"type": "step_started", "step": step})
             event({"type": "status", "message": f"正在思考（第 {step} 轮）"})
-            event({"type": "model_request", "step": step})
             try:
                 if _cache_debug_enabled():
                     _debug_message_digest(messages, f"step-{step}-request", event)
@@ -587,11 +584,6 @@ class SkillAgent:
                         "工具调用解析失败：请求模型重新输出规范动作（第 %d/2 次）",
                         parse_error_count,
                     )
-                    event({
-                        "type": "retry",
-                        "attempt": parse_error_count,
-                        "reason": "工具调用格式不完整，正在自动纠正",
-                    })
                     messages.append(assistant_message("上一个工具动作未能通过格式校验。"))
                     messages.append({
                         "role": "user",
@@ -601,7 +593,6 @@ class SkillAgent:
                             "不要添加说明、Markdown 或 XML；若任务已完成，直接输出最终答复。"
                         ),
                     })
-                    event({"type": "step_finished", "step": step})
                     continue
                 logger.warning("工具调用解析失败：连续三次无法得到完整工具动作（不展示原文）")
                 event({"type": "run_failed", "error": "工具调用格式连续三次无法自动纠正"})
@@ -628,7 +619,6 @@ class SkillAgent:
                             + "。请使用 job_wait 或 job_status 收集终态后继续。"
                         ),
                     })
-                    event({"type": "step_finished", "step": step})
                     continue
                 content = str(action.get("content") or raw or "任务已完成").strip()
                 if reasoning:
@@ -636,8 +626,6 @@ class SkillAgent:
                 # 不要把最终答复截断在 2000 字符：done 事件的 message（完整 assistant
                 # 消息）是前端重建最终答复正文的事件源，截断会让长答复（如 H3 多段提示词）在
                 # “正文到某处就消失、只显示到冒号”的 bug 中显示不全。
-                event({"type": "step_finished", "step": step})
-                event({"type": "run_completed", "message": content})
                 # 让 trace 成为这一轮发给模型的完整字节序列：把最终答复也纳入 messages，
                 # 使 trace = 线上最后一步请求 + 答复。这样重放端只需重放 trace，就能逐字节
                 # 还原整轮上下文，不必再依赖“答复不在 trace 里”这条容易失效的隐式约定
@@ -805,7 +793,6 @@ class SkillAgent:
                         *step_images,
                     ],
                 })
-            event({"type": "step_finished", "step": step})
 
     @staticmethod
     def _pending_background_jobs(run_context: RunContext | None) -> list[str]:
@@ -900,10 +887,8 @@ class SkillAgent:
             and not deterministic_failure and attempt < 2
         ):
             if cancel_event and cancel_event.is_set():
-                event({"type": "run_cancelled", "reason": "用户取消"})
                 raise TaskCancelled("任务已取消")
             attempt += 1
-            event({"type": "retry", "tool": tool, "attempt": attempt, "reason": "可重试错误，自动重试"})
             time.sleep(1.0)
             success, result = _dispatch()
         return success, result

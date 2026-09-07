@@ -150,9 +150,7 @@ def run_subagent_agent(
             # usage 是宿主诊断信息，不进入父模型上下文。
             result={"response": content, "tool_runs": [model_visible_run(run) for run in runs]},
         )
-        emit({"type": "subagent_result", "response": content[:2000]})
     except TaskCancelled:
-        emit({"type": "subagent_cancelled"})
         raise
     except Exception as exc:
         traceback.print_exc()

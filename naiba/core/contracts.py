@@ -167,16 +167,6 @@ class EventType(str, Enum):
     JOB_CHECK = "job_check"
     OUTPUT = "output"
 
-    # ---- Agent 循环内部事件 ----
-    STEP_STARTED = "step_started"
-    STEP_FINISHED = "step_finished"
-    RETRY = "retry"
-    MODEL_REQUEST = "model_request"
-    RUN_COMPLETED = "run_completed"
-    RUN_CANCELLED = "run_cancelled"
-    SUBAGENT_RESULT = "subagent_result"
-    SUBAGENT_CANCELLED = "subagent_cancelled"
-
 
 class EventPayload(TypedDict, total=False):
     """流式事件负载契约（各事件 type 字段的并集；wire 版式零变化，仅类型标注）。
@@ -194,7 +184,6 @@ class EventPayload(TypedDict, total=False):
     run_id: str
     sequence: int
     status: str
-    step: int
     attempt: int
     limit: int
     used: int
@@ -232,7 +221,6 @@ class EventPayload(TypedDict, total=False):
     line: str
     # 子 Agent / 计划
     current_step: str
-    response: str
     error: str
     result: str
 
@@ -263,15 +251,6 @@ EVENT_PAYLOAD_KEYS: dict[str, frozenset[str] | None] = {
     "error": frozenset({"message", "partial_message"}),
     "debug_cache": frozenset({"label", "lines"}),
     "heartbeat": frozenset(),
-    # ---- Agent 循环记录事件（落库供审计/工具读取，前端不消费）----
-    "step_started": frozenset({"step"}),
-    "step_finished": frozenset({"step"}),
-    "retry": frozenset({"attempt", "reason", "tool"}),
-    "model_request": frozenset({"step"}),
-    "run_completed": frozenset({"message"}),
-    "run_cancelled": frozenset({"reason"}),
-    "subagent_result": frozenset({"response"}),
-    "subagent_cancelled": frozenset(),
     # ---- Job 域（字段动态展开，宽松）----
     "job_status": None,
     "job_finished": None,

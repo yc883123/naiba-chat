@@ -24,15 +24,16 @@ from naiba.core.contracts import (  # noqa: E402
 
 class EventContractTests(unittest.TestCase):
     def test_frontend_handled_events_subset_of_enum(self):
-        # 前端已按域拆分为 public/js/*.js（阶段 5.1），按加载顺序拼接后反查 handleChatEvent。
+        # 前端已按域拆分为 public/js/*.js（阶段 5.1），handleChatEvent 已路由表化
+        # （阶段 3：CHAT_EVENT_HANDLERS 的键即前端可处置事件全集），从路由表反查。
         js_dir = ROOT / "public" / "js"
         chunks = []
         for path in sorted(js_dir.glob("*.js")):
             chunks.append(path.read_text(encoding="utf-8"))
         js = "\n".join(chunks)
-        handle = js[js.index("function handleChatEvent"):]
-        frontend_types = set(re.findall(r"""event\.type === ['"]([a-z_]+)['"]""", handle))
-        self.assertGreaterEqual(len(frontend_types), 20, "前端事件分支解析异常，请检查 app.js/js/")
+        table = js[js.index("const CHAT_EVENT_HANDLERS = {"):]
+        frontend_types = set(re.findall(r"""^\s{2}([a-z_]+):\s*handle[A-Za-z]+Event,?$""", table, re.M))
+        self.assertGreaterEqual(len(frontend_types), 20, "前端事件表解析异常，请检查 12-chat-input.js 路由表")
         missing = sorted(t for t in frontend_types if t not in EventType.__members__.values())
         self.assertEqual(missing, [], f"前端可处置的事件 type 不在 EventType 枚举中：{missing}")
 
@@ -115,9 +116,7 @@ class EventPayloadContractTests(unittest.TestCase):
         "cancelled": {"type", "message"},
         "error": {"type", "message"},
         "choice": {"type", "choices", "choice_groups"},
-        "retry": {"type", "attempt", "reason"},
         "context_full": {"type", "limit", "used", "budget"},
-        "run_cancelled": {"type", "reason"},
     }
 
     def _walk_event_dicts(self, node):
