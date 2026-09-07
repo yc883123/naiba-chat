@@ -104,7 +104,7 @@ export function scheduleTaskSync(delay = null) {
 }
 
 export function taskStatusLabel(status) {
-  return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消' })[status] || status;
+  return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' })[status] || status;
 }
 
 export function currentPermissionMode() {
