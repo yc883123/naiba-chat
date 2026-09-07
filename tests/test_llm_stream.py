@@ -100,6 +100,29 @@ class StreamReaderTests(unittest.TestCase):
         self.assertEqual(result["reasoning"], "")
         self.assertTrue(any(e.get("type") == "delta" for e in events))
 
+    def test_read_sse_captures_reasoning_item_id(self):
+        """DeepSeek Responses 思考回传必需 reasoning item id：从 output_item.added
+        捕获；delta 事件的 item_id 兜底。"""
+        events = []
+        response = [
+            'data: {"type": "response.output_item.added", "output_index": 0, '
+            '"item": {"type": "reasoning", "id": "rs_abc123", "status": "in_progress"}}'.encode("utf-8"),
+            'data: {"type": "response.reasoning_text.delta", "item_id": "rs_abc123", "delta": "思考"}'.encode("utf-8"),
+            'data: {"type": "response.output_text.delta", "delta": "回答"}'.encode("utf-8"),
+        ]
+        result = StreamMixins._read_sse_response(response, "codex_responses", events.append)
+        self.assertEqual(result["reasoning"], "思考")
+        self.assertEqual(result["reasoning_id"], "rs_abc123")
+        self.assertEqual(result["content"], "回答")
+
+    def test_read_sse_reasoning_id_fallback_from_delta(self):
+        """output_item.added 未携带 id 时，delta 事件的 item_id 兜底收集。"""
+        result = StreamMixins._read_sse_response([
+            'data: {"type": "response.reasoning_text.delta", "item_id": "rs_delta9", "delta": "想"}'.encode("utf-8"),
+            'data: {"type": "response.reasoning_text.delta", "item_id": "rs_delta9", "delta": "一下"}'.encode("utf-8"),
+        ], "codex_responses", None)
+        self.assertEqual(result["reasoning_id"], "rs_delta9")
+
 
 if __name__ == "__main__":
     unittest.main()

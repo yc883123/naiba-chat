@@ -5,6 +5,7 @@ ModelRuntime 通过继承本 Mixin 复用，运行时类名限定引用（self./
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -104,7 +105,7 @@ class ProtocolMixins:
 
 
     @staticmethod
-    def _responses_input(messages: list[dict[str, Any]], deepseek: bool = False) -> list[dict[str, Any]]:
+    def _responses_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         converted = []
         for item in messages:
             role = str(item.get("role") or "user")
@@ -118,26 +119,27 @@ class ProtocolMixins:
             if role == "assistant":
                 # DeepSeek 思考模式：携带 tools 的请求，历史轮次推理必须回传，否则 400
                 # "The reasoning_text in the thinking mode must be passed back"。
-                # 形态以官方文档为准：reasoning item 的 content 为明文（"明文 content 归并到
-                # 相邻 assistant 消息"）；块数组 [{type:reasoning_text,…}] 在多轮工具链实测仍
-                # 400（2026-09-07 用户 12 轮工具调用实测）→ DeepSeek 走明文；OpenAI 原生
-                # Responses API 保留官方 reasoning_text 块数组形态（尚未实测，按官方规格保留）。
+                # 形态为官方 schema：reasoning item 的 content 为 reasoning_text 内容块列表
+                # （"以明文承载思维链内容"；content 传字符串会被 serde 拒 "expected a sequence"），
+                # 且 output item 带唯一 id（OpenAI 规范 input 侧 reasoning.id required）——
+                # 服务端实测：无 id 块数组多轮长链 400（2026-09-07 用户 12 轮实测）。
+                # id 优先用流式解析捕获的服务端真实 id（reasoning_id）；旧持久化历史无 id 时
+                # 合成确定性 id（rs_h_ 前缀，跨轮字节稳定）。
                 reasoning_text = item.get("reasoning_content")
                 if reasoning_text is None:
                     reasoning_text = item.get("reasoning")
                 if reasoning_text is not None and str(reasoning_text).strip():
-                    if deepseek:
-                        converted.append({
-                            "type": "reasoning",
-                            "content": str(reasoning_text),
-                        })
-                    else:
-                        converted.append({
-                            "type": "reasoning",
-                            "content": [
-                                {"type": "reasoning_text", "text": str(reasoning_text)}
-                            ],
-                        })
+                    reasoning_id = str(item.get("reasoning_id") or "")
+                    if not reasoning_id:
+                        digest = hashlib.sha1(str(reasoning_text).encode("utf-8")).hexdigest()
+                        reasoning_id = f"rs_h_{digest[:16]}"
+                    converted.append({
+                        "type": "reasoning",
+                        "id": reasoning_id,
+                        "content": [
+                            {"type": "reasoning_text", "text": str(reasoning_text)}
+                        ],
+                    })
                 if isinstance(item.get("tool_calls"), list):
                     # reasoning/assistant/function_call 相邻成组；function_call 与
                     # function_call_output 保持相邻配对（中间不可插入 item）。
@@ -796,6 +798,17 @@ class ProtocolMixins:
         return urllib.parse.urlunsplit(
             (parsed.scheme, parsed.netloc, target_path, parsed.query, parsed.fragment)
         )
+
+
+    @staticmethod
+    def _responses_reasoning_id(request_format: str, result: Any) -> str:
+        """从非流式 Responses 响应中提取 reasoning item 的唯一 id（回传用）。"""
+        if request_format != "codex_responses" or not isinstance(result, dict):
+            return ""
+        for item in result.get("output") or []:
+            if isinstance(item, dict) and item.get("type") == "reasoning":
+                return str(item.get("id") or "")
+        return ""
 
 
     @staticmethod

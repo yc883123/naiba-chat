@@ -199,6 +199,15 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
         self._local.last_reasoning = value
 
     @property
+    def last_reasoning_id(self) -> str:
+        """最近一次模型响应的 reasoning item 服务端 id（思考模式回传必需）。"""
+        return str(getattr(self._local, "last_reasoning_id", ""))
+
+    @last_reasoning_id.setter
+    def last_reasoning_id(self, value: str) -> None:
+        self._local.last_reasoning_id = value
+
+    @property
     def last_usage(self) -> dict[str, int]:
         value = getattr(self._local, "last_usage", {})
         return dict(value) if isinstance(value, dict) else {}
@@ -264,7 +273,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
         diagnostics["lock_wait_ms"] = round((time.perf_counter() - lock_started) * 1000, 1)
         total_started = time.perf_counter()
         try:
-            content, reasoning, usage = self._complete_online(
+            content, reasoning, reasoning_id, usage = self._complete_online(
                 profile, messages, options, effective_status, diagnostics
             )
         finally:
@@ -280,6 +289,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
         if not reasoning_enabled and not ModelRuntime._is_deepseek_profile(profile):
             reasoning = ""
         self.last_reasoning = reasoning
+        self.last_reasoning_id = reasoning_id
         self.last_usage = usage
         return content
 
@@ -558,7 +568,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
         options: dict[str, Any],
         status: StatusCallback | None = None,
         diagnostics: dict[str, Any] | None = None,
-    ) -> tuple[str, str, dict[str, int]]:
+    ) -> tuple[str, str, str, dict[str, int]]:
         base_url = str(profile.get("base_url") or "").rstrip("/")
         model = str(profile.get("model") or "").strip()
         api_key = str(profile.get("api_key") or "").strip()
@@ -637,7 +647,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                 "model": model,
                 "input": ModelRuntime._responses_input([
                     item for item in messages if item.get("role") != "system"
-                ], deepseek=ModelRuntime._is_deepseek_profile(profile)),
+                ]),
                 "stream": stream_enabled,
             }
             if temperature is not None:
@@ -905,7 +915,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                                         reasoning = ""
                             if not content:
                                 raise RuntimeError("Ollama 流式响应中没有文本内容")
-                        return content, reasoning, streamed["usage"]
+                        return content, reasoning, "", streamed["usage"]
                     if stream_enabled and response_format == "lm_studio":
                         streamed = ModelRuntime._read_lm_studio_stream(response, status)
                         content = ModelRuntime._clean_content(streamed["content"])
@@ -916,7 +926,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                                 reasoning = ""
                             else:
                                 raise RuntimeError("LM Studio 流式响应中没有文本内容")
-                        return content, reasoning, streamed["usage"]
+                        return content, reasoning, "", streamed["usage"]
                     if stream_enabled and response_format != "gemini":
                         streamed = ModelRuntime._read_sse_response(response, response_format, status)
                         content = ModelRuntime._clean_content(streamed["content"])
@@ -927,7 +937,7 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                                 reasoning = ""
                             else:
                                 raise RuntimeError("在线模型流式响应中没有文本内容")
-                        return content, reasoning, streamed["usage"]
+                        return content, reasoning, str(streamed.get("reasoning_id") or ""), streamed["usage"]
                     raw_response = ModelRuntime._read_response_cancelable(
                         response, cancel_event
                     ).decode("utf-8", errors="replace")
@@ -1162,9 +1172,10 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
         except RuntimeError:
             reasoning = ModelRuntime._online_reasoning(response_format, result)
             if connection_test and reasoning:
-                return "接口已返回有效响应", reasoning, usage
+                return "接口已返回有效响应", reasoning, "", usage
             raise
-        return content, reasoning, usage
+        reasoning_id = ModelRuntime._responses_reasoning_id(response_format, result)
+        return content, reasoning, reasoning_id, usage
 
     @staticmethod
     def _online_response(request_format: str, result: Any) -> tuple[str, str]:

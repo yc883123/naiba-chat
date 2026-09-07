@@ -49,36 +49,35 @@ class LlmProtocolTests(unittest.TestCase):
 
     def test_responses_input_reasoning_passback(self):
         """回归：DeepSeek 思考模式（携带 tools）要求历史 reasoning 以独立 reasoning item
-        回传。DeepSeek 官方文档：reasoning 的 content 为明文（"明文 content 归并到相邻
-        assistant 消息"）；块数组 [{type:reasoning_text,…}] 在多轮工具链实测仍 400
-        "must be passed back"（2026-09-07 用户 12 轮工具调用实测）→ DeepSeek 走明文；
-        OpenAI 原生 Responses API 保留官方 reasoning_text 块数组（未实测，按官方规格保留）。"""
-        # 纯对话 assistant 轮：DeepSeek 明文 → assistant 消息
-        out = P._responses_input(
-            [{"role": "assistant", "content": "回答", "reasoning_content": "思考中"}],
-            deepseek=True,
-        )
+        回传（content 为 reasoning_text 内容块列表，官方 schema「以明文承载思维链内容」，
+        传字符串会被 serde 拒 "expected a sequence"）；item 必须带唯一 id（无 id 多轮长链
+        实测 400「must be passed back」）——优先用服务端真实 id，旧历史无 id 时合成 rs_h_ 兜底。"""
+        # 纯对话 assistant 轮：block 数组 + 合成 id → assistant 消息
+        out = P._responses_input([
+            {"role": "assistant", "content": "回答", "reasoning_content": "思考中"},
+        ])
         self.assertEqual(out[0]["type"], "reasoning")
-        self.assertEqual(out[0]["content"], "思考中")
+        self.assertEqual(out[0]["content"], [{"type": "reasoning_text", "text": "思考中"}])
+        self.assertTrue(str(out[0]["id"] or "").startswith("rs_h_"))
         self.assertEqual(out[1]["role"], "assistant")
-        # OpenAI 形态：块数组（默认分支不受影响）
-        out_openai = P._responses_input(
-            [{"role": "assistant", "content": "回答", "reasoning_content": "思考中"}]
-        )
-        self.assertEqual(out_openai[0]["content"], [{"type": "reasoning_text", "text": "思考中"}])
+        # 服务端真实 id 原样保留（流式解析捕获 / 非流式响应提取）
+        out_id = P._responses_input([
+            {"role": "assistant", "content": "回答", "reasoning_content": "思考中", "reasoning_id": "rs_real123"},
+        ])
+        self.assertEqual(out_id[0]["id"], "rs_real123")
         # tool_calls 轮：reasoning item → assistant 消息 → function_call（配对相邻）
         out2 = P._responses_input([
             {"role": "assistant", "content": "",
              "reasoning": "先调用工具",
              "tool_calls": [{"id": "c1", "name": "pwsh", "arguments": {"command": "dir"}}]},
-        ], deepseek=True)
+        ])
         self.assertEqual(out2[0]["type"], "reasoning")
-        self.assertEqual(out2[0]["content"], "先调用工具")
+        self.assertEqual(out2[0]["content"][0]["text"], "先调用工具")
         self.assertEqual(out2[1]["role"], "assistant")
         self.assertEqual(out2[2]["type"], "function_call")
         self.assertEqual(out2[2]["call_id"], "c1")
         # 无 reasoning 时：不产生 reasoning item（仅 assistant 消息）
-        out3 = P._responses_input([{"role": "assistant", "content": "回答"}], deepseek=True)
+        out3 = P._responses_input([{"role": "assistant", "content": "回答"}])
         self.assertEqual(out3[0].get("role"), "assistant")
         self.assertEqual(len(out3), 1)
 

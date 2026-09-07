@@ -208,6 +208,7 @@ class StreamMixins:
         full_content_parts: list[str] = []
         pending = ""
         reasoning_parts: list[str] = []
+        reasoning_ids: list[str] = []
         reasoning_streamer = _ReasoningStreamer(status, reasoning_parts)
         native_tool_calls: dict[int, dict[str, str]] = {}
         tool_protocol = False
@@ -226,6 +227,20 @@ class StreamMixins:
             if not isinstance(chunk, dict):
                 continue
             chunks.append(chunk)
+            event_type = str(chunk.get("type") or "")
+            # 捕获 reasoning item 的服务端唯一 id：output_item.added 事件携带 item
+            # 对象；delta 事件以 item_id 兜底（OpenAI 规范字段）。回传时需要（官方
+            # schema reasoning item 的 id 为必填；缺失在多轮长链实测 400）。
+            if request_format == "codex_responses" and event_type == "response.output_item.added":
+                item = chunk.get("item") or {}
+                if isinstance(item, dict) and item.get("type") == "reasoning":
+                    iid = str(item.get("id") or "")
+                    if iid and iid not in reasoning_ids:
+                        reasoning_ids.append(iid)
+            elif request_format == "codex_responses" and "reasoning" in event_type and event_type.endswith("delta"):
+                iid = str(chunk.get("item_id") or "")
+                if iid and iid not in reasoning_ids:
+                    reasoning_ids.append(iid)
             text, reasoning, tool_calls = ProtocolMixins._stream_delta_full(request_format, chunk)
             text, inline_reasoning = inline_parser.feed(text)
             reasoning = reasoning + inline_reasoning
@@ -269,7 +284,12 @@ class StreamMixins:
             content = ProtocolMixins._build_action_from_native_tool_calls(native_tool_calls)
         else:
             content = StreamMixins._clean_content("".join(full_content_parts))
-        return {"content": content, "reasoning": "".join(reasoning_parts), "usage": usage}
+        return {
+            "content": content,
+            "reasoning": "".join(reasoning_parts),
+            "reasoning_id": reasoning_ids[-1] if reasoning_ids else "",
+            "usage": usage,
+        }
 
 
     @staticmethod

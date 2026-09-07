@@ -526,6 +526,10 @@ class SkillAgent:
             message: dict[str, Any] = {"role": "assistant", "content": content}
             if reasoning:
                 message["reasoning_content"] = reasoning
+            if reasoning_id:
+                # 服务端 reasoning item 的唯一 id（responses API 思考回传必需；
+                # 无 id 的历史轮次由协议层合成确定性 id 兜底）。
+                message["reasoning_id"] = reasoning_id
             message.update(extra)
             return message
 
@@ -557,6 +561,7 @@ class SkillAgent:
             if cancel_event and cancel_event.is_set():
                 abort_run()
             reasoning = getattr(model_runtime, "last_reasoning", "") if model_runtime else ""
+            reasoning_id = getattr(model_runtime, "last_reasoning_id", "") if model_runtime else ""
             usage = getattr(model_runtime, "last_usage", {}) if model_runtime else {}
             if usage:
                 usages.append(usage)

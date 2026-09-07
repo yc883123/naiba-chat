@@ -170,7 +170,7 @@ def _copy_model_trace_message(message: Any) -> dict[str, Any] | None:
     out: dict[str, Any] = {"role": str(message.get("role") or "user")}
     if "content" in message:
         out["content"] = message["content"]
-    for key in ("reasoning_content", "tool_calls", "tool_call_id", "name"):
+    for key in ("reasoning_content", "reasoning_id", "tool_calls", "tool_call_id", "name"):
         if message.get(key):
             out[key] = message[key]
     return out
