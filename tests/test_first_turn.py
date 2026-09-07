@@ -59,6 +59,24 @@ class FirstTurnStoreTests(unittest.TestCase):
     def test_no_chat_run_returns_none(self):
         self.assertIsNone(self.storage.first_chat_run_snapshot(self.conversation["id"]))
 
+    def test_trace_summarizer_strips_big_image_base64(self):
+        from naiba.run.chat import _summarize_trace_messages
+
+        messages = [
+            {"role": "system", "content": "s"},
+            {"role": "user", "content": [
+                {"type": "text", "text": "看图"},
+                {"type": "image", "data": "x" * 999, "media_type": "image/png"},
+            ]},
+            {"role": "user", "content": [{"type": "image", "data": "short"}]},
+            {"role": "assistant", "content": "ok"},
+        ]
+        out = _summarize_trace_messages(messages)
+        self.assertEqual(out[1]["content"][1]["data"], "[base64 图片数据已省略]")
+        self.assertEqual(out[2]["content"][0]["data"], "short", "小负载不动")
+        self.assertEqual(out[0], messages[0])
+        self.assertEqual(out[3], messages[3])
+
 
 if __name__ == "__main__":
     unittest.main()

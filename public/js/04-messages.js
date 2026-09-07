@@ -256,18 +256,38 @@ export function moveBottomProseInline(row, answer) {
 }
 
 export function firstTurnCardMarkup(firstTurn) {
-  if (!firstTurn || !firstTurn.prompt) return '';
+  if (!firstTurn || !firstTurn.system) return '';
   const tools = Array.isArray(firstTurn.tools) ? firstTurn.tools : [];
   const skills = Array.isArray(firstTurn.skills) ? firstTurn.skills : [];
-  const toolChips = tools.map((tool) => `<div class="ft-tool" title="${escapeHtml(tool.description || '')}"><code>${escapeHtml(tool.name || '')}</code></div>`).join('');
+  const options = firstTurn.options || {};
+  const toolChips = tools.map((tool) => `<span class="ft-chip ft-tool-chip" title="${escapeHtml(tool.description || '')}">${escapeHtml(tool.name || '')}</span>`).join('');
   const skillChips = skills.map((skill) => `<span class="ft-chip">${escapeHtml(skill.name || skill.id || '')}</span>`).join('');
+  const optionText = [
+    options.temperature != null ? `temperature ${options.temperature}` : '',
+    options.max_tokens != null ? `max_tokens ${options.max_tokens}` : '',
+    options.context_size != null ? `context ${options.context_size}` : '',
+    options.reasoning_effort ? `reasoning ${options.reasoning_effort}` : '',
+  ].filter(Boolean).join(' · ');
+  const fullMessages = (Array.isArray(firstTurn.full_messages) ? firstTurn.full_messages : [])
+    .filter((m) => m && m.role !== 'user');
   return `<details class="first-turn-card">
     <summary>首次请求上下文 · ${escapeHtml(firstTurn.agent_name || 'Agent')} · ${escapeHtml(firstTurn.model_key || '')} · 工具 ${tools.length} 个</summary>
     <div class="ft-body">
       <div class="ft-meta">${skillChips ? `技能：${skillChips}` : '技能：无'}</div>
       <div class="ft-tools">${toolChips || '<span class="ft-note">（未启用工具）</span>'}</div>
-      <div class="ft-prompt-label">发送给模型的系统提示词：</div>
-      <pre class="ft-prompt">${escapeHtml(firstTurn.prompt)}</pre>
+      ${optionText ? `<div class="ft-options">生成参数：${escapeHtml(optionText)}</div>` : ''}
+      <details class="ft-section">
+        <summary>系统提示词（发送给模型的 system 原文）</summary>
+        <pre class="ft-prompt">${escapeHtml(firstTurn.system)}</pre>
+      </details>
+      <details class="ft-section">
+        <summary>工具定义（完整 JSON Schema）</summary>
+        <pre class="ft-prompt">${escapeHtml(JSON.stringify(tools, null, 2))}</pre>
+      </details>
+      <details class="ft-section">
+        <summary>完整请求消息（除首发用户消息外）</summary>
+        <pre class="ft-prompt">${escapeHtml(JSON.stringify(fullMessages, null, 2))}</pre>
+      </details>
     </div>
   </details>`;
 }

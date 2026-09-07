@@ -61,6 +61,34 @@ def _search_sources(tool_runs: list[dict[str, Any]]) -> list[dict[str, str]]:
     return sources[:20]
 
 
+def _summarize_trace_messages(messages: list[Any]) -> list[dict[str, Any]]:
+    """trace 消息摘要化（first_turn 展示用）：图片 base64 data 替换为占位说明。
+
+    完整消息仍逐条保留（role/content/metadata 原文），只剥离超长二进制负载——
+    前端展示"第一轮发送内容"时无需几 MB 的图片 base64。
+    """
+    out: list[dict[str, Any]] = []
+    for item in messages:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            out.append(dict(item))
+            continue
+        summarized = []
+        for part in content:
+            if (
+                isinstance(part, dict)
+                and part.get("type") in {"image", "input_image"}
+                and isinstance(part.get("data"), str)
+                and len(part["data"]) > 200
+            ):
+                part = {**part, "data": "[base64 图片数据已省略]"}
+            summarized.append(part)
+        out.append({**item, "content": summarized})
+    return out
+
+
 def _merge_usage_summary(
     summary: dict[str, Any], latest: dict[str, Any]
 ) -> dict[str, Any]:
@@ -510,44 +538,6 @@ class ConversationRunMixin:
             prompt = (prompt + "\n\n图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径；"
                        "图片已作为原图直接可见时（多模态模型）无需调用；仅当用户明确要求裁剪、OCR、坐标、像素比较等"
                        "新操作时才调用 vision_image_ops。").strip()
-            if snapshot.get("is_first_turn"):
-                # 首轮固化的"第一轮发送上下文"落盘（供前端展示）：系统提示词原文 +
-                # 模型可见工具集（名称+描述）与模型/Agent/技能信息。失败不阻断主链。
-                try:
-                    frozen_policy = snapshot.get("skill_policy") or {}
-                    first_turn_skill_ids = [
-                        str(item) for item in (frozen_policy.get("skill_ids") or []) if str(item).strip()
-                    ]
-                    catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
-                    catalog_rows = catalog_getter() if callable(catalog_getter) else []
-                    catalog_map = (
-                        catalog_rows
-                        if isinstance(catalog_rows, dict)
-                        else {str(row.get("id") or ""): row for row in catalog_rows if isinstance(row, dict)}
-                    )
-                    first_turn: dict[str, Any] = {
-                        "prompt": prompt,
-                        "tools": [
-                            {
-                                "name": str(spec.get("name") or ""),
-                                "description": str(spec.get("description") or ""),
-                            }
-                            for spec in tool_schemas
-                            if spec.get("name")
-                        ],
-                        "model_key": model_key,
-                        "agent_name": str(agent.get("name") or ""),
-                        "skills": [
-                            {
-                                "id": skill_id,
-                                "name": str((catalog_map.get(skill_id) or {}).get("name") or skill_id),
-                            }
-                            for skill_id in first_turn_skill_ids
-                        ],
-                    }
-                    self.app.storage.update_run_snapshot(run_id, {"first_turn": first_turn})
-                except Exception:
-                    traceback.print_exc()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
             run_context: RunContext = {
                 "run_id": run_id,
@@ -592,6 +582,9 @@ class ConversationRunMixin:
                 if usage:
                     live = SkillAgent._summarize_usage([{**usage, "request_ms": direct_request_ms}])
                     event({"type": "usage", "usage": live})
+                # direct 路径无 SkillAgent trace 写入：补写消息快照（首轮上下文落盘用）
+                if isinstance(run_context, dict):
+                    run_context["trace_messages"] = list(direct_messages)
                 chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
             else:
                 worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
@@ -790,6 +783,14 @@ class ConversationRunMixin:
                 error_payload["partial_message"] = partial_message
             self.emit(run_id, error_payload)
         finally:
+            # 首轮上下文（first_turn）收尾统一落盘：完整系统提示词（含 Skill 注入块）、
+            # 完整工具 JSON 定义、生成参数与完整请求消息（图片 base64 摘要化）。
+            # 正常/取消/失败路径都落（trace 可能部分），失败不阻断收尾。
+            if snapshot.get("is_first_turn"):
+                try:
+                    self._persist_first_turn_context(run_id, snapshot, run_context)
+                except Exception:
+                    traceback.print_exc()
             # 终态合流（推理流式期逐块落库 → 整段 reasoning）：放在全部收尾事件落库
             # 之后，前端收到终态即停止轮询，无并发读；整理失败不阻断收尾。
             try:
@@ -930,6 +931,59 @@ class ConversationRunMixin:
             return self.app.storage.add_message(conversation_id, "assistant", content, metadata)
         except Exception:
             return None
+
+    def _persist_first_turn_context(
+        self,
+        run_id: str,
+        snapshot: dict[str, Any],
+        run_context: RunContext | None,
+    ) -> None:
+        """首轮「第一轮发送上下文」落盘（供前端会话顶部折叠卡展示）。
+
+        数据以 SkillAgent 实际发送给模型的消息为准（trace_messages = 完整字节序列）：
+        完整 system（含 Skill 注入块/工具说明/图片策略）+ 完整工具 JSON 定义 +
+        生成参数 + 完整请求消息（图片 data 摘要化）；技能取冻结集 ∪ 本轮引用。
+        非首轮/无 trace（轻量 direct 未写 trace）时为空操作。
+        """
+        trace = (run_context or {}).get("trace_messages") or []
+        system_text = next(
+            (str(m.get("content") or "") for m in trace if m.get("role") == "system"), ""
+        )
+        if not system_text:
+            return
+        schema_getter = getattr(getattr(self.app, "tool_registry", None), "schemas", None)
+        available_schemas = schema_getter() if callable(schema_getter) else []
+        allowed = {str(item) for item in (snapshot.get("allowed_tools") or [])}
+        tools = [
+            dict(spec)
+            for spec in available_schemas
+            if isinstance(spec, dict) and str(spec.get("name") or "") in allowed
+        ]
+        policy = snapshot.get("skill_policy") or {}
+        skill_ids = list(dict.fromkeys(
+            [str(i) for i in (policy.get("skill_ids") or []) if str(i).strip()]
+            + [str(i) for i in (policy.get("referenced_ids") or []) if str(i).strip()]
+        ))
+        catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
+        catalog_rows = catalog_getter() if callable(catalog_getter) else []
+        catalog_map = (
+            catalog_rows
+            if isinstance(catalog_rows, dict)
+            else {str(row.get("id") or ""): row for row in catalog_rows if isinstance(row, dict)}
+        )
+        first_turn: dict[str, Any] = {
+            "system": system_text,
+            "tools": tools,
+            "options": dict(snapshot.get("generation_options") or {}),
+            "model_key": str(snapshot.get("model_key") or ""),
+            "agent_name": str((snapshot.get("agent") or {}).get("name") or ""),
+            "skills": [
+                {"id": skill_id, "name": str((catalog_map.get(skill_id) or {}).get("name") or skill_id)}
+                for skill_id in skill_ids
+            ],
+            "full_messages": _summarize_trace_messages(trace),
+        }
+        self.app.storage.update_run_snapshot(run_id, {"first_turn": first_turn})
 
     @staticmethod
     def _rebuild_partial_run(
