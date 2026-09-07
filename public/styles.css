@@ -434,12 +434,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-sources time { margin-left: 8px; font-size: 11px; }
 .message-sources p { margin: 2px 0 0; line-height: 1.45; }
 .skill-usage { margin: 0 0 8px; color: var(--accent); font-size: 12px; }
-.reasoning-block { margin: 8px 0 12px 16px; border: 1px solid var(--line); border-left: 3px solid var(--violet-deep); background: var(--reasoning-bg); border-radius: var(--r-md); padding: 6px 10px; }
+.reasoning-block { margin: 8px 0 12px; border: 1px solid var(--line); border-left: 3px solid var(--violet-deep); background: var(--reasoning-bg); border-radius: var(--r-md); padding: 6px 10px; }
 .reasoning-block summary { cursor: pointer; color: var(--reasoning-text); font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }
 .reasoning-block.tool-reasoning { border-left-color: var(--reasoning-border); background: var(--surface-2); }
 /* 流式过程中插入到事件流里的“中途正文”块：普通正文样式，与思考/工具块的时间顺序交错。 */
-.message-body > .stream-prose { margin: 8px 0 8px 16px; }
+.message-body > .stream-prose { margin: 8px 0; }
 .reasoning-block.tool-reasoning summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92%; }
 .aborted-badge { display: inline-block; margin: 0 6px 6px 0; padding: 2px 8px; border-radius: var(--r-xs); background: var(--aborted-bg); color: var(--warning); font-size: 11px; font-weight: 600; border: 1px solid var(--aborted-border); }
 .edit-attachments { margin: 8px 0; }
@@ -451,12 +451,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .tool-availability ul { margin: 6px 0 0; padding-left: 20px; }
 .tool-availability code { color: var(--text); }
 .tool-availability span { margin-left: 6px; }
-.tool-run { margin: 5px 0 5px 16px; font-size: 12px; color: var(--muted); }
+.tool-run { margin: 5px 0; font-size: 12px; color: var(--muted); }
 .tool-run summary { cursor: pointer; color: var(--amber); }
 .tool-run pre { max-height: 220px; font-size: 11px; white-space: pre-wrap; }
 /* 流式把每次工具调用作为独立兄弟节点插入（与思考块按时间交错），
    不再包在 .tool-stack 里；这里给它补上原本由 .tool-stack 提供的琥珀色左栏。 */
-.message-body > .tool-run { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 16px; }
+.message-body > .tool-run { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 0; }
 /* 活动时间线请求分割线（极简版）：每次新请求的开始块上方一条淡色横线。
    absolute 定位悬挂在块上缘之外（top:-8px），不占块内高度（块不变高）、
    横线与块之间预留 8px 垂直距离；margin-top 为横线留出空隙。 */
