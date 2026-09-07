@@ -520,6 +520,9 @@ class ConversationRunMixin:
                     if callable(getattr(getattr(self.app, "vision", None), "session_tool_defs", None))
                     else None
                 ),
+                # 会话工作区（snapshot 冻结值）：产物类工具（vision crop/pixel_diff 等）
+                # 落盘的默认位置——契约键，缺失会退到程序默认工作区（实测踩坑）。
+                "workspace_dir": str(snapshot.get("workspace_dir") or ""),
             }
             if lightweight_direct:
                 direct_messages = list(history)

@@ -127,6 +127,7 @@ def run_subagent_agent(
         "job_registry": app.jobs,
         "model_has_vision": brain_has_vision,
         "tool_defs": session_defs,
+        "workspace_dir": str(app.config.resolve_workspace_dir() or ""),
     }
     try:
         content, runs, reasonings, usage = worker.run(

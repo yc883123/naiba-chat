@@ -20,7 +20,7 @@ RUN_CONTEXT_KEYS: tuple[str, ...] = (
     "depth", "allowed_tools", "skill_policy", "job_registry", "executor",
     "cancel_event", "vision_budget", "interaction_mode", "routing_message",
     "mcp_active", "trace_messages", "plan_exit_content", "plan_step_title",
-    "model_has_vision", "tool_defs",
+    "model_has_vision", "tool_defs", "workspace_dir",
 )
 
 # 运行期保持 dict 形态（零行为变化）；"带默认值/校验"经由工厂与校验函数落地，
@@ -48,6 +48,7 @@ def default_run_context() -> dict[str, Any]:
         "plan_step_title": "",
         "model_has_vision": False,
         "tool_defs": None,
+        "workspace_dir": "",
     }
 
 
@@ -130,6 +131,7 @@ class RunContext(TypedDict, total=False):
     plan_step_title: str             # 当前计划步骤标题（metadata 用）
     model_has_vision: bool           # 会话大脑模型是否支持图片（vision_analyze 执行分流）
     tool_defs: dict[str, Any] | None # 会话化 def 覆盖（如 vision_analyze 按模型能力换形态）
+    workspace_dir: str               # 本轮会话工作区（解析后的绝对路径；产物类工具落盘默认位置）
 
 
 class EventType(str, Enum):
