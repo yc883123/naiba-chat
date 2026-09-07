@@ -5,7 +5,8 @@
 - **原始 run**（内存，仅宿主收尾用）：``{tool, arguments, result(原文), success, reason}``；
 - **模型可见 model_run**（模型上下文）：``{tool, success, result}``——``arguments``/``reason``
   是模型自产自销（它自己刚发的入参与理由），不进模型上下文；``result`` 剥离宿主机器字段
-  （存储路径/缩略图/尺寸/SHA-256/产物路径）并统一追加截断标记；
+  （存储路径/缩略图/尺寸/SHA-256；vision_image_ops 的产物路径 path/heatmap 例外保留——
+  它是模型引用产物的凭据）并统一追加截断标记；
 - **展示 run display_run**（stream 事件与 ``metadata.tool_runs``）：``{tool, arguments, result(脱敏+标记), success, reason}``
   ——与 model_run 唯一差异是 ``arguments``/``reason``（仅前端展示供用户核对，不影响模型）。
 
@@ -96,12 +97,14 @@ def _artifact_summary(result: str) -> str:
 
 
 def _vision_ops_summary(result: str) -> str:
-    """vision_image_ops：剥离产物路径（crop 的 path / pixel_diff 的 heatmap），保留统计。"""
-    payload = _json_object(result)
-    if payload is None:
-        return str(result or "")
-    visible = {key: value for key, value in payload.items() if key not in {"path", "heatmap"}}
-    return json.dumps(visible, ensure_ascii=False)
+    """vision_image_ops：原样保留（含产物路径 path/heatmap）。
+
+    裁剪图/热力图是模型后续操作的对象（保存到工作区、复制、再处理），产物路径
+    必须回传给模型才能引用——剥离路径会导致模型找不到刚落盘的产物（实测：多轮
+    搜索 + 绕道 PowerShell 重做）。与 vision_analyze 装载形态不同：那是宿主注入
+    用，模型只需按名引用；工具产物路径是模型自产自销的引用凭据。
+    """
+    return str(result or "")
 
 
 def model_visible_result(tool_name: str, result: str) -> str:

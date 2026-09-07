@@ -548,7 +548,7 @@ def build_vision_tool_specs() -> list[ToolSpec]:
             name="vision_image_ops",
             description=(
                 "图像处理（本地计算，不依赖视觉模型）：op=colors/crop/pixel_diff 分别提取主色与占比、"
-                "按像素框裁剪、逐像素对比两张图（返回差异率与热力图路径）。"
+                "按像素框裁剪（返回裁剪图路径）、逐像素对比（返回差异率与热力图路径）。"
             ),
             parameters={
                 "type": "object",

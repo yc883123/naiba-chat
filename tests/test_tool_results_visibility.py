@@ -73,12 +73,14 @@ class ToolResultsVisibilityTests(unittest.TestCase):
         # 错误项必须保留路径定位（模型要知道哪个文件失败）。
         self.assertEqual(payload["errors"], [{"path": r"D:\out\b.txt", "error": "文件为空"}])
 
-    def test_vision_ops_strips_product_paths(self) -> None:
+    def test_vision_ops_keeps_product_paths(self) -> None:
+        """crop/热力图产物路径必须对模型可见：产物是模型后续引用对象
+        （保存/复制/再处理），剥离路径会逼模型绕道重做（实测：多轮搜索+PowerShell 重算）。"""
         diff = json.loads(model_visible_result("vision_image_ops", PIXEL_DIFF_RESULT))
-        self.assertNotIn("heatmap", diff)
+        self.assertEqual(diff["heatmap"], r"D:\out\diff_1.png")
         self.assertEqual(diff["ratio"], 0.5)
         crop = json.loads(model_visible_result("vision_image_ops", CROP_RESULT))
-        self.assertNotIn("path", crop)
+        self.assertEqual(crop["path"], r"D:\out\crop_1.png")
         self.assertEqual(crop["size"], [640, 480])
 
     def test_plain_text_result_passes_through_until_truncation(self) -> None:
