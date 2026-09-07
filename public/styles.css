@@ -421,26 +421,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .usage-requests { margin-top: 6px; padding: 6px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--r-md, 8px); background: rgba(128, 128, 128, 0.04); }
 .usage-request-line { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1.7; }
 .usage-duration { color: var(--text); }
-/* 模型请求轮次断点：每次新请求的开始块左侧「·」记号（历史回放与流式渲染共用） */
-.reasoning-block.request-start::before,
-.tool-run.request-start::before,
-.stream-prose.request-start::before {
-  content: '·';
-  display: inline-block;
-  width: 11px;
-  margin-left: -14px;
-  color: var(--accent);
-  font-weight: 700;
-  font-size: 14px;
-  line-height: 1;
-  vertical-align: 1px;
-  user-select: none;
-}
-.reasoning-block.request-start,
-.tool-run.request-start,
-.stream-prose.request-start {
-  margin-left: 14px;
-}
+/* 用量数字列对齐（%6d / %3.1f / %2.1f）：tabular-nums 等宽数字 + 定宽右对齐 */
+.usage-line, .usage-request-line { font-variant-numeric: tabular-nums; }
+.n-tok { display: inline-block; min-width: 6ch; text-align: right; }
+.n-sec { display: inline-block; min-width: 3ch; text-align: right; }
+.n-rate { display: inline-block; min-width: 4ch; text-align: right; }
 .message-sources { margin-top: 10px; color: var(--muted); font-size: 12px; }
 .message-sources summary { cursor: pointer; color: var(--text); }
 .message-sources ol { margin: 8px 0 0; padding-left: 22px; }
@@ -449,12 +434,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-sources time { margin-left: 8px; font-size: 11px; }
 .message-sources p { margin: 2px 0 0; line-height: 1.45; }
 .skill-usage { margin: 0 0 8px; color: var(--accent); font-size: 12px; }
-.reasoning-block { margin: 8px 0 12px; border: 1px solid var(--line); border-left: 3px solid var(--violet-deep); background: var(--reasoning-bg); border-radius: var(--r-md); padding: 6px 10px; }
+.reasoning-block { margin: 8px 0 12px 16px; border: 1px solid var(--line); border-left: 3px solid var(--violet-deep); background: var(--reasoning-bg); border-radius: var(--r-md); padding: 6px 10px; }
 .reasoning-block summary { cursor: pointer; color: var(--reasoning-text); font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }
 .reasoning-block.tool-reasoning { border-left-color: var(--reasoning-border); background: var(--surface-2); }
 /* 流式过程中插入到事件流里的“中途正文”块：普通正文样式，与思考/工具块的时间顺序交错。 */
-.message-body > .stream-prose { margin: 8px 0; }
+.message-body > .stream-prose { margin: 8px 0 8px 16px; }
 .reasoning-block.tool-reasoning summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92%; }
 .aborted-badge { display: inline-block; margin: 0 6px 6px 0; padding: 2px 8px; border-radius: var(--r-xs); background: var(--aborted-bg); color: var(--warning); font-size: 11px; font-weight: 600; border: 1px solid var(--aborted-border); }
 .edit-attachments { margin: 8px 0; }
@@ -466,12 +451,34 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .tool-availability ul { margin: 6px 0 0; padding-left: 20px; }
 .tool-availability code { color: var(--text); }
 .tool-availability span { margin-left: 6px; }
-.tool-run { margin: 5px 0; font-size: 12px; color: var(--muted); }
+.tool-run { margin: 5px 0 5px 16px; font-size: 12px; color: var(--muted); }
 .tool-run summary { cursor: pointer; color: var(--amber); }
 .tool-run pre { max-height: 220px; font-size: 11px; white-space: pre-wrap; }
 /* 流式把每次工具调用作为独立兄弟节点插入（与思考块按时间交错），
    不再包在 .tool-stack 里；这里给它补上原本由 .tool-stack 提供的琥珀色左栏。 */
-.message-body > .tool-run { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 4px; }
+.message-body > .tool-run { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 16px; }
+/* 活动时间线左侧轨道（mac 风格）：淡色竖线贯穿条目；每次新请求（request-start）
+   的开始块在轨道上显示柔和绿点——所有条目统一缩进 16px，不再参差歪斜。 */
+.reasoning-block, .tool-run, .stream-prose { position: relative; }
+.reasoning-block::before, .tool-run::before, .stream-prose::before {
+  content: '';
+  position: absolute;
+  left: -12px; top: 3px; bottom: 3px;
+  width: 2px;
+  border-radius: 1px;
+  background: rgba(128, 128, 128, 0.16);
+}
+.reasoning-block.request-start::after,
+.tool-run.request-start::after,
+.stream-prose.request-start::after {
+  content: '';
+  position: absolute;
+  left: -15px; top: 9px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #7fd8a8;
+  box-shadow: 0 0 0 3px rgba(127, 216, 168, 0.22);
+}
 .tool-confirm { margin: 10px 0; border: 1px solid var(--warning); border-radius: var(--radius); background: var(--amber-soft); padding: 12px; }
 .tool-confirm-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .tool-confirm-icon { font-size: 18px; }

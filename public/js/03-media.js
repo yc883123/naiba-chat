@@ -296,7 +296,8 @@ function usageRequestLine(item) {
   const total = Math.max(0, Number(item.total_tokens || 0)) || input + output;
   const rate = input ? (cached / input * 100).toFixed(1) : '0.0';
   const ms = Number(item.request_ms || 0);
-  return `<div class="usage-request-line">第 ${Number(item.index || 0)} 次请求：输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 总 ${total.toLocaleString()} · 命中率 ${rate}%（命中 ${cached.toLocaleString()} / 重算 ${Math.max(0, input - cached).toLocaleString()}）${ms > 0 ? ` · 耗时 ${(ms / 1000).toFixed(1)}s` : ''}</div>`;
+  // 数值列对齐：token %6d / 时长 %3.1f / 命中率 %2.1f（CSS 定宽右对齐，无需千分位）。
+  return `<div class="usage-request-line">第 ${Number(item.index || 0)} 次请求：输入 <span class="n-tok">${input}</span> · 输出 <span class="n-tok">${output}</span> · 总 <span class="n-tok">${total}</span> · 命中率 <span class="n-rate">${rate}%</span>（命中 <span class="n-tok">${cached}</span> / 重算 <span class="n-tok">${Math.max(0, input - cached)}</span>）${ms > 0 ? ` · 耗时 <span class="n-sec">${(ms / 1000).toFixed(1)}</span>s` : ''}</div>`;
 }
 
 export function usageMarkup(usage, createdAt = null) {
@@ -320,22 +321,23 @@ export function usageMarkup(usage, createdAt = null) {
     ? `<button class="usage-toggle-btn" type="button" data-usage-toggle aria-expanded="false" aria-label="查看逐次请求明细">请求明细 <span class="usage-toggle-arrow">▸</span></button><div class="usage-requests" hidden>${details.map((item) => usageRequestLine(item)).join('')}</div>`
     : '';
   const tokenLine = (input || output)
-    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存命中率 ${rate}%（命中 ${cached.toLocaleString()} / 重算 ${miss.toLocaleString()}）${detailsHtml}</div>`
+    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 <span class="n-tok">${total}</span> tokens · 输入 <span class="n-tok">${input}</span> · 输出 <span class="n-tok">${output}</span> · 缓存命中率 <span class="n-rate">${rate}%</span>（命中 <span class="n-tok">${cached}</span> / 重算 <span class="n-tok">${miss}</span>）${detailsHtml}</div>`
     : '';
   const durationMs = Number(performance.total_ms || 0);
   const elapsedMs = Number(usage.elapsed_ms || 0);
   const when = formatDateTime(createdAt);
   // 进行中（流式 usage 事件带 elapsed_ms、无终态 total_ms）显示"本轮已耗时"；
   // 完成后（终态 metadata.usage）显示汇总"本轮总耗时 + 完成日期"。
-  const durationLabel = durationMs > 0
-    ? `本轮总耗时 ${(durationMs / 1000).toFixed(1)}s`
-    : (elapsedMs > 0 ? `本轮已耗时 ${(elapsedMs / 1000).toFixed(1)}s` : '');
+  const durationValue = durationMs > 0 ? durationMs : elapsedMs;
+  const durationLabel = durationValue > 0
+    ? `本轮${durationMs > 0 ? '总' : '已'}耗时 <span class="n-sec">${(durationValue / 1000).toFixed(1)}</span>s`
+    : '';
   const durationLine = durationLabel
     ? `<div class="usage-line usage-duration">${durationLabel}，共 ${requests} 次请求${durationMs > 0 && when ? `。${when}` : ''}</div>`
     : '';
   // 只保留视觉 lane（聊天"lane 耗时"是最后一次请求的诊断值，与"本轮总耗时"重复且易误导，已移除）。
   const laneLine = (visualMs || visionCacheHit)
-    ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : ''}${(visionCacheHit && visualMs) ? ' · ' : ''}${visualMs ? `视觉 ${(visualMs / 1000).toFixed(1)}s` : ''}</div>`
+    ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : ''}${(visionCacheHit && visualMs) ? ' · ' : ''}${visualMs ? `视觉 <span class="n-sec">${(visualMs / 1000).toFixed(1)}</span>s` : ''}</div>`
     : '';
   const warnings = Array.isArray(performance.warnings) ? performance.warnings : [];
   const warningLine = warnings.map((item) => `<div class="usage-warning">${escapeHtml(item)}</div>`).join('');
