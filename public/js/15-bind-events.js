@@ -9,7 +9,7 @@ import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadCurrentModel, unloadProviderModel } from "./07-models-agents.js";
 import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
-import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
+import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
 import { cancelCurrentRun, handlePasteImage, openStarterPromptDialog, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleLightweightFeature, toggleRichText, updateDeepReasoningButton } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
@@ -146,7 +146,10 @@ export function bindEvents() {
     $('#topbarMoreButton')?.setAttribute('aria-expanded', 'false');
   });
   $('#saveMcpServer')?.addEventListener('click', saveMcpServer);
-  $('#openSettings').addEventListener('click', () => $('#settingsDialog').showModal());
+  $('#openSettings').addEventListener('click', () => {
+    $('#settingsDialog').showModal();
+    loadStorageStats();
+  });
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
   $('#conversationPromptPresetSelect')?.addEventListener('change', (event) => applyConversationPromptPreset(event.target.value));
@@ -649,6 +652,8 @@ export function bindEvents() {
     radio.addEventListener('change', renderProxyRows);
   });
   $('#cleanImageCache')?.addEventListener('click', cleanImageCache);
+  $('#refreshStorageStats')?.addEventListener('click', loadStorageStats);
+  $('#compactDatabase')?.addEventListener('click', compactDatabase);
   $('#imageUploadOriginal')?.addEventListener('change', renderImageCompressRow);
   $('#imageLightboxClose')?.addEventListener('click', closeImageLightbox);
   $('#imageLightbox')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) closeImageLightbox(); });

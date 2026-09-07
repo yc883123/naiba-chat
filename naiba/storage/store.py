@@ -663,6 +663,45 @@ class ChatStorage:
         details = [str(row[0]) for row in rows]
         return {"ok": all(d == "ok" for d in details), "details": details}
 
+    def storage_usage(self) -> dict[str, Any]:
+        """历史数据统计（设置页「历史数据管理」展示用）：数据库大小与关键表规模。"""
+        size = self.db_path.stat().st_size if self.db_path.exists() else 0
+        with self._connect() as db:
+            events = db.execute(
+                "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM run_events"
+            ).fetchone()
+            tasks = db.execute(
+                "SELECT COUNT(*), "
+                "COALESCE(SUM(CASE WHEN status IN ('completed','failed','cancelled','interrupted') "
+                "THEN 1 ELSE 0 END), 0) FROM background_tasks"
+            ).fetchone()
+            snapshots = db.execute(
+                "SELECT COALESCE(SUM(LENGTH(snapshot)), 0) FROM background_tasks"
+            ).fetchone()
+            messages = db.execute("SELECT COUNT(*) FROM messages").fetchone()
+        return {
+            "db_bytes": int(size),
+            "event_count": int(events[0]),
+            "event_payload_chars": int(events[1] or 0),
+            "task_count": int(tasks[0]),
+            "terminal_task_count": int(tasks[1] or 0),
+            "snapshot_chars": int(snapshots[0] or 0),
+            "message_count": int(messages[0]),
+        }
+
+    def compact_database(self) -> dict[str, Any]:
+        """VACUUM 物理收缩数据库（回收已清理历史数据占用的磁盘空间）。
+
+        执行期间短暂独占数据库；应用为单实例（server.lock 互斥），同步执行安全。
+        失败（磁盘空间不足/文件锁）抛 OperationalError，由调用方明确报错。
+        """
+        before = self.db_path.stat().st_size if self.db_path.exists() else 0
+        with self._connect() as db:
+            db.commit()
+            db.execute("VACUUM")
+        after = self.db_path.stat().st_size if self.db_path.exists() else 0
+        return {"before_bytes": int(before), "after_bytes": int(after)}
+
     def backup_for_migration(self, backup_dir: Path) -> dict[str, Any]:
         files: list[str] = []
         error: str | None = None

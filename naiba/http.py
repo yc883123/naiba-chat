@@ -13,6 +13,7 @@ import mimetypes
 import os
 import secrets
 import socket
+import sqlite3
 import sys
 import time
 import urllib.parse
@@ -131,7 +132,9 @@ class RequestHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and not self._authorized(parsed):
             self._json({"error": "访问口令无效"}, HTTPStatus.UNAUTHORIZED)
             return
-        if path == "/api/bootstrap":
+        if path == "/api/storage/stats":
+            self._json(self.app.storage.storage_usage())
+        elif path == "/api/bootstrap":
             self._json(self.app.bootstrap())
         elif path == "/api/update":
             self._json(self.app.updater.status())
@@ -329,7 +332,15 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"error": "访问口令无效"}, HTTPStatus.UNAUTHORIZED)
             return
 
-        if path == "/api/conversations":
+        if path == "/api/storage/compact":
+            try:
+                self._json(self.app.storage.compact_database())
+            except sqlite3.OperationalError as exc:
+                self._json(
+                    {"error": f"数据库压缩失败：{exc}"},
+                    HTTPStatus.CONFLICT,
+                )
+        elif path == "/api/conversations":
             self._json(*self.app.api_create_conversation(body))
         elif path.startswith("/api/conversations/") and path.endswith("/branch"):
             conversation_id = path.split("/")[-2]

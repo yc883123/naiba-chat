@@ -469,6 +469,45 @@ export async function cleanImageCache() {
   }
 }
 
+/* ---------- 历史数据管理 ---------- */
+export async function loadStorageStats() {
+  const dbSize = $('#dbSize');
+  if (!dbSize) return;
+  try {
+    const stats = await api('/api/storage/stats');
+    dbSize.textContent = formatBytes(Number(stats.db_bytes || 0));
+    const tasks = $('#taskCount');
+    if (tasks) {
+      tasks.textContent = `${Number(stats.task_count || 0)} 条（已结束 ${Number(stats.terminal_task_count || 0)}）`;
+    }
+    const events = $('#eventCount');
+    if (events) {
+      events.textContent = `${Number(stats.event_count || 0).toLocaleString()} 条`;
+    }
+  } catch (error) {
+    toast(`统计加载失败：${error.message}`);
+  }
+}
+
+export async function compactDatabase() {
+  const btn = $('#compactDatabase');
+  if (!btn) return;
+  if (!confirm('压缩数据库会回收已清理记录占用的磁盘空间（VACUUM）。请确认当前没有正在进行的对话任务，期间界面可能短暂卡顿。继续吗？')) return;
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '压缩中…';
+  try {
+    const result = await api('/api/storage/compact', { method: 'POST', body: {} });
+    toast(`压缩完成：${formatBytes(result.before_bytes)} → ${formatBytes(result.after_bytes)}`);
+    await loadStorageStats();
+  } catch (error) {
+    toast(`压缩失败：${error.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+}
+
 export function renderWorkspaceControl() {
   const resolved = String(state.bootstrap?.resolved_workspace_dir || '').trim();
   const raw = String(state.bootstrap?.settings?.workspace_dir || 'workspace').trim() || 'workspace';

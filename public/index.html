@@ -520,6 +520,17 @@
               </div>
               <div class="hint image-cache-row">当前缓存图片总大小：<code id="imageCacheSize">-</code><button class="control-button" id="cleanImageCache" type="button" title="只保留最新的、总大小不超过 128MB 的图片">清理旧图片缓存</button></div>
             </div>
+            <div class="field-wide storage-maintenance">
+              <span class="settings-label"><b>历史数据管理</b></span>
+              <div class="hint storage-stat-row">
+                数据库：<code id="dbSize">-</code>
+                <span class="storage-stat-sep">·</span>运行记录：<code id="taskCount">-</code>
+                <span class="storage-stat-sep">·</span>运行事件：<code id="eventCount">-</code>
+                <button class="control-button" id="refreshStorageStats" type="button">刷新</button>
+                <button class="control-button" id="compactDatabase" type="button" title="回收已删除历史数据占用的磁盘空间（VACUUM），可能耗时数秒">压缩数据库</button>
+              </div>
+              <small class="hint">运行事件会随推理流自动合流；先到「异步任务 → 清理已结束」删除终态记录，再点「压缩数据库」回收磁盘空间。</small>
+            </div>
           </div>
           <p class="hint">模型温度、上下文窗口和最大输出 Tokens 请在"API 供应商"中按供应商单独设置。</p>
           <div class="form-actions"><button class="primary-button" id="saveRuntime" type="button">保存参数</button></div>
