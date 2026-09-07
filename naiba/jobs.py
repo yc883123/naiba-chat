@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from naiba import net as net_io
+from naiba.tools.providers.core import POWERSHELL_UTF8_PREFIX
 
 JOB_TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 JOB_ACTIVE = {"queued", "running", "waiting", "stopping"}
@@ -373,7 +374,12 @@ class JobRegistry:
         proc = None
         try:
             proc = subprocess.Popen(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command],
+                [
+                    "powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                    # 与 pwsh 工具一致：强制 UTF-8 输出控制台与管道（否则中文路径/输出
+                    # 按 locale 编码，父进程按 UTF-8 解码必乱码）。
+                    POWERSHELL_UTF8_PREFIX + "\n" + command,
+                ],
                 cwd=cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
