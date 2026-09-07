@@ -31,7 +31,7 @@ export function messageElement(message, temporary = false) {
     const activity = Array.isArray(metadata.activity) ? metadata.activity : [];
     const activityHtml = activity.length ? activityMarkup(activity) : '';
     const activityHasProse = activity.some((item) => item && item.type === 'prose');
-    const reasoningToolHtml = activityHtml || (reasoningMarkup(metadata.reasoning, true) + toolMarkup(metadata.tool_runs));
+    const reasoningToolHtml = activityHtml || (reasoningMarkup(metadata.reasoning) + toolMarkup(metadata.tool_runs));
     // 当 activity 已内嵌正文（prose 条目）时，正文按时间交错展示，不再在末尾重复渲染；
     // 末尾的 answer-content 仅保留用于复制/检索（隐藏），避免与时间线重复。
     const hideBottomContent = activityHasProse && !temporary;

@@ -127,15 +127,18 @@ class EventPayloadContractTests(unittest.TestCase):
         "context_full": {"type", "limit", "used", "budget"},
     }
 
-    def _walk_event_dicts(self, node):
+    def _walk_event_dicts(self, node, path="$"):
         if isinstance(node, dict):
             if isinstance(node.get("type"), str):
-                yield node
-            for value in node.values():
-                yield from self._walk_event_dicts(value)
+                # metadata.activity 条目（reasoning/tool/prose）是消息展示结构，不是
+                # 事件流负载——其键（ts/request_index 等）由活动时间线契约管理，跳过。
+                if ".metadata.activity[" not in path:
+                    yield node
+            for key, value in node.items():
+                yield from self._walk_event_dicts(value, f"{path}.{key}")
         elif isinstance(node, list):
-            for item in node:
-                yield from self._walk_event_dicts(item)
+            for index, item in enumerate(node):
+                yield from self._walk_event_dicts(item, f"{path}[{index}]")
 
     def test_golden_payload_keys_subset_of_contract(self):
         golden_dir = ROOT / "tests" / "golden"

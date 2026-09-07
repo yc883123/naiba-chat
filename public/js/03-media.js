@@ -237,8 +237,8 @@ export function mediaMarkup(attachments = []) {
   return `<div class="media-grid">${items}</div>`;
 }
 
-export function toolRunMarkup(run = {}) {
-  return `<details class="tool-run">
+export function toolRunMarkup(run = {}, markerClass = '') {
+  return `<details class="tool-run${markerClass}">
     <summary>${run.success ? '已执行' : '执行失败'} · ${escapeHtml(run.tool)}${run.reason ? ` · ${escapeHtml(run.reason)}` : ''}</summary>
     <pre>${escapeHtml(JSON.stringify(run.arguments || {}, null, 2))}\n\n${escapeHtml(run.result || '')}</pre>
   </details>`;
@@ -251,35 +251,34 @@ export function toolMarkup(runs = []) {
 
 export function activityMarkup(activity = []) {
   if (!Array.isArray(activity) || !activity.length) return '';
-  // 找出最后一段 reasoning（正式回复的思考），保持展开；其余工具思考折叠。
-  let lastReasoningIndex = -1;
-  activity.forEach((item, index) => {
-    if (item && item.type === 'reasoning') lastReasoningIndex = index;
-  });
+  // 所有思考块一视同仁（均折叠）；请求轮次断点「·」标在每次新请求开始块的左侧
+  // （request_index 由后端以 usage 事件为边界标注，与用量明细的请求序号对应）。
   let html = '';
+  let prevRequestIndex = 0;
   activity.forEach((item, index) => {
     try {
-      if (item.type === 'reasoning') html += reasoningMarkup([item.text], index === lastReasoningIndex);
-      else if (item.type === 'tool' && item.run) html += toolRunMarkup(item.run);
-      else if (item.type === 'prose') html += `<div class="stream-prose">${markdown(item.text)}</div>`;
+      const requestStart = Number(item.request_index || 0) !== Number(prevRequestIndex || 0);
+      const markerClass = requestStart ? ' request-start' : '';
+      if (requestStart) prevRequestIndex = Number(item.request_index || 0);
+      if (item.type === 'reasoning') html += reasoningMarkup([item.text], markerClass);
+      else if (item.type === 'tool' && item.run) html += toolRunMarkup(item.run, markerClass);
+      else if (item.type === 'prose') html += `<div class="stream-prose${markerClass}">${markdown(item.text)}</div>`;
     } catch (_) { /* 单个条目异常不影响整体 */ }
   });
   return html;
 }
 
-export function reasoningMarkup(reasoning, finalOpen = false) {
+export function reasoningMarkup(reasoning, markerClass = '') {
   const list = Array.isArray(reasoning) ? reasoning.filter(Boolean) : (reasoning ? [reasoning] : []);
   if (!list.length) return '';
-  // 每次工具调用/思考段单独一行（可折叠）；正式回复的最后一段思考保持展开，不折叠。
-  return list.map((text, index) => {
+  // 每个思考段单独一行（可折叠）；一律折叠（不再有"最后一个思考块默认展开"的
+  // 区别对待——用户实测确认展开态会造成最终答复被夹在时间线中间的观感问题）。
+  return list.map((text) => {
     const clean = String(text || '').trim();
     const preview = clean.replace(/\s+/g, ' ').slice(0, 80);
     const summary = preview ? `思考：${preview}${clean.length > preview.length ? '…' : ''}` : '思考';
-    const isFinal = finalOpen && index === list.length - 1;
     const body = `<summary>${escapeHtml(summary)}</summary><div class="reasoning-content">${markdown(clean)}</div></details>`;
-    return isFinal
-      ? `<details class="reasoning-block" open>${body}`
-      : `<details class="reasoning-block tool-reasoning">${body}`;
+    return `<details class="reasoning-block tool-reasoning${markerClass}">${body}`;
   }).join('');
 }
 

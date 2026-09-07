@@ -42,9 +42,12 @@ def _build_activity_timeline(
     的倒序观感。内容复用传入的 reasonings 与 runs（避免重复/不一致），仅用 events 的
     先后顺序决定交错。计数不齐时把剩余段落追加到末尾兜底。本函数为模块级。
 
-    每个条目附带 ``ts``（对应 run_events 事件的 created_at 毫秒时间戳）——前端
-    可据此获知条目时刻（当前仅作备用，不强制显示）。顺序即事件物理序：
-    **不做 buffered 思考的"移到最前"重排**（时间线体系需求：严格物理序）。
+    每个条目附带 ``ts``（对应 run_events 事件的 created_at 毫秒时间戳）与
+    ``request_index``（模型请求轮次序号，以 usage 事件为边界；前端据此在每次
+    新请求的开始块左侧画「·」断点记号）——当前 ts 仅作备用，request_index 用于
+    请求轮次定位。排序规则（用户实测反馈定稿）：**思考/工具严格物理序**；
+    **最终答复（最后一 prose 段）固定在时间线末尾**（buffered 思考/工具晚于
+    答复到达时不再把答复夹在中间）。
     """
 
     def _ts_for(*candidates: dict[str, Any]) -> int | None:
@@ -61,11 +64,16 @@ def _build_activity_timeline(
     in_reasoning = False
     prose: list[str] = []
     prose_ts: int | None = None
+    request_index = 0  # 已完成的模型请求数；usage 事件为请求边界（活动条目归属于"下一个"请求）
 
     def flush_prose() -> None:
         nonlocal prose, prose_ts
         if prose and has_tools:
-            item: dict[str, Any] = {"type": "prose", "text": "".join(prose)}
+            item: dict[str, Any] = {
+                "type": "prose",
+                "text": "".join(prose),
+                "request_index": request_index + 1,
+            }
             if prose_ts:
                 item["ts"] = prose_ts
             activity.append(item)
@@ -75,7 +83,11 @@ def _build_activity_timeline(
     def flush_reasoning() -> None:
         nonlocal ri
         if in_reasoning and ri < len(reasonings):
-            item: dict[str, Any] = {"type": "reasoning", "text": reasonings[ri]}
+            item: dict[str, Any] = {
+                "type": "reasoning",
+                "text": reasonings[ri],
+                "request_index": request_index + 1,
+            }
             ts = _ts_for(last_reasoning_end, last_reasoning_start)
             if ts:
                 item["ts"] = ts
@@ -88,6 +100,10 @@ def _build_activity_timeline(
 
     for ev in events:
         kind = str(ev.get("type") or "")
+        if kind == "usage":
+            # 每一次请求完成 = 请求轮次边界：其后到达的活动条目归属下一次请求。
+            request_index = max(0, int((ev.get("usage") or {}).get("requests") or 0))
+            continue
         if kind == "delta":
             if not prose:
                 prose_ts = _ts_for(ev)
@@ -104,7 +120,11 @@ def _build_activity_timeline(
         elif kind == "reasoning":
             flush_reasoning()
             if ri < len(reasonings):
-                item: dict[str, Any] = {"type": "reasoning", "text": reasonings[ri]}
+                item: dict[str, Any] = {
+                    "type": "reasoning",
+                    "text": reasonings[ri],
+                    "request_index": request_index + 1,
+                }
                 ts = _ts_for(ev)
                 if ts:
                     item["ts"] = ts
@@ -117,7 +137,11 @@ def _build_activity_timeline(
         elif kind == "tool_result":
             last_tool_result = ev
             if ti < len(runs):
-                item: dict[str, Any] = {"type": "tool", "run": runs[ti]}
+                item: dict[str, Any] = {
+                    "type": "tool",
+                    "run": runs[ti],
+                    "request_index": request_index + 1,
+                }
                 ts = _ts_for(ev)
                 if ts:
                     item["ts"] = ts
@@ -126,19 +150,25 @@ def _build_activity_timeline(
     flush_prose()
     flush_reasoning()
     while ri < len(reasonings):
-        item: dict[str, Any] = {"type": "reasoning", "text": reasonings[ri]}
+        item: dict[str, Any] = {"type": "reasoning", "text": reasonings[ri], "request_index": request_index + 1}
         ts = _ts_for(last_reasoning_end, last_reasoning_start)
         if ts:
             item["ts"] = ts
         activity.append(item)
         ri += 1
     while ti < len(runs):
-        item: dict[str, Any] = {"type": "tool", "run": runs[ti]}
+        item: dict[str, Any] = {"type": "tool", "run": runs[ti], "request_index": request_index + 1}
         ts = _ts_for(last_tool_result)
         if ts:
             item["ts"] = ts
         activity.append(item)
         ti += 1
+    # 最终答复（最后一 prose 段）固定到时间线末尾：模型流式时"后段思考/工具"可能晚于
+    # 最终答复到达（buffered），物理序会把答复排在它们之前——用户实测确认最终答复应
+    # 显示在时间线之后（思考全部折叠时尤为明显），故最终答复整体后置（其余条目仍严格物理序）。
+    prose_indexes = [index for index, item in enumerate(activity) if item.get("type") == "prose"]
+    if prose_indexes:
+        activity.append(activity.pop(prose_indexes[-1]))
     return activity
 
 

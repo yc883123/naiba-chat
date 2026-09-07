@@ -40,7 +40,7 @@ class ActivityTimelineTests(unittest.TestCase):
         self.assertEqual(activity[0]["text"], "后补的思考")
 
     def test_trailing_reasoning_after_tools_stays_last(self):
-        # 工具轮 + 末尾 buffered 思考：顺序必须是 prose/tool/reasoning（事件的物理序）。
+        # 工具轮 + 后续正文与 buffered 思考：思考/工具保持物理序，最终答复固定到末尾。
         events = [
             ev("delta", content="调一下工具", created_at=100),
             ev("tool_start", created_at=200),
@@ -48,14 +48,36 @@ class ActivityTimelineTests(unittest.TestCase):
             ev("reasoning_start", created_at=400),
             ev("reasoning_delta", content="思考", created_at=500),
             ev("reasoning_end", created_at=600),
+            ev("delta", content="完成", created_at=700),
         ]
         runs = [{"tool": "read_file", "success": True, "result": "ok"}]
         activity = _build_activity_timeline(events, ["思考"], runs)
         self.assertEqual(
             [item["type"] for item in activity],
-            ["prose", "tool", "reasoning"],
-            "严格物理序：末尾思考不得被移到最前",
+            ["prose", "tool", "reasoning", "prose"],
+            "中途正文保持物理位置；最终答复（最后一 prose 段）固定到时间线末尾",
         )
+        self.assertEqual(activity[-1]["text"], "完成")
+
+    def test_request_index_groups_by_usage_events(self):
+        # usage 事件是请求轮次边界：其后到达的活动条目归属下一次请求（request_index+1）。
+        events = [
+            ev("tool_start", created_at=100),
+            ev("tool_result", created_at=200),
+            ev("usage", usage={"requests": 1}, created_at=300),
+            ev("reasoning_start", created_at=400),
+            ev("reasoning_delta", content="第二次请求的思考", created_at=500),
+            ev("reasoning_end", created_at=600),
+            ev("delta", content="最终答复", created_at=700),
+        ]
+        runs = [{"tool": "pwsh", "success": True, "result": "out"}]
+        activity = _build_activity_timeline(events, ["第二次请求的思考"], runs)
+        tool = next(item for item in activity if item["type"] == "tool")
+        reasoning = next(item for item in activity if item["type"] == "reasoning")
+        prose = next(item for item in activity if item["type"] == "prose")
+        self.assertEqual(tool["request_index"], 1, "usage 前的条目归属请求 1")
+        self.assertEqual(reasoning["request_index"], 2, "usage 后的条目归属请求 2")
+        self.assertEqual(prose["request_index"], 2)
 
     def test_entries_carry_ts_from_events(self):
         events = [

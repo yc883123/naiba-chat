@@ -420,11 +420,24 @@ function handleReasoningStartEvent(event, { row }) {
   });
 }
 
+// ---- 流式渲染的模型请求轮次断点：每次新请求（usage 事件边界后）的第一个块左侧画「·」 ----
+// row.dataset.requestsDone = 已完成的请求数（usage 事件更新）；requestsMarked = 已标记起点数。
+function markRequestStart(row, block) {
+  if (!row || !block) return;
+  const done = Number(row.dataset.requestsDone || 0);
+  const marked = Number(row.dataset.requestsMarked || 0);
+  if (marked < done + 1) {
+    row.dataset.requestsMarked = String(marked + 1);
+    block.classList.add('request-start');
+  }
+}
+
 function handleReasoningDeltaEvent(event, { row, answer }) {
   if (!String(event.content || '').trim()) return false;
   let block = row.querySelector('.reasoning-block[data-active="true"]');
   if (!block) {
     block = createStreamingReasoningBlock(answer);
+    markRequestStart(row, block);
   }
   state.streamingReasoningBlock = block;
   const content = block.querySelector('.reasoning-content');
@@ -477,6 +490,7 @@ function handleToolStartEvent(event, { row, answer }) {
     ? event.arguments
     : JSON.stringify(event.arguments || {}, null, 2);
   details.innerHTML = `<summary>Running · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</summary><pre>${escapeHtml(toolArguments)}</pre>`;
+  markRequestStart(row, details);
   answer.before(details);
   // 让新插入的工具块始终位于末尾（紧贴 answer），从而保持时间顺序。
   scrollToBottom();
@@ -576,9 +590,13 @@ function handleContextFullEvent() {
   updateContextComposerLock(Boolean(state.chatBusy));
 }
 
-function handleUsageEvent(event, { answer }) {
+function handleUsageEvent(event, { row, answer }) {
   // 用量框常驻流式消息尾端：首次请求完成时挂载，之后每完成一次请求原位更新
   // （命中率为最后一次请求口径，与终态 metadata.usage 同构）。
+  row.dataset.requestsDone = String(Math.max(
+    Number(row.dataset.requestsDone || 0),
+    Number(event.usage?.requests || 0),
+  ));
   let box = answer.nextElementSibling;
   if (!box || !(box.classList && box.classList.contains('usage-stream'))) {
     box = document.createElement('div');

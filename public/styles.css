@@ -421,6 +421,26 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .usage-requests { margin-top: 6px; padding: 6px 10px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--r-md, 8px); background: rgba(128, 128, 128, 0.04); }
 .usage-request-line { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; line-height: 1.7; }
 .usage-duration { color: var(--text); }
+/* 模型请求轮次断点：每次新请求的开始块左侧「·」记号（历史回放与流式渲染共用） */
+.reasoning-block.request-start::before,
+.tool-run.request-start::before,
+.stream-prose.request-start::before {
+  content: '·';
+  display: inline-block;
+  width: 11px;
+  margin-left: -14px;
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 14px;
+  line-height: 1;
+  vertical-align: 1px;
+  user-select: none;
+}
+.reasoning-block.request-start,
+.tool-run.request-start,
+.stream-prose.request-start {
+  margin-left: 14px;
+}
 .message-sources { margin-top: 10px; color: var(--muted); font-size: 12px; }
 .message-sources summary { cursor: pointer; color: var(--text); }
 .message-sources ol { margin: 8px 0 0; padding-left: 22px; }

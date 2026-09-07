@@ -95,10 +95,12 @@
         "aborted": true,
         "activity": [
           {
+            "request_index": 1,
             "text": "先分析再执行",
             "type": "reasoning"
           },
           {
+            "request_index": 1,
             "run": {
               "result": "文件内容摘要",
               "success": true,
@@ -107,6 +109,7 @@
             "type": "tool"
           },
           {
+            "request_index": 1,
             "run": {
               "result": "命令输出",
               "success": true,
@@ -115,6 +118,7 @@
             "type": "tool"
           },
           {
+            "request_index": 1,
             "text": "写到一半的回复",
             "type": "prose"
           }
