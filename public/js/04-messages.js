@@ -269,8 +269,6 @@ export function firstTurnCardMarkup(firstTurn) {
     options.context_size != null ? `context ${options.context_size}` : '',
     options.reasoning_effort ? `reasoning ${options.reasoning_effort}` : '',
   ].filter(Boolean).join(' · ');
-  const fullMessages = (Array.isArray(firstTurn.full_messages) ? firstTurn.full_messages : [])
-    .filter((m) => m && m.role !== 'user');
   return `<details class="first-turn-card">
     <summary>首次请求上下文 · ${escapeHtml(firstTurn.agent_name || 'Agent')} · ${escapeHtml(firstTurn.model_key || '')} · 工具 ${tools.length} 个</summary>
     <div class="ft-body">
@@ -284,10 +282,6 @@ export function firstTurnCardMarkup(firstTurn) {
       ${tools.length ? `<details class="ft-section">
         <summary>工具定义（${tools.length} 个，JSON）</summary>
         <pre class="ft-prompt">${escapeHtml(JSON.stringify(tools, null, 2))}</pre>
-      </details>` : ''}
-      ${fullMessages.length ? `<details class="ft-section">
-        <summary>完整请求消息（除首发用户消息外）</summary>
-        <pre class="ft-prompt">${escapeHtml(JSON.stringify(fullMessages, null, 2))}</pre>
       </details>` : ''}
     </div>
   </details>`;
