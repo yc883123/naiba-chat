@@ -445,6 +445,10 @@ class SkillAgent:
         # mcp__ 工具时自然得知，避免连接状态变化破坏前缀缓存。
         if skill_prompts:
             system += "\n\n" + SKILL_PROMPT_HEADER + "\n\n".join(skill_prompts)
+        # 完整系统提示词带出（trace 只记增量、不含 system）：首轮上下文落盘
+        # （first_turn）与后续展示需要这份完整原文。
+        if isinstance(run_context, dict):
+            run_context["trace_system"] = system
 
         options = dict(options)
         if native_tools:

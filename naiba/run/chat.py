@@ -963,9 +963,13 @@ class ConversationRunMixin:
         非首轮/无 trace（轻量 direct 未写 trace）时为空操作。
         """
         trace = (run_context or {}).get("trace_messages") or []
-        system_text = next(
-            (str(m.get("content") or "") for m in trace if m.get("role") == "system"), ""
-        )
+        # system 优先取 SkillAgent 带出的完整原文（trace 不含 system——增量设计）；
+        # direct 轻量路径 fallback 从 trace 里找 role=system。
+        system_text = str((run_context or {}).get("trace_system") or "")
+        if not system_text:
+            system_text = next(
+                (str(m.get("content") or "") for m in trace if m.get("role") == "system"), ""
+            )
         if not system_text:
             return
         schema_getter = getattr(getattr(self.app, "tool_registry", None), "schemas", None)
@@ -998,7 +1002,9 @@ class ConversationRunMixin:
                 {"id": skill_id, "name": str((catalog_map.get(skill_id) or {}).get("name") or skill_id)}
                 for skill_id in skill_ids
             ],
-            "full_messages": _summarize_trace_messages(trace),
+            "full_messages": _summarize_trace_messages(
+                [{"role": "system", "content": system_text}, *trace]
+            ),
         }
         self.app.storage.update_run_snapshot(run_id, {"first_turn": first_turn})
 
