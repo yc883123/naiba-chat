@@ -467,7 +467,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .stream-prose.request-start::before {
   content: '';
   position: absolute;
-  left: -16px; right: 0;
+  left: 0; right: 0;
   top: -8px;
   height: 1px;
   background: var(--line);
