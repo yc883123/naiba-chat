@@ -3,17 +3,15 @@
 处理器来源（整块复用，不做改写型手术）：
 - ``naiba.subagent.job_tool_handler_factory``：run_in_background/job_output/job_status/job_wait/job_kill；
 - ``naiba.subagent.subagent_handler_factory``：subagent；
-- 本模块函数：todo_write / artifact_report（自 app.py 处理器原样抽取，self→app 参数）。
+- 本模块函数：todo_write（自 app.py 处理器原样抽取，self→app 参数）。
 
 依赖经构造参数注入（AppContext Protocol），不摸全局。
 """
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 from functools import partial
-from pathlib import Path
 from typing import Any
 
 from naiba.core.contracts import AppContext
@@ -47,42 +45,13 @@ def _todo_write_handler(
     return True, json.dumps({"saved": True, "todos": todos}, ensure_ascii=False)
 
 
-def _artifact_report_handler(
-    app: AppContext, args: dict[str, Any], _skills: Any, _run_context: dict[str, Any] | None = None,
-) -> tuple[bool, str]:
-    paths = (args or {}).get("paths")
-    if not isinstance(paths, list) or not paths or len(paths) > 200:
-        return False, "paths 必须是 1 到 200 个文件路径"
-    require_nonempty = bool((args or {}).get("require_nonempty", True))
-    rows: list[dict[str, Any]] = []
-    errors: list[dict[str, str]] = []
-    for raw in paths:
-        path = Path(str(raw or "")).expanduser().resolve()
-        try:
-            if not path.is_file():
-                raise FileNotFoundError(path)
-            size = path.stat().st_size
-            if require_nonempty and size <= 0:
-                raise ValueError("文件为空")
-            digest = hashlib.sha256()
-            with path.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            rows.append({"path": str(path), "size": size, "sha256": digest.hexdigest()})
-        except (OSError, ValueError) as exc:
-            errors.append({"path": str(path), "error": str(exc)})
-    result = {"status": "verified" if rows and not errors else ("partial" if rows else "failed"), "label": str((args or {}).get("label") or ""), "artifacts": rows, "errors": errors}
-    return (not errors), json.dumps(result, ensure_ascii=False)
-
-
 class JobToolProvider:
-    """job/subagent 域：8 个任务工具（含 subagent/todo_write/artifact_report）单一定义。"""
+    """job/subagent 域：7 个任务工具（含 subagent/todo_write）单一定义。"""
 
     def __init__(self, app: AppContext) -> None:
         handlers = dict(job_tool_handler_factory(app))
         handlers["subagent"] = subagent_handler_factory(app)
         handlers["todo_write"] = partial(_todo_write_handler, app)
-        handlers["artifact_report"] = partial(_artifact_report_handler, app)
         self._handlers = handlers
 
     def tools(self) -> list[ToolSpec]:

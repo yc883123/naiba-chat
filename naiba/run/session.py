@@ -20,7 +20,7 @@ from naiba.vision.runtime import IMAGE_SUFFIXES
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
 # - Craft 模式：作业/子 Agent/视觉/搜索工具全部可用；
 # - Ask/Plan 模式：仅只读分析与搜索工具（crop/pixel_diff 等写文件工具排除）。
-JOB_TOOLS = ("run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write", "artifact_report")
+JOB_TOOLS = ("run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write")
 # Harness 兼容别名（read/write/edit/grep）只存在于查询层归一（执行兼容），
 # 不再注入 allowed_tools/模型可见集；只保留规范名，避免别名与规范名重复披露。
 HARNESS_TOOLS = ("read_file", "write_file", "edit_file", "list_directory", "search_files", "pwsh")

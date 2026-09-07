@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 MODEL_RESULT_MAX_CHARS = 30000
@@ -67,35 +66,6 @@ def _vision_load_summary(result: str) -> str:
     return json.dumps({"note": str(payload.get("note") or ""), "images": names}, ensure_ascii=False)
 
 
-def _artifact_summary(result: str) -> str:
-    """artifact_report：剥离 SHA-256 与绝对路径，只留名称/大小/状态/错误要点。"""
-    payload = _json_object(result)
-    if payload is None:
-        return str(result or "")
-    artifacts = []
-    for item in payload.get("artifacts") or []:
-        if not isinstance(item, dict):
-            continue
-        artifacts.append({
-            "name": Path(str(item.get("path") or "")).name or str(item.get("path") or ""),
-            "size": item.get("size"),
-        })
-    errors = [
-        {"path": str(err.get("path") or ""), "error": str(err.get("error") or "")}
-        for err in payload.get("errors") or []
-        if isinstance(err, dict)
-    ]
-    return json.dumps(
-        {
-            "status": payload.get("status"),
-            "label": payload.get("label"),
-            "artifacts": artifacts,
-            "errors": errors,
-        },
-        ensure_ascii=False,
-    )
-
-
 def _vision_ops_summary(result: str) -> str:
     """vision_image_ops：原样保留（含产物路径 path/heatmap）。
 
@@ -111,8 +81,6 @@ def model_visible_result(tool_name: str, result: str) -> str:
     """把工具原始 result 变为模型可见内容：按工具剥离机器字段 + 统一截断标记。"""
     if tool_name in {"vision_analyze", "vision_read_folder"}:
         value = _vision_load_summary(result)
-    elif tool_name == "artifact_report":
-        value = _artifact_summary(result)
     elif tool_name == "vision_image_ops":
         value = _vision_ops_summary(result)
     else:

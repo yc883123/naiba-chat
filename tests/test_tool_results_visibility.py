@@ -30,15 +30,6 @@ VISION_LOAD_RESULT = json.dumps(
     },
     ensure_ascii=False,
 )
-ARTIFACT_RESULT = json.dumps(
-    {
-        "status": "verified",
-        "label": "产物",
-        "artifacts": [{"path": r"D:\out\a.txt", "size": 12, "sha256": "abc123"}],
-        "errors": [{"path": r"D:\out\b.txt", "error": "文件为空"}],
-    },
-    ensure_ascii=False,
-)
 PIXEL_DIFF_RESULT = json.dumps(
     {
         "ratio": 0.5,
@@ -63,15 +54,6 @@ class ToolResultsVisibilityTests(unittest.TestCase):
         self.assertNotIn("path", str(payload))
         self.assertNotIn("thumb_path", str(payload))
         self.assertNotIn("width", str(payload))
-
-    def test_artifact_keeps_name_size_and_errors(self) -> None:
-        payload = json.loads(model_visible_result("artifact_report", ARTIFACT_RESULT))
-        self.assertEqual(payload["status"], "verified")
-        self.assertEqual(payload["artifacts"], [{"name": "a.txt", "size": 12}])
-        self.assertNotIn("sha256", str(payload))
-        self.assertNotIn(r"D:\out\a.txt", str(payload))
-        # 错误项必须保留路径定位（模型要知道哪个文件失败）。
-        self.assertEqual(payload["errors"], [{"path": r"D:\out\b.txt", "error": "文件为空"}])
 
     def test_vision_ops_keeps_product_paths(self) -> None:
         """crop/热力图产物路径必须对模型可见：产物是模型后续引用对象
@@ -110,17 +92,18 @@ class ToolResultsVisibilityTests(unittest.TestCase):
 
     def test_display_run_keeps_arguments_reason_with_visible_result(self) -> None:
         run = {
-            "tool": "artifact_report",
-            "arguments": {"paths": [r"D:\out\a.txt"]},
-            "result": ARTIFACT_RESULT,
+            "tool": "vision_image_ops",
+            "arguments": {"op": "crop", "image": "/host/a.png"},
+            "result": CROP_RESULT,
             "success": True,
-            "reason": "登记产物",
+            "reason": "裁剪人脸",
         }
         shown = display_tool_run(run)
-        self.assertEqual(shown["arguments"], {"paths": [r"D:\out\a.txt"]})
-        self.assertEqual(shown["reason"], "登记产物")
-        self.assertEqual(shown["tool"], "artifact_report")
-        self.assertNotIn("sha256", shown["result"])
+        self.assertEqual(shown["arguments"], {"op": "crop", "image": "/host/a.png"})
+        self.assertEqual(shown["reason"], "裁剪人脸")
+        self.assertEqual(shown["tool"], "vision_image_ops")
+        # 产物路径保留（模型引用凭据），display 与 model 同源
+        self.assertIn("crop_1.png", shown["result"])
 
 
 if __name__ == "__main__":

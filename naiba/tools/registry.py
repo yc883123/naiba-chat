@@ -85,6 +85,7 @@ RETIRED_TOOL_MAP: dict[str, str] = {
 RETIRED_TOOL_GUIDE: dict[str, str] = {
     "call_mcp": "call_mcp 已移除：MCP 工具现以 mcp__<server>__<tool> 直接暴露，请直接调用对应工具。",
     "glob": "glob 已并入 list_directory：请用 list_directory 的 pattern/files_only 参数。",
+    "artifact_report": "artifact_report 已移除：任务产物由宿主自动校验（非空/大小）并作为消息附件展示，无需登记。",
 }
 for _old_name, _new_name in RETIRED_TOOL_MAP.items():
     RETIRED_TOOL_GUIDE.setdefault(_old_name, f"{_old_name} 已并入 {_new_name}，请改用 {_new_name}。")
@@ -649,23 +650,6 @@ def build_job_tool_specs() -> list[ToolSpec]:
             side_effect=False,
             retryable=False,
             timeout=30,
-            permission="confirm",
-        ),
-        ToolSpec(
-            name="artifact_report",
-            description="校验文件存在且非空并计算 SHA-256，登记为聊天产物附件（可预览/下载）；把需要交付的产物路径传进来。",
-            parameters={
-                "type": "object",
-                "properties": {
-                    "paths": {"type": "array", "items": {"type": "string"}, "description": "产物路径"},
-                    "label": {"type": "string", "default": ""},
-                    "require_nonempty": {"type": "boolean", "default": True},
-                },
-                "required": ["paths"],
-            },
-            side_effect=False,
-            retryable=True,
-            timeout=60,
             permission="confirm",
         ),
         ToolSpec(
