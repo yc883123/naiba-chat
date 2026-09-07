@@ -886,7 +886,8 @@ class VisionRouter:
             with Image.open(paths[0]) as image:
                 image.load()
                 cropped = image.crop((x1, y1, x2, y2)).convert("RGB")
-            out = self._artifact_path("crop", ".png")
+            # 默认保存到当前会话工作区根目录（用户可直接看到产物；模型也可直接引用）。
+            out = self._artifact_path("crop", ".png", base_dir=self._run_workspace_dir(_ctx))
             cropped.save(out, format="PNG")
             return True, json.dumps(
                 {"path": str(out), "size": [cropped.size[0], cropped.size[1]], "box": [x1, y1, x2, y2]},
@@ -961,7 +962,7 @@ class VisionRouter:
                     else:
                         ph[x, y] = pa[x, y][:3]
             worst = sorted(grid_diff.items(), key=lambda item: -item[1])[:5]
-            out = self._artifact_path("diff", ".png")
+            out = self._artifact_path("diff", ".png", base_dir=self._run_workspace_dir(_ctx))
             heat.save(out, format="PNG")
             return True, json.dumps(
                 {
@@ -1053,9 +1054,28 @@ class VisionRouter:
         folder.mkdir(parents=True, exist_ok=True)
         return folder
 
-    def _artifact_path(self, prefix: str, suffix: str) -> Path:
+    def _run_workspace_dir(self, ctx: Any) -> Path:
+        """当前运行会话的工作区（run_context.workspace_dir）；缺失时兜底默认工作区。
+
+        crop/pixel_diff 产物默认落这里：产物是用户要的交付物，直接放在工作区根目录，
+        用户与模型都能直接引用；不再藏进 .naiba-chat/vision 隐藏目录。
+        """
+        try:
+            raw = str((ctx or {}).get("workspace_dir") or "").strip()
+            if raw:
+                return Path(raw).expanduser().resolve()
+        except (TypeError, ValueError, OSError):
+            pass
+        return self._artifact_dir().parent
+
+    def _artifact_path(self, prefix: str, suffix: str, base_dir: Path | None = None) -> Path:
         stamp = f"{int(time.time() * 1000)}_{secrets_token(4)}"
-        return self._artifact_dir() / f"{prefix}_{stamp}{suffix}"
+        directory = base_dir if base_dir is not None else self._artifact_dir()
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            directory = self._artifact_dir()
+        return directory / f"{prefix}_{stamp}{suffix}"
 
     def _annotate_box(self, path: str, x1: int, y1: int, x2: int, y2: int) -> str | None:
         """在图上画出目标框并写回工作区 .naiba-chat/vision/，返回标注图路径。"""

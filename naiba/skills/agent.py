@@ -382,6 +382,11 @@ class SkillAgent:
                 "应停下来告知用户：需重开会话并在新建会话的 Agent 工具勾选里加上该 MCP 工具，"
                 "不要在会话内反复尝试调用未启用的 MCP 工具。"
             )
+        if "artifact_report" in allowed:
+            guide_parts.append(
+                "任务产物（图片/文件）会由宿主自动附加到消息；仅当用户明确要交付某产物、或产物位于非托管路径"
+                "（如工作区副本）需登记为附件时，才调用 artifact_report——不要例行登记。"
+            )
         guide_parts.append("Skill 只是说明，不是工具开关。")
         script_first_guide = "\n\n" + "".join(guide_parts)
         workspace_path = str(getattr(self.executor, "workspace", "") or "")

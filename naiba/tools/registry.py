@@ -653,7 +653,7 @@ def build_job_tool_specs() -> list[ToolSpec]:
         ),
         ToolSpec(
             name="artifact_report",
-            description="校验并登记任务产物文件，返回大小与 SHA-256；适用于代码、文档、媒体等任何任务。",
+            description="校验文件存在且非空并计算 SHA-256，登记为聊天产物附件（可预览/下载）；把需要交付的产物路径传进来。",
             parameters={
                 "type": "object",
                 "properties": {

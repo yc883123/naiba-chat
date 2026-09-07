@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -10,6 +11,8 @@ import http.client
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from naiba import net as net_io
@@ -1127,6 +1130,32 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                     else:
                         time.sleep(delay)
                     continue
+                # 思考回传类 400（must be passed back / reasoning 相关）把完整请求 payload
+                # 落盘到本地，便于复现定位（payload 不含 API Key；仅含对话内容，写本机文件）。
+                if (
+                    exc.code in {400, 422}
+                    and ("reasoning" in str(detail).lower() or "must be passed" in str(detail).lower())
+                ):
+                    try:
+                        dump_dir = os.environ.get("NAIBA_ERROR_DUMP_DIR") or os.getcwd()
+                        dump_path = Path(dump_dir) / "naiba-model-error-payload.json"
+                        dump_path.write_text(
+                            json.dumps(
+                                {
+                                    "ts": datetime.now().isoformat(timespec="seconds"),
+                                    "endpoint": endpoint,
+                                    "status": exc.code,
+                                    "detail": detail,
+                                    "payload": payload,
+                                },
+                                ensure_ascii=False,
+                                indent=1,
+                            ),
+                            encoding="utf-8",
+                        )
+                        logger.error("思考回传类错误请求 payload 已落盘：%s", dump_path)
+                    except OSError:
+                        pass
                 raise RuntimeError(f"{target_detail}返回 HTTP {exc.code}: {detail}") from exc
             except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
                 reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
