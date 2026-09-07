@@ -320,8 +320,9 @@ export function usageMarkup(usage, createdAt = null) {
   const detailsHtml = details.length
     ? `<button class="usage-toggle-btn" type="button" data-usage-toggle aria-expanded="false" aria-label="查看逐次请求明细">请求明细 <span class="usage-toggle-arrow">▸</span></button><div class="usage-requests" hidden>${details.map((item) => usageRequestLine(item)).join('')}</div>`
     : '';
+  // 顶部总结行保持自然文本（不定宽对齐——定宽会让单行数字稀疏）；请求明细表内保留列格式化。
   const tokenLine = (input || output)
-    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 <span class="n-tok">${total}</span> tokens · 输入 <span class="n-tok">${input}</span> · 输出 <span class="n-tok">${output}</span> · 缓存命中率 <span class="n-rate">${rate}%</span>（命中 <span class="n-tok">${cached}</span> / 重算 <span class="n-tok">${miss}</span>）${detailsHtml}</div>`
+    ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total} tokens · 输入 ${input} · 输出 ${output} · 缓存命中率 ${rate}%（命中 ${cached} / 重算 ${miss}）${detailsHtml}</div>`
     : '';
   const durationMs = Number(performance.total_ms || 0);
   const elapsedMs = Number(usage.elapsed_ms || 0);
@@ -330,14 +331,14 @@ export function usageMarkup(usage, createdAt = null) {
   // 完成后（终态 metadata.usage）显示汇总"本轮总耗时 + 完成日期"。
   const durationValue = durationMs > 0 ? durationMs : elapsedMs;
   const durationLabel = durationValue > 0
-    ? `本轮${durationMs > 0 ? '总' : '已'}耗时 <span class="n-sec">${(durationValue / 1000).toFixed(1)}</span>s`
+    ? `本轮${durationMs > 0 ? '总' : '已'}耗时 ${(durationValue / 1000).toFixed(1)}s`
     : '';
   const durationLine = durationLabel
     ? `<div class="usage-line usage-duration">${durationLabel}，共 ${requests} 次请求${durationMs > 0 && when ? `。${when}` : ''}</div>`
     : '';
   // 只保留视觉 lane（聊天"lane 耗时"是最后一次请求的诊断值，与"本轮总耗时"重复且易误导，已移除）。
   const laneLine = (visualMs || visionCacheHit)
-    ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : ''}${(visionCacheHit && visualMs) ? ' · ' : ''}${visualMs ? `视觉 <span class="n-sec">${(visualMs / 1000).toFixed(1)}</span>s` : ''}</div>`
+    ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : ''}${(visionCacheHit && visualMs) ? ' · ' : ''}${visualMs ? `视觉 ${(visualMs / 1000).toFixed(1)}s` : ''}</div>`
     : '';
   const warnings = Array.isArray(performance.warnings) ? performance.warnings : [];
   const warningLine = warnings.map((item) => `<div class="usage-warning">${escapeHtml(item)}</div>`).join('');
