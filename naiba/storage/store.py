@@ -377,6 +377,28 @@ def _slim_terminal_snapshots(db: sqlite3.Connection) -> int:
     return updated
 
 
+def _warn_data_migration(db: sqlite3.Connection, message: str) -> None:
+    """迁移警告双通道输出（窗口版 stdout/stderr 均为 None，print 会 AttributeError）。
+
+    ① stderr 可用时打印（源码模式/控制台）；② 同时追加写入数据库所在目录的
+    data-migration-warning.log（冻结版无控制台场景的诊断都走文件，见维护说明 §九13）。
+    """
+    try:
+        if sys.stderr is not None:
+            print(message, file=sys.stderr)
+    except Exception:
+        pass  # 诊断通道失败不阻断迁移；文件通道兜底
+    try:
+        row = db.execute("PRAGMA database_list").fetchone()
+        db_file = str(row[2]) if row and len(row) > 2 and row[2] else ""
+        if db_file:
+            target = Path(db_file).parent / "data-migration-warning.log"
+            with open(target, "a", encoding="utf-8") as handle:
+                handle.write(f"{message}\n")
+    except Exception:
+        pass  # 数据目录不可写：无更优通道，放弃（不影响迁移结果）
+
+
 def _migrate_to_v14(db: sqlite3.Connection) -> None:
     """存量历史数据压缩（三个重复存储源，全部幂等）+ VACUUM 物理收缩。
 
@@ -384,7 +406,7 @@ def _migrate_to_v14(db: sqlite3.Connection) -> None:
     - done/cancelled 事件携带的完整消息对象与 messages 表重复 → 载荷瘦身；
     - 终态 snapshot 固化的完整会话消息列表（O(N²) 累积，实测 81 MB）→ 键收缩；
     - VACUUM 释放物理空间。内容改写失败会让迁移整体失败（用户可见、可重试）；
-      VACUUM 属空间优化，失败仅记录诊断（stderr）并允许迁移继续。
+      VACUUM 属空间优化，失败仅记录诊断（stderr + 警告文件）并允许迁移继续。
     """
     _coalesce_reasoning_deltas(db)
     _slim_terminal_event_payloads(db)
@@ -393,7 +415,7 @@ def _migrate_to_v14(db: sqlite3.Connection) -> None:
     try:
         db.execute("VACUUM")
     except sqlite3.OperationalError as exc:  # 空间不足/文件锁等：内容迁移已成功
-        print(f"[naiba-storage] 迁移 v14 内容完成，VACUUM 未执行：{exc}", file=sys.stderr)
+        _warn_data_migration(db, f"[naiba-storage] 迁移 v14 内容完成，VACUUM 未执行：{exc}")
 
 
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。

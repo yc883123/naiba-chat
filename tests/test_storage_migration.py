@@ -189,6 +189,43 @@ class MigrationV14Tests(unittest.TestCase):
                 self.assertEqual(json.loads(row[0])["content"], "字" * 50)
                 self.assertEqual(row[1], 1, "合流行使用段首 sequence")
 
+    def test_vacuum_failure_does_not_break_migration(self):
+        """窗口版 stderr=None 时 VACUUM 失败不得让迁移抛异常（发布前防御）。"""
+
+        class FakeDb:
+            """只读包装真实连接：VACUUM 一律失败，其余转发（sqlite3.Connection.execute 只读不可 patch）。"""
+
+            def __init__(self, real):
+                self._real = real
+
+            def execute(self, sql, *args, **kwargs):
+                if "VACUUM" in str(sql):
+                    raise sqlite3.OperationalError("disk full (simulated)")
+                return self._real.execute(sql, *args, **kwargs)
+
+            def commit(self):
+                self._real.commit()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = ChatStorage(Path(tmp) / "chat.db")
+            convo = storage.create_conversation()
+            agent = {"id": "general", "name": "通用 Agent"}
+            run, _h = storage.create_chat_run(
+                convo["id"], "消息", [], agent, {"model_key": "online:demo"}, "craft"
+            )
+            storage.update_background_task(run["id"], status="completed", finished=True)
+            with closing(sqlite3.connect(Path(tmp) / "chat.db")) as db:
+                _insert_delta_events(db, run["id"], 100, 5)
+                storage_module._migrate_to_v14(FakeDb(db))  # 不应抛异常
+                left = db.execute(
+                    "SELECT COUNT(*) FROM run_events WHERE event_type='reasoning_delta'"
+                ).fetchone()[0]
+                self.assertEqual(left, 0, "内容迁移应在 VACUUM 失败时仍完成")
+            # 警告已落到数据目录文件
+            warning_log = Path(tmp) / "data-migration-warning.log"
+            self.assertTrue(warning_log.exists(), "VACUUM 失败应写入警告文件")
+            self.assertIn("VACUUM 未执行", warning_log.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
