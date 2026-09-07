@@ -4,7 +4,7 @@
 
 import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
-import { updateContextComposerLock, updateContextUsage } from "./03-media.js";
+import { updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
 import { getStreamingProseSegment, messageElement, moveBottomProseInline, renderMessages, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
@@ -304,6 +304,7 @@ const CHAT_EVENT_HANDLERS = {
   context_full: handleContextFullEvent,
   done: handleDoneEvent,
   error: handleErrorEvent,
+  usage: handleUsageEvent,
 };
 
 export function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
@@ -573,6 +574,18 @@ function handleContextFullEvent() {
   // 上下文已达上限：后端已阻止本次请求，立即锁定输入并提示新建对话。
   state.contextAtCeiling = true;
   updateContextComposerLock(Boolean(state.chatBusy));
+}
+
+function handleUsageEvent(event, { answer }) {
+  // 用量框常驻流式消息尾端：首次请求完成时挂载，之后每完成一次请求原位更新
+  // （命中率为最后一次请求口径，与终态 metadata.usage 同构）。
+  let box = answer.nextElementSibling;
+  if (!box || !(box.classList && box.classList.contains('usage-stream'))) {
+    box = document.createElement('div');
+    box.className = 'usage-stream';
+    answer.insertAdjacentElement('afterend', box);
+  }
+  box.innerHTML = usageMarkup(event.usage || {});
 }
 
 function handleDoneEvent(event, { row, answer, collapseReasoning }) {

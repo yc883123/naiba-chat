@@ -160,12 +160,15 @@ class EventType(str, Enum):
     DEBUG_CACHE = "debug_cache"
     HEARTBEAT = "heartbeat"
 
+    # ---- Agent 循环记录（无消费事件已随阶段 4 清理）----
     # ---- Job 域（字段动态展开，宽松）----
     JOB_STATUS = "job_status"
     JOB_FINISHED = "job_finished"
     JOB_LOG = "job_log"
     JOB_CHECK = "job_check"
     OUTPUT = "output"
+    # ---- 实时用量（流式期间每完成一次请求推送，前端尾端框实时更新）----
+    USAGE = "usage"
 
 
 class EventPayload(TypedDict, total=False):
@@ -223,11 +226,16 @@ class EventPayload(TypedDict, total=False):
     current_step: str
     error: str
     result: str
+    # 实时用量（usage 事件负载；与消息 metadata.usage 同构）
+    usage: dict[str, Any]
 
 
 # 事件 type → 允许的负载键（不含公共键 type/run_id/sequence/created_at；None = 宽松，
 # 仅校验 type 存在性——job 域字段经 **fields/dict 动态展开，无法静态钉死）。
 # 权威来源：各发射点取证（阶段 2 契约收口），守门 tests/test_events_contract.py 强制。
+# 历史消息排序契约：后端唯一决定消息顺序（(created_at, rowid)），前端按 API
+# 返回数组顺序渲染、不自行排序——见 tests/test_contracts.py 守门。
+MESSAGE_ORDER_KEYS: tuple[str, ...] = ("created_at", "rowid")
 EVENT_PAYLOAD_KEYS: dict[str, frozenset[str] | None] = {
     # ---- 对话流（前端 handleChatEvent 可处置）----
     "run_started": frozenset({"run_id", "lightweight_mode"}),
@@ -257,6 +265,8 @@ EVENT_PAYLOAD_KEYS: dict[str, frozenset[str] | None] = {
     "job_log": frozenset({"line"}),
     "job_check": None,
     "output": frozenset({"line"}),
+    # ---- 实时用量 ----
+    "usage": frozenset({"usage"}),
 }
 
 

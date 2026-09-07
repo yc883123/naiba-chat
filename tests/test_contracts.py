@@ -81,6 +81,14 @@ class EventContractTests(unittest.TestCase):
         self.assertGreater(len(validate_run_context("not-a-dict")), 0)
         self.assertEqual(set(RUN_CONTEXT_KEYS), set(RunContext.__annotations__))
 
+    def test_message_order_contract_is_backend_authority(self):
+        # 历史消息排序契约：后端唯一决定顺序（(created_at, rowid)），前端按 API
+        # 返回数组顺序渲染、不自行排序。存储层 SQL 与契约常量必须一致。
+        from naiba.core.contracts import MESSAGE_ORDER_KEYS
+
+        store_src = (ROOT / "naiba" / "storage" / "store.py").read_text(encoding="utf-8")
+        self.assertIn("ORDER BY " + ", ".join(MESSAGE_ORDER_KEYS), store_src, "会话查询未按契约排序（消息顺序权威在后端）")
+
     def test_config_view_and_app_context_protocols(self):
         # runtime_checkable：ConfigStore / NaibaChatApp 真实实例必须满足注入协议。
         import tempfile

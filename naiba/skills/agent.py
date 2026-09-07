@@ -548,7 +548,9 @@ class SkillAgent:
             try:
                 if _cache_debug_enabled():
                     _debug_message_digest(messages, f"step-{step}-request", event)
+                request_t0 = time.perf_counter()
                 raw = self.model_complete(profile, messages, options, event)
+                request_ms = round((time.perf_counter() - request_t0) * 1000, 1)
             except RuntimeError as exc:
                 # 模型 HTTP 调用被取消信号中断时抛 RuntimeError("任务已取消")，
                 # 统一转成 TaskCancelled，使其走"取消"而非"失败"路径。
@@ -562,6 +564,11 @@ class SkillAgent:
             usage = getattr(model_runtime, "last_usage", {}) if model_runtime else {}
             if usage:
                 usages.append(usage)
+                # 实时用量：每完成一次请求即推送最新汇总（最后一次请求口径的命中率 +
+                # 累计请求次数与本次请求耗时），前端在流式末尾的用量框就地更新。
+                live = self._summarize_usage(usages)
+                live["request_ms"] = request_ms
+                event({"type": "usage", "usage": live})
                 logger.info(
                     "[per-request] step=%s in=%s cached=%s out=%s appended=%s",
                     step,

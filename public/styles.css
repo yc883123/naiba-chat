@@ -412,6 +412,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 #messages.conversation-running .message-actions [data-branch-message] { display: none; }
 .message-actions [data-branch-message]:hover { color: var(--accent); }
 .usage-line { margin-top: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* 流式期间常驻消息尾端的用量框：首次请求完成时挂载、之后原位更新 */
+.usage-stream { margin-top: 6px; padding: 4px 10px; border-radius: 8px; background: rgba(128, 128, 128, 0.06); }
+.usage-stream .usage-line { margin-top: 2px; }
 .message-sources { margin-top: 10px; color: var(--muted); font-size: 12px; }
 .message-sources summary { cursor: pointer; color: var(--text); }
 .message-sources ol { margin: 8px 0 0; padding-left: 22px; }

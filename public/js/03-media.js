@@ -305,12 +305,16 @@ export function usageMarkup(usage) {
   const tokenLine = (input || output)
     ? `<div class="usage-line" title="本轮 ${requests} 次模型请求">本轮 ${total.toLocaleString()} tokens · 输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 缓存命中率 ${rate}%（命中 ${cached.toLocaleString()} / 重算 ${miss.toLocaleString()}）</div>`
     : '';
+  const durationMs = Number(performance.total_ms || 0);
+  const durationLine = durationMs > 0
+    ? `<div class="usage-line usage-duration">本轮总耗时 ${(durationMs / 1000).toFixed(1)}s</div>`
+    : '';
   const laneLine = (visualMs || chatMs || visionCacheHit)
     ? `<div class="usage-line usage-performance">${visionCacheHit ? '视觉缓存命中' : (visualMs ? `视觉 ${(visualMs / 1000).toFixed(1)}s` : '')}${(visionCacheHit || visualMs) && chatMs ? ' → ' : ''}${chatMs ? `聊天 ${(chatMs / 1000).toFixed(1)}s` : ''} · 共 ${requestCount || requests} 次请求</div>`
     : '';
   const warnings = Array.isArray(performance.warnings) ? performance.warnings : [];
   const warningLine = warnings.map((item) => `<div class="usage-warning">${escapeHtml(item)}</div>`).join('');
-  return `${tokenLine}${laneLine}${warningLine}`;
+  return `${tokenLine}${durationLine}${laneLine}${warningLine}`;
 }
 
 export function updateContextUsage(messages = null, message = null) {

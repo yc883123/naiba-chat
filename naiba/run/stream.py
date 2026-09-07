@@ -34,72 +34,111 @@ def _safe_activity(
 def _build_activity_timeline(
     events: list[dict[str, Any]], reasonings: list[str], runs: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """按运行事件的时间序，把思考段、正文与工具调用交错产出，供前端按时间显示思维链/工具链。
+    """按运行事件的严格物理时间序，把思考段、正文与工具调用交错产出，供前端按时间显示思维链/工具链。
 
     正文（delta 事件）只有当本轮确实调用了工具时才作为 ``{"type": "prose", "text": ...}``
     条目插入到它发生的时间点（"中途回复的正文"随工具链交错展示）；若没有任何工具调用，
     正文就是整段的最终回复，统一放到末尾 content 里，避免"正文跑到最前面、思考在最后"
     的倒序观感。内容复用传入的 reasonings 与 runs（避免重复/不一致），仅用 events 的
     先后顺序决定交错。计数不齐时把剩余段落追加到末尾兜底。本函数为模块级。
+
+    每个条目附带 ``ts``（对应 run_events 事件的 created_at 毫秒时间戳）——前端
+    可据此获知条目时刻（当前仅作备用，不强制显示）。顺序即事件物理序：
+    **不做 buffered 思考的"移到最前"重排**（时间线体系需求：严格物理序）。
     """
+
+    def _ts_for(*candidates: dict[str, Any]) -> int | None:
+        for ev in candidates:
+            ts = ev.get("created_at")
+            if ts:
+                return int(ts)
+        return None
+
     activity: list[dict[str, Any]] = []
     has_tools = any(str(ev.get("type") or "") in {"tool_start", "tool_result"} for ev in events)
     ri = 0
     ti = 0
     in_reasoning = False
     prose: list[str] = []
+    prose_ts: int | None = None
 
     def flush_prose() -> None:
+        nonlocal prose, prose_ts
         if prose and has_tools:
-            activity.append({"type": "prose", "text": "".join(prose)})
-        prose.clear()
+            item: dict[str, Any] = {"type": "prose", "text": "".join(prose)}
+            if prose_ts:
+                item["ts"] = prose_ts
+            activity.append(item)
+        prose = []
+        prose_ts = None
 
     def flush_reasoning() -> None:
         nonlocal ri
         if in_reasoning and ri < len(reasonings):
-            activity.append({"type": "reasoning", "text": reasonings[ri]})
+            item: dict[str, Any] = {"type": "reasoning", "text": reasonings[ri]}
+            ts = _ts_for(last_reasoning_end, last_reasoning_start)
+            if ts:
+                item["ts"] = ts
+            activity.append(item)
             ri += 1
+
+    last_reasoning_start: dict[str, Any] = {}
+    last_reasoning_end: dict[str, Any] = {}
+    last_tool_result: dict[str, Any] = {}
 
     for ev in events:
         kind = str(ev.get("type") or "")
         if kind == "delta":
+            if not prose:
+                prose_ts = _ts_for(ev)
             prose.append(str(ev.get("content") or ""))
             continue
         flush_prose()
         if kind == "reasoning_start":
+            last_reasoning_start = ev
             in_reasoning = True
         elif kind == "reasoning_end":
+            last_reasoning_end = ev
             flush_reasoning()
             in_reasoning = False
         elif kind == "reasoning":
             flush_reasoning()
             if ri < len(reasonings):
-                activity.append({"type": "reasoning", "text": reasonings[ri]})
+                item: dict[str, Any] = {"type": "reasoning", "text": reasonings[ri]}
+                ts = _ts_for(ev)
+                if ts:
+                    item["ts"] = ts
+                activity.append(item)
                 ri += 1
         elif kind == "reasoning_delta":
             # Streaming reasoning deltas are coalesced; the text is matched via
             # reasonings at reasoning_end, so keep state without adding here.
             pass
         elif kind == "tool_result":
+            last_tool_result = ev
             if ti < len(runs):
-                activity.append({"type": "tool", "run": runs[ti]})
+                item: dict[str, Any] = {"type": "tool", "run": runs[ti]}
+                ts = _ts_for(ev)
+                if ts:
+                    item["ts"] = ts
+                activity.append(item)
                 ti += 1
     flush_prose()
     flush_reasoning()
     while ri < len(reasonings):
-        activity.append({"type": "reasoning", "text": reasonings[ri]})
+        item: dict[str, Any] = {"type": "reasoning", "text": reasonings[ri]}
+        ts = _ts_for(last_reasoning_end, last_reasoning_start)
+        if ts:
+            item["ts"] = ts
+        activity.append(item)
         ri += 1
     while ti < len(runs):
-        activity.append({"type": "tool", "run": runs[ti]})
+        item: dict[str, Any] = {"type": "tool", "run": runs[ti]}
+        ts = _ts_for(last_tool_result)
+        if ts:
+            item["ts"] = ts
+        activity.append(item)
         ti += 1
-    # 某些模型把思考作为一整块在最后才给出（buffered）。此时按事件顺序它会排在正文之后，
-    # 造成"正文在前、思考在后"的倒序；而思考逻辑上发生在答复之前，应移到最前面。
-    # 仅在"末尾是 reasoning"时重排，不影响处于工具之间的中途思考。
-    trailing: list[dict[str, Any]] = []
-    while activity and activity[-1].get("type") == "reasoning":
-        trailing.insert(0, activity.pop())
-    if trailing:
-        activity[:0] = trailing
     return activity
 
 

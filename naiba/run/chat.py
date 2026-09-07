@@ -528,7 +528,9 @@ class ConversationRunMixin:
                 direct_messages = list(history)
                 if prompt:
                     direct_messages.insert(0, {"role": "system", "content": prompt})
+                direct_t0 = time.perf_counter()
                 response = self.app.models.complete(profile, direct_messages, options, event)
+                direct_request_ms = round((time.perf_counter() - direct_t0) * 1000, 1)
                 if cancel_event.is_set():
                     raise TaskCancelled("任务已取消")
                 runs, reasonings = [], []
@@ -536,6 +538,10 @@ class ConversationRunMixin:
                 if direct_reasoning:
                     reasonings.append(direct_reasoning)
                 usage = dict(getattr(self.app.models, "last_usage", {}) or {})
+                if usage:
+                    live = SkillAgent._summarize_usage([usage])
+                    live["request_ms"] = direct_request_ms
+                    event({"type": "usage", "usage": live})
                 chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
             else:
                 worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
