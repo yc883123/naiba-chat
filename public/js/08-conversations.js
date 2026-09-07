@@ -426,7 +426,8 @@ export async function openConversation(id) {
   // 首轮上下文（系统提示词 + 工具集）折叠卡：单独拉取，失败静默（老会话无此数据）。
   try {
     const firstTurn = await api(`/api/conversations/${id}/first_turn`);
-    state.firstTurnInfo = (firstTurn && typeof firstTurn === 'object' && firstTurn.prompt) ? firstTurn : null;
+    const hasSystem = firstTurn && typeof firstTurn === 'object' && Boolean(firstTurn.system || firstTurn.prompt);
+    state.firstTurnInfo = hasSystem ? firstTurn : null;
   } catch (_) {
     state.firstTurnInfo = null;
   }
