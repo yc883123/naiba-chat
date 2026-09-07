@@ -280,6 +280,32 @@ export async function handlePasteImage(event) {
   toast('已粘贴图片，可发送');
 }
 
+// ---- Run 事件流渲染：类型路由表（阶段 3：巨型 if-else → type→handler 表）----
+// 约定：handler 返回 false 表示“本事件不触发滚动”（原 debug_cache/reasoning_delta
+// 空内容分支的 return 语义）；其余事件按原实现在分派后统一滚动到底部。
+const CHAT_EVENT_HANDLERS = {
+  debug_cache: handleDebugCacheEvent,
+  run_started: handleRunStartedEvent,
+  status: handleStatusEvent,
+  skills: handleSkillsEvent,
+  skill_warning: handleSkillWarningEvent,
+  tools_available: handleToolsAvailableEvent,
+  delta: handleDeltaEvent,
+  reasoning_start: handleReasoningStartEvent,
+  reasoning_delta: handleReasoningDeltaEvent,
+  reasoning_end: handleReasoningEndEvent,
+  reasoning: handleReasoningEvent,
+  tool_start: handleToolStartEvent,
+  tool_result: handleToolResultEvent,
+  tool_confirm: handleToolConfirmEvent,
+  choice: handleChoiceEvent,
+  cancelled: handleCancelledEvent,
+  run_failed: handleRunFailedEvent,
+  context_full: handleContextFullEvent,
+  done: handleDoneEvent,
+  error: handleErrorEvent,
+};
+
 export function handleChatEvent(event, row, conversationId = state.conversationId, runId = state.chatRunId) {
   if (conversationId !== state.conversationId) return;
   if (state.cancelRequested || state.cancelledRunIds.has(String(event.run_id || runId || ''))) return;
@@ -294,265 +320,313 @@ export function handleChatEvent(event, row, conversationId = state.conversationI
   const collapseReasoning = () => {
     row.querySelectorAll('.reasoning-block').forEach((block) => { block.open = false; });
   };
-  if (event.type === 'debug_cache') {
-    // 缓存诊断（NAIBA_DEBUG_CACHE=1 时由后端推送）：逐条 [索引:角色:字节数:哈希]
-    console.groupCollapsed(`[CACHE] ${event.label || ''}`);
-    (event.lines || []).forEach((line) => console.log(line));
-    console.groupEnd();
-    window.__CACHE_DEBUG__ ??= [];
-    window.__CACHE_DEBUG__.push({ label: event.label || '', lines: event.lines || [] });
+  const handler = CHAT_EVENT_HANDLERS[String(event.type || '')];
+  if (!handler) {
+    // 未知类型：可观测（console）而非静默；原实现未知事件同样直接落到末尾滚动。
+    console.debug('[naiba] 未识别的运行事件类型:', String(event.type || ''));
+    scrollToBottom();
     return;
   }
-  if (event.type === 'run_started') {
-    state.chatRunId = String(event.run_id || '');
-    state.runConversationId = conversationId;
-    row.dataset.runId = state.chatRunId;
-    row.dataset.lightweightMode = String(Boolean(event.lightweight_mode));
-  } else if (event.type === 'status') {
-    clearVisionProgress();
-    const statusMessage = String(event.message || '');
-    setActivity(statusMessage);
-    // 思考等待计时：显示 “正在思考 … · 已等待 X 秒”，收到进展事件即清除
-    if (state.elapsedTimer) clearElapsedStatus();
-    state.elapsedBase = statusMessage || '正在思考';
-    state.elapsedSince = Date.now();
-    const tick = () => {
-      const seconds = Math.max(0, Math.floor((Date.now() - state.elapsedSince) / 1000));
-      const el = $('#runtimeStatus');
-      if (el) el.textContent = `${state.elapsedBase} · 已等待 ${seconds} 秒`;
-    };
-    tick();
-    state.elapsedTimer = window.setInterval(tick, 1000);
-  } else if (event.type === 'skills') {
-    const user = (event.skills || []).filter((s) => s?.source !== 'auto');
-    const auto = (event.skills || []).filter((s) => s?.source === 'auto');
-    const parts = [];
-    if (user.length) parts.push(`已启用 ${user.map((s) => s?.name).join('、')}`);
-    if (auto.length) parts.push(`已自动匹配 ${auto.map((s) => s?.name).join('、')}`);
-    setActivity(parts.join('；'));
-  } else if (event.type === 'skill_warning') {
-    const warning = String(event.message || '本次引用的技能体积较大，已完整注入但可能影响响应速度');
-    toast(warning);
-    setActivity(warning);
-  } else if (event.type === 'tools_available') {
-    // Tool schemas are runtime state, not user-facing message content.
-    // Keep tool execution/result details available without dumping the full
-    // capability list into every response.
-  } else if (event.type === 'delta') {
-    clearElapsedStatus();
-    setActivity('');
-    const content = String(event.content || '');
-    if (row.dataset.lightweightMode === 'true') {
-      const current = answer.dataset.raw || '';
-      const next = current + content;
-      answer.dataset.raw = next;
-      answer.textContent = next;
-      scrollToBottom();
-    } else if (row.dataset.sawTool === 'true') {
-      // 已出现工具：中途正文插入事件流（与思考/工具块按时间交错），不再全部堆到底部。
-      const seg = getStreamingProseSegment(row, answer);
-      if (seg) scheduleStreamingMarkdown(seg, (seg.dataset.raw || '') + content);
-    } else {
-      // 尚无工具：正文即整段回复，累积到底部（避免正文跑到思考前面的倒序）。
-      const current = answer.dataset.raw || '';
-      const next = current + content;
-      answer.dataset.raw = next;
-      scheduleStreamingMarkdown(answer, next);
-    }
-  } else if (event.type === 'reasoning_start') {
-    clearElapsedStatus();
-    state.streamingReasoningBlock = null;
-    row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
-      block.dataset.active = 'false';
-      if (!(block.querySelector('.reasoning-content')?.dataset.raw || '').trim()) block.remove();
-    });
-  } else if (event.type === 'reasoning_delta') {
-    if (!String(event.content || '').trim()) return;
-    let block = row.querySelector('.reasoning-block[data-active="true"]');
-    if (!block) {
-      block = createStreamingReasoningBlock(answer);
-    }
-    state.streamingReasoningBlock = block;
-    const content = block.querySelector('.reasoning-content');
-    scheduleStreamingMarkdown(content, (content.dataset.raw || '') + String(event.content || ''));
-    row.dataset.reasoningStreamed = 'true';
-  } else if (event.type === 'reasoning_end') {
-    // 工具 vs 正式的分类不在此处做（正文 delta 无法可靠区分：模型可能在工具前
-    // 先叙说一句）。这里保持展开；接下来若 tool_start 到来，由 collapseToolReasoningBlock
-    // 坍缩成单行；若一直无 tool_start（正式回复）则保持展开。
-    const block = state.streamingReasoningBlock;
-    if (block) {
-      block.dataset.active = 'false';
-      const content = block.querySelector('.reasoning-content');
-      if (!(content?.dataset.raw || '').trim()) block.remove();
-    }
-  } else if (event.type === 'reasoning' && !row.dataset.reasoningStreamed) {
-    // 实时显示推理内容到可折叠块
-    let block = row.querySelector('.reasoning-block');
-    if (!block) {
-      block = document.createElement('details');
-      block.className = 'reasoning-block';
-      block.open = true;
-      block.innerHTML = '<summary>思考过程</summary><div class="reasoning-content"></div>';
-      answer.before(block);
-    }
-    const content = block.querySelector('.reasoning-content');
-    content.innerHTML = markdown((content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content);
-    content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
-  } else if (event.type === 'tool_start') {
-    clearElapsedStatus();
-    // 首个工具出现：把之前累计在底部的正文移到内联块（紧跟该工具前），并切换为“有工具”模式。
-    if (row.dataset.sawTool !== 'true') {
-      moveBottomProseInline(row, answer);
-      row.dataset.sawTool = 'true';
-    }
-    collapseToolReasoningBlock();
-    // 每次工具调用作为一个独立兄弟节点插到 answer 之前，与思考块按时间顺序交错摆放，
-    // 而不是全部塞进同一个 .tool-stack（那样会把所有工具挤在一起，破坏与思考块的交错）。
-    const details = document.createElement('details');
-    details.className = 'tool-run';
-    details.open = true;
-    const toolArguments = typeof event.arguments === 'string'
-      ? event.arguments
-      : JSON.stringify(event.arguments || {}, null, 2);
-    details.innerHTML = `<summary>Running · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</summary><pre>${escapeHtml(toolArguments)}</pre>`;
-    answer.before(details);
-    // 让新插入的工具块始终位于末尾（紧贴 answer），从而保持时间顺序。
+  if (handler(event, { row, answer, setActivity, collapseReasoning, conversationId, runId }) !== false) {
     scrollToBottom();
-  } else if (event.type === 'tool_result') {
-    const toolRuns = row.querySelectorAll('.tool-run');
-    const last = toolRuns[toolRuns.length - 1];
-    if (last) {
-      const summary = last.querySelector('summary');
-      if (summary) summary.textContent = `${event.success ? 'Completed' : 'Failed'} · ${event.tool}`;
-      const toolArguments = typeof event.arguments === 'string'
-        ? event.arguments
-        : JSON.stringify(event.arguments || {}, null, 2);
-      const pre = last.querySelector('pre') || document.createElement('pre');
-      pre.textContent = `${toolArguments}\n\n${String(event.result || '')}`;
-      if (!pre.parentNode) last.appendChild(pre);
-      last.open = false;
-    }
-  } else if (event.type === 'tool_confirm') {
-    clearElapsedStatus();
-    if (row.dataset.sawTool !== 'true') {
-      moveBottomProseInline(row, answer);
-      row.dataset.sawTool = 'true';
-    }
-    // 同样保留已输出的正式回复，避免在等待确认时被吞掉。
-    const confirmId = event.confirm_id;
-    const toolName = event.tool_name;
-    const toolDesc = event.tool_desc;
-    const toolArguments = typeof event.arguments === 'string'
-      ? event.arguments
-      : JSON.stringify(event.arguments || {}, null, 2);
-    const confirmMarkup = `
-      <div class="tool-confirm" data-confirm-id="${escapeHtml(confirmId)}">
-        <div class="tool-confirm-header">
-          <span class="tool-confirm-icon">⚠️</span>
-          <span class="tool-confirm-title">需要确认</span>
-        </div>
-        <div class="tool-confirm-body">
-          <div class="tool-confirm-tool">工具：${escapeHtml(toolName)}</div>
-          <div class="tool-confirm-desc">${escapeHtml(toolDesc)}</div>
-          ${toolArguments ? `<div class="tool-confirm-args"><pre>${escapeHtml(toolArguments)}</pre></div>` : ''}
-        </div>
-        <div class="tool-confirm-actions">
-          <button class="tool-confirm-btn tool-confirm-reject" data-confirm-id="${escapeHtml(confirmId)}" data-run-id="${escapeHtml(event.run_id || runId)}">拒绝</button>
-          <button class="tool-confirm-btn tool-confirm-approve" data-confirm-id="${escapeHtml(confirmId)}" data-run-id="${escapeHtml(event.run_id || runId)}">允许执行</button>
-        </div>
-      </div>`;
-    answer.insertAdjacentHTML('beforebegin', confirmMarkup);
-    scrollToBottom();
-  } else if (event.type === 'choice') {
-    // AI回复包含可选项，显示选择按钮
-    showChoiceButtons(event.choices, event.choice_groups);
-  } else if (event.type === 'cancelled') {
-    clearElapsedStatus();
-    clearVisionProgress();
-    setActivity('');
-    if (event.aborted_message) {
-      // 取消时后端已把累积内容持久化为"已中止"assistant 消息，直接用其渲染，保留已展示的思考与工具。
-      try {
-        const cancelledRow = messageElement(event.aborted_message);
-        row.replaceWith(cancelledRow);
-        updateContextUsage(null, event.aborted_message);
-      } catch (error) {
-        console.error('[naiba] cancelled 事件渲染崩溃:', error, 'message=', event.aborted_message);
-      }
-    } else {
-      // 没有 aborted_message（例如 forced-cancel 未及时重建）：绝不能清空已展示的中途输出，
-      // 只在真正无任何内容时才显示占位提示；否则会抹掉 AI 已输出的回复。
-      const hasContent = Boolean((answer.dataset.raw || '').trim())
-        || row.querySelector('.reasoning-block, .tool-run, .stream-prose, .tool-confirm');
-      if (!hasContent) {
-        answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
-      }
-      setActivity(event.message || '任务已取消');
-    }
-  } else if (event.type === 'run_failed') {
-    clearElapsedStatus();
-    clearVisionProgress();
-    setActivity('');
-    // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
-    answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
-    $('#runtimeStatus').textContent = '执行失败';
-  } else if (event.type === 'context_full') {
-    // 上下文已达上限：后端已阻止本次请求，立即锁定输入并提示新建对话。
-    state.contextAtCeiling = true;
-    updateContextComposerLock(Boolean(state.chatBusy));
-  } else if (event.type === 'done') {
-    clearElapsedStatus();
-    clearVisionProgress();
-    collapseReasoning();
-    if (event.message) {
-      try {
-        const completedRow = messageElement(event.message);
-        row.replaceWith(completedRow);
-        updateContextUsage(null, event.message);
-        const metadata = event.message.metadata || {};
-        if ((Array.isArray(metadata.choice_groups) && metadata.choice_groups.length)
-          || (Array.isArray(metadata.choices) && metadata.choices.length)) {
-          showChoiceButtons(metadata.choices, metadata.choice_groups);
-        }
-      } catch (error) {
-        console.error('[naiba] done 事件渲染崩溃:', error, 'message=', event.message);
-      }
-    } else {
-      answer.innerHTML = '<p>计划执行完成</p>';
-    }
-    $('#runtimeStatus').textContent = '就绪';
-  } else if (event.type === 'error') {
-    clearElapsedStatus();
-    clearVisionProgress();
-    collapseReasoning();
-    if (event.partial_message) {
-      // 失败时后端已把累积内容持久化为 partial assistant 消息，直接用其渲染，
-      // 保留已展示的思考/正文/工具，避免 HTTP 500 后内容被覆盖丢失。
-      try {
-        const partialRow = messageElement(event.partial_message);
-        row.replaceWith(partialRow);
-        updateContextUsage(null, event.partial_message);
-      } catch (error) {
-        console.error('[naiba] error 事件渲染崩溃:', error, 'message=', event.partial_message);
-      }
-    } else {
-      // 没有 partial_message：绝不能清空已展示的中途输出，
-      // 只在真正无任何内容时才显示错误占位；否则会抹掉 AI 已输出的回复。
-      const hasContent = Boolean((answer.dataset.raw || '').trim())
-        || row.querySelector('.reasoning-block, .tool-run, .stream-prose, .tool-confirm');
-      if (hasContent) {
-        const errNode = document.createElement('p');
-        errNode.className = 'run-error';
-        errNode.textContent = `执行失败：${event.message || '任务执行失败'}`;
-        answer.appendChild(errNode);
-      } else {
-        answer.innerHTML = `<p>执行失败：${escapeHtml(event.message || '任务执行失败')}</p>`;
-      }
-    }
-    $('#runtimeStatus').textContent = '执行失败';
   }
+}
+
+function handleDebugCacheEvent(event) {
+  // 缓存诊断（NAIBA_DEBUG_CACHE=1 时由后端推送）：逐条 [索引:角色:字节数:哈希]
+  console.groupCollapsed(`[CACHE] ${event.label || ''}`);
+  (event.lines || []).forEach((line) => console.log(line));
+  console.groupEnd();
+  window.__CACHE_DEBUG__ ??= [];
+  window.__CACHE_DEBUG__.push({ label: event.label || '', lines: event.lines || [] });
+  return false;
+}
+
+function handleRunStartedEvent(event, { row, conversationId }) {
+  state.chatRunId = String(event.run_id || '');
+  state.runConversationId = conversationId;
+  row.dataset.runId = state.chatRunId;
+  row.dataset.lightweightMode = String(Boolean(event.lightweight_mode));
+}
+
+function handleStatusEvent(event, { setActivity }) {
+  clearVisionProgress();
+  const statusMessage = String(event.message || '');
+  setActivity(statusMessage);
+  // 思考等待计时：显示 “正在思考 … · 已等待 X 秒”，收到进展事件即清除
+  if (state.elapsedTimer) clearElapsedStatus();
+  state.elapsedBase = statusMessage || '正在思考';
+  state.elapsedSince = Date.now();
+  const tick = () => {
+    const seconds = Math.max(0, Math.floor((Date.now() - state.elapsedSince) / 1000));
+    const el = $('#runtimeStatus');
+    if (el) el.textContent = `${state.elapsedBase} · 已等待 ${seconds} 秒`;
+  };
+  tick();
+  state.elapsedTimer = window.setInterval(tick, 1000);
+}
+
+function handleSkillsEvent(event, { setActivity }) {
+  const user = (event.skills || []).filter((s) => s?.source !== 'auto');
+  const auto = (event.skills || []).filter((s) => s?.source === 'auto');
+  const parts = [];
+  if (user.length) parts.push(`已启用 ${user.map((s) => s?.name).join('、')}`);
+  if (auto.length) parts.push(`已自动匹配 ${auto.map((s) => s?.name).join('、')}`);
+  setActivity(parts.join('；'));
+}
+
+function handleSkillWarningEvent(event, { setActivity }) {
+  const warning = String(event.message || '本次引用的技能体积较大，已完整注入但可能影响响应速度');
+  toast(warning);
+  setActivity(warning);
+}
+
+function handleToolsAvailableEvent() {
+  // Tool schemas are runtime state, not user-facing message content.
+  // Keep tool execution/result details available without dumping the full
+  // capability list into every response.
+}
+
+function handleDeltaEvent(event, { row, answer, setActivity }) {
+  clearElapsedStatus();
+  setActivity('');
+  const content = String(event.content || '');
+  if (row.dataset.lightweightMode === 'true') {
+    const current = answer.dataset.raw || '';
+    const next = current + content;
+    answer.dataset.raw = next;
+    answer.textContent = next;
+    scrollToBottom();
+  } else if (row.dataset.sawTool === 'true') {
+    // 已出现工具：中途正文插入事件流（与思考/工具块按时间交错），不再全部堆到底部。
+    const seg = getStreamingProseSegment(row, answer);
+    if (seg) scheduleStreamingMarkdown(seg, (seg.dataset.raw || '') + content);
+  } else {
+    // 尚无工具：正文即整段回复，累积到底部（避免正文跑到思考前面的倒序）。
+    const current = answer.dataset.raw || '';
+    const next = current + content;
+    answer.dataset.raw = next;
+    scheduleStreamingMarkdown(answer, next);
+  }
+}
+
+function handleReasoningStartEvent(event, { row }) {
+  clearElapsedStatus();
+  state.streamingReasoningBlock = null;
+  row.querySelectorAll('.reasoning-block[data-active="true"]').forEach((block) => {
+    block.dataset.active = 'false';
+    if (!(block.querySelector('.reasoning-content')?.dataset.raw || '').trim()) block.remove();
+  });
+}
+
+function handleReasoningDeltaEvent(event, { row, answer }) {
+  if (!String(event.content || '').trim()) return false;
+  let block = row.querySelector('.reasoning-block[data-active="true"]');
+  if (!block) {
+    block = createStreamingReasoningBlock(answer);
+  }
+  state.streamingReasoningBlock = block;
+  const content = block.querySelector('.reasoning-content');
+  scheduleStreamingMarkdown(content, (content.dataset.raw || '') + String(event.content || ''));
+  row.dataset.reasoningStreamed = 'true';
+}
+
+function handleReasoningEndEvent() {
+  // 工具 vs 正式的分类不在此处做（正文 delta 无法可靠区分：模型可能在工具前
+  // 先叙说一句）。这里保持展开；接下来若 tool_start 到来，由 collapseToolReasoningBlock
+  // 坍缩成单行；若一直无 tool_start（正式回复）则保持展开。
+  const block = state.streamingReasoningBlock;
+  if (block) {
+    block.dataset.active = 'false';
+    const content = block.querySelector('.reasoning-content');
+    if (!(content?.dataset.raw || '').trim()) block.remove();
+  }
+}
+
+function handleReasoningEvent(event, { row, answer }) {
+  if (row.dataset.reasoningStreamed) return;
+  // 实时显示推理内容到可折叠块
+  let block = row.querySelector('.reasoning-block');
+  if (!block) {
+    block = document.createElement('details');
+    block.className = 'reasoning-block';
+    block.open = true;
+    block.innerHTML = '<summary>思考过程</summary><div class="reasoning-content"></div>';
+    answer.before(block);
+  }
+  const content = block.querySelector('.reasoning-content');
+  content.innerHTML = markdown((content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content);
+  content.dataset.raw = (content.dataset.raw || '') + (content.dataset.raw ? '\n\n---\n\n' : '') + event.content;
+}
+
+function handleToolStartEvent(event, { row, answer }) {
+  clearElapsedStatus();
+  // 首个工具出现：把之前累计在底部的正文移到内联块（紧跟该工具前），并切换为“有工具”模式。
+  if (row.dataset.sawTool !== 'true') {
+    moveBottomProseInline(row, answer);
+    row.dataset.sawTool = 'true';
+  }
+  collapseToolReasoningBlock();
+  // 每次工具调用作为一个独立兄弟节点插到 answer 之前，与思考块按时间顺序交错摆放，
+  // 而不是全部塞进同一个 .tool-stack（那样会把所有工具挤在一起，破坏与思考块的交错）。
+  const details = document.createElement('details');
+  details.className = 'tool-run';
+  details.open = true;
+  const toolArguments = typeof event.arguments === 'string'
+    ? event.arguments
+    : JSON.stringify(event.arguments || {}, null, 2);
+  details.innerHTML = `<summary>Running · ${escapeHtml(event.tool)}${event.reason ? ` · ${escapeHtml(event.reason)}` : ''}</summary><pre>${escapeHtml(toolArguments)}</pre>`;
+  answer.before(details);
+  // 让新插入的工具块始终位于末尾（紧贴 answer），从而保持时间顺序。
   scrollToBottom();
+}
+
+function handleToolResultEvent(event, { row }) {
+  const toolRuns = row.querySelectorAll('.tool-run');
+  const last = toolRuns[toolRuns.length - 1];
+  if (last) {
+    const summary = last.querySelector('summary');
+    if (summary) summary.textContent = `${event.success ? 'Completed' : 'Failed'} · ${event.tool}`;
+    const toolArguments = typeof event.arguments === 'string'
+      ? event.arguments
+      : JSON.stringify(event.arguments || {}, null, 2);
+    const pre = last.querySelector('pre') || document.createElement('pre');
+    pre.textContent = `${toolArguments}\n\n${String(event.result || '')}`;
+    if (!pre.parentNode) last.appendChild(pre);
+    last.open = false;
+  }
+}
+
+function handleToolConfirmEvent(event, { row, answer, runId }) {
+  clearElapsedStatus();
+  if (row.dataset.sawTool !== 'true') {
+    moveBottomProseInline(row, answer);
+    row.dataset.sawTool = 'true';
+  }
+  // 同样保留已输出的正式回复，避免在等待确认时被吞掉。
+  const confirmId = event.confirm_id;
+  const toolName = event.tool_name;
+  const toolDesc = event.tool_desc;
+  const toolArguments = typeof event.arguments === 'string'
+    ? event.arguments
+    : JSON.stringify(event.arguments || {}, null, 2);
+  const confirmMarkup = `
+    <div class="tool-confirm" data-confirm-id="${escapeHtml(confirmId)}">
+      <div class="tool-confirm-header">
+        <span class="tool-confirm-icon">⚠️</span>
+        <span class="tool-confirm-title">需要确认</span>
+      </div>
+      <div class="tool-confirm-body">
+        <div class="tool-confirm-tool">工具：${escapeHtml(toolName)}</div>
+        <div class="tool-confirm-desc">${escapeHtml(toolDesc)}</div>
+        ${toolArguments ? `<div class="tool-confirm-args"><pre>${escapeHtml(toolArguments)}</pre></div>` : ''}
+      </div>
+      <div class="tool-confirm-actions">
+        <button class="tool-confirm-btn tool-confirm-reject" data-confirm-id="${escapeHtml(confirmId)}" data-run-id="${escapeHtml(event.run_id || runId)}">拒绝</button>
+        <button class="tool-confirm-btn tool-confirm-approve" data-confirm-id="${escapeHtml(confirmId)}" data-run-id="${escapeHtml(event.run_id || runId)}">允许执行</button>
+      </div>
+    </div>`;
+  answer.insertAdjacentHTML('beforebegin', confirmMarkup);
+  scrollToBottom();
+}
+
+function handleChoiceEvent(event) {
+  // AI回复包含可选项，显示选择按钮
+  showChoiceButtons(event.choices, event.choice_groups);
+}
+
+function handleCancelledEvent(event, { row, answer, setActivity }) {
+  clearElapsedStatus();
+  clearVisionProgress();
+  setActivity('');
+  if (event.aborted_message) {
+    // 取消时后端已把累积内容持久化为"已中止"assistant 消息，直接用其渲染，保留已展示的思考与工具。
+    try {
+      const cancelledRow = messageElement(event.aborted_message);
+      row.replaceWith(cancelledRow);
+      updateContextUsage(null, event.aborted_message);
+    } catch (error) {
+      console.error('[naiba] cancelled 事件渲染崩溃:', error, 'message=', event.aborted_message);
+    }
+  } else {
+    // 没有 aborted_message（例如 forced-cancel 未及时重建）：绝不能清空已展示的中途输出，
+    // 只在真正无任何内容时才显示占位提示；否则会抹掉 AI 已输出的回复。
+    const hasContent = Boolean((answer.dataset.raw || '').trim())
+      || row.querySelector('.reasoning-block, .tool-run, .stream-prose, .tool-confirm');
+    if (!hasContent) {
+      answer.innerHTML = `<p>${escapeHtml(event.message || '任务已取消')}</p>`;
+    }
+    setActivity(event.message || '任务已取消');
+  }
+}
+
+function handleRunFailedEvent(event, { answer, setActivity }) {
+  clearElapsedStatus();
+  clearVisionProgress();
+  setActivity('');
+  // 工具协议解析失败：只展示可读错误，不显示原始 XML/JSON 或命令参数。
+  answer.innerHTML = `<p>执行失败：${escapeHtml(event.error || '任务执行失败')}</p>`;
+  $('#runtimeStatus').textContent = '执行失败';
+}
+
+function handleContextFullEvent() {
+  // 上下文已达上限：后端已阻止本次请求，立即锁定输入并提示新建对话。
+  state.contextAtCeiling = true;
+  updateContextComposerLock(Boolean(state.chatBusy));
+}
+
+function handleDoneEvent(event, { row, answer, collapseReasoning }) {
+  clearElapsedStatus();
+  clearVisionProgress();
+  collapseReasoning();
+  if (event.message) {
+    try {
+      const completedRow = messageElement(event.message);
+      row.replaceWith(completedRow);
+      updateContextUsage(null, event.message);
+      const metadata = event.message.metadata || {};
+      if ((Array.isArray(metadata.choice_groups) && metadata.choice_groups.length)
+        || (Array.isArray(metadata.choices) && metadata.choices.length)) {
+        showChoiceButtons(metadata.choices, metadata.choice_groups);
+      }
+    } catch (error) {
+      console.error('[naiba] done 事件渲染崩溃:', error, 'message=', event.message);
+    }
+  } else {
+    answer.innerHTML = '<p>计划执行完成</p>';
+  }
+  $('#runtimeStatus').textContent = '就绪';
+}
+
+function handleErrorEvent(event, { row, answer, collapseReasoning }) {
+  clearElapsedStatus();
+  clearVisionProgress();
+  collapseReasoning();
+  if (event.partial_message) {
+    // 失败时后端已把累积内容持久化为 partial assistant 消息，直接用其渲染，
+    // 保留已展示的思考/正文/工具，避免 HTTP 500 后内容被覆盖丢失。
+    try {
+      const partialRow = messageElement(event.partial_message);
+      row.replaceWith(partialRow);
+      updateContextUsage(null, event.partial_message);
+    } catch (error) {
+      console.error('[naiba] error 事件渲染崩溃:', error, 'message=', event.partial_message);
+    }
+  } else {
+    // 没有 partial_message：绝不能清空已展示的中途输出，
+    // 只在真正无任何内容时才显示错误占位；否则会抹掉 AI 已输出的回复。
+    const hasContent = Boolean((answer.dataset.raw || '').trim())
+      || row.querySelector('.reasoning-block, .tool-run, .stream-prose, .tool-confirm');
+    if (hasContent) {
+      const errNode = document.createElement('p');
+      errNode.className = 'run-error';
+      errNode.textContent = `执行失败：${event.message || '任务执行失败'}`;
+      answer.appendChild(errNode);
+    } else {
+      answer.innerHTML = `<p>执行失败：${escapeHtml(event.message || '任务执行失败')}</p>`;
+    }
+  }
+  $('#runtimeStatus').textContent = '执行失败';
 }
 
 export function showChoiceButtons(choices, choiceGroups = []) {
