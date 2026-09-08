@@ -26,21 +26,94 @@ export function attachmentThumbUrl(attachment) {
   return thumb ? fileUrl(thumb) : fileUrl(source);
 }
 
-export function openImageLightbox(largeUrl) {
+// ---- 大图灯箱：会话内左右切换 ----
+// 图片列表 = 当前会话消息里所有可放大的图片（#messages img[data-large-url]），
+// 按 DOM 顺序（= 历史出现顺序）去重；输入区待发送附件与右侧文件面板的图片不参与切换。
+let lightboxItems = [];
+let lightboxIndex = -1;
+
+function collectConversationImages() {
+  const container = $('#messages');
+  if (!container) return [];
+  const seen = new Set();
+  const items = [];
+  container.querySelectorAll('img[data-large-url]').forEach((img) => {
+    const url = String(img.getAttribute('data-large-url') || '');
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    items.push({ url, name: String(img.getAttribute('alt') || '') });
+  });
+  return items;
+}
+
+function renderLightboxFrame() {
+  const img = $('#imageLightboxImg');
+  const prev = $('#imageLightboxPrev');
+  const next = $('#imageLightboxNext');
+  const counter = $('#imageLightboxCounter');
+  const item = lightboxItems[lightboxIndex];
+  if (!img || !item) return;
+  img.src = item.url;
+  img.alt = item.name || '大图预览';
+  const multiple = lightboxItems.length > 1;
+  if (prev) prev.hidden = !multiple;
+  if (next) next.hidden = !multiple;
+  if (counter) {
+    counter.hidden = !multiple;
+    counter.textContent = multiple ? `${lightboxIndex + 1} / ${lightboxItems.length}` : '';
+  }
+}
+
+export function openImageLightbox(largeUrl, sourceEl = null) {
   const img = $('#imageLightboxImg');
   const box = $('#imageLightbox');
-  if (!img || !box || !largeUrl) return;
-  if (!/^(\/api\/file|https?:\/\/)/i.test(largeUrl)) return;
+  const url = String(largeUrl || '');
+  if (!img || !box || !url) return;
+  if (!/^(\/api\/file|https?:\/\/)/i.test(url)) return;
+  const inConversation = Boolean(sourceEl && sourceEl.closest && sourceEl.closest('#messages'));
+  lightboxItems = inConversation ? collectConversationImages() : [];
+  lightboxIndex = lightboxItems.findIndex((item) => item.url === url);
+  if (lightboxIndex < 0) {
+    // 不在会话列表内（输入区附件、文件面板）或列表为空：按单张展示，不显示左右按钮。
+    lightboxItems = [{ url, name: String(sourceEl?.getAttribute?.('alt') || '') }];
+    lightboxIndex = 0;
+  }
   img.onerror = () => closeImageLightbox();
-  img.src = largeUrl;
   box.hidden = false;
+  box.setAttribute('aria-hidden', 'false');
+  renderLightboxFrame();
+  box.focus?.();
 }
 
 export function closeImageLightbox() {
   const box = $('#imageLightbox');
-  if (box) box.hidden = true;
+  if (box) {
+    box.hidden = true;
+    box.setAttribute('aria-hidden', 'true');
+  }
   const img = $('#imageLightboxImg');
   if (img) img.removeAttribute('src');
+  lightboxItems = [];
+  lightboxIndex = -1;
+}
+
+// 左右切换（delta = ±1）；返回 false 表示当前没有可切换的列表。
+export function stepImageLightbox(delta) {
+  if (lightboxItems.length < 2 || lightboxIndex < 0) return false;
+  const count = lightboxItems.length;
+  lightboxIndex = (lightboxIndex + delta + count) % count;
+  renderLightboxFrame();
+  return true;
+}
+
+// 灯箱打开时消费 ←/→/Esc；返回 true 表示按键已被处理。
+export function handleImageLightboxKey(event) {
+  const box = $('#imageLightbox');
+  if (!box || box.hidden) return false;
+  if (event.key === 'ArrowLeft') { event.preventDefault(); stepImageLightbox(-1); return true; }
+  if (event.key === 'ArrowRight') { event.preventDefault(); stepImageLightbox(1); return true; }
+  if (event.key === 'Escape') { event.preventDefault(); closeImageLightbox(); return true; }
+  return false;
 }
 
 // ---- 大图右键 → 复制图片到剪贴板 ----
@@ -157,7 +230,7 @@ export async function runImageContextAction(action) {
 // 点击缩略图 → 弹大图；拖拽历史缩略图 → 以"大图 URL"拖动；缩略图 404 → 回退原图。
 document.addEventListener('click', (event) => {
   const target = event.target.closest?.('[data-large-url]');
-  if (target) openImageLightbox(target.getAttribute('data-large-url'));
+  if (target) openImageLightbox(target.getAttribute('data-large-url'), target);
 });
 document.addEventListener('dragstart', (event) => {
   const target = event.target.closest?.('[data-large-url]');

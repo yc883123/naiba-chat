@@ -3,7 +3,7 @@
 // ============================================================
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast } from "./01-core.js";
-import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, hideImageContextMenu, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
+import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
 import { branchMessage, isNearBottom, setStickToBottom, startEditMessage } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
@@ -474,7 +474,7 @@ export function bindEvents() {
       return;
     }
     const previewImage = event.target.closest('.file-image-wrap img[data-large-url]');
-    if (previewImage) openImageLightbox(previewImage.dataset.largeUrl);
+    if (previewImage) openImageLightbox(previewImage.dataset.largeUrl, previewImage);
   });
   const closeFilePanelButton = $('#closeFilePanel');
   if (closeFilePanelButton) closeFilePanelButton.addEventListener('click', () => closeFilePanel());
@@ -494,6 +494,8 @@ export function bindEvents() {
     updateFileTabsButton();
   });
   document.addEventListener('keydown', (event) => {
+    // 大图灯箱打开时优先消费 ←/→/Esc（避免同时触发文件面板的 Esc 收尾）。
+    if (handleImageLightboxKey(event)) return;
     if (event.key !== 'Escape' || !filePanelState.open || !filePanelUsable()) return;
     if (document.querySelector('dialog[open]')) return;
     const tab = activeFileTab();
@@ -664,6 +666,8 @@ export function bindEvents() {
   $('#compactDatabase')?.addEventListener('click', compactDatabase);
   $('#imageUploadOriginal')?.addEventListener('change', renderImageCompressRow);
   $('#imageLightboxClose')?.addEventListener('click', closeImageLightbox);
+  $('#imageLightboxPrev')?.addEventListener('click', (event) => { event.stopPropagation(); stepImageLightbox(-1); });
+  $('#imageLightboxNext')?.addEventListener('click', (event) => { event.stopPropagation(); stepImageLightbox(1); });
   $('#imageLightbox')?.addEventListener('click', (event) => { if (event.target === event.currentTarget) closeImageLightbox(); });
   $('#saveToken').addEventListener('click', saveAccessToken);
   $('#checkUpdate').addEventListener('click', checkUpdate);

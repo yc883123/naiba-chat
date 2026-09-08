@@ -694,9 +694,12 @@
   </dialog>
 
   <dialog class="toast" id="toast" role="status"></dialog>
-  <div class="image-lightbox" id="imageLightbox" hidden aria-hidden="true">
+  <div class="image-lightbox" id="imageLightbox" hidden aria-hidden="true" tabindex="-1">
     <button class="lightbox-close" id="imageLightboxClose" type="button" title="关闭" aria-label="关闭大图"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+    <button class="lightbox-nav lightbox-prev" id="imageLightboxPrev" type="button" title="上一张（←）" aria-label="上一张" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg></button>
     <img id="imageLightboxImg" alt="大图预览" draggable="false">
+    <button class="lightbox-nav lightbox-next" id="imageLightboxNext" type="button" title="下一张（→）" aria-label="下一张" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"></path></svg></button>
+    <div class="lightbox-counter" id="imageLightboxCounter" hidden></div>
   </div>
   <div class="image-context-menu" id="imageContextMenu" hidden role="menu" aria-label="图片操作">
     <button type="button" role="menuitem" data-image-context-action="copy">复制图片</button>
