@@ -656,6 +656,9 @@ class NaibaChatApp:
             return {"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST
         if workspace_group is not None and not isinstance(workspace_group, str):
             return {"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST
+        favorite = body.get("favorite")
+        if favorite is not None and not isinstance(favorite, bool):
+            return {"error": "favorite 必须是布尔值"}, HTTPStatus.BAD_REQUEST
         if workspace_group is not None:
             workspace_group = str(workspace_group).strip()
             if workspace_group:
@@ -688,7 +691,7 @@ class NaibaChatApp:
             model_key=model_key, permission_mode=permission_mode,
             web_search_enabled=web_search_enabled, deep_reasoning_enabled=deep_reasoning_enabled,
             reasoning_effort=reasoning_effort, workspace_dir=workspace_dir,
-            workspace_group=workspace_group,
+            workspace_group=workspace_group, favorite=favorite,
         )
         return updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND
 

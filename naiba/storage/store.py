@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 # 自该版本起存在"数据改写型"迁移（v14 起），执行前自动备份整库。
 FIRST_DATA_WRITING_MIGRATION = 14
@@ -437,6 +437,17 @@ def _migrate_to_v14(db: sqlite3.Connection) -> None:
         _warn_data_migration(db, f"[naiba-storage] 迁移 v14 内容完成，VACUUM 未执行：{exc}")
 
 
+def _migrate_to_v15(db: sqlite3.Connection) -> None:
+    """会话收藏标记（侧栏「已收藏」分组）。
+
+    纯增量列：默认 0（未收藏），不影响任何既有读取路径；列已存在时跳过（幂等）。
+    """
+    try:
+        db.execute("SELECT favorite FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute("ALTER TABLE conversations ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -453,6 +464,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     12: _migrate_to_v12,
     13: _migrate_to_v13,
     14: _migrate_to_v14,
+    15: _migrate_to_v15,
 }
 
 
@@ -859,13 +871,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, favorite, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, favorite, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -873,7 +885,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, favorite, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -1000,6 +1012,7 @@ class ChatStorage:
         workspace_dir: str | None = None,
         workspace_group: str | None = None,
         reasoning_effort: str | None = None,
+        favorite: bool | None = None,
     ) -> dict[str, Any] | None:
         """Update settings owned by one conversation and return its summary."""
         values: dict[str, Any] = {}
@@ -1058,6 +1071,9 @@ class ChatStorage:
             values["workspace_dir"] = str(workspace_dir or "").strip()
         if workspace_group is not None:
             values["workspace_group"] = str(workspace_group or "").strip()
+        if favorite is not None:
+            # 收藏只是侧栏归类标记，不参与模型上下文，也不影响任何冻结快照。
+            values["favorite"] = 1 if bool(favorite) else 0
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
@@ -1761,6 +1777,8 @@ class ChatStorage:
         # 历史列仍留在表里，但不再对外暴露，避免旧值被前端误用。
         result.pop("lightweight_mode", None)
         result.pop("lightweight_disabled_features", None)
+        # 收藏标记统一成 0/1 整数（列可能来自旧库迁移前的行对象，避免 None/字符串）。
+        result["favorite"] = 1 if int(result.get("favorite") or 0) else 0
         try:
             parsed = json.loads(result.get("enabled_tool_ids") or "[]")
             if not isinstance(parsed, list):

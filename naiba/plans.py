@@ -714,13 +714,10 @@ class PlanManager:
                     raise first_error
         options["stream"] = bool(frozen.get("stream_enabled", conversation.get("stream_enabled", 1)))
         agent = frozen.get("agent") or self.app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
-        agent_prompt = str(agent.get("system_prompt") or "").strip() or str(
+        # 系统提示词只有一个来源：Agent（会话级系统提示词已移除）。
+        combined_prompt = str(agent.get("system_prompt") or "").strip() or str(
             self.app.config.data.get("agent_system_prompt", "")
         )
-        conversation_prompt = str(
-            frozen.get("conversation_system_prompt", conversation.get("system_prompt") or "")
-        ).strip()
-        combined_prompt = "\n\n".join(item for item in (agent_prompt, conversation_prompt) if item)
         done_steps = [
             item for item in (plan.get("steps") or []) if item.get("status") == "done"
         ]

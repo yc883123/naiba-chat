@@ -225,7 +225,6 @@ class ConversationRunMixin:
             )
             snapshot = {
                 "agent": agent,
-                "conversation_system_prompt": str(conversation.get("system_prompt") or ""),
                 "provider_id": str(conversation.get("provider_id") or ""),
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
                 "model_key": model_key,
@@ -315,7 +314,6 @@ class ConversationRunMixin:
                 "plan_id": plan_id,
                 "interaction_mode": "plan",
                 "agent": agent,
-                "conversation_system_prompt": str(conversation.get("system_prompt") or ""),
                 "conversation_messages": conversation.get("messages") or [],
                 "provider_id": str(conversation.get("provider_id") or ""),
                 "model_key": model_key,
@@ -504,12 +502,8 @@ class ConversationRunMixin:
                 ],
             })
             agent = snapshot.get("agent") or {}
-            prompt = "\n\n".join(
-                item for item in (
-                    str(agent.get("system_prompt") or "").strip(),
-                    str(snapshot.get("conversation_system_prompt") or "").strip(),
-                ) if item
-            )
+            # 系统提示词只有一个来源：Agent（会话级系统提示词已移除，见维护说明 §四）。
+            prompt = str(agent.get("system_prompt") or "").strip()
             if mode == "plan":
                 prompt = (prompt + "\n\n" + self.app.plans.prepare_prompt(self.app.plans.get(plan_id))).strip()
             # 联网搜索提示（PLAN4 §联网搜索）：只要会话固化工具集已声明 web_search、

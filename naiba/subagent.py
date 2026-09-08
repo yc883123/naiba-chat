@@ -84,11 +84,10 @@ def run_subagent_agent(
             raise first_error
     options["stream"] = bool(conversation.get("stream_enabled", 1))
     agent = app.config.get_agent(str(conversation.get("agent_id") or "")) or {}
-    agent_prompt = str(agent.get("system_prompt") or "").strip() or str(
+    # 系统提示词只有一个来源：Agent（会话级系统提示词已移除）。
+    combined_prompt = str(agent.get("system_prompt") or "").strip() or str(
         app.config.data.get("agent_system_prompt", "")
     )
-    conversation_prompt = str(conversation.get("system_prompt") or "").strip()
-    combined_prompt = "\n\n".join(item for item in (agent_prompt, conversation_prompt) if item)
     requested = [str(t) for t in (params.get("allowed_tools") or [])]
     if "allowed_tools" in params:
         allowed_tools = [t for t in requested if t not in SUBAGENT_BLOCKED_TOOLS]
