@@ -65,6 +65,21 @@ class TopbarStyleTests(unittest.TestCase):
         self.assertIn(".mcp-button.connected i", css)
         self.assertIn(".mcp-button.error i", css)
 
+    def test_index_html_has_no_duplicate_ids(self) -> None:
+        """index.html 不得有重复 id——`$('#x')` 只命中第一个，重复会让另一处被写错。
+
+        真实事故：顶栏任务徽标与「历史数据管理」的运行记录都叫 `taskCount`，
+        打开设置页时 `loadStorageStats` 把顶栏按钮写成了「0 条（已结束 0）」。
+        """
+        import collections
+        import re
+
+        html = self._index()
+        ids = re.findall(r'\bid="([^"]+)"', html)
+        duplicates = {key: count for key, count in collections.Counter(ids).items() if count > 1}
+        self.assertEqual(duplicates, {}, f"index.html 存在重复 id：{duplicates}")
+        self.assertIn('id="storageTaskCount"', html, "历史数据管理的运行记录应使用独立 id")
+
     def test_topbar_unload_button_removed(self) -> None:
         """顶栏「卸载模型」按钮已删（本地模型卸载统一在设置页）。"""
         index = self._index()
