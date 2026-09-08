@@ -18,6 +18,7 @@ export async function loadConversations() {
   if (!state.conversationId && state.conversations.length) {
     await openConversation(state.conversations[0].id);
   } else if (!state.conversations.length) {
+    state.firstTurnInfo = null;
     renderMessages([]);
     renderPermissionModeSwitch();
   }
@@ -385,6 +386,9 @@ export async function createConversation(workspaceGroup = '', workspaceDir = '',
   if (conversation.workspace_dir) {
     state.workspaceDir = conversation.workspace_dir;
   }
+  // 新会话没有首轮上下文：清掉上一个会话残留的 firstTurnInfo，否则首轮上下文
+  // 折叠卡会错误地出现在新会话页面（该卡数据契约上只属于 openConversation 装载的会话）。
+  state.firstTurnInfo = null;
   state.conversations.unshift(conversation);
   state.expandedGroups.add(currentConversationWorkspaceGroup());
   renderComposerWorkspace();
@@ -786,6 +790,8 @@ export async function deleteConversation(id) {
   if (!wasCurrent) return;
   if (state.conversations.length) await openConversation(state.conversations[0].id);
   else {
+    // 最后一个会话被删除：清掉其 firstTurnInfo 残留，避免空视图错误展示首轮上下文条
+    state.firstTurnInfo = null;
     renderMessages([]);
   }
 }
