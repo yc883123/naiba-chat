@@ -316,6 +316,8 @@ class AgentCardsMarkupTests(unittest.TestCase):
         tool_scope = css[css.index("#agentToolScope {"):]
         tool_scope = tool_scope[: tool_scope.index("}")]
         self.assertIn("height: var(--agent-list-h)", tool_scope, "工具集必须用同一高度变量，否则两边不等高")
+        self.assertIn("grid-auto-rows: max-content", tool_scope,
+                      "固定高度 + 默认 align-content:stretch 会把分组行均摊压扁（实测 19.6px vs 分组头 59px）")
 
     def test_scrollable_lists_are_not_clipped(self) -> None:
         """固定 Skill / 工具集列表是滚动容器：网格行必须按内容定高，否则被裁掉且点不到。"""
