@@ -62,6 +62,8 @@ function renderLightboxFrame() {
     counter.hidden = !multiple;
     counter.textContent = multiple ? `${lightboxIndex + 1} / ${lightboxItems.length}` : '';
   }
+  // 换图后回到适配尺寸（避免沿用上一张的缩放/平移）。
+  resetLightboxZoom();
 }
 
 export function openImageLightbox(largeUrl, sourceEl = null) {
@@ -90,11 +92,21 @@ export function closeImageLightbox() {
   if (box) {
     box.hidden = true;
     box.setAttribute('aria-hidden', 'true');
+    box.classList.remove('is-zoomed', 'dragging');
   }
   const img = $('#imageLightboxImg');
-  if (img) img.removeAttribute('src');
+  if (img) {
+    img.removeAttribute('src');
+    img.style.transform = '';
+    img.classList.remove('zoomed');
+  }
   lightboxItems = [];
   lightboxIndex = -1;
+  lightboxScale = 1;
+  lightboxTx = 0;
+  lightboxTy = 0;
+  lightboxDrag = null;
+  lightboxTouch = null;
 }
 
 // 左右切换（delta = ±1）；返回 false 表示当前没有可切换的列表。
@@ -114,6 +126,228 @@ export function handleImageLightboxKey(event) {
   if (event.key === 'ArrowRight') { event.preventDefault(); stepImageLightbox(1); return true; }
   if (event.key === 'Escape') { event.preventDefault(); closeImageLightbox(); return true; }
   return false;
+}
+
+// ---- 灯箱缩放 / 拖动 / 半屏点击翻页 ----
+// 规则：未缩放时点左半屏=上一张、右半屏=下一张（单张图时点空白处仍是关闭）；
+// 缩放后单击不翻页（让位给拖动），双击复位，滚轮/双指捏合缩放，拖动平移。
+const LIGHTBOX_MAX_SCALE = 6;
+let lightboxScale = 1;
+let lightboxTx = 0;
+let lightboxTy = 0;
+let lightboxDrag = null;          // { x, y, tx, ty, moved, pointer }
+let lightboxTouch = null;         // { mode: 'pan'|'pinch', ... }
+let lightboxSuppressClick = false; // 拖动/双指结束后抑制随后的 click
+let lightboxLastTapAt = 0;
+
+function applyLightboxTransform() {
+  const img = $('#imageLightboxImg');
+  const box = $('#imageLightbox');
+  if (!img) return;
+  if (lightboxScale <= 1.001) {
+    lightboxScale = 1;
+    lightboxTx = 0;
+    lightboxTy = 0;
+    img.style.transform = '';
+    img.classList.remove('zoomed');
+  } else {
+    img.style.transform = `translate(${lightboxTx}px, ${lightboxTy}px) scale(${lightboxScale})`;
+    img.classList.add('zoomed');
+  }
+  box?.classList.toggle('is-zoomed', lightboxScale > 1.001);
+}
+
+export function resetLightboxZoom() {
+  lightboxScale = 1;
+  lightboxTx = 0;
+  lightboxTy = 0;
+  applyLightboxTransform();
+}
+
+function clampLightboxPan() {
+  const img = $('#imageLightboxImg');
+  if (!img || lightboxScale <= 1.001) {
+    lightboxTx = 0;
+    lightboxTy = 0;
+    return;
+  }
+  const rect = img.getBoundingClientRect();
+  const layoutW = rect.width / lightboxScale;
+  const layoutH = rect.height / lightboxScale;
+  // 只在图片比视口大时才允许平移，避免把图拖出屏幕。
+  const maxX = Math.max(0, (layoutW * lightboxScale - window.innerWidth) / 2);
+  const maxY = Math.max(0, (layoutH * lightboxScale - window.innerHeight) / 2);
+  lightboxTx = Math.max(-maxX, Math.min(maxX, lightboxTx));
+  lightboxTy = Math.max(-maxY, Math.min(maxY, lightboxTy));
+}
+
+// 以 (clientX, clientY) 为锚点缩放：保持光标下的图像点不动。
+function zoomLightboxAt(nextScale, clientX, clientY) {
+  const img = $('#imageLightboxImg');
+  if (!img) return;
+  const target = Math.max(1, Math.min(LIGHTBOX_MAX_SCALE, nextScale));
+  if (Math.abs(target - lightboxScale) < 0.001) return;
+  const rect = img.getBoundingClientRect();
+  const centerX = rect.left + rect.width / 2 - lightboxTx;
+  const centerY = rect.top + rect.height / 2 - lightboxTy;
+  const vx = clientX - centerX;
+  const vy = clientY - centerY;
+  const ratio = target / lightboxScale;
+  lightboxTx = vx - (vx - lightboxTx) * ratio;
+  lightboxTy = vy - (vy - lightboxTy) * ratio;
+  lightboxScale = target;
+  clampLightboxPan();
+  applyLightboxTransform();
+}
+
+function toggleLightboxZoom(clientX, clientY) {
+  if (lightboxScale > 1.001) {
+    resetLightboxZoom();
+    return;
+  }
+  const rect = $('#imageLightboxImg')?.getBoundingClientRect();
+  zoomLightboxAt(2.5, clientX ?? (rect ? rect.left + rect.width / 2 : window.innerWidth / 2), clientY ?? window.innerHeight / 2);
+}
+
+function touchDistance(touches) {
+  const dx = touches[0].clientX - touches[1].clientX;
+  const dy = touches[0].clientY - touches[1].clientY;
+  return Math.hypot(dx, dy);
+}
+
+export function initImageLightboxInteractions() {
+  const box = $('#imageLightbox');
+  const img = $('#imageLightboxImg');
+  if (!box || !img) return;
+
+  // 滚轮缩放（以光标为锚点）
+  box.addEventListener('wheel', (event) => {
+    if (box.hidden) return;
+    event.preventDefault();
+    zoomLightboxAt(lightboxScale * (event.deltaY < 0 ? 1.15 : 1 / 1.15), event.clientX, event.clientY);
+  }, { passive: false });
+
+  // 鼠标拖动平移（仅缩放后）
+  box.addEventListener('mousedown', (event) => {
+    if (event.button !== 0 || lightboxScale <= 1.001) return;
+    if (event.target.closest?.('button')) return;
+    lightboxDrag = { x: event.clientX, y: event.clientY, tx: lightboxTx, ty: lightboxTy, moved: false };
+    box.classList.add('dragging');
+    event.preventDefault();
+  });
+  document.addEventListener('mousemove', (event) => {
+    if (!lightboxDrag) return;
+    const dx = event.clientX - lightboxDrag.x;
+    const dy = event.clientY - lightboxDrag.y;
+    if (!lightboxDrag.moved && Math.hypot(dx, dy) > 4) lightboxDrag.moved = true;
+    if (!lightboxDrag.moved) return;
+    lightboxTx = lightboxDrag.tx + dx;
+    lightboxTy = lightboxDrag.ty + dy;
+    clampLightboxPan();
+    applyLightboxTransform();
+  });
+  document.addEventListener('mouseup', () => {
+    if (!lightboxDrag) return;
+    const moved = lightboxDrag.moved;
+    lightboxDrag = null;
+    box.classList.remove('dragging');
+    if (moved) {
+      // 拖动结束后的 click 不应触发翻页/关闭。
+      lightboxSuppressClick = true;
+      window.setTimeout(() => { lightboxSuppressClick = false; }, 0);
+    }
+  });
+
+  // 单击：未缩放时按屏幕左右半屏翻页；单张图时点图片以外区域关闭（保持原行为）
+  box.addEventListener('click', (event) => {
+    if (event.target.closest?.('button')) return;
+    if (lightboxSuppressClick) return;
+    if (lightboxScale > 1.001) return;
+    if (lightboxItems.length < 2) {
+      if (event.target !== img) closeImageLightbox();
+      return;
+    }
+    stepImageLightbox(event.clientX < window.innerWidth / 2 ? -1 : 1);
+  });
+
+  // 双击：缩放后复位
+  box.addEventListener('dblclick', (event) => {
+    if (event.target.closest?.('button')) return;
+    if (lightboxScale > 1.001) resetLightboxZoom();
+  });
+
+  // 触屏：单指平移（缩放后）、双指捏合缩放、双击切换缩放
+  box.addEventListener('touchstart', (event) => {
+    if (box.hidden) return;
+    if (event.touches.length >= 2) {
+      lightboxTouch = {
+        mode: 'pinch',
+        distance: touchDistance(event.touches),
+        scale: lightboxScale,
+        x: (event.touches[0].clientX + event.touches[1].clientX) / 2,
+        y: (event.touches[0].clientY + event.touches[1].clientY) / 2,
+        tx: lightboxTx,
+        ty: lightboxTy,
+      };
+      return;
+    }
+    const touch = event.touches[0];
+    lightboxTouch = {
+      mode: 'pan',
+      x: touch.clientX,
+      y: touch.clientY,
+      tx: lightboxTx,
+      ty: lightboxTy,
+      moved: false,
+    };
+  }, { passive: true });
+  box.addEventListener('touchmove', (event) => {
+    if (!lightboxTouch) return;
+    if (lightboxTouch.mode === 'pinch' && event.touches.length >= 2) {
+      event.preventDefault();
+      const next = lightboxTouch.scale * (touchDistance(event.touches) / (lightboxTouch.distance || 1));
+      zoomLightboxAt(next, lightboxTouch.x, lightboxTouch.y);
+      return;
+    }
+    if (lightboxTouch.mode === 'pan' && event.touches.length === 1 && lightboxScale > 1.001) {
+      event.preventDefault();
+      const touch = event.touches[0];
+      const dx = touch.clientX - lightboxTouch.x;
+      const dy = touch.clientY - lightboxTouch.y;
+      if (!lightboxTouch.moved && Math.hypot(dx, dy) > 6) lightboxTouch.moved = true;
+      if (!lightboxTouch.moved) return;
+      lightboxTx = lightboxTouch.tx + dx;
+      lightboxTy = lightboxTouch.ty + dy;
+      clampLightboxPan();
+      applyLightboxTransform();
+    }
+  }, { passive: false });
+  box.addEventListener('touchend', (event) => {
+    if (!lightboxTouch) return;
+    const moved = Boolean(lightboxTouch.moved);
+    const wasPinch = lightboxTouch.mode === 'pinch';
+    const lastX = lightboxTouch.x;
+    const lastY = lightboxTouch.y;
+    lightboxTouch = null;
+    if (moved || wasPinch) {
+      lightboxSuppressClick = true;
+      window.setTimeout(() => { lightboxSuppressClick = false; }, 0);
+      return;
+    }
+    // 双击（双触）切换缩放
+    const now = Date.now();
+    if (now - lightboxLastTapAt < 300) {
+      lightboxLastTapAt = 0;
+      lightboxSuppressClick = true;
+      window.setTimeout(() => { lightboxSuppressClick = false; }, 0);
+      toggleLightboxZoom(lastX, lastY);
+      return;
+    }
+    lightboxLastTapAt = now;
+    if (event.touches.length === 0 && lightboxItems.length < 2 && lightboxScale <= 1.001) {
+      closeImageLightbox();
+    }
+  });
 }
 
 // ---- 大图右键 → 复制图片到剪贴板 ----
