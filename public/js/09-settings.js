@@ -23,7 +23,8 @@ export function renderSkills(filter = '') {
 
 export function updateSkillSummary() {
   const fixedCount = currentAgentFixedSkillIds().length;
-  $('#skillCount').textContent = `Skill ${state.bootstrap.skills.length}`;
+  // 只填数字：按钮自带「Skill」文字标签（此前填「Skill N」→ 顶栏显示「Skill 8 Skill」）。
+  $('#skillCount').textContent = String(state.bootstrap.skills.length);
   $('#skillPolicyHint').textContent = '点击某项即在输入框光标处插入 /技能 引用；发送后按“首轮注入 / 后续追加”注入';
   $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，当前 Agent 预设 ${fixedCount} 个（新建会话自动预填引用）`;
 }
@@ -1430,33 +1431,33 @@ export function mcpServerState(server) {
 
 export function renderMcp() {
   const servers = state.bootstrap.mcp_servers || [];
-  // Top-bar status light: priority error > in-use > connection-change > idle
+  // 顶栏 MCP 指示灯：**只看颜色**（绿=已连接 / 红=未连接或出错 / 黄=连接中 / 灰=未配置服务），
+  // 文字恒为「MCP」，具体状态放 title 里（此前文字拼「MCP · 已就绪」等，啰嗦且占宽）。
   const mcpButton = $('#mcpStatus');
-  const dot = mcpButton.querySelector('i');
   const label = mcpButton.querySelector('span');
   const anyError = servers.some((s) => s.status === 'error' || s.error);
   const anyCalling = servers.some((s) => s.activity === 'calling' || (s.active_calls && s.active_calls > 0));
   const anyConnecting = servers.some((s) => s.status === 'connecting' || s.status === 'reconnecting');
-  let topText;
+  const allConnected = servers.length > 0 && servers.every((s) => s.connected);
+  mcpButton.classList.remove('connected', 'calling', 'connecting', 'error', 'disconnected');
+  let statusText;
   if (anyError) {
-    mcpButton.classList.remove('connected', 'calling', 'connecting'); mcpButton.classList.add('error');
-    if (dot) dot.style.background = '#e45e55'; topText = 'MCP · 错误';
-  } else if (anyCalling) {
-    mcpButton.classList.remove('error', 'connecting'); mcpButton.classList.add('calling');
-    if (dot) dot.style.background = '#3ecf8e'; topText = 'MCP · 使用中';
+    mcpButton.classList.add('error');
+    statusText = '连接错误';
   } else if (anyConnecting) {
-    mcpButton.classList.remove('error', 'calling'); mcpButton.classList.add('connecting');
-    if (dot) dot.style.background = '#e0a13a'; topText = 'MCP · 连接中';
+    mcpButton.classList.add('connecting');
+    statusText = '连接中';
+  } else if (allConnected) {
+    mcpButton.classList.add(anyCalling ? 'calling' : 'connected');
+    statusText = anyCalling ? '使用中' : '已连接';
+  } else if (servers.length) {
+    mcpButton.classList.add('disconnected');
+    statusText = '未连接';
   } else {
-    mcpButton.classList.remove('error', 'calling', 'connecting');
-    if (servers.length && servers.every((s) => s.connected)) {
-      mcpButton.classList.add('connected');
-      if (dot) dot.style.background = '#3ecf8e'; topText = 'MCP · 已就绪';
-    } else {
-      if (dot) dot.style.background = '#7d867d'; topText = servers.length ? 'MCP · 待机' : 'MCP';
-    }
+    statusText = '未配置服务';
   }
-  if (label) label.textContent = topText;
+  if (label) label.textContent = 'MCP';
+  mcpButton.title = `MCP：${statusText}（点击查看连接状态）`;
 
   $('#mcpList').innerHTML = servers.map((server) => {
     const st = mcpServerState(server);

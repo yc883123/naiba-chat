@@ -278,15 +278,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .agent-control { flex: 0 1 170px; }
 .model-control select { width: 100%; max-width: min(480px, 45vw); height: 34px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--text); padding: 0 30px 0 10px; }
 .topbar-actions { display: flex; gap: 8px; align-items: center; }
-.topbar-overflow { position: relative; flex: none; }
-.topbar-more-button { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--text); }
-.topbar-more-button:hover { border-color: var(--line-strong); background: var(--surface-2); }
-.topbar-overflow-menu { position: absolute; right: 0; top: 42px; z-index: 60; min-width: 160px; display: grid; gap: 2px; padding: 5px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-3); }
-.topbar-overflow-menu[hidden] { display: none; }
-.topbar-overflow-menu .control-button { width: 100%; justify-content: flex-start; gap: 9px; border: 0; background: transparent; display: flex; align-items: center; min-height: 36px; padding: 0 10px; font-size: 13px; }
-.topbar-overflow-menu .control-button:hover { background: var(--surface-2); }
-.topbar-overflow-menu .control-button[hidden] { display: none; }
-.topbar-overflow-menu svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 顶栏操作按钮统一：图标 + 文字横向排列，SVG 走线性描边（否则裸 SVG 会以默认黑色填充
+   渲染成一团黑块——刷新/卸载模型从「⋯」菜单搬回来后踩到过）。 */
+.topbar-actions .control-button { display: inline-flex; align-items: center; gap: 6px; }
+.topbar-actions .control-button svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 /* 图标按钮内的线性 SVG 统一样式 */
 .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .send-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
@@ -298,17 +293,20 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .mcp-button i { display: block; }
 .mcp-button.connecting i { background: var(--warning); }
 .mcp-button.calling i { background: var(--success); }
+/* 红点=未连接/连接错误（顶栏 MCP 状态只看颜色，文字恒为「MCP」） */
+.mcp-button.disconnected i { background: var(--danger); }
 .mcp-actions { display: flex; gap: 6px; flex: none; }
 .task-button { display: inline-flex; align-items: center; gap: 6px; }
-#taskCount { min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 9px; background: var(--surface-2); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.task-button.has-active #taskCount { background: var(--accent-solid); color: #fff; }
+/* 计数用普通数字文本（此前是圆角胶囊 + 灰底，视觉上像"奇怪的徽标"） */
+#taskCount { font-variant-numeric: tabular-nums; font-weight: 600; }
+.task-button.has-active #taskCount { color: var(--accent); }
 /* 文件面板重开按钮：徽标计数为已打开文件数 */
 .file-reopen-button:not([hidden]) { display: inline-flex; align-items: center; gap: 6px; background: var(--sidebar); color: var(--sidebar-text); border-color: transparent; padding: 0 12px; }
 .file-reopen-button:hover { background: rgba(255,255,255,.09); border-color: transparent; color: var(--sidebar-text); }
 .file-reopen-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-#fileTabsCount { min-width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 9px; background: var(--surface-2); color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+#fileTabsCount { font-variant-numeric: tabular-nums; font-weight: 600; }
 .file-reopen-button #fileTabsCount[hidden] { display: none; }
-.file-reopen-button.has-tabs #fileTabsCount { background: var(--accent-solid); color: #fff; font-weight: 700; }
+.file-reopen-button.has-tabs #fileTabsCount { color: var(--accent); }
 
 .messages { min-height: 0; overflow-y: scroll; overscroll-behavior: contain; scrollbar-gutter: stable; padding: 34px max(22px, calc((100% - var(--chat-max)) / 2)) 28px; scroll-behavior: smooth; }
 .empty-state { min-height: 100%; display: grid; place-content: center; justify-items: center; padding-bottom: 8vh; }

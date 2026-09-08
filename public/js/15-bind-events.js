@@ -124,22 +124,8 @@ export function bindEvents() {
     $('#settingsDialog').showModal();
     switchSettingsTab('connections');
   });
-  // 顶栏「更多」溢出菜单：切换开合，点击外部关闭。
-  $('#topbarMoreButton')?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    const menu = $('#topbarOverflowMenu');
-    if (!menu) return;
-    menu.hidden = !menu.hidden;
-    $('#topbarMoreButton').setAttribute('aria-expanded', String(!menu.hidden));
-  });
+  // 顶栏「刷新」与「卸载模型」已回到操作区常驻（不再藏进「⋯」溢出菜单）。
   document.addEventListener('click', (event) => {
-    const wrap = $('#topbarOverflowMenu');
-    if (wrap && !wrap.hidden) {
-      if (!wrap.contains(event.target) && !event.target.closest?.('#topbarMoreButton')) {
-        wrap.hidden = true;
-        $('#topbarMoreButton')?.setAttribute('aria-expanded', 'false');
-      }
-    }
     // 会话「⋯」菜单：点击菜单与触发按钮之外的位置即关闭。
     const conversationMenu = $('#conversationItemMenu');
     if (conversationMenu && !conversationMenu.hidden
