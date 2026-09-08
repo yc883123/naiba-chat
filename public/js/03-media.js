@@ -668,7 +668,7 @@ export function usageMarkup(usage, createdAt = null) {
     : '';
   // 平均速率（输出 tokens ÷ 请求总耗时）：有逐次明细时显示，旧数据无耗时则不显示。
   const avgSpeed = averageTokenSpeed(details);
-  const speedLabel = avgSpeed === null ? '' : `平均${Math.round(avgSpeed)} token/s `;
+  const speedLabel = avgSpeed === null ? '' : `平均 ${Math.round(avgSpeed)} token/s，`;
   const durationLine = durationLabel
     ? `<div class="usage-line usage-duration">${durationLabel}，${speedLabel}共 ${requests} 次请求${durationMs > 0 && when ? `。${when}` : ''}</div>`
     : '';
