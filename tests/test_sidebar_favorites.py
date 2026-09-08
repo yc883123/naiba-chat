@@ -268,11 +268,28 @@ class ConversationPromptRetiredTests(unittest.TestCase):
             source,
             "又退回「只有中间文字能点」的旧写法",
         )
-        self.assertIn("openConversation(item.dataset.conversationId);", source)
+        self.assertIn("openConversation(item.dataset.conversationId)", source)
         css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
         item_rule = css[css.index(".conversation-item {"):]
         item_rule = item_rule[: item_rule.index("}")]
         self.assertIn("cursor: pointer", item_rule, "条目缺少手型光标")
+
+    def test_server_status_dot_is_the_only_indicator(self) -> None:
+        """侧栏底部只留一个状态点：绿=已连接、红=连不上服务端。"""
+        index = (ROOT / "public/index.html").read_text(encoding="utf-8")
+        self.assertNotIn("serverLabel", index, "「服务已连接」文字又回来了")
+        self.assertNotIn('class="server-state"', index, "旧的 server-state 状态块又回来了")
+        dot_tag = index[: index.index('id="serverDot"')]
+        dot_tag = dot_tag[dot_tag.rindex("<"):] + index[index.index('id="serverDot"'): index.index('id="serverDot"') + 120]
+        self.assertIn("status-mark", dot_tag, "状态点缺少 status-mark 样式类")
+        core = (ROOT / "public/js/01-core.js").read_text(encoding="utf-8")
+        self.assertIn("export function setServerStatus(", core)
+        api_block = core[core.index("export async function api("):]
+        api_block = api_block[: api_block.index("\n}\n")]
+        self.assertGreaterEqual(api_block.count("setServerStatus("), 2, "api() 未在两条路径刷新状态点")
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        self.assertIn(".status-mark.error", css)
+        self.assertNotIn(".server-state", css, "旧状态块样式未清理")
 
     def test_sidebar_scroll_clamp_uses_real_scroll_height(self) -> None:
         """虚拟窗口的滚动上限必须取浏览器真实 scrollHeight（含容器 padding）。
