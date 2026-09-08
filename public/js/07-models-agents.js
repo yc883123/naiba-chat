@@ -208,14 +208,7 @@ export function localProviderKind(provider) {
 
 export function updateUnloadModelButton() {
   const busy = Boolean(state.chatRunId || state.taskSubmitting);
-  const topButton = $('#unloadModel');
-  const topKind = localProviderKind(selectedProvider());
-  if (topButton) {
-    topButton.hidden = !topKind;
-    topButton.disabled = busy;
-    topButton.title = topKind ? `卸载${topKind === 'ollama' ? ' Ollama' : ' LM Studio'} 当前模型` : '当前供应商不支持手动卸载';
-  }
-
+  // 顶栏的「卸载模型」按钮已移除（本地模型卸载统一在「设置 → API 供应商」里操作）。
   const settingsButton = $('#unloadProviderModel');
   if (settingsButton) {
     const providerId = $('#providerId')?.value || '';
@@ -238,7 +231,6 @@ export async function unloadProviderModel(provider) {
     return;
   }
   if (!confirm(`卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 模型“${provider.model}”？`)) return;
-  $('#unloadModel').disabled = true;
   $('#unloadProviderModel').disabled = true;
   try {
     const result = await api('/api/models/unload', {
@@ -251,10 +243,6 @@ export async function unloadProviderModel(provider) {
   } finally {
     updateUnloadModelButton();
   }
-}
-
-export async function unloadCurrentModel() {
-  await unloadProviderModel(selectedProvider());
 }
 
 export async function unloadConfiguredProviderModel() {

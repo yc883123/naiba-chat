@@ -277,17 +277,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .model-control { min-width: 0; display: flex; flex: 1 1 180px; gap: 10px; align-items: center; color: var(--muted); font-size: 12px; }
 .agent-control { flex: 0 1 170px; }
 .model-control select { width: 100%; max-width: min(480px, 45vw); height: 34px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--text); padding: 0 30px 0 10px; }
-.topbar-actions { display: flex; gap: 8px; align-items: center; }
-/* 顶栏操作按钮统一：图标 + 文字横向排列，SVG 走线性描边（否则裸 SVG 会以默认黑色填充
-   渲染成一团黑块——刷新/卸载模型从「⋯」菜单搬回来后踩到过）。 */
-.topbar-actions .control-button { display: inline-flex; align-items: center; gap: 6px; }
+/* 顶栏操作区：自身不被压缩（flex: none），子按钮也不被压缩 + 文字不换行——
+   否则窗口偏窄时按钮会被挤成竖排文字（实测「卸载模型/刷新」竖着排、「文件」拆成两行）。 */
+.topbar-actions { display: flex; gap: 8px; align-items: center; flex: none; }
+.topbar-actions > * { flex: none; }
+.topbar-actions .control-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .topbar-actions .control-button svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 /* 图标按钮内的线性 SVG 统一样式 */
 .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .send-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .search-field svg { width: 16px; height: 16px; flex: none; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .lightbox-close svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
-.control-button, .mcp-button, .text-button { min-height: 34px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--text); padding: 0 11px; }
+.control-button, .mcp-button, .text-button { min-height: 34px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--text); padding: 0 11px; white-space: nowrap; }
 .control-button:hover, .mcp-button:hover { border-color: var(--line-strong); background: var(--surface-2); }
 .mcp-button { display: flex; align-items: center; gap: 7px; }
 .mcp-button i { display: block; }
@@ -300,10 +301,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 /* 计数用普通数字文本（此前是圆角胶囊 + 灰底，视觉上像"奇怪的徽标"） */
 #taskCount { font-variant-numeric: tabular-nums; font-weight: 600; }
 .task-button.has-active #taskCount { color: var(--accent); }
-/* 文件面板重开按钮：徽标计数为已打开文件数 */
-.file-reopen-button:not([hidden]) { display: inline-flex; align-items: center; gap: 6px; background: var(--sidebar); color: var(--sidebar-text); border-color: transparent; padding: 0 12px; }
-.file-reopen-button:hover { background: rgba(255,255,255,.09); border-color: transparent; color: var(--sidebar-text); }
-.file-reopen-button svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 文件面板重开按钮：与其它顶栏按钮同款（此前用侧栏深色底，与浅色主题格格不入、hover 也不一致）。 */
+.file-reopen-button:not([hidden]) { display: inline-flex; align-items: center; gap: 6px; }
 #fileTabsCount { font-variant-numeric: tabular-nums; font-weight: 600; }
 .file-reopen-button #fileTabsCount[hidden] { display: none; }
 .file-reopen-button.has-tabs #fileTabsCount { color: var(--accent); }
@@ -1134,8 +1133,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .topbar { gap: 8px; padding: 0 12px; }
   .workspace-control { min-width: 90px; }
   .workspace-control span, .model-control > span, .agent-control > span { display: none; }
-  #openSkills .button-label, #openTasks .button-label { display: none; }
-  #openSkills, #openTasks { min-width: 38px; }
+  /* 不再隐藏「任务 / Skill」文字标签：只留裸数字没有意义（窄屏优先压缩模型/Agent 下拉框）。 */
 }
 
 @media (max-width: 760px) {
@@ -1168,7 +1166,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .model-control { grid-column: 2; grid-row: 1; }
   .agent-control { grid-column: 3; grid-row: 1; }
   .model-control select, .agent-control select { max-width: 100%; width: 100%; min-width: 0; padding: 0 24px 0 8px; text-overflow: ellipsis; }
-  .mcp-button span { display: none; }
+  /* MCP 文字标签在手机上也保留（只有圆点会看不出这是什么）。 */
   .topbar-actions {
     position: static;
     grid-column: 1 / -1;
@@ -1182,9 +1180,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
     z-index: auto;
   }
   .mcp-button, .control-button { min-width: 34px; max-width: 100%; padding: 0 8px; }
-  #openSkills .button-label { display: none; }
-  #openSkills, #openTasks { min-width: 34px; }
-  #openTasks .button-label { display: none; }
+  /* 手机上也保留「任务 / Skill / MCP」文字标签（按钮整行换行即可，裸数字/裸圆点无法理解）。 */
   #skillCount { min-width: 0; height: auto; background: transparent; color: inherit; font-size: 12px; }
   .messages { min-height: 0; padding: 22px 14px 18px; overflow-x: hidden; }
   .starter-grid { grid-template-columns: 1fr; width: min(440px, 88vw); }
