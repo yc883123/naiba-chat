@@ -130,7 +130,7 @@ export function setServerStatus(ok) {
 export async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
-  if (options.body && typeof options.body !== 'string') {
+  if (options.body && typeof options.body !== 'string' && !(options.body instanceof FormData)) {
     headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(options.body);
   }

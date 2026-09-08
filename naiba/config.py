@@ -1786,10 +1786,28 @@ class ConfigStore:
                 )
             return dict(agent) if agent else None
 
+    def _allocate_agent_id(self) -> str:
+        """为新建 Agent 分配持久化唯一 id（用户不再手填）。
+
+        形态 `agent_<12 位 hex>`：只含 `[A-Za-z0-9_-]`，天然满足 upsert 的校验与 URL 安全；
+        与既有 Agent、内置清单逐一比对，避免碰撞。
+        """
+        taken = {str(item.get("id") or "") for item in self.data.get("agents", [])}
+        taken |= built_in_agent_ids()
+        for _ in range(64):
+            candidate = f"agent_{uuid.uuid4().hex[:12]}"
+            if candidate not in taken:
+                return candidate
+        raise ValueError("无法分配 Agent ID，请重试")
+
     def upsert_agent(self, values: dict[str, Any]) -> dict[str, Any]:
         agent_id = str(values.get("id") or "").strip()
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", agent_id):
-            raise ValueError("Agent ID 只能包含字母、数字、下划线或连字符")
+        if agent_id:
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", agent_id):
+                raise ValueError("Agent ID 只能包含字母、数字、下划线或连字符")
+        else:
+            # 新建（前端已不再让用户填 ID）：后台分配一个持久化唯一 id。
+            agent_id = self._allocate_agent_id()
         # 内置 Agent 默认“全开启”，且允许用户自定义（如裁剪 tool_scope）。
         # 编辑仍保留 built_in 标记，使其不可删除；未内建的新 ID 视为自定义 Agent。
         is_built_in = agent_id in built_in_agent_ids()
@@ -1820,6 +1838,11 @@ class ConfigStore:
         with self.lock:
             agents = self.data.setdefault("agents", [])
             index = next((i for i, item in enumerate(agents) if item.get("id") == agent_id), None)
+            # 头像：调用方没带 avatar 键时保留已存值（表单保存不带头像，不能顺手清掉）。
+            avatar = values.get("avatar")
+            if avatar is None:
+                avatar = (agents[index].get("avatar") if index is not None else "") or ""
+            payload["avatar"] = str(avatar).strip()
             if index is None:
                 agents.append(payload)
             else:

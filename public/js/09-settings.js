@@ -835,6 +835,14 @@ export async function refreshAgentsFromServer() {
 // 卡片上的提示词摘要长度（超出截断，完整内容在弹层里看）。
 const AGENT_PROMPT_PREVIEW_LIMIT = 140;
 
+// 弹层里新选的头像文件（保存时才上传；新建 Agent 此时还没有 id，必须延后到保存后）。
+let agentAvatarFile = null;
+
+export function agentAvatarUrl(agent) {
+  const file = String(agent?.avatar || '');
+  return file ? `/api/agents/avatar/${encodeURIComponent(file)}` : '';
+}
+
 function agentCardMarkup(agent, defaultId) {
   const id = escapeHtml(agent.id || '');
   const name = escapeHtml(agent.name || '未命名 Agent');
@@ -843,6 +851,7 @@ function agentCardMarkup(agent, defaultId) {
   const preview = prompt.length > AGENT_PROMPT_PREVIEW_LIMIT
     ? `${prompt.slice(0, AGENT_PROMPT_PREVIEW_LIMIT)}…`
     : prompt;
+  const avatar = agentAvatarUrl(agent);
   const badges = [
     agent.id === defaultId ? '<span class="agent-card-badge">默认</span>' : '',
     agent.built_in ? '<span class="agent-card-tag">内置</span>' : '',
@@ -850,7 +859,7 @@ function agentCardMarkup(agent, defaultId) {
   return `
     <div class="agent-card${agent.id === defaultId ? ' is-default' : ''}" data-agent-card="${id}" role="button" tabindex="0" aria-label="编辑 ${name}">
       ${agent.built_in ? '' : `<button class="agent-card-delete" type="button" data-agent-delete="${id}" title="删除 ${name}" aria-label="删除 ${name}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>`}
-      <span class="agent-card-name" title="${name}">${name}</span>
+      <span class="agent-card-name" title="${name}">${avatar ? `<img class="agent-card-avatar" src="${escapeHtml(avatar)}" alt="">` : ''}${name}</span>
       <span class="agent-card-meta">${skills ? `${skills} 个固定 Skill` : '无固定 Skill'}</span>
       <p class="agent-card-prompt">${preview ? escapeHtml(preview) : '未设置系统提示词'}</p>
       <span class="agent-card-foot">${badges}</span>
@@ -889,8 +898,6 @@ export function renderAgentSkillPicker() {
 
 export function showAgentForm(agent = null) {
   $('#agentFormId').value = agent?.id || '';
-  $('#agentId').value = agent?.id || '';
-  $('#agentId').disabled = Boolean(agent);
   $('#agentName').value = agent?.name || '';
   $('#agentSystemPromptEdit').value = agent?.system_prompt || '';
   state.agentFormSkillIds = agent?.skill_ids ? [...agent.skill_ids] : [];
@@ -910,11 +917,43 @@ export function showAgentForm(agent = null) {
   if (presetSelect) presetSelect.value = '';
   renderAgentPromptPresetSelect();
   $('#agentError').textContent = '';
-  // 卡片点开即编辑（新增时 ID 可填，编辑已有 Agent 时 ID 锁定）。
+  // 卡片点开即编辑；ID 由后台分配，只在副标题里显示已有 ID 供核对。
+  agentAvatarFile = null;
+  const existingAvatar = agentAvatarUrl(agent);
+  const avatarPreview = $('#agentAvatarPreview');
+  if (avatarPreview) {
+    avatarPreview.hidden = !existingAvatar;
+    avatarPreview.src = existingAvatar;
+    avatarPreview.title = existingAvatar ? '当前头像' : '';
+  }
   $('#agentDialogTitle').textContent = state.agentFormIsNew ? '新增 Agent' : (agent?.name || 'Agent 设置');
+  $('#agentDialogSubtitle').textContent = state.agentFormIsNew
+    ? '保存后自动分配 ID'
+    : `Agent ID：${agent?.id || ''}`;
   const dialog = $('#agentDialog');
   if (dialog && !dialog.open) dialog.showModal();
   $('#agentName').focus();
+}
+
+// 「自定义头像」：选图后只做本地预览，保存 Agent 时才真正上传（新建时还没有 id）。
+export function pickAgentAvatar() {
+  $('#agentAvatarFileInput')?.click();
+}
+
+export function handleAgentAvatarFile(file) {
+  if (!file) return;
+  if (!String(file.type || '').startsWith('image/')) {
+    toast('请选择图片文件（PNG / JPG / WebP）');
+    return;
+  }
+  agentAvatarFile = file;
+  const preview = $('#agentAvatarPreview');
+  if (preview) {
+    preview.hidden = false;
+    preview.src = URL.createObjectURL(file);
+    preview.title = `待保存：${file.name || '头像'}`;
+  }
+  toast('头像已选择，点「保存 Agent」后生效');
 }
 
 // Agent 设置：工具选择的联动规则。创建者工具依赖其查询工具（与后端
@@ -1365,7 +1404,8 @@ export async function saveAgentForm() {
   // 保留“以后新增工具自动纳入”的语义，不要在这里被固化成一份死的工具名单。
   const keepUnrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
   const payload = {
-    id: $('#agentId').value.trim(),
+    // 新建时不带 id（留空）：后端分配持久化唯一 id，前端不再让用户手填。
+    id: $('#agentFormId').value.trim(),
     name: $('#agentName').value.trim(),
     system_prompt: $('#agentSystemPromptEdit').value,
     skill_ids: state.agentFormSkillIds,
@@ -1374,7 +1414,19 @@ export async function saveAgentForm() {
       : [...new Set([...state.agentFormToolScope, ...state.agentFormUnknownTools])],
   };
   try {
-    await api('/api/agents', { method: 'POST', body: payload });
+    const saved = await api('/api/agents', { method: 'POST', body: payload });
+    // 头像延后到这里上传：新建 Agent 保存前还没有 id。
+    if (agentAvatarFile && saved?.id) {
+      try {
+        const form = new FormData();
+        form.append('agent_id', saved.id);
+        form.append('file', agentAvatarFile, agentAvatarFile.name || 'avatar.png');
+        await api('/api/agents/avatar', { method: 'POST', body: form });
+      } catch (error) {
+        toast(`头像上传失败：${error.message}`);
+      }
+      agentAvatarFile = null;
+    }
     await refreshAgentsFromServer();
     hideAgentForm();
     renderAgents();

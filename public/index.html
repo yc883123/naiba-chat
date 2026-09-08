@@ -632,9 +632,6 @@
         <button class="icon-button" type="button" data-close="agentDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
       </div>
       <div class="agent-form-body">
-        <label>Agent ID
-          <input id="agentId" type="text" placeholder="英文、数字、下划线或连字符">
-        </label>
         <label>名称
           <input id="agentName" type="text" placeholder="例如 通用 Agent">
         </label>
@@ -648,8 +645,11 @@
           <span class="character-card-import">
             <button class="control-button" id="importAgentCharacterCard" type="button">导入角色卡 PNG</button>
             <input id="agentCharacterCardFileInput" type="file" accept="image/png" hidden>
+            <button class="control-button" id="pickAgentAvatar" type="button">自定义头像</button>
+            <input id="agentAvatarFileInput" type="file" accept="image/*" hidden>
+            <img id="agentAvatarPreview" class="agent-avatar-preview" alt="" hidden>
           </span>
-          <small class="agent-prompt-hint">导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；快捷提示词在「设置 → 快捷提示词」中管理。</small>
+          <small class="agent-prompt-hint">导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；自定义头像会中心裁切为正方形，用于该 Agent 的会话头像（保存后生效）。快捷提示词在「设置 → 快捷提示词」中管理。</small>
         </div>
         <div class="agent-skills">
           <div class="agent-skills-head"><span><b>固定 Skill</b><small>该 Agent 启用时自动加载</small></span></div>

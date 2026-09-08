@@ -47,6 +47,7 @@ from naiba.storage.media import (
     _clean_uploads_cache, _process_uploaded_image, _uploads_total_bytes, auto_clean_uploads,
     is_uploads_path, remove_uploaded_file, store_uploaded_file,
 )
+from naiba.storage.avatars import read_agent_avatar, store_agent_avatar
 from naiba.storage.media_collect import MediaCollector
 from naiba.storage.job_media import JobMediaWriter
 from naiba.storage.store import ChatStorage
@@ -1094,6 +1095,36 @@ class NaibaChatApp:
         # 兼容回退：旧 JSON(base64) 格式不再接受，统一走 multipart 流式
         # （http.py _upload_request → _upload_spooled）。
         return self._reply({"error": "上传接口已升级为 multipart 流式，请刷新页面后重试"}, HTTPStatus.BAD_REQUEST)
+
+    def api_set_agent_avatar(
+        self, agent_id: str, raw: bytes
+    ) -> tuple[dict[str, Any], int]:
+        """设置 Agent 自定义头像：中心裁切正方形 → WebP 落盘 → 写回 agents[].avatar。
+
+        头像是 Agent 级资源（用该 Agent 的会话统一显示），与 uploads 缓存分离存放，
+        不受"未被引用即清理"的影响；换图会删掉上一份文件。
+        """
+        agent = self.config.get_agent(str(agent_id or "").strip())
+        if not agent:
+            return {"error": "Agent 不存在"}, HTTPStatus.NOT_FOUND
+        try:
+            name = store_agent_avatar(
+                self._paths.data_dir,
+                str(agent.get("id") or ""),
+                raw,
+                previous=str(agent.get("avatar") or ""),
+            )
+            saved = self.config.upsert_agent({**agent, "avatar": name})
+        except ValueError as exc:
+            return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
+        return {"ok": True, "agent": saved}, HTTPStatus.OK
+
+    def api_read_agent_avatar(self, name: str) -> tuple[bytes, int] | tuple[dict[str, Any], int]:
+        """读取头像文件字节（http.py 直接写响应体）。"""
+        data = read_agent_avatar(self._paths.data_dir, name)
+        if data is None:
+            return {"error": "头像不存在"}, HTTPStatus.NOT_FOUND
+        return data, HTTPStatus.OK
 
     def _upload_spooled(self, spool_path: str, original_name: str) -> tuple[dict[str, Any], int]:
         """multipart 流式上传的落库入口：http.py 完成协议解析后调用。

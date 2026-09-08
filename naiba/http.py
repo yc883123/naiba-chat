@@ -34,6 +34,7 @@ from naiba.core.media_types import MIME_BY_EXT
 from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
 from naiba.paths import PathContext, default_path_context, static_asset_version
+from naiba.storage.avatars import AVATAR_MAX_BYTES
 from naiba.storage.media import UPLOAD_MAX_BYTES, _uploads_total_bytes
 
 # multipart 上传的传输层兜底上限（文件 80MB + 表单/边界开销）。
@@ -301,6 +302,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed.query)
             kind = query.get("kind", [None])[0]
             self._json({"profiles": self.app.config.model_profiles(kind)})
+        elif path.startswith("/api/agents/avatar/"):
+            self._serve_agent_avatar(path.rsplit("/", 1)[-1])
         elif path == "/api/file":
             query = urllib.parse.parse_qs(parsed.query)
             self._serve_local_file(query.get("path", [""])[0])
@@ -332,6 +335,13 @@ class RequestHandler(BaseHTTPRequestHandler):
         # 上传接口改 multipart 流式（不再走 JSON base64）：跳过 JSON 读取分流。
         if path == "/api/uploads" and self.headers.get("Content-Type", "").lower().startswith("multipart/form-data"):
             self._upload_request()
+            return
+        # Agent 头像同样走 multipart（小体积、进内存），也必须在 JSON 读取前分流。
+        if path == "/api/agents/avatar" and self.headers.get("Content-Type", "").lower().startswith("multipart/form-data"):
+            if not self._authorized(parsed):
+                self._json({"error": "访问口令无效"}, HTTPStatus.UNAUTHORIZED)
+                return
+            self._agent_avatar_upload()
             return
         body = self._read_json(max_size=130 * 1024 * 1024)
         if body is None:
@@ -1001,6 +1011,147 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _parse_character_card(self, body: dict[str, Any]) -> None:
         self._json(*self.app._parse_character_card(body))
+
+    def _read_multipart_small(self, max_bytes: int) -> tuple[dict[str, str], bytes] | None:
+        """读取体积受限的 multipart 表单：文本字段进 dict、单个文件进内存。
+
+        只用于小文件接口（Agent 头像）；大文件上传走 `_upload_request` 的 spool 流式路径。
+        出错时已回包并返回 None。
+        """
+        from python_multipart import MultipartParser
+        from python_multipart.multipart import parse_options_header
+
+        content_type = str(self.headers.get("Content-Type", ""))
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = 0
+        if not length:
+            self._json({"error": "缺少 Content-Length"}, HTTPStatus.BAD_REQUEST)
+            return None
+        if length > max_bytes + 64 * 1024:
+            self._json({"error": "请求内容过大"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return None
+        _, params = parse_options_header(content_type)
+        # parse_options_header 的键为 bytes（b'boundary'），兼容双形态。
+        boundary = params.get("boundary") or params.get(b"boundary") or b""
+        if not boundary:
+            self._json({"error": "缺少 multipart boundary"}, HTTPStatus.BAD_REQUEST)
+            return None
+
+        fields: dict[str, str] = {}
+        state: dict[str, Any] = {
+            "name": "", "filename": "", "field": b"", "value": b"",
+            "data": bytearray(), "too_large": False, "complete": False,
+        }
+
+        def on_part_begin() -> None:
+            state["name"] = ""
+            state["filename"] = ""
+            state["field"] = b""
+            state["value"] = b""
+            state["data"] = bytearray()
+
+        def on_header_field(data: bytes, start: int, end: int) -> None:
+            state["field"] += data[start:end]
+
+        def on_header_value(data: bytes, start: int, end: int) -> None:
+            state["value"] += data[start:end]
+
+        def on_header_end() -> None:
+            field = state["field"].decode("latin-1").strip().lower()
+            value = state["value"].decode("latin-1").strip()
+            state["field"] = b""
+            state["value"] = b""
+            if field != "content-disposition":
+                return
+            _, disp_params = parse_options_header(value)
+            raw_name = disp_params.get("name") or disp_params.get(b"name") or b""
+            state["name"] = raw_name.decode("latin-1") if isinstance(raw_name, bytes) else str(raw_name)
+            raw_filename = disp_params.get("filename") or disp_params.get(b"filename")
+            if not raw_filename:
+                return
+            decoded = raw_filename.decode("latin-1") if isinstance(raw_filename, bytes) else str(raw_filename)
+            try:
+                # multipart header 的 filename 按 latin-1 解析，中文（UTF-8 字节）需还原。
+                decoded = decoded.encode("latin-1").decode("utf-8")
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                pass
+            state["filename"] = Path(decoded.strip()).name
+
+        def on_part_data(data: bytes, start: int, end: int) -> None:
+            written = end - start
+            if state["filename"] and len(state["data"]) + written > max_bytes:
+                state["too_large"] = True
+                return
+            state["data"] += data[start:end]
+
+        def on_part_end() -> None:
+            if state["filename"]:
+                state["file_data"] = bytes(state["data"])
+            elif state["name"]:
+                fields[state["name"]] = bytes(state["data"]).decode("utf-8", "replace")
+
+        def on_end() -> None:
+            state["complete"] = True
+
+        callbacks = {
+            "on_part_begin": on_part_begin,
+            "on_header_field": on_header_field,
+            "on_header_value": on_header_value,
+            "on_header_end": on_header_end,
+            "on_part_data": on_part_data,
+            "on_part_end": on_part_end,
+            "on_end": on_end,
+        }
+        try:
+            parser = MultipartParser(boundary, callbacks)
+            remaining = length
+            while remaining > 0 and not state["too_large"]:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                parser.write(chunk)
+            if not state["too_large"]:
+                parser.finalize()
+            else:
+                self.close_connection = True
+        except Exception as exc:  # noqa: BLE001 - 解析失败/客户端中断统一走错误收尾
+            try:
+                self._json({"error": f"表单解析失败：{exc}"}, HTTPStatus.BAD_REQUEST)
+            except OSError:
+                pass
+            return None
+        if state["too_large"]:
+            self._json({"error": "请求内容过大"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return None
+        file_data = state.get("file_data") or b""
+        if not state["complete"] or not file_data:
+            self._json({"error": "上传中断或未收到图片内容"}, HTTPStatus.BAD_REQUEST)
+            return None
+        return fields, file_data
+
+    def _agent_avatar_upload(self) -> None:
+        parsed = self._read_multipart_small(AVATAR_MAX_BYTES)
+        if parsed is None:
+            return
+        fields, data = parsed
+        self._json(*self.app.api_set_agent_avatar(fields.get("agent_id", ""), data))
+
+    def _serve_agent_avatar(self, name: str) -> None:
+        """Agent 头像：内容哈希命名 → 可长期强缓存；文件名非法/文件缺失走 404。"""
+        payload, status = self.app.api_read_agent_avatar(name)
+        if status != HTTPStatus.OK or not isinstance(payload, (bytes, bytearray)):
+            self._json(payload if isinstance(payload, dict) else {"error": "头像不存在"}, status)
+            return
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/webp")
+        self.send_header("Content-Length", str(len(payload)))
+        self.send_header("Cache-Control", "private, max-age=31536000, immutable")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.end_headers()
+        self.wfile.write(payload)
 
     def _upload_request(self) -> None:
         """multipart/form-data 流式上传：解析到临时 spool 后交给 app 落盘。

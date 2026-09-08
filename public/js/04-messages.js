@@ -9,6 +9,17 @@ import { openConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
 import { hideSkillPopup, renderInputMirror, renderUserContent, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
+// 当前会话所用 Agent 的自定义头像 URL（没有则空串 → 回退到默认的「AI」圆标）。
+// 与 currentAgentFixedSkillIds 同口径：会话绑定的 Agent 优先，失效时回退默认 Agent。
+export function currentAgentAvatarUrl() {
+  const agents = state.bootstrap?.agents || [];
+  const conversation = state.conversations.find((item) => item.id === state.conversationId);
+  let agent = agents.find((item) => item.id === String(conversation?.agent_id || ''));
+  if (!agent) agent = agents.find((item) => item.id === String(state.bootstrap?.default_agent_id || ''));
+  const file = String(agent?.avatar || '');
+  return file ? `/api/agents/avatar/${encodeURIComponent(file)}` : '';
+}
+
 export function messageElement(message, temporary = false) {
   const row = document.createElement('article');
   row.className = `message-row ${message.role}`;
@@ -39,8 +50,13 @@ export function messageElement(message, temporary = false) {
     // 附件——新消息的附件都在 run.media 里（集合命中→不重复渲染），旧会话没有 run.media
     // （集合为空→末尾网格照旧），两条渲染路径互不打架。
     const bottomAttachments = remainingAttachments(metadata);
+    // 自定义头像：用该 Agent 的会话把默认「AI」圆标换成上传的图片（已中心裁切成正方形）。
+    const avatarUrl = currentAgentAvatarUrl();
+    const avatarHtml = avatarUrl
+      ? `<img class="message-avatar message-avatar-img" src="${escapeHtml(avatarUrl)}" alt="">`
+      : '<div class="message-avatar">AI</div>';
     row.innerHTML = `
-      <div class="message-avatar">AI</div>
+      ${avatarHtml}
       <div class="message-card">
         <div class="message-body">
           ${skillMarkup(metadata.skills)}
