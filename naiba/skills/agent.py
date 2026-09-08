@@ -2,7 +2,7 @@
 
 包含技能注入（冻结集/引用集、前缀缓存稳定）、系统提示组装、Agent 循环（协议解析/上下文预算/
 并行工具/反幻觉守卫/熔断）、XML/JSON 工具协议解析与上下文窗口策略（两族方法随类保留，
-包内纯函数化留待后续）。模块级辅助：_extract_step_images/_model_visible_runs 与专属常量。
+包内纯函数化留待后续）。模块级辅助：_extract_step_image_batches/_model_visible_runs 与专属常量。
 """
 
 from __future__ import annotations
@@ -60,16 +60,21 @@ SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参
 # （点 13：只提示、不静默截断）。前端在发送前也用同类阈值自行估算提醒。
 SKILL_CONTENT_WARN_CHARS = 60000
 
-def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -> list[dict[str, Any]]:
-    """从 ``vision_analyze``（视觉模型会话=装载形态）工具结果提取图片 image parts，
-    供多模态模型直接看图。
+def _extract_step_image_batches(
+    step_runs: list[dict[str, Any]], inject: bool = True
+) -> list[dict[str, Any]]:
+    """从 ``vision_analyze``（视觉模型会话=装载形态）工具结果提取图片分批元数据。
 
-    仅当 ``inject``（大脑支持图片）时生成 image parts；文本型大脑只缓存、不注入，
-    避免把纯文本模型看不到的图片塞进消息。
+    每个 vision_analyze 调用独立成一批（每批最多注入 4 张），返回：
+    [{batch_index, total_batches, loaded, shown, parts}]——loaded=该批工具读取总数，
+    shown=实际注入张数（≤4），超限不静默：调用方把 loaded/shown 写进注入消息，
+    模型明确知道"还有未展示部分"，不会误以为后续批次不存在。
+
+    仅当 ``inject``（大脑支持图片）时生成 image parts；文本型大脑不注入（不生成批次）。
     """
     if not inject:
         return []
-    parts: list[dict[str, Any]] = []
+    batches: list[dict[str, Any]] = []
     for run in step_runs or []:
         if not isinstance(run, dict) or str(run.get("tool") or "") != "vision_analyze":
             continue
@@ -78,14 +83,24 @@ def _extract_step_images(step_runs: list[dict[str, Any]], inject: bool = True) -
         except (json.JSONDecodeError, TypeError):
             continue
         images = payload.get("images") if isinstance(payload, dict) else None
-        if not isinstance(images, list):
+        if not isinstance(images, list) or not images:
             continue
-        for img in images:
+        parts: list[dict[str, Any]] = []
+        for img in images[:4]:
             path = str((img or {}).get("path") or "")
             part = encode_image_for_model(path) if path else None
             if part:
                 parts.append(part)
-    return parts[:4]
+        batches.append({
+            "loaded": len(images),
+            "shown": len(parts),
+            "parts": parts,
+        })
+    total = len(batches)
+    for index, batch in enumerate(batches, 1):
+        batch["batch_index"] = index
+        batch["total_batches"] = total
+    return batches
 
 
 def _model_visible_runs(step_runs: list[dict[str, Any]]) -> str:
@@ -793,14 +808,22 @@ class SkillAgent:
                         ),
                     }
                 )
-            # vision_read_folder：把读取的图片作为 image content 注入，供多模态模型直接看图。
-            step_images = _extract_step_images(step_runs, bool(profile.get("supports_images")))
-            if step_images:
+            # vision_read_folder：把读取的图片作为 image content 分批注入，供多模态模型直接看图。
+            # 每批（=一次 vision_analyze 调用）最多 4 张；超限在注入文本中显式标注，
+            # 避免模型误以为"后续批次不存在"（静默截断=误导源，教训 24）。
+            step_batches = _extract_step_image_batches(step_runs, bool(profile.get("supports_images")))
+            for batch in step_batches:
+                if not batch["parts"]:
+                    continue
+                label = f"【图片批 {batch['batch_index']}/{batch['total_batches']}"
+                if batch["loaded"] > batch["shown"]:
+                    label += f"：本次读取 {batch['loaded']} 张，已展示前 {batch['shown']} 张"
+                label += "】"
                 messages.append({
                     "role": "user",
                     "content": [
-                        {"type": "text", "text": "以上是工具刚读取的图片，请据此继续（点击即可查看大图）。"},
-                        *step_images,
+                        {"type": "text", "text": label + " 以上是工具刚读取的图片，请据此继续（点击即可查看大图）。"},
+                        *batch["parts"],
                     ],
                 })
 

@@ -490,7 +490,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
 
 VISION_ANALYZE_DESCRIPTION = (
     "分析本地图片：把图片与你的问题交给视觉模型后端，按提问返回描述、识别文字等结果。"
-    "无需选择分析模式，直接提问即可；paths/image 填图片绝对路径。"
+    "单次最多 4 张，超过请分多次调用；paths/image 填图片绝对路径。"
 )
 VISION_ANALYZE_PARAMETERS: dict[str, Any] = {
     "type": "object",
@@ -499,19 +499,20 @@ VISION_ANALYZE_PARAMETERS: dict[str, Any] = {
         "image": _string("单张图片路径（paths 的简写）"),
         "question": _string("对图片的提问；写清意图即可（识别文字/定位元素/描述内容等），无需选择模式"),
         "json": {"type": "boolean", "description": "是否返回结构化 JSON", "default": False},
+        "max_images": {"type": "integer", "description": "单次最多分析张数（默认 4；超过请分多次调用）", "default": 4},
     },
     "required": [],
 }
 VISION_ANALYZE_LOAD_DESCRIPTION = (
-    "从文件夹或路径列表读取图片并装入本次对话（供你直接查看）。一次可读多张；"
-    "paths/folder 填绝对路径，返回每张图片的名称与缓存路径。"
+    "从文件夹或路径列表读取图片并装入本次对话（供你直接查看）。"
+    "单次最多 4 张，超过会按批注入并标注批次；返回每张图片名称与缓存路径。"
 )
 VISION_ANALYZE_LOAD_PARAMETERS: dict[str, Any] = {
     "type": "object",
     "properties": {
         "paths": {"type": "array", "items": {"type": "string"}, "description": "图片或文件夹的绝对路径列表"},
         "folder": _string("待扫描文件夹的绝对路径（paths 的简写）"),
-        "max_images": {"type": "integer", "description": "最多读取张数", "default": 8},
+        "max_images": {"type": "integer", "description": "单次最多读取张数（默认 4；超过请分多次调用）", "default": 4},
     },
     "required": [],
 }

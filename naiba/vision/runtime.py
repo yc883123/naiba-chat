@@ -699,16 +699,16 @@ class VisionRouter:
             if folder:
                 paths.append(folder)
             try:
-                max_images = max(1, int(args.get("max_images") or 8))
+                max_images = max(1, int(args.get("max_images") or 4))
             except (TypeError, ValueError):
-                max_images = 8
+                max_images = 4
             return self._cache_folder_images(paths, max_images)
         except Exception as exc:  # noqa: BLE001
             return False, f"vision_read_folder 失败:{exc}"
 
     def _cache_folder_images(self, paths: list[str], max_images: int, skip_uploads: bool = True) -> tuple[bool, str]:
         """扫描路径/文件夹里的图片，经 _process_uploaded_image 缓存到 uploads，返回带缩略图的列表。"""
-        candidates: list[Path] = []
+        candidates_all: list[Path] = []
         seen: set[str] = set()
         for raw in paths:
             if not raw:
@@ -720,13 +720,14 @@ class VisionRouter:
                         key = str(file.resolve()).lower()
                         if key not in seen:
                             seen.add(key)
-                            candidates.append(file)
+                            candidates_all.append(file)
             elif p.is_file() and p.suffix.lower() in IMAGE_SUFFIXES:
                 key = str(p.resolve()).lower()
                 if key not in seen:
                     seen.add(key)
-                    candidates.append(p)
-        candidates = candidates[:max_images]
+                    candidates_all.append(p)
+        total_candidates = len(candidates_all)
+        candidates = candidates_all[:max_images]
         if not candidates:
             return False, "vision_read_folder: 未找到图片文件"
 
@@ -766,6 +767,11 @@ class VisionRouter:
         if not images:
             return False, "vision_read_folder: 图片读取/缓存失败"
         note = f"已读取 {len(images)} 张图片"
+        if total_candidates > len(images):
+            note += (
+                f"，共发现 {total_candidates} 张（单次最多读取 {len(images)} 张），"
+                f"还有 {total_candidates - len(images)} 张未读取，可继续调用本次工具"
+            )
         return True, json.dumps({"note": note, "images": images}, ensure_ascii=False)
 
     def _resolve_paths(self, args: dict[str, Any]) -> list[str]:
@@ -817,9 +823,20 @@ class VisionRouter:
             paths = self._resolve_paths(args)
             if not paths:
                 return False, "vision_describe: 请提供 paths 或 image 参数（图片文件路径）"
+            try:
+                limit = max(1, min(int(args.get("max_images") or 4), 4))
+            except (TypeError, ValueError):
+                limit = 4
+            shown = paths[:limit]
+            total = len(paths)
             question = str(args.get("question") or "")
             json_mode = bool(args.get("json"))
-            result = self.describe_files(paths, question, json_mode, cancel_event, self._context_budget(_ctx))
+            result = self.describe_files(shown, question, json_mode, cancel_event, self._context_budget(_ctx))
+            if total > len(shown):
+                result += (
+                    f"\n（本次共 {total} 张，已分析前 {len(shown)} 张；"
+                    f"其余 {total - len(shown)} 张可继续使用本工具，传剩余路径即可。）"
+                )
             return True, result
         except Exception as exc:  # noqa: BLE001
             return False, f"vision_describe 失败：{exc}"
