@@ -218,7 +218,8 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/workspaces":
             self._json({"workspaces": self.app.config.data.get("workspaces", [])})
         elif path == "/api/starter-prompts":
-            self._json({"prompts": self.app.config.get_starter_prompts()})
+            query = urllib.parse.parse_qs(parsed.query)
+            self._json({"prompts": self.app.config.get_starter_prompts(query.get("sort", [""])[0])})
         elif path == "/api/conversation-prompt-presets":
             self._json({"presets": self.app.config.get_conversation_prompt_presets()})
         elif path.startswith("/api/conversations/") and path.endswith("/file/open"):
@@ -578,6 +579,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             self._json({"prompts": prompts}, HTTPStatus.CREATED)
+        elif path.startswith("/api/starter-prompts/") and path.endswith("/use"):
+            index = path.split("/")[-2]
+            try:
+                idx = int(index)
+                if idx < 0:
+                    raise ValueError
+            except ValueError:
+                self._json({"error": "无效的指令序号"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"prompts": self.app.config.record_starter_prompt_use(idx)})
         elif path.startswith("/api/starter-prompts/"):
             index = path.rsplit("/", 1)[-1]
             try:

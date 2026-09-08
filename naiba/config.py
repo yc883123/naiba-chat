@@ -429,6 +429,47 @@ def _infer_kind_for_request_format(request_format: str) -> str:
     return "local" if request_format in LOCAL_REQUEST_FORMATS else "online"
 
 
+# 快捷消息（自定义指令）排序权重：点击数为主、新鲜度加分防"新条目永远沉底"。
+STARTER_PROMPT_USE_CAP = 50
+STARTER_PROMPT_RECENCY_BONUS = ((7, 6), (30, 3), (90, 1))
+
+
+def _normalize_starter_prompts(items: Any) -> list[dict[str, Any]]:
+    """规整自定义指令条目：补齐 index/count/added_at/used_at（旧配置缺字段按 0 处理）。"""
+    result: list[dict[str, Any]] = []
+    for position, item in enumerate(items if isinstance(items, list) else []):
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        result.append(
+            {
+                "index": position,
+                "title": str(item.get("title") or "自定义指令"),
+                "text": text,
+                "count": max(0, int(item.get("count") or 0)),
+                "added_at": max(0, int(item.get("added_at") or 0)),
+                "used_at": max(0, int(item.get("used_at") or 0)),
+            }
+        )
+    return result
+
+
+def starter_prompt_score(entry: dict[str, Any], now_ms: int) -> float:
+    """快捷消息权重：min(点击次数, 50)×2 + 新鲜度加分（7 天 +6 / 30 天 +3 / 90 天 +1）。"""
+    count = max(0, int(entry.get("count") or 0))
+    score = min(count, STARTER_PROMPT_USE_CAP) * 2
+    added_at = max(0, int(entry.get("added_at") or 0))
+    if added_at:
+        age_days = max(0.0, (now_ms - added_at) / 86400000.0)
+        for days, bonus in STARTER_PROMPT_RECENCY_BONUS:
+            if age_days <= days:
+                score += bonus
+                break
+    return score
+
+
 class ConfigStore:
     def __init__(self, path: Path, paths: PathContext | None = None):
         self.path = path
@@ -666,12 +707,22 @@ class ConfigStore:
             self.save()
             return list(self.data["skills_dirs"])
 
-    def get_starter_prompts(self) -> list[dict[str, str]]:
+    def get_starter_prompts(self, sort: str = "") -> list[dict[str, Any]]:
+        """自定义指令（常用提示词）列表。
+
+        每条附带 ``index``（原始插入序号，增删改按它定位）与 ``score``（快捷消息排序权重）；
+        ``sort="usage"`` 时按 score 降序、并列取新增时间倒序（快捷消息面板用），
+        默认保持插入顺序（开始新对话页卡片用，行为不变）。
+        """
         with self.lock:
             items = self.data.get("starter_prompts", [])
-            if isinstance(items, list):
-                return [dict(item) for item in items if isinstance(item, dict)]
-            return []
+            normalized = _normalize_starter_prompts(items)
+        if str(sort or "").strip().lower() == "usage":
+            now_ms = int(time.time() * 1000)
+            normalized.sort(key=lambda item: (
+                -starter_prompt_score(item, now_ms), -int(item.get("added_at") or 0), int(item["index"]),
+            ))
+        return normalized
 
     @staticmethod
     def _preset_timestamp() -> str:
@@ -749,7 +800,7 @@ class ConfigStore:
             self.save()
             return True
 
-    def add_starter_prompt(self, title: str, text: str) -> list[dict[str, str]]:
+    def add_starter_prompt(self, title: str, text: str) -> list[dict[str, Any]]:
         title = " ".join(str(title or "").strip().split())[:40] or "自定义指令"
         text = str(text or "").strip()
         if not text:
@@ -759,11 +810,17 @@ class ConfigStore:
             if not isinstance(prompts, list):
                 prompts = []
                 self.data["starter_prompts"] = prompts
-            prompts.append({"title": title, "text": text})
+            prompts.append({
+                "title": title,
+                "text": text,
+                "count": 0,
+                "added_at": int(time.time() * 1000),
+                "used_at": 0,
+            })
             self.save()
         return self.get_starter_prompts()
 
-    def remove_starter_prompt(self, index: int) -> list[dict[str, str]]:
+    def remove_starter_prompt(self, index: int) -> list[dict[str, Any]]:
         with self.lock:
             prompts = self.data.setdefault("starter_prompts", [])
             if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
@@ -771,7 +828,7 @@ class ConfigStore:
                 self.save()
         return self.get_starter_prompts()
 
-    def update_starter_prompt(self, index: int, title: str, text: str) -> list[dict[str, str]]:
+    def update_starter_prompt(self, index: int, title: str, text: str) -> list[dict[str, Any]]:
         title = " ".join(str(title or "").strip().split())[:40] or "自定义指令"
         text = str(text or "").strip()
         if not text:
@@ -779,8 +836,28 @@ class ConfigStore:
         with self.lock:
             prompts = self.data.setdefault("starter_prompts", [])
             if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
-                prompts[int(index)] = {"title": title, "text": text}
+                current = prompts[int(index)] if isinstance(prompts[int(index)], dict) else {}
+                # 编辑只改标题与内容：使用次数/新增时间/最近使用时间原样保留。
+                prompts[int(index)] = {
+                    "title": title,
+                    "text": text,
+                    "count": max(0, int(current.get("count") or 0)),
+                    "added_at": max(0, int(current.get("added_at") or 0)),
+                    "used_at": max(0, int(current.get("used_at") or 0)),
+                }
                 self.save()
+        return self.get_starter_prompts()
+
+    def record_starter_prompt_use(self, index: int) -> list[dict[str, Any]]:
+        """记录一次快捷消息使用（点击插入）：累加次数并刷新最近使用时间。"""
+        with self.lock:
+            prompts = self.data.setdefault("starter_prompts", [])
+            if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
+                entry = prompts[int(index)]
+                if isinstance(entry, dict):
+                    entry["count"] = max(0, int(entry.get("count") or 0)) + 1
+                    entry["used_at"] = int(time.time() * 1000)
+                    self.save()
         return self.get_starter_prompts()
 
     def _resolve_dir(self, raw: str) -> Path:
