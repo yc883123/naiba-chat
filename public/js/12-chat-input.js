@@ -4,7 +4,7 @@
 
 import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
-import { updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
+import { toolMediaMarkup, updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
 import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
@@ -603,6 +603,17 @@ function handleToolResultEvent(event, { row }) {
     pre.textContent = `${toolArguments}\n\n${String(event.result || '')}`;
     if (!pre.parentNode) last.appendChild(pre);
     last.open = false;
+    // 媒体就地出现在本次工具块下方（流式期间即可见，不必等整轮结束）。
+    // 工具块本身保持折叠；终态 done 会用 messageElement 全量重渲染，toolRunMarkup
+    // 从同一份 run.media 重建同位置的媒体块，位置与内容不变。
+    const markup = toolMediaMarkup(event);
+    const next = last.nextElementSibling;
+    if (next && next.classList && next.classList.contains('tool-media')) {
+      if (markup) next.outerHTML = markup;
+      else next.remove();
+    } else if (markup) {
+      last.insertAdjacentHTML('afterend', markup);
+    }
   }
 }
 

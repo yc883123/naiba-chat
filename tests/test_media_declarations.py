@@ -188,6 +188,41 @@ class FrontendMediaListTests(unittest.TestCase):
         self.assertIn("mediaKind(source, attachment.name)", source)
 
 
+class FrontendInlineMediaTests(unittest.TestCase):
+    """媒体就地内嵌（P3）的接线守门：源码级断言。
+
+    本沙箱无法跑浏览器冒烟（Edge spawn 被拦），因此把"流式插入/末尾去重/截断提示"
+    这几处关键接线钉在源码上；渲染结果由 `.tmptest/p3_markup_check.mjs` 真执行校验。
+    """
+
+    def _read(self, name: str) -> str:
+        return (ROOT / "public" / "js" / name).read_text(encoding="utf-8")
+
+    def test_tool_block_renders_media_inline(self) -> None:
+        source = self._read("03-media.js")
+        self.assertIn("export function toolMediaMarkup(", source)
+        self.assertIn("${toolMediaMarkup(run)}", source, "toolRunMarkup 必须复用媒体块")
+
+    def test_streaming_inserts_media_block_after_tool_block(self) -> None:
+        source = self._read("12-chat-input.js")
+        self.assertIn("toolMediaMarkup(event)", source)
+        self.assertIn("classList.contains('tool-media')", source)
+        self.assertIn("insertAdjacentHTML('afterend', markup)", source)
+
+    def test_bottom_grid_dedupes_inline_media(self) -> None:
+        source = self._read("04-messages.js")
+        self.assertIn("remainingAttachments(metadata)", source)
+
+    def test_truncation_notice_is_rendered(self) -> None:
+        self.assertIn("media-truncated", self._read("03-media.js"))
+        self.assertIn(".media-truncated", (ROOT / "public" / "styles.css").read_text(encoding="utf-8"))
+
+    def test_inline_media_block_has_styles(self) -> None:
+        css = (ROOT / "public" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn(".tool-media", css)
+        self.assertIn(".message-body > .tool-media", css)
+
+
 class FileChangeChipAlignmentTests(unittest.TestCase):
     """`.bmp`/`.svg` 产物曾经两头都不显示：现在必须落回"修改文件"chip（可见）。"""
 

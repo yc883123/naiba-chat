@@ -569,10 +569,57 @@ export function mediaMarkup(attachments = []) {
 }
 
 export function toolRunMarkup(run = {}, markerClass = '') {
+  // 工具块下方就地内嵌本次调用产出的媒体（P3）：媒体记录来自后端在产出点按声明
+  // 采集的 run.media，流式与历史重放走同一份数据，位置天然一致。
   return `<details class="tool-run${markerClass}">
     <summary>${run.success ? '已执行' : '执行失败'} · ${escapeHtml(run.tool)}${run.reason ? ` · ${escapeHtml(run.reason)}` : ''}</summary>
     <pre>${escapeHtml(JSON.stringify(run.arguments || {}, null, 2))}\n\n${escapeHtml(run.result || '')}</pre>
-  </details>`;
+  </details>${toolMediaMarkup(run)}`;
+}
+
+// 分桶截断的自述信息（后端 attachments_truncated / media_truncated 同构）：
+// "共 N 个媒体，仅显示前 M 个"——静默截断 = 误导源，必须让用户看见。
+export function mediaTruncatedNotice(truncated) {
+  if (!truncated || typeof truncated !== 'object') return '';
+  const total = Number(truncated.total || 0);
+  const shown = Number(truncated.shown || 0);
+  if (!(total > 0) || shown >= total) return '';
+  return `<div class="media-truncated">共 ${total} 个媒体，仅显示前 ${shown} 个</div>`;
+}
+
+// 单次工具调用的媒体块（就地内嵌）：无媒体且无截断提示时返回空串。
+export function toolMediaMarkup(run = {}) {
+  const media = Array.isArray(run.media) ? run.media : [];
+  const notice = mediaTruncatedNotice(run.media_truncated);
+  if (!media.length && !notice) return '';
+  return `<div class="tool-media">${media.length ? mediaMarkup(media) : ''}${notice}</div>`;
+}
+
+// 消息里"已就地渲染"的媒体来源集合（末尾网格据此去重，避免同一张图出现两遍）。
+// 新消息的媒体挂在 activity/tool_runs 的 run.media 上；旧会话没有该字段 → 集合为空，
+// 末尾网格照旧渲染（双路径兼容，零数据迁移）。
+export function inlineMediaSources(metadata = {}) {
+  const sources = new Set();
+  const addRun = (run) => {
+    if (!run || !Array.isArray(run.media)) return;
+    run.media.forEach((item) => {
+      const key = String((item && (item.source || item.path)) || '');
+      if (key) sources.add(key);
+    });
+  };
+  (Array.isArray(metadata.tool_runs) ? metadata.tool_runs : []).forEach(addRun);
+  (Array.isArray(metadata.activity) ? metadata.activity : []).forEach((item) => {
+    if (item && item.type === 'tool') addRun(item.run);
+  });
+  return sources;
+}
+
+// 末尾网格只渲染"没有就地归属"的附件：新消息的媒体都在 run.media 里（已就地渲染），
+// 旧会话没有 run.media（集合为空 → 全部保留，末尾网格照旧）。两条渲染路径互不打架。
+export function remainingAttachments(metadata = {}) {
+  const inline = inlineMediaSources(metadata);
+  const list = Array.isArray(metadata.attachments) ? metadata.attachments : [];
+  return list.filter((attachment) => !inline.has(String((attachment && (attachment.source || attachment.path)) || '')));
 }
 
 export function toolMarkup(runs = []) {

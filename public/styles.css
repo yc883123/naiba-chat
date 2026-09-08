@@ -473,6 +473,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 /* 流式把每次工具调用作为独立兄弟节点插入（与思考块按时间交错），
    不再包在 .tool-stack 里；这里给它补上原本由 .tool-stack 提供的琥珀色左栏。 */
 .message-body > .tool-run { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 0; }
+/* 工具产物媒体（P3）：就地内嵌在对应工具块下方，与工具块同一琥珀色左栏对齐。 */
+.tool-media { margin: 0 0 10px; }
+.message-body > .tool-media { border-left: 2px solid var(--warning); padding-left: 10px; margin-left: 0; }
+.tool-media .media-grid { margin-top: 6px; }
+.tool-media .media-grid img.thumbnail { max-height: 180px; }
+/* 分桶截断自述（"共 N 个媒体，仅显示前 M 个"）：绝不静默截断。 */
+.media-truncated { margin-top: 6px; font-size: 11px; color: var(--muted); }
 /* 活动时间线请求分割线（极简版）：每次新请求的开始块上方一条淡色横线。
    absolute 定位悬挂在块上缘之外（top:-8px），不占块内高度（块不变高）、
    横线与块之间预留 8px 垂直距离；margin-top 为横线留出空隙。 */

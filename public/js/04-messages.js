@@ -4,7 +4,7 @@
 
 import { $, api, draggedFileCache, emptyStateElement, escapeHtml, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
-import { activityMarkup, attachmentThumbUrl, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, reasoningMarkup, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, usageMarkup } from "./03-media.js";
+import { activityMarkup, attachmentThumbUrl, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, mediaTruncatedNotice, reasoningMarkup, remainingAttachments, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, usageMarkup } from "./03-media.js";
 import { openConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
@@ -35,6 +35,10 @@ export function messageElement(message, temporary = false) {
     // 当 activity 已内嵌正文（prose 条目）时，正文按时间交错展示，不再在末尾重复渲染；
     // 末尾的 answer-content 仅保留用于复制/检索（隐藏），避免与时间线重复。
     const hideBottomContent = activityHasProse && !temporary;
+    // 媒体就地内嵌在工具调用处（toolRunMarkup 自带）；末尾网格只渲染"没有就地归属"的
+    // 附件——新消息的附件都在 run.media 里（集合命中→不重复渲染），旧会话没有 run.media
+    // （集合为空→末尾网格照旧），两条渲染路径互不打架。
+    const bottomAttachments = remainingAttachments(metadata);
     row.innerHTML = `
       <div class="message-avatar">AI</div>
       <div class="message-card">
@@ -45,7 +49,8 @@ export function messageElement(message, temporary = false) {
           ${temporary ? '<div class="run-activity activity">正在准备</div>' : ''}
           <div class="answer-content" data-raw="" ${hideBottomContent ? 'style="display:none"' : ''}>${temporary ? '' : abortedBadge + markdown(message.content)}</div>
           ${temporary ? '' : sourcesMarkup(metadata.sources)}
-          ${mediaMarkup(metadata.attachments)}
+          ${mediaMarkup(bottomAttachments)}
+          ${bottomAttachments.length ? mediaTruncatedNotice(metadata.attachments_truncated) : ''}
           ${temporary ? '' : fileChangesSummaryMarkup(metadata.files)}
           ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance }, message.created_at)}
           ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
