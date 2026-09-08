@@ -29,36 +29,68 @@ export function updateSkillSummary() {
   $('#skillsSummary').textContent = `${state.bootstrap.skills.length} 个可用，当前 Agent 预设 ${fixedCount} 个（新建会话自动预填引用）`;
 }
 
+/* ---------- API 供应商：卡片列表 + 点开才弹出的设置对话框 ---------- */
+
+// 请求格式 → 卡片类型标签（与表单下拉同一套格式名，避免两处各写各的）。
+const PROVIDER_FORMAT_LABELS = {
+  openai_chat: 'OpenAI 兼容',
+  codex_responses: 'Codex /responses',
+  gemini: 'Gemini',
+  claude: 'Claude',
+  lm_studio: 'LM Studio',
+  ollama: 'Ollama',
+  llama_cpp: 'llama.cpp',
+  unsloth: 'Unsloth',
+};
+
+function providerProfiles() {
+  return state.bootstrap?.model_profiles || state.bootstrap?.providers || [];
+}
+
+function providerCardMarkup(provider) {
+  const id = escapeHtml(provider.id || '');
+  const name = escapeHtml(provider.name || '未命名供应商');
+  const model = escapeHtml(provider.model || '未选择模型');
+  const format = PROVIDER_FORMAT_LABELS[provider.request_format] || escapeHtml(provider.request_format || '未指定格式');
+  return `
+    <div class="provider-card${provider.is_default ? ' is-default' : ''}" data-provider-card="${id}" role="button" tabindex="0" aria-label="编辑 ${name}">
+      <button class="provider-card-delete" type="button" data-provider-delete="${id}" title="删除 ${name}" aria-label="删除 ${name}">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
+      <span class="provider-card-name" title="${name}">${name}</span>
+      <span class="provider-card-model" title="${model}">${model}</span>
+      <span class="provider-card-foot">
+        <span class="provider-card-tag">${format}</span>
+        ${provider.is_default ? '<span class="provider-card-badge">当前</span>' : ''}
+      </span>
+    </div>`;
+}
+
 export function renderProviders() {
-  const allProviders = state.bootstrap.model_profiles || state.bootstrap.providers || [];
-  const providers = allProviders.filter((provider) => (provider.kind || 'online') === state.providerKindTab);
+  const providers = providerProfiles().filter((provider) => (provider.kind || 'online') === state.providerKindTab);
   $$('[data-provider-kind]').forEach((button) => {
     const active = button.dataset.providerKind === state.providerKindTab;
     button.classList.toggle('active', active);
     button.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  const select = $('#providerSelect');
-  select.innerHTML = providers.length
-    ? providers.map((provider) => `<option value="${provider.id}">${escapeHtml(provider.name)}</option>`).join('')
-    : `<option value="">尚未添加${state.providerKindTab === 'local' ? '本地' : '在线'} API</option>`;
-  const currentId = $('#providerId').value;
-  const current = providers.find((provider) => provider.id === currentId)
-    || providers.find((provider) => provider.id === state.bootstrap.settings.provider_id)
-    || providers[0];
-  showProviderForm(current || {
-    kind: state.providerKindTab,
-    request_format: state.providerKindTab === 'local' ? 'lm_studio' : 'openai_chat',
-  }, { editing: false });
+  const container = $('#providerCards');
+  if (!container) return;
+  // 「添加 API」卡片固定排在最后一张（列表为空时它就是唯一一张卡）。
+  container.innerHTML = providers.map(providerCardMarkup).join('') + `
+    <button type="button" class="provider-card provider-card-add" data-provider-add>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      <span>添加 API</span>
+    </button>`;
 }
 
-export function showProviderForm(provider = {}, { editing = false, isNew = false } = {}) {
+export function openProviderCard(providerId) {
+  const provider = providerProfiles().find((item) => item.id === providerId);
+  if (!provider) return;
+  showProviderForm(provider);
+}
+
+export function showProviderForm(provider = {}, { isNew = false } = {}) {
   $('#providerId').value = provider.id || '';
-  if (isNew) {
-    $('#providerSelect').insertAdjacentHTML('beforeend', '<option value="__new__">正在添加新供应商</option>');
-    $('#providerSelect').value = '__new__';
-  } else {
-    $('#providerSelect').value = provider.id || '';
-  }
   $('#providerName').value = provider.name || '';
   $('#providerBaseUrl').value = provider.base_url || '';
   const inferredKind = provider.kind || (['ollama', 'lm_studio', 'llama_cpp', 'unsloth'].includes(provider.request_format) ? 'local' : 'online');
@@ -78,12 +110,18 @@ export function showProviderForm(provider = {}, { editing = false, isNew = false
   $('#toggleProviderKey').title = '显示 API Key';
   $('#providerKeyStatus').textContent = provider.has_api_key ? '已配置' : '未配置';
   $('#providerError').textContent = '';
-  setProviderEditMode(editing, isNew);
+  $('#providerDialogTitle').textContent = isNew ? '添加 API 供应商' : (provider.name || 'API 供应商');
+  $('#providerDialogSubtitle').textContent = inferredKind === 'local' ? '本地 API' : '在线 API';
+  // 卡片点开即可编辑（不再有「只读 → 点编辑」两态）。
+  setProviderEditMode(true, isNew);
   syncProviderKindOptions();
   updateProviderFormatGuide();
   updateProviderContextField();
   updateProviderVisionHint();
   updateUnloadModelButton();
+  const dialog = $('#providerDialog');
+  if (dialog && !dialog.open) dialog.showModal();
+  $('#providerName').focus();
 }
 
 export function syncProviderKindOptions(previousFormat = '') {
@@ -115,38 +153,24 @@ export function updateProviderFormatGuide() {
 }
 
 export function updateProviderContextField() {
-  const field = $('#providerContextField');
-  const input = $('#providerContextWindow');
-  const active = Boolean($('#providerId').value) || state.providerIsNew;
-  field.hidden = !active;
-  input.disabled = !state.providerEditing;
-  $('#providerMaxOutputField').hidden = !active;
-  $('#providerTemperatureField').hidden = !active;
-  ['#providerMaxOutputTokens', '#providerTemperature'].forEach((selector) => {
-    $(selector).disabled = !state.providerEditing;
+  ['#providerContextWindow', '#providerMaxOutputTokens', '#providerTemperature'].forEach((selector) => {
+    const element = $(selector);
+    if (element) element.disabled = !state.providerEditing;
   });
 }
 
 export function setProviderEditMode(editing, isNew = false) {
   state.providerEditing = editing;
   state.providerIsNew = isNew;
-  const active = Boolean($('#providerId').value) || isNew;
-  $$('.provider-field').forEach((element) => { element.hidden = !active; });
-  $('#providerEmpty').hidden = active;
   [
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
     '#providerKind', '#providerModel', '#providerModelCustom', '#providerContextWindow',
     '#providerMaxOutputTokens', '#providerTemperature', '#providerReasoningEffort',
-    '#providerSupportsImages',
-  ].forEach((selector) => { $(selector).disabled = !editing; });
-  $('#providerSelect').disabled = editing;
-  $('#addProvider').disabled = editing;
-  $('#deleteProvider').disabled = !$('#providerId').value || editing;
-  $('#loadProviderModels').disabled = !editing;
-  $('#testProvider').hidden = !active;
-  $('#editProvider').hidden = !active || editing;
-  $('#cancelProvider').hidden = !editing;
-  $('#saveProvider').hidden = !editing;
+    '#providerSupportsImages', '#loadProviderModels',
+  ].forEach((selector) => {
+    const element = $(selector);
+    if (element) element.disabled = !editing;
+  });
   updateProviderContextField();
   updateUnloadModelButton();
 }
@@ -306,36 +330,55 @@ export async function saveProvider(event) {
       else list.push(saved);
     });
     $('#providerId').value = saved.id;
-    renderProviders();
     populateModels();
     const visionSelect = $('#visionProvider');
     if (visionSelect) delete visionSelect.dataset.populated;
     populateVisionSettings();
     toast('API 供应商已保存');
+    cancelProviderEdit();
   } catch (error) {
     $('#providerError').textContent = error.message;
   }
 }
 
 export function addProvider() {
-  if (state.providerEditing) return;
   const local = state.providerKindTab === 'local';
   showProviderForm({
     kind: state.providerKindTab,
     request_format: local ? 'lm_studio' : 'openai_chat',
-  }, { editing: true, isNew: true });
-  $('#providerName').focus();
+  }, { isNew: true });
 }
 
-export function editProvider() {
-  if (!$('#providerId').value) return;
-  setProviderEditMode(true, false);
-  $('#providerName').focus();
-}
-
+// 关闭设置弹层并复位编辑态；Esc、右上角关闭按钮、取消、保存成功四条路径都走这里。
 export function cancelProviderEdit() {
   clearTimeout(providerModelCheckTimer);
+  state.providerEditing = false;
+  state.providerIsNew = false;
+  const dialog = $('#providerDialog');
+  if (dialog?.open) dialog.close();
   renderProviders();
+}
+
+// 卡片右上角 × 的删除入口：按 id 删（不再依赖「先在下拉里选中」）。
+export async function deleteProvider(providerId) {
+  const provider = providerProfiles().find((item) => item.id === providerId);
+  if (!provider) return;
+  if (!confirm(`删除供应商“${provider.name || provider.id}”？这会同时移除模型配置。`)) return;
+  try {
+    await api(`/api/providers/${encodeURIComponent(providerId)}`, { method: 'DELETE' });
+    const data = await api('/api/bootstrap');
+    state.bootstrap = { ...state.bootstrap, ...data };
+    if ($('#providerId').value === providerId) {
+      cancelProviderEdit();
+    } else {
+      renderProviders();
+    }
+    populateModels();
+    populateVisionSettings();
+    toast('供应商已删除');
+  } catch (error) {
+    toast(`删除 API 失败：${error.message}`);
+  }
 }
 
 export async function testProvider() {

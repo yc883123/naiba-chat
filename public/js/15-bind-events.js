@@ -7,9 +7,9 @@ import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, h
 import { branchMessage, isNearBottom, setStickToBottom, startEditMessage } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
-import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
+import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
 import { applyAgentPromptPreset, clearTerminalTasks, closeConversationMenu, closeConversationPromptPresetForm, conversationMenuTargetId, createWorkspace, deleteConversation, importAgentCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openRenameConversation, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveNewWorkspace, saveRenameConversation, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
-import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
+import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteProvider, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openProviderCard, openVisionProviderForm, persistSearchProfiles, pickWorkspace, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
 import { cancelCurrentRun, closeQuickMessagePanel, closeReasoningMenu, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, positionReasoningMenu, quickPanelState, reloadPage, restoreStarterPresets, saveStarterPrompt, sendMessage, setReasoningEffort, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
@@ -589,18 +589,32 @@ export function bindEvents() {
     if (parent && parent !== current) loadWorkspaceTree(parent);
   });
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => switchSettingsTab(button.dataset.settingsTab)));
-  $('#addProvider').addEventListener('click', addProvider);
-  $('#providerSelect').addEventListener('change', (event) => {
-    const provider = state.bootstrap.providers.find((item) => item.id === event.target.value);
-    showProviderForm(provider || {});
+  // API 供应商卡片：整张卡可点即打开设置弹层；右上角 × 删除；末尾「添加 API」卡片新建。
+  $('#providerCards').addEventListener('click', (event) => {
+    const remove = event.target.closest('[data-provider-delete]');
+    if (remove) {
+      deleteProvider(remove.dataset.providerDelete).catch((error) => toast(`删除失败：${error.message}`));
+      return;
+    }
+    if (event.target.closest('[data-provider-add]')) { addProvider(); return; }
+    const card = event.target.closest('[data-provider-card]');
+    if (card) openProviderCard(card.dataset.providerCard);
   });
+  $('#providerCards').addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const card = event.target.closest('[data-provider-card]');
+    if (!card) return;
+    event.preventDefault();
+    openProviderCard(card.dataset.providerCard);
+  });
+  // Esc / 右上角关闭 / 取消：统一由 close 事件复位编辑态并重绘卡片。
+  $('#providerDialog').addEventListener('close', () => cancelProviderEdit());
   $$('[data-provider-kind]').forEach((button) => button.addEventListener('click', () => {
     if (state.providerEditing || state.providerKindTab === button.dataset.providerKind) return;
     state.providerKindTab = button.dataset.providerKind;
     renderProviders();
   }));
   $('#providerForm').addEventListener('submit', saveProvider);
-  $('#editProvider').addEventListener('click', editProvider);
   $('#cancelProvider').addEventListener('click', cancelProviderEdit);
   $('#testProvider').addEventListener('click', testProvider);
   $('#loadProviderModels').addEventListener('click', () => loadProviderModels());
@@ -618,20 +632,6 @@ export function bindEvents() {
   $('#toggleProviderKey').addEventListener('click', toggleProviderKey);
   $('#providerApiKey').addEventListener('input', (event) => {
     if (event.target.value) $('#providerKeyStatus').textContent = '待保存';
-  });
-  $('#deleteProvider').addEventListener('click', async () => {
-    const providerId = $('#providerId').value;
-    if (!providerId) return;
-    const provider = state.bootstrap.providers.find((item) => item.id === providerId);
-    if (!confirm(`删除供应商"${provider?.name || ''}"？`)) return;
-    await api(`/api/providers/${encodeURIComponent(providerId)}`, { method: 'DELETE' });
-    const data = await api('/api/bootstrap');
-    state.bootstrap = { ...state.bootstrap, ...data };
-    $('#providerId').value = '';
-    renderProviders();
-    populateModels();
-    populateVisionSettings();
-    toast('供应商已删除');
   });
   $('#addAgent').addEventListener('click', () => showAgentForm(null));
   $('#agentList').addEventListener('click', (event) => {

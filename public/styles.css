@@ -913,7 +913,28 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .mcp-add-fields input { width: 100%; }
 .mcp-env-row { margin-top: -2px; }
 .mcp-add-fields .form-actions { margin-top: 6px; }
-.provider-form { display: grid; gap: 13px; }
+.provider-form { display: flex; flex-direction: column; max-height: inherit; }
+.provider-form-body { display: grid; gap: 13px; padding: 18px; overflow: auto; }
+/* 错误提示与按钮行固定在弹层底部（字段本身仍按原格式滚动）。 */
+.provider-form-footer { padding: 4px 18px 16px; border-top: 1px solid var(--line); }
+.provider-form-footer .form-actions { margin: 0; }
+.provider-dialog { width: min(620px, calc(100vw - 30px)); height: auto; max-height: min(760px, calc(100dvh - 30px)); }
+/* API 供应商卡片：一行最多三张，最后一张固定是「添加 API」卡片 */
+.provider-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.provider-card { position: relative; display: grid; align-content: start; gap: 6px; min-height: 116px; padding: 14px 14px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+.provider-card:hover, .provider-card:focus-visible { border-color: var(--accent); box-shadow: var(--shadow-1); outline: none; }
+.provider-card.is-default { border-color: var(--accent); background: var(--accent-soft); }
+.provider-card-name { padding-right: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
+.provider-card-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+.provider-card-foot { display: flex; align-items: center; gap: 6px; margin-top: auto; }
+.provider-card-tag { padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 11px; }
+.provider-card-badge { padding: 2px 7px; border-radius: 999px; background: var(--accent-solid); color: #fff; font-size: 11px; }
+.provider-card-delete { position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--muted); padding: 0; cursor: pointer; }
+.provider-card-delete:hover { background: var(--danger-soft); color: var(--danger); }
+.provider-card-delete svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.provider-card-add { place-content: center; justify-items: center; gap: 7px; border-style: dashed; background: transparent; color: var(--muted); }
+.provider-card-add:hover { border-color: var(--accent); color: var(--accent); }
+.provider-card-add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .provider-scope-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; padding: 4px; border-radius: var(--radius); background: var(--surface-2); }
 .provider-scope-tabs button { min-height: 38px; border: 0; border-radius: calc(var(--radius) - 2px); background: transparent; color: var(--muted); font-weight: 600; }
 .provider-scope-tabs button.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 3px rgba(0, 0, 0, .08); }
@@ -1134,6 +1155,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .workspace-control { min-width: 90px; }
   .workspace-control span, .model-control > span, .agent-control > span { display: none; }
   /* 不再隐藏「任务 / Skill」文字标签：只留裸数字没有意义（窄屏优先压缩模型/Agent 下拉框）。 */
+  .provider-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 760px) {
@@ -1208,7 +1230,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .permission-grid { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: 1fr; }
   .rename-conversation-dialog { width: 100vw; max-width: none; }
-  .settings-dialog, .panel-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+  .settings-dialog, .panel-dialog, .provider-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
+  .provider-cards { grid-template-columns: 1fr; }
   /* 移动端隐藏文件面板 */
   .file-panel, .app-shell.file-panel-open .file-panel { display: none !important; }
   .file-changes { border-top-color: var(--line); }
