@@ -29,6 +29,7 @@ from naiba.config import tool_catalog_entries, tool_group_entries, tool_preset_e
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.conv_files import _conv_file_allow, _conv_file_open, _conv_file_save
 from naiba.core.exceptions import ActiveRunError
+from naiba.core.media_types import MIME_BY_EXT
 from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
 from naiba.paths import PathContext, default_path_context, static_asset_version
@@ -39,22 +40,9 @@ _UPLOAD_BODY_LIMIT = 100 * 1024 * 1024
 
 
 # 部分系统 mimetypes 未注册 webp/avif 等，导致 <img> 接到 application/octet-stream
-# 配合 nosniff 而拒绝渲染（缩略图破图）。提供显式兜底映射（自 server.py 随静态职责迁入）。
-_MEDIA_MIME_FALLBACK = {
-    ".webp": "image/webp",
-    ".avif": "image/avif",
-    ".gif": "image/gif",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".mov": "video/quicktime",
-    ".ogg": "audio/ogg",
-    ".oga": "audio/ogg",
-    ".ogv": "video/ogg",
-    ".m4a": "audio/mp4",
-    ".wav": "audio/wav",
-    ".flac": "audio/flac",
-    ".svg": "image/svg+xml",
-}
+# 配合 nosniff 而拒绝渲染（缩略图破图）。兜底映射唯一定义在 core/media_types.py
+# （顺带补齐此前漏登记的 .m4v——视频因此可能不播）。
+_MEDIA_MIME_FALLBACK = dict(MIME_BY_EXT)
 
 
 class AppHTTPServer(ThreadingHTTPServer):

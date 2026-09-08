@@ -18,26 +18,20 @@ from typing import Any
 
 from naiba import net as net_io
 
+from naiba.core.media_types import MEDIA_EXTS, is_media_path
 from naiba.core.paths import path_within  # noqa: F401  (re-export for callers)
 from naiba.storage.media import _ensure_webp_thumb
 
 # 多媒体产物（图片/视频/音频）走"原来那套"消息内产物卡片预览
 # （extract_attachments → metadata.attachments → mediaMarkup），不列入
-# "修改文件"总结，避免同一产物出现两套入口。名单与 extract_attachments 对齐。
-MEDIA_PRODUCT_EXTS = frozenset({
-    ".png", ".jpg", ".jpeg", ".webp", ".gif",
-    ".mp4", ".webm", ".mov", ".m4v", ".ogv",
-    ".wav", ".mp3", ".m4a", ".ogg", ".flac",
-})
+# "修改文件"总结，避免同一产物出现两套入口。
+# 名单唯一定义在 core/media_types.py（前端经 /api/bootstrap.media_exts 取同一份）。
+MEDIA_PRODUCT_EXTS = MEDIA_EXTS
 
 
 def _is_media_product_path(raw: str) -> bool:
     """按扩展名判断文件是否属于多媒体产物（图片/视频/音频）。"""
-    lower = str(raw or "").lower()
-    if "?" in lower:
-        lower = lower.split("?", 1)[0]
-    dot = lower.rfind(".")
-    return dot > 0 and lower[dot:] in MEDIA_PRODUCT_EXTS
+    return is_media_path(raw)
 
 
 # 仅附件、无文字的用户轮次：模型侧显式说明"用户没写指令"，避免模型自行编造用户诉求。
@@ -129,11 +123,8 @@ def extract_attachments(
     if data_dir is None:
         raise ValueError("extract_attachments 必须显式传入 data_dir")
     imaging = dict(imaging or {})
-    extensions = (
-        ".png", ".jpg", ".jpeg", ".webp", ".gif",
-        ".mp4", ".webm", ".mov", ".m4v", ".ogv",
-        ".wav", ".mp3", ".m4a", ".ogg", ".flac",
-    )
+    # 名单唯一定义（core/media_types.py）：不再与 MEDIA_PRODUCT_EXTS 各写一份。
+    extensions = tuple(MEDIA_EXTS)
     # 结构化媒体记录里存放"真实路径/URL"的键。识别到这类 dict 时只产出单个附件，
     # 其 thumb_path/name 作为该附件的元数据，而不是被当作独立附件再次扫描。
     source_keys = ("path", "source", "url", "view_url", "file")

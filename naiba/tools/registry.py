@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from naiba.core.contracts import RunContext
+from naiba.core.media_types import normalize_media_declaration
 
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Protocol
@@ -89,6 +90,60 @@ RETIRED_TOOL_GUIDE: dict[str, str] = {
 }
 for _old_name, _new_name in RETIRED_TOOL_MAP.items():
     RETIRED_TOOL_GUIDE.setdefault(_old_name, f"{_old_name} 已并入 {_new_name}，请改用 {_new_name}。")
+
+# ---- 媒体采集声明表（单一定义扩展位 metadata["media"]）----
+# 契约与取值见 core/media_types.py（policy: inline/intent_gated/never；
+# extract: none/scan/structured）。装配期（build_tool_registry）逐名写入并校验：
+# 内置工具必须显式声明、缺失即报错；MCP/第三方动态工具无声明时走默认
+# （inline/scan）——它们的结果形态不可预知，宁可按通用口径提取。
+# 守门：tests/test_media_declarations.py（声明完整性 + 取值合法 + 名单一致性）。
+MEDIA_DECLARATIONS: dict[str, dict[str, str]] = {
+    # core 域
+    "read_file": {"policy": "never", "extract": "none"},
+    "write_file": {"policy": "inline", "extract": "scan"},
+    "list_directory": {"policy": "intent_gated", "extract": "scan"},
+    "search_files": {"policy": "intent_gated", "extract": "scan"},
+    "edit_file": {"policy": "inline", "extract": "scan"},
+    "pwsh": {"policy": "inline", "extract": "scan"},
+    "run_skill_script": {"policy": "inline", "extract": "scan"},
+    "http_request": {"policy": "inline", "extract": "scan"},
+    "register_mcp": {"policy": "never", "extract": "none"},
+    # Harness 兼容别名（执行层归一，与规范名同口径）
+    "read": {"policy": "never", "extract": "none"},
+    "write": {"policy": "inline", "extract": "scan"},
+    "edit": {"policy": "inline", "extract": "scan"},
+    "grep": {"policy": "intent_gated", "extract": "scan"},
+    # job 域（job_* 返回快照 JSON，产物 URL/路径可能嵌在任意层）
+    "todo_write": {"policy": "never", "extract": "none"},
+    "run_in_background": {"policy": "never", "extract": "none"},
+    "job_output": {"policy": "inline", "extract": "scan"},
+    "job_status": {"policy": "inline", "extract": "scan"},
+    "job_wait": {"policy": "inline", "extract": "scan"},
+    "job_kill": {"policy": "never", "extract": "none"},
+    "subagent": {"policy": "inline", "extract": "scan"},
+    # comfyui 域（wait=true 返回快照：completed_shots[].files 为产物 URL）
+    "comfyui_prepare_workflow": {"policy": "never", "extract": "none"},
+    "comfyui_batch": {"policy": "inline", "extract": "structured"},
+    # capability 域
+    "inspect_installed_skill": {"policy": "never", "extract": "none"},
+    "install_skill": {"policy": "never", "extract": "none"},
+    "unpack_skill_archive": {"policy": "never", "extract": "none"},
+    # vision 域（结果必为结构化媒体记录：images[]/path/heatmap）
+    "vision_analyze": {"policy": "inline", "extract": "structured"},
+    "vision_image_ops": {"policy": "inline", "extract": "structured"},
+    # 侧翼（搜索结果与历史召回里的路径属"顺带提及"，不当作本轮产物）
+    "web_search": {"policy": "never", "extract": "none"},
+    "recall_history": {"policy": "never", "extract": "none"},
+    # documents 域（页图/局部图是渲染产物，read_pdf 只出文本）
+    "read_pdf": {"policy": "never", "extract": "none"},
+    "pdf_render_pages": {"policy": "inline", "extract": "structured"},
+    "pdf_zoom_region": {"policy": "inline", "extract": "structured"},
+}
+
+
+def media_declaration_for(name: str) -> dict[str, str]:
+    """取工具的媒体采集声明（未声明=默认口径，MCP/第三方工具适用）。"""
+    return normalize_media_declaration(MEDIA_DECLARATIONS.get(str(name or "")))
 
 
 def _mcp_tool_policy(annotations: dict[str, Any]) -> ToolPolicyFn:
@@ -172,6 +227,20 @@ class ToolRegistry:
         """
         specs = provider.tools() if hasattr(provider, "tools") else provider
         self.register_many(list(specs))
+
+    def declare_media(self, name: str, declaration: dict[str, Any]) -> None:
+        """写入工具的媒体采集声明（``metadata["media"]``）；未知工具明确报错。
+
+        声明是"是否显示/如何提取媒体"的唯一开关（取值见 core/media_types.py）；
+        装配期逐名写入，避免各处再按工具名硬编码集合（维护说明 §九.30）。
+        """
+        spec = self._specs.get(str(name or ""))
+        if spec is None:
+            raise KeyError(f"媒体声明指向未注册工具：{name}")
+        normalized = normalize_media_declaration(declaration)
+        self._specs[spec.name] = replace(
+            spec, metadata={**(spec.metadata or {}), "media": normalized}
+        )
 
     def register_alias(self, alias: str, target: str) -> None:
         """登记别名（查询层解析）。alias 与 target 相同或为空时忽略。"""
@@ -1007,4 +1076,14 @@ def build_tool_registry() -> ToolRegistry:
     registry.register_many(build_document_tool_specs())
     # 别名表在查询层归一（Phase 5 后唯一来源；当前与 ToolExecutor.TOOL_ALIASES 双轨一致）
     registry.register_alias_map(HARNESS_ALIASES)
+    # 媒体采集声明：内置工具逐名写入 metadata["media"]（缺失即装配期报错，
+    # 不静默回落——漏声明会让产物"看起来没坏但不再显示"）。
+    for name in registry.names():
+        declaration = MEDIA_DECLARATIONS.get(name)
+        if declaration is None:
+            raise KeyError(f"工具缺少媒体声明（MEDIA_DECLARATIONS）：{name}")
+        registry.declare_media(name, declaration)
+    undeclared = sorted(set(MEDIA_DECLARATIONS) - set(registry.names()))
+    if undeclared:
+        raise KeyError(f"MEDIA_DECLARATIONS 存在未注册工具：{undeclared}")
     return registry

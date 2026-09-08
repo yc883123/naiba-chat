@@ -30,6 +30,7 @@ from naiba.core.migration import (
     _copy_legacy_data, _database_has_conversations, _merge_data_tree,
     _sync_bundled_skills, migrate_legacy_data,
 )
+from naiba.core.media_types import media_exts_payload
 from naiba.core.network import network_access_status
 from naiba.core.conv_files import _conv_workspace_root, browse_workspace_tree
 from naiba.core.paths import path_within
@@ -373,6 +374,9 @@ class NaibaChatApp:
             "default_agent_id": self.config.default_agent_id(),
             "workspaces": self.config.data.get("workspaces", []),
             "image_cache_bytes": _uploads_total_bytes(self._paths.data_dir),
+            # 媒体扩展名与分桶上限的唯一来源（core/media_types.py）：前端不再各写
+            # 一份正则，消除"前后端名单漂移"导致的产物静默消失/破图。
+            "media_exts": media_exts_payload(),
             **access,
             "lan_restart_required": str(self.config.data.get("host", "0.0.0.0")) != self.listener_host,
             "update": self.updater.status(),

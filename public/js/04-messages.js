@@ -4,7 +4,7 @@
 
 import { $, api, draggedFileCache, emptyStateElement, escapeHtml, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
-import { activityMarkup, attachmentThumbUrl, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaMarkup, reasoningMarkup, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, usageMarkup } from "./03-media.js";
+import { activityMarkup, attachmentThumbUrl, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, reasoningMarkup, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, usageMarkup } from "./03-media.js";
 import { openConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
@@ -18,7 +18,7 @@ export function messageElement(message, temporary = false) {
   if (Array.isArray(metadata.attachments)) {
     metadata.attachments.forEach((attachment) => {
       const source = attachment.source || attachment.path;
-      if (source && /\.(png|jpe?g|gif|webp)$/i.test(source)) preloadDraggedFile(source, attachment.name);
+      if (source && mediaKind(source, attachment.name) === 'image') preloadDraggedFile(source, attachment.name);
     });
   }
   if (message.role === 'user') {
@@ -177,7 +177,7 @@ export function uploadedFileMarkup(files = []) {
   if (!files.length) return '';
   const html = files.map((file) => {
     const source = file.source || file.path || '';
-    const isImage = /\.(png|jpe?g|webp|gif)$/i.test(source);
+    const isImage = mediaKind(source, file.name) === 'image';
     if (isImage) {
       const thumbUrl = attachmentThumbUrl(file);
       const largeUrl = fileUrl(source);

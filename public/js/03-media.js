@@ -26,6 +26,30 @@ export function attachmentThumbUrl(attachment) {
   return thumb ? fileUrl(thumb) : fileUrl(source);
 }
 
+// 多媒体类型判定（唯一入口）：扩展名名单来自后端 /api/bootstrap.media_exts
+// （唯一定义 naiba/core/media_types.py），前端不再各写一份正则——两处漂移曾导致
+// `.bmp`/`.svg` 产物既无"修改文件"chip、也无媒体卡，在消息里彻底消失。
+// 返回 'image' | 'video' | 'audio' | 'other'。
+export function mediaKind(source, name = '') {
+  const lists = state.bootstrap?.media_exts?.exts || {};
+  for (const candidate of [source, name]) {
+    const ext = fileExtension(candidate);
+    if (!ext) continue;
+    for (const kind of ['image', 'video', 'audio']) {
+      if ((lists[kind] || []).includes(ext)) return kind;
+    }
+  }
+  return 'other';
+}
+
+function fileExtension(value) {
+  const text = String(value || '').split('?')[0];
+  const dot = text.lastIndexOf('.');
+  if (dot <= 0) return '';
+  const ext = text.slice(dot).toLowerCase();
+  return /^\.[a-z0-9]+$/.test(ext) ? ext : '';
+}
+
 // ---- 大图灯箱：会话内左右切换 ----
 // 图片列表 = 当前会话消息里所有可放大的图片（#messages img[data-large-url]），
 // 按 DOM 顺序（= 历史出现顺序）去重；输入区待发送附件与右侧文件面板的图片不参与切换。
@@ -527,18 +551,18 @@ export function mediaMarkup(attachments = []) {
   if (!attachments.length) return '';
   const items = attachments.map((attachment) => {
     const source = attachment.source || attachment.path;
-    const lower = `${String(source).toLowerCase().split('?')[0]} ${String(attachment.name || '').toLowerCase()}`;
+    const kind = mediaKind(source, attachment.name);
     const url = fileUrl(source);
     const safeUrl = escapeHtml(url);
     const name = escapeHtml(attachment.name || '生成文件');
-    if (/\.(png|jpe?g|webp|gif)$/.test(lower)) {
+    if (kind === 'image') {
       const thumbUrl = attachmentThumbUrl(attachment);
       const reusePath = attachment.source || attachment.path || '';
       const reuseThumb = attachment.thumb_path || '';
       return `<span class="media-item"><img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${safeUrl}"><button class="thumb-reuse" type="button" title="发送到输入框（复用此图）" aria-label="发送到输入框" data-reuse-source="${escapeHtml(reusePath)}" data-reuse-name="${name}" data-reuse-thumb="${escapeHtml(reuseThumb)}">↩</button></span>`;
     }
-    if (/\.(mp4|webm|mov|m4v|ogv)(?:\s|$)/.test(lower)) return `<video src="${safeUrl}" controls playsinline preload="metadata"></video>`;
-    if (/\.(wav|mp3|m4a|ogg|flac)(?:\s|$)/.test(lower)) return `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
+    if (kind === 'video') return `<video src="${safeUrl}" controls playsinline preload="metadata"></video>`;
+    if (kind === 'audio') return `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
     return `<a class="file-chip" href="${safeUrl}" target="_blank" rel="noreferrer">${name}</a>`;
   }).join('');
   return `<div class="media-grid">${items}</div>`;
@@ -860,8 +884,6 @@ export function sourcesMarkup(sources = []) {
 
 // 消息末尾「本轮修改的文件」总结。桌面端文件名可点 → 打开右侧文件面板；
 // 手机端（≤760px）由 CSS + openFilePanel 双重把关，仅展示、不可点。
-export const FILE_CHIP_MEDIA_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.svg', '.mp4', '.webm', '.mov', '.m4v', '.ogv', '.wav', '.mp3', '.m4a', '.ogg', '.flac']);
-
 export function fileChangesSummaryMarkup(files = []) {
   if (!Array.isArray(files) || !files.length) return '';
   let edited = 0;
@@ -875,11 +897,10 @@ export function fileChangesSummaryMarkup(files = []) {
   const chips = files.map((f) => {
     if (!f || !f.path) return '';
     const raw = String(f.path);
-    // 图片/视频/音频等多媒体产物走消息内原有附件卡片预览，不冒充"修改文件"chip
-    //（兜底：历史消息 metadata.files 里可能已混入媒体路径）。
-    const lower = raw.toLowerCase();
-    const dot = lower.lastIndexOf('.');
-    if (dot > 0 && FILE_CHIP_MEDIA_EXTS.has(lower.slice(dot))) return '';
+    // 图片/视频/音频等多媒体产物走消息内媒体卡（mediaMarkup），不冒充"修改文件"chip。
+    // 判定与后端同源（mediaKind ← /api/bootstrap.media_exts）：此前前端多算 .bmp/.svg，
+    // 后端又不把它们当媒体，结果产物两边都不显示（静默消失）。
+    if (mediaKind(raw, f.name) !== 'other') return '';
     const name = escapeHtml(f.name || raw.replace(/\\/g, '/').split('/').pop() || raw);
     const isEdit = f.op === 'edit';
     return `<button type="button" class="file-change-chip" data-file-op="${isEdit ? 'edit' : 'write'}" data-open-file="${escapeHtml(raw)}" title="${isEdit ? '编辑' : '新建'}：${escapeHtml(raw)}"><span class="file-change-op">${isEdit ? '改' : '新'}</span><span class="file-change-name">${name}</span></button>`;

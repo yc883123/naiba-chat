@@ -24,10 +24,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from naiba.core.media_types import IMAGE_PROCESS_EXTS
 from naiba.core.paths import path_within
 
 
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+# 上传压缩/缩略图支持的图片格式：唯一定义在 core/media_types.py
+# （GIF 保持原图与动画、不生成缩略图；前端按类型回退主图）。
+IMAGE_SUFFIXES = set(IMAGE_PROCESS_EXTS)
 
 
 # 上传上限：与 app._upload 时代一致的 80MB（multipart 流式也在此拦截）。

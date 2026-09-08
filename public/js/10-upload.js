@@ -4,7 +4,7 @@
 // ============================================================
 
 import { $, escapeHtml, state, toast } from "./01-core.js";
-import { attachmentThumbUrl, fileUrl, updateSendButtonState } from "./03-media.js";
+import { attachmentThumbUrl, fileUrl, mediaKind, updateSendButtonState } from "./03-media.js";
 
 // 与服务端 UPLOAD_MAX_BYTES 一致的前置校验上限（超限直接拦截，不发起请求）。
 export const UPLOAD_MAX_BYTES = 80 * 1024 * 1024;
@@ -90,7 +90,7 @@ export function readAsDataUrl(file) {
 
 export function renderPendingFiles() {
   $('#pendingFiles').innerHTML = state.pendingFiles.map((file, index) => {
-    const isImage = !!(file.path || file.thumb_path) && /\.(png|jpe?g|webp|gif)$/i.test(file.path || file.name || '');
+    const isImage = Boolean(file.path || file.thumb_path) && mediaKind(file.path, file.name) === 'image';
     // 上传中/无 path 时不渲染缩略图（旧逻辑会请求空路径 /api/file?path= → 404 破图）。
     const thumbUrl = file.path ? attachmentThumbUrl(file) : '';
     const image = (isImage && thumbUrl)
