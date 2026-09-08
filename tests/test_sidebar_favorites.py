@@ -238,6 +238,20 @@ class ConversationPromptRetiredTests(unittest.TestCase):
         sort_block = sort_block[: sort_block.index("};")]
         self.assertNotIn("favorite", sort_block)
 
+    def test_top_new_chat_button_removed(self) -> None:
+        """顶栏「新会话」按钮已删：每个工作区分组自带「＋ 新会话」，空列表另有兜底入口。"""
+        index = (ROOT / "public/index.html").read_text(encoding="utf-8")
+        self.assertNotIn("newChatButton", index, "顶栏「新会话」按钮又回来了（与工作区内新建重复）")
+        source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        self.assertIn('data-action="new-chat"', source, "空列表缺少兜底新建入口")
+
+    def test_active_scroll_uses_minimal_scroll(self) -> None:
+        """点击会话不得把列表强制滚到顶：定位用最小滚动（已可见则不动）。"""
+        source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        self.assertIn("export function sidebarScrollForActive(", source)
+        self.assertIn("sidebarScrollForActive(rows, offsets, st, tree.clientHeight || 0)", source)
+        self.assertNotIn("if (idx >= 0) st = offsets[idx];", source, "又退回「强制置顶」的旧写法")
+
     def test_sidebar_scroll_clamp_uses_real_scroll_height(self) -> None:
         """虚拟窗口的滚动上限必须取浏览器真实 scrollHeight（含容器 padding）。
 
