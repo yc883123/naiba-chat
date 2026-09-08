@@ -1372,6 +1372,8 @@ export async function renderAgentToolPicker() {
       }
       const small = document.createElement('small');
       small.textContent = tool.description || '';
+      // 卡片里说明只显示两行（保持紧凑、行高一致），完整说明放 title 悬停查看。
+      if (tool.description) label.title = `${tool.name}：${tool.description}`;
       span.append(b, small);
       label.append(cb, span);
       grid.append(label);
