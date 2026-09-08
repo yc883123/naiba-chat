@@ -201,7 +201,7 @@ def built_in_agent_ids() -> set[str]:
 
 # ---- 工具目录（Agent 编辑页的可选工具集）----
 # 按职责分组；每个工具的 model_target 标注它是给文本模型（走视觉车道）还是给多模态
-# 视觉模型（vision_read_folder 直接看图）用的；default_selected 决定新建 Agent 的默认勾选。
+# 视觉模型（vision_analyze 装载形态直接看图）用的；default_selected 决定新建 Agent 的默认勾选。
 _ALIAS_MAIN = {
     "read": "read_file", "write": "write_file", "edit": "edit_file",
     "grep": "search_files",

@@ -19,17 +19,16 @@ from naiba.vision.runtime import IMAGE_SUFFIXES
 
 # 系统工具（除 9 个基础 agent_tools 外，按模式追加到 allowed_tools）。
 # - Craft 模式：作业/子 Agent/视觉/搜索工具全部可用；
-# - Ask/Plan 模式：仅只读分析与搜索工具（crop/pixel_diff 等写文件工具排除）。
+# - Ask/Plan 模式：仅只读分析与搜索工具（vision_image_ops 这类写文件工具排除）。
 JOB_TOOLS = ("run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent", "todo_write")
 # Harness 兼容别名（read/write/edit/grep）只存在于查询层归一（执行兼容），
 # 不再注入 allowed_tools/模型可见集；只保留规范名，避免别名与规范名重复披露。
 HARNESS_TOOLS = ("read_file", "write_file", "edit_file", "list_directory", "search_files", "pwsh")
 CAPABILITY_TOOLS = ("install_skill", "unpack_skill_archive", "inspect_installed_skill")
-VISION_READONLY_TOOLS = (
-    "vision_describe", "vision_ground", "vision_detect", "vision_ocr", "vision_colors",
-)
-VISION_WRITING_TOOLS = ("vision_crop", "vision_pixel_diff")
-SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("vision_read_folder", "web_search", "comfyui_prepare_workflow", "comfyui_batch")
+# 视觉工具单入口：vision_analyze（识图/装载，只读）与 vision_image_ops（PIL 本地计算，会写产物文件）。
+VISION_READONLY_TOOLS = ("vision_analyze",)
+VISION_WRITING_TOOLS = ("vision_image_ops",)
+SYSTEM_TOOLS_CRAFT = HARNESS_TOOLS + JOB_TOOLS + CAPABILITY_TOOLS + VISION_READONLY_TOOLS + VISION_WRITING_TOOLS + ("web_search", "comfyui_prepare_workflow", "comfyui_batch")
 SYSTEM_TOOLS_READONLY = VISION_READONLY_TOOLS + ("web_search",)
 
 # Cross-tool dependency closure: a Job CREATOR tool is useless without the QUERY

@@ -15,6 +15,7 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import unittest
@@ -435,6 +436,80 @@ class ToolPolicyUnificationTests(unittest.TestCase):
         executor = ToolExecutor(root, sys.executable, 60, MCPRegistry([]), permission_mode="full")
         executor.set_def_resolver(registry.get)
         self.assertEqual(executor._confirmation_reason("t_full", {}, []), "")
+
+
+class ToolNameSetFreshnessTests(unittest.TestCase):
+    """守门：代码里按工具名硬编码的集合必须与声明表同步（防退役名残留/新名漏加）。
+
+    背景：`attachments.ENUMERATION_TOOLS` 曾长期留着 `glob_files/glob/find_files` 三个
+    早已退役（甚至从未存在）的名字，`session.py` 的视觉工具集则反过来漏掉了
+    `vision_analyze/vision_image_ops`——硬编码名单与声明表各写各的，必然漂移。
+
+    注意：**历史重放**用的集合是例外——旧会话落库的 `metadata.tool_runs` 里可能存着
+    退役名，删掉会让老会话内容在重放时静默消失（golden history_images 曾抓到）。
+    这类"兼容保留"由下面第二个用例显式钉死，避免被当成遗留名再清理一次。
+    """
+
+    # 只服务"当前轮次分发"的集合：其中的名字必须是当前声明的工具。
+    CURRENT_RUN_SETS = (
+        "ENUMERATION_TOOLS", "VISION_READONLY_TOOLS", "VISION_WRITING_TOOLS",
+        "SYSTEM_TOOLS_CRAFT", "SYSTEM_TOOLS_READONLY", "JOB_TOOLS",
+        "CAPABILITY_TOOLS", "HARNESS_TOOLS",
+    )
+
+    def _live_names(self) -> set[str]:
+        return set(_assembled_test_registry().names())
+
+    def _current_run_sets(self) -> dict[str, Any]:
+        from naiba.core.attachments import ENUMERATION_TOOLS
+        from naiba.run import session as session_mod
+
+        return {
+            "ENUMERATION_TOOLS": ENUMERATION_TOOLS,
+            "VISION_READONLY_TOOLS": session_mod.VISION_READONLY_TOOLS,
+            "VISION_WRITING_TOOLS": session_mod.VISION_WRITING_TOOLS,
+            "SYSTEM_TOOLS_CRAFT": session_mod.SYSTEM_TOOLS_CRAFT,
+            "SYSTEM_TOOLS_READONLY": session_mod.SYSTEM_TOOLS_READONLY,
+            "JOB_TOOLS": session_mod.JOB_TOOLS,
+            "CAPABILITY_TOOLS": session_mod.CAPABILITY_TOOLS,
+            "HARNESS_TOOLS": session_mod.HARNESS_TOOLS,
+        }
+
+    def test_dispatch_sets_reference_live_tools(self) -> None:
+        live = self._live_names()
+        sets = self._current_run_sets()
+        self.assertEqual(set(sets), set(self.CURRENT_RUN_SETS), "守门覆盖的集合清单与实现不同步")
+        for label, names in sets.items():
+            for name in names:
+                with self.subTest(set=label, tool=name):
+                    self.assertIn(name, live, f"{label} 里的 {name} 不是当前声明的工具名")
+
+    def test_vision_sets_cover_both_entry_points(self) -> None:
+        """视觉只读/写集必须正好覆盖 vision_analyze / vision_image_ops。"""
+        from naiba.run import session as session_mod
+
+        self.assertEqual(set(session_mod.VISION_READONLY_TOOLS), {"vision_analyze"})
+        self.assertEqual(set(session_mod.VISION_WRITING_TOOLS), {"vision_image_ops"})
+
+    def test_legacy_replay_sets_keep_retired_vision_name(self) -> None:
+        """历史重放集合必须保留退役名 vision_read_folder（旧会话已落库数据兼容）。"""
+        from naiba.core.history import CONTENT_READ_TOOLS
+
+        self.assertIn("vision_analyze", CONTENT_READ_TOOLS)
+        self.assertIn(
+            "vision_read_folder", CONTENT_READ_TOOLS,
+            "旧会话 metadata.tool_runs 里可能存着退役名，删掉会让识图结果重放时静默消失",
+        )
+        from naiba.core.tool_results import model_visible_result
+
+        legacy = model_visible_result(
+            "vision_read_folder",
+            json.dumps({"note": "两张图", "images": [{"name": "a.png", "path": "/host/a.png",
+                                                      "thumb_path": "/host/t.jpg", "width": 8, "height": 8}]},
+                       ensure_ascii=False),
+        )
+        self.assertIn("a.png", legacy)
+        self.assertNotIn("thumb_path", legacy, "退役名也必须走同一脱敏分支（不把宿主字段灌回模型）")
 
 
 class VisionEntryUnificationTests(unittest.TestCase):

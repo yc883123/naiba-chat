@@ -546,7 +546,7 @@ class VisionRouter:
                     prompt,
                     cancel_event=cancel_event,
                     budget=vision_budget,
-                    operation=f"vision_describe:{json_mode}",
+                    operation=f"vision_analyze:{json_mode}",
                 )
                 if content and content.strip():
                     self._cache_put(cache_key, content, cfg)
@@ -647,7 +647,7 @@ class VisionRouter:
         """vision_analyze 统一入口：按会话模型能力分流（模型全程无感）。
 
         - 会话无视觉能力（文本大脑）：委托视觉模型后端分析（describe 式，问题直达）；
-        - 会话有视觉能力（多模态大脑）：直接把图片装入对话（原 vision_read_folder 行为）。
+        - 会话有视觉能力（多模态大脑）：直接把图片装入对话（装载形态）。
         分流依据为 run_context.model_has_vision（会话固化产物，非模型自省）。
         """
         if isinstance(ctx, dict) and ctx.get("model_has_vision"):
@@ -669,7 +669,7 @@ class VisionRouter:
         """会话化 def 覆盖（RunContext.tool_defs 生产方）：vision_analyze 按会话能力换形态。
 
         模型看到的工具名永远是 vision_analyze；schema 形态按会话模型能力变化：
-        - model_has_vision=True（多模态）：装载形态（原 vision_read_folder 的参数/描述）；
+        - model_has_vision=True（多模态）：装载形态（按装载变体的参数/描述）；
         - model_has_vision=False（文本）：分析形态（registry 基 def 原样）。
         """
         from naiba.tools.registry import vision_analyze_load_variant
@@ -704,7 +704,7 @@ class VisionRouter:
                 max_images = 4
             return self._cache_folder_images(paths, max_images)
         except Exception as exc:  # noqa: BLE001
-            return False, f"vision_read_folder 失败:{exc}"
+            return False, f"vision_analyze 失败：{exc}"
 
     def _cache_folder_images(self, paths: list[str], max_images: int, skip_uploads: bool = True) -> tuple[bool, str]:
         """扫描路径/文件夹里的图片，经 _process_uploaded_image 缓存到 uploads，返回带缩略图的列表。"""
@@ -729,7 +729,7 @@ class VisionRouter:
         total_candidates = len(candidates_all)
         candidates = candidates_all[:max_images]
         if not candidates:
-            return False, "vision_read_folder: 未找到图片文件"
+            return False, "vision_analyze：未找到图片文件"
 
         target_dir = (Path(self.app.config.resolve_data_dir()) / "uploads").resolve() \
             if getattr(self.app, "config", None) else (Path.cwd() / "uploads").resolve()
@@ -765,7 +765,7 @@ class VisionRouter:
             except OSError:
                 continue
         if not images:
-            return False, "vision_read_folder: 图片读取/缓存失败"
+            return False, "vision_analyze：图片读取/缓存失败"
         note = f"已读取 {len(images)} 张图片"
         if total_candidates > len(images):
             note += (
@@ -822,7 +822,7 @@ class VisionRouter:
             cancel_event = _ctx.get("cancel_event") if isinstance(_ctx, dict) else None
             paths = self._resolve_paths(args)
             if not paths:
-                return False, "vision_describe: 请提供 paths 或 image 参数（图片文件路径）"
+                return False, "vision_analyze：请提供 paths 或 image 参数（图片文件路径）"
             try:
                 limit = max(1, min(int(args.get("max_images") or 4), 4))
             except (TypeError, ValueError):
@@ -839,7 +839,7 @@ class VisionRouter:
                 )
             return True, result
         except Exception as exc:  # noqa: BLE001
-            return False, f"vision_describe 失败：{exc}"
+            return False, f"vision_analyze 失败：{exc}"
 
     @staticmethod
     def _extract_json(text: str) -> Any:
@@ -875,20 +875,20 @@ class VisionRouter:
         try:
             paths = self._resolve_paths(args)
             if not paths:
-                return False, "vision_crop: 请提供 image 参数"
+                return False, "vision_image_ops(crop)：请提供 image 参数"
             region = str(args.get("region") or "").strip()
             parts = [int(x) for x in region.replace(",", " ").split() if x.strip().lstrip("-").isdigit() or x.strip().isdigit()]
             if len(parts) != 4:
-                return False, "vision_crop: region 需为 x1,y1,x2,y2 四个整数"
+                return False, "vision_image_ops(crop)：region 需为 x1,y1,x2,y2 四个整数"
             x1, y1, x2, y2 = parts
             size = _image_size(paths[0])
             if not size:
-                return False, "vision_crop: 无法读取图片尺寸"
+                return False, "vision_image_ops(crop)：无法读取图片尺寸"
             width, height = size
             x1, x2 = sorted((max(0, min(x1, width)), max(0, min(x2, width))))
             y1, y2 = sorted((max(0, min(y1, height)), max(0, min(y2, height))))
             if x2 - x1 < 1 or y2 - y1 < 1:
-                return False, "vision_crop: 裁剪区域为空"
+                return False, "vision_image_ops(crop)：裁剪区域为空"
             from PIL import Image
 
             with Image.open(paths[0]) as image:
@@ -902,13 +902,13 @@ class VisionRouter:
                 ensure_ascii=False,
             )
         except Exception as exc:  # noqa: BLE001
-            return False, f"vision_crop 失败：{exc}"
+            return False, f"vision_image_ops(crop) 失败：{exc}"
 
     def _tool_colors(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
         try:
             paths = self._resolve_paths(args)
             if not paths:
-                return False, "vision_colors: 请提供 image 参数"
+                return False, "vision_image_ops(colors)：请提供 image 参数"
             top = min(max(int(args.get("top", 6)), 1), 20)
             image = _read_rgb(paths[0])
             small = image.copy()
@@ -928,14 +928,14 @@ class VisionRouter:
                 )
             return True, json.dumps({"colors": rows}, ensure_ascii=False)
         except Exception as exc:  # noqa: BLE001
-            return False, f"vision_colors 失败：{exc}"
+            return False, f"vision_image_ops(colors) 失败：{exc}"
 
     def _tool_pixel_diff(self, args: dict[str, Any], _skills: Any, _ctx: Any) -> tuple[bool, str]:
         try:
             original = str(args.get("original") or "").strip()
             rebuilt = str(args.get("rebuilt") or "").strip()
             if not original or not rebuilt:
-                return False, "vision_pixel_diff: 请提供 original 与 rebuilt 参数"
+                return False, "vision_image_ops(pixel_diff)：请提供 original 与 rebuilt 参数"
             threshold = min(max(int(args.get("threshold", 16)), 0), 255)
             a = _read_rgb(original)
             b = _read_rgb(rebuilt)
@@ -986,7 +986,7 @@ class VisionRouter:
                 ensure_ascii=False,
             )
         except Exception as exc:  # noqa: BLE001
-            return False, f"vision_pixel_diff 失败：{exc}"
+            return False, f"vision_image_ops(pixel_diff) 失败：{exc}"
 
     # ---- 内部工具 ----
     @staticmethod
@@ -1015,7 +1015,7 @@ class VisionRouter:
     def _budgeted_backend_call(
         self, profile: dict[str, Any], parts: list[dict[str, Any]], prompt: str,
         max_tokens: int = 2048, cancel_event: threading.Event | None = None,
-        budget: VisionBudget | None = None, operation: str = "vision_describe",
+        budget: VisionBudget | None = None, operation: str = "vision_analyze",
     ) -> str:
         key = self._budget_key(parts, prompt, operation, max_tokens)
         if budget:
@@ -1039,7 +1039,7 @@ class VisionRouter:
         max_tokens: int,
         cancel_event: threading.Event | None = None,
         vision_budget: VisionBudget | None = None,
-        operation: str = "vision_describe",
+        operation: str = "vision_analyze",
     ) -> str:
         errors: list[str] = []
         for profile in self.vision_backends():

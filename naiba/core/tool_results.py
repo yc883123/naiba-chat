@@ -48,7 +48,7 @@ def _json_object(result: str) -> dict[str, Any] | None:
 
 
 def _vision_load_summary(result: str) -> str:
-    """视觉「装载」形态（vision_analyze/vision_read_folder）：只留 note 与图片名。
+    """视觉「装载」形态（vision_analyze 多模态分流）：只留 note 与图片名。
 
     原始 result 含存储路径/缩略图/尺寸——宿主（extract_attachments、图片注入）用，
     模型只需要名字以便引用具体图片。
@@ -78,7 +78,11 @@ def _vision_ops_summary(result: str) -> str:
 
 
 def model_visible_result(tool_name: str, result: str) -> str:
-    """把工具原始 result 变为模型可见内容：按工具剥离机器字段 + 统一截断标记。"""
+    """把工具原始 result 变为模型可见内容：按工具剥离机器字段 + 统一截断标记。
+
+    ``vision_read_folder`` 为已退役的旧名，仅旧会话落库的 tool_runs 里可能出现；
+    保留同一脱敏分支，避免老会话历史重放时把存储路径/尺寸灌回模型上下文。
+    """
     if tool_name in {"vision_analyze", "vision_read_folder"}:
         value = _vision_load_summary(result)
     elif tool_name == "vision_image_ops":

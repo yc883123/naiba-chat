@@ -233,7 +233,7 @@ class ToolRegistry:
     def schemas(self) -> list[dict[str, Any]]:
         """暴露给 Web 端与提示词构建的精简 Schema（模型/Web 可见集）。
 
-        Harness 别名（read/write/edit/glob/grep）不在此列：别名只存在于查询层归一
+        Harness 别名（read/write/edit/grep）不在此列：别名只存在于查询层归一
         （resolve/execute 兼容保留），不向模型与 Web 披露，避免与规范名重复出现。
         """
         rows = []

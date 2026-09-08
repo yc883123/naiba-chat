@@ -107,6 +107,14 @@ def _image_intent(text: str) -> bool:
     return bool(_IMAGE_MEDIA_TERM_RE.search(t) and _IMAGE_VIEW_ACTION_RE.search(t))
 
 
+# 枚举类工具（列出/搜索目录、按名匹配文件）：返回值是一批文件路径。
+# 只有当用户明确要求查看/列出/查找图片时，才把它们返回的图片当可显示附件，
+# 否则不作为附件，避免一次目录列举把一堆不相干的图片都拉进消息末尾。
+# 名单 = 当前规范名 + 查询层别名（grep→search_files，模型可能直接这么调用）；
+# 守门 tests/test_tool_registry_shape.py::ToolNameSetFreshnessTests 反查声明表。
+ENUMERATION_TOOLS = frozenset({"list_directory", "search_files", "grep"})
+
+
 def extract_attachments(
     runs: list[dict[str, Any]],
     allow_enumerated_media: bool = False,
@@ -126,10 +134,6 @@ def extract_attachments(
         ".mp4", ".webm", ".mov", ".m4v", ".ogv",
         ".wav", ".mp3", ".m4a", ".ogg", ".flac",
     )
-    # 枚举类工具（列出/搜索目录、按名匹配文件）的返回值是一批文件路径；
-    # 只有当用户明确要求查看/列出/查找图片时才把它们当可显示附件，否则不作为附件，
-    # 避免 glob/list 把一堆不相干的图片都拉进消息末尾。
-    enumeration_tools = {"glob_files", "glob", "list_directory", "search_files", "grep", "find_files"}
     # 结构化媒体记录里存放"真实路径/URL"的键。识别到这类 dict 时只产出单个附件，
     # 其 thumb_path/name 作为该附件的元数据，而不是被当作独立附件再次扫描。
     source_keys = ("path", "source", "url", "view_url", "file")
@@ -192,8 +196,8 @@ def extract_attachments(
             visit(item)
 
     for run in runs:
-        # 枚举类工具（glob/list/search）返回一批路径；若非"用户明确要看图"，跳过其图片附件。
-        if not allow_enumerated_media and str(run.get("tool") or "") in enumeration_tools:
+        # 枚举类工具（list_directory/search_files/grep）返回一批路径；若非"用户明确要看图"，跳过其图片附件。
+        if not allow_enumerated_media and str(run.get("tool") or "") in ENUMERATION_TOOLS:
             continue
         result = run.get("result", "")
         try:
@@ -262,8 +266,8 @@ def extract_attachments(
         seen.add(content_key)
         unique.append({"source": source, "name": name, "thumb_path": thumb_path})
 
-    # 同一张图可能同时被工具路径(glob/pwsh/…复制到 generated，无缩略图)与
-    # vision_read_folder(缓存到 uploads，带缩略图)各记录一份。按原始文件名去重，
+    # 同一张图可能同时被工具路径（pwsh/脚本把它复制到 generated，无缩略图）与
+    # vision_analyze（缓存到 uploads，带缩略图）各记录一份。按原始文件名去重，
     # 优先保留带 thumb_path 的版本，避免出现"同图双份、其中一份缩略图破图"。
     by_key: dict[str, dict[str, str]] = {}
     order: list[str] = []

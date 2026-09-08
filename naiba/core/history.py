@@ -89,7 +89,11 @@ def encode_image_for_model(source: str) -> dict[str, str] | None:
 # 它们会被持久注入到下一轮及之后的历史，避免模型跨轮丢失或反复调用视觉 API。
 # 其余的一次性/查询类工具（pwsh、list_directory、job_*、web_search 等）
 # 不注入历史，防止上下文无限膨胀。
-CONTENT_READ_TOOLS = frozenset({"read_file", "search_files", "vision_read_folder", "vision_analyze"})
+# 内容读取类工具（其输出作为"不可信数据"跨轮重放）。
+# 保留退役名 vision_read_folder：它只可能出现在**旧会话已落库的 metadata.tool_runs** 里
+# （新会话只会写 vision_analyze），删掉会让老会话的识图结果在重放时静默消失——
+# 属"向后兼容保留的弃用路径"，不是遗留代码；守门 test_tool_registry_shape 钉死。
+CONTENT_READ_TOOLS = frozenset({"read_file", "search_files", "vision_analyze", "vision_read_folder"})
 
 
 def _content_read_tool_outputs(tool_runs: list[dict[str, Any]]) -> str:

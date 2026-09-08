@@ -651,8 +651,8 @@ class ConversationRunMixin:
                 "activity": _safe_activity(self._all_run_events(run_id), reasonings, display_runs),
                 "usage": usage,
                 "performance": performance,
-                # 只有用户明确要求看/列出/查找图片时，才把枚举类工具(glob/list/search)返回的图片
-                # 作为附件显示；否则枚举结果只是路径，避免一堆不相干的图片出现在消息末尾。
+                # 只有用户明确要求看/列出/查找图片时，才把枚举类工具(list_directory/search_files)
+                # 返回的图片作为附件显示；否则枚举结果只是路径，避免一堆不相干的图片出现在消息末尾。
                 "attachments": extract_attachments(
                     runs,
                     allow_enumerated_media=_image_intent(message),

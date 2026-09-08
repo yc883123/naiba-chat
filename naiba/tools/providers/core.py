@@ -1,11 +1,10 @@
-"""core 域工具 Provider：11 个核心工具「schema + 实现函数」单一定义。
+"""core 域工具 Provider：9 个核心工具「schema + 实现函数」单一定义。
 
 实现函数自 ``ToolExecutor._tool_*`` 原样抽取（self → ctx，字节语义等价；Phase 3 双轨对拍：
 旧方法保留至 Phase 5，本模块为权威实现），共用的路径解析/规则函数随迁。
 
-执行统一签名：``fn(ctx, arguments, active_skills=None)``（返回值与旧方法一致：
-多数返回 str，``call_mcp`` 返回 ``(success, result)``）；绑定为 ToolSpec.execute 时
-统一归一为 ``(arguments, active_skills, run_context) -> (success, result)``。
+执行统一签名：``fn(ctx, arguments, active_skills=None)``（返回值与旧方法一致，均为 str）；
+绑定为 ToolSpec.execute 时统一归一为 ``(arguments, active_skills, run_context) -> (success, result)``。
 """
 from __future__ import annotations
 
@@ -790,7 +789,7 @@ def _result_success(name: str, result: str) -> bool:
 
 
 class CoreToolProvider:
-    """core 域 Provider：10 个核心工具（不含已删除的 call_mcp）的单一定义（schema + 实现函数绑定）。"""
+    """core 域 Provider：9 个核心工具的单一定义（schema + 实现函数绑定）。"""
 
     def __init__(self, context: ToolContext) -> None:
         self._context = context

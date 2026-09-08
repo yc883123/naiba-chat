@@ -808,7 +808,7 @@ class SkillAgent:
                         ),
                     }
                 )
-            # vision_read_folder：把读取的图片作为 image content 分批注入，供多模态模型直接看图。
+            # vision_analyze（装载形态）：把读取的图片作为 image content 分批注入，供多模态模型直接看图。
             # 每批（=一次 vision_analyze 调用）最多 4 张；超限在注入文本中显式标注，
             # 避免模型误以为"后续批次不存在"（静默截断=误导源，教训 24）。
             step_batches = _extract_step_image_batches(step_runs, bool(profile.get("supports_images")))
