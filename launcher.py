@@ -252,12 +252,27 @@ def _notify_startup_error(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+def _force_utf8_stdio(streams=None) -> None:
+    """把子进程 stdout/stderr 强制为 UTF-8（冻结版 runw 下 PYTHONIOENCODING 未必生效）。
+
+    背景：`run_skill_script` 的父进程按 UTF-8 解码子进程输出；若子进程按 locale(GBK)
+    输出，脚本打印的中文路径会变成乱码（用户实测：`C:\\...\\临时提示词\\...` 打印成
+    `C:\\...\\??ʱ??ʾ??\\...`），而父进程再把这个乱码路径当媒体产物 → 前端破图。
+    """
+    for stream in (streams if streams is not None else (sys.stdout, sys.stderr)):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            continue
+
+
 def _run_skill_script(argv: list[str]) -> int:
     """冻结版子进程入口：naiba-chat.exe --run-skill-script <script> [args...]。
 
     只设置 sys.argv 后以 __main__ 方式执行脚本，不初始化 GUI/HTTP 服务/实例锁。
     返回进程退出码。
     """
+    _force_utf8_stdio()
     if not argv:
         print("缺少 --run-skill-script 的脚本路径", file=sys.stderr)
         return 2

@@ -155,9 +155,18 @@ class MediaCollector:
                             thumb_path = source
                 except (OSError, urllib.error.URLError, ValueError) as exc:
                     # 缓存失败不静默：记日志并保留原来源（ComfyUI /view 由 /api/file 代理显示）。
-                    logger.warning(
-                        "媒体缓存失败，保留原来源：source=%s error=%s", source, exc
-                    )
+                    logger.warning("媒体缓存失败，保留原来源：source=%s error=%s", source, exc)
+        # 落地校验：本地路径必须真实存在，否则**丢弃**该记录。
+        # 否则会给消息挂上一张必然 403/404 的破图（真实事故：脚本 stdout 中文乱码 →
+        # 路径不存在 → 前端渲染出破损图像）；URL 仍保留（ComfyUI /view 由 /api/file 代理）。
+        if parsed.scheme not in {"http", "https"}:
+            try:
+                if not Path(source).expanduser().is_file():
+                    logger.info("媒体候选落地失败（本地文件不存在），丢弃：source=%s", source)
+                    return None
+            except OSError as exc:
+                logger.warning("媒体候选落地校验失败，丢弃：source=%s error=%s", source, exc)
+                return None
         return {"kind": kind, "name": name, "source": source, "thumb_path": thumb_path}
 
 

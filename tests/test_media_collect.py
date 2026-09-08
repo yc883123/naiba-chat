@@ -278,6 +278,22 @@ class ContentAddressedCacheTests(_TempCase):
         self.assertTrue(Path(first["source"]).is_file() and Path(second["source"]).is_file())
 
 
+    def test_nonexistent_local_path_is_dropped(self) -> None:
+        """本地路径不存在（如脚本 stdout 中文乱码、文件已被移动）→ 不产出记录。
+
+        否则会给消息挂一张必然 403/404 的破图（用户实测：run_skill_script 打印的乱码
+        路径被当媒体产物，前端渲染成破损图像）。
+        """
+        missing = self.src / "不存在的目录" / "ghost.png"
+        collected = self.collector.collect(_run(f"moved a.png -> {missing}"), INLINE)
+        self.assertEqual(collected["media"], [])
+
+    def test_mojibake_path_is_dropped(self) -> None:
+        """GBK 乱码路径（非 UTF-8 子进程输出被按 UTF-8 解码的产物）同样丢弃。"""
+        mojibake = "C:\\Users\\ylxia\\Desktop\\\ufffd\ufffd\u02b1\ufffd\\preview_images\\a.png"
+        self.assertEqual(self.collector.collect(_run(f"moved a.png -> {mojibake}"), INLINE)["media"], [])
+
+
 class UnionRunMediaTests(_TempCase):
     """消息级汇总：顺序、去重、分桶截断、旧数据兼容。"""
 
@@ -404,6 +420,36 @@ class MediaContractTests(unittest.TestCase):
         visible = model_visible_run(run)
         self.assertNotIn("media", visible)
         self.assertNotIn("media_truncated", visible)
+
+
+class ToolRunEncodingTests(unittest.TestCase):
+    """`run_skill_script` 子进程 stdio 必须 UTF-8（否则中文路径乱码 → 乱码路径变破图）。"""
+
+    def test_frozen_entry_forces_utf8_stdio(self) -> None:
+        try:
+            import launcher
+        except ImportError as exc:  # 桌面依赖缺失时跳过（CI/无 GUI 环境）
+            self.skipTest(f"launcher 不可导入：{exc}")
+
+        calls = []
+
+        class _Stream:
+            def reconfigure(self, **kwargs):
+                calls.append(kwargs)
+
+        launcher._force_utf8_stdio((_Stream(), _Stream()))
+        self.assertEqual(len(calls), 2)
+        for kwargs in calls:
+            self.assertEqual(kwargs.get("encoding"), "utf-8")
+            self.assertEqual(kwargs.get("errors"), "replace")
+
+    def test_force_utf8_stdio_tolerates_none_stream(self) -> None:
+        try:
+            import launcher
+        except ImportError as exc:
+            self.skipTest(f"launcher 不可导入：{exc}")
+
+        launcher._force_utf8_stdio((None,))  # 无控制台的 runw 下 sys.stdout 可能为 None
 
 
 if __name__ == "__main__":
