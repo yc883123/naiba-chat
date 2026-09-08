@@ -1012,9 +1012,13 @@ class ChatStorage:
         workspace_dir: str | None = None,
         workspace_group: str | None = None,
         reasoning_effort: str | None = None,
-        favorite: bool | None = None,
     ) -> dict[str, Any] | None:
-        """Update settings owned by one conversation and return its summary."""
+        """Update settings owned by one conversation and return its summary.
+
+        ``favorite`` 不走这里：收藏只是侧栏归类标记，**不能推进 ``updated_at``**
+        （侧栏按更新时间排序，推进会把会话顶到工作区最前、打乱顺序），
+        改用 ``set_conversation_favorite``。
+        """
         values: dict[str, Any] = {}
         if title is not None:
             clean_title = " ".join(str(title).strip().split())[:120]
@@ -1071,9 +1075,6 @@ class ChatStorage:
             values["workspace_dir"] = str(workspace_dir or "").strip()
         if workspace_group is not None:
             values["workspace_group"] = str(workspace_group or "").strip()
-        if favorite is not None:
-            # 收藏只是侧栏归类标记，不参与模型上下文，也不影响任何冻结快照。
-            values["favorite"] = 1 if bool(favorite) else 0
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
@@ -1098,6 +1099,21 @@ class ChatStorage:
                     conversation_id,
                 ),
             )
+
+    def set_conversation_favorite(self, conversation_id: str, favorite: bool) -> dict[str, Any] | None:
+        """只改收藏标记，**不动 ``updated_at``**。
+
+        侧栏工作区分组按 ``updated_at`` 倒序（且默认只显示最新 5 条）：收藏若推进时间，
+        会话会被顶到工作区最前、打乱用户熟悉的顺序，启动时"最新 5 条"也会被收藏项挤占。
+        """
+        with self._connect() as db:
+            cursor = db.execute(
+                "UPDATE conversations SET favorite = ? WHERE id = ?",
+                (1 if bool(favorite) else 0, conversation_id),
+            )
+            if cursor.rowcount == 0:
+                return None
+        return self.get_conversation(conversation_id, include_messages=False)
 
     def clear_workspace_group(self, workspace_group: str) -> int:
         """删除工作区时把其下对话归档到「未分组」（workspace_group 置空），返回受影响行数。"""

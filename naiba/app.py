@@ -691,8 +691,15 @@ class NaibaChatApp:
             model_key=model_key, permission_mode=permission_mode,
             web_search_enabled=web_search_enabled, deep_reasoning_enabled=deep_reasoning_enabled,
             reasoning_effort=reasoning_effort, workspace_dir=workspace_dir,
-            workspace_group=workspace_group, favorite=favorite,
+            workspace_group=workspace_group,
         )
+        if favorite is not None:
+            # 收藏单独落库：只改标记、不推进 updated_at（否则侧栏顺序被重排）。
+            # 会话不存在时 update_conversation_settings 已返回 None，这里保持一致语义。
+            favorited = self.storage.set_conversation_favorite(conversation_id, favorite)
+            if favorited is None:
+                return {"error": "对话不存在"}, HTTPStatus.NOT_FOUND
+            updated = favorited if updated is None else {**updated, **favorited}
         return updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND
 
     def api_upsert_workspace(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
