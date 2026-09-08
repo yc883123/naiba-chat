@@ -79,7 +79,7 @@ class FavoriteStorageTests(unittest.TestCase):
         self.assertEqual(int(row["favorite"]), 0)
 
     def test_toggle_round_trip_through_list_and_get(self) -> None:
-        updated = self.storage.update_conversation_settings(self.conv_id, favorite=True)
+        updated = self.storage.set_conversation_favorite(self.conv_id, True)
         self.assertEqual(int(updated["favorite"]), 1)
         listed = next(
             item for item in self.storage.list_conversations() if item["id"] == self.conv_id
@@ -88,13 +88,24 @@ class FavoriteStorageTests(unittest.TestCase):
         self.assertEqual(
             int(self.storage.get_conversation(self.conv_id, include_messages=False)["favorite"]), 1
         )
-        again = self.storage.update_conversation_settings(self.conv_id, favorite=False)
+        again = self.storage.set_conversation_favorite(self.conv_id, False)
         self.assertEqual(int(again["favorite"]), 0)
+
+    def test_favorite_does_not_bump_updated_at(self) -> None:
+        """收藏不得推进 updated_at：否则侧栏按时间排序会把会话顶到工作区最前。"""
+        before = self.storage.get_conversation(self.conv_id, include_messages=False)
+        self.storage.set_conversation_favorite(self.conv_id, True)
+        after = self.storage.get_conversation(self.conv_id, include_messages=False)
+        self.assertEqual(before["updated_at"], after["updated_at"], "收藏改动了 updated_at（会重排侧栏）")
+        # 对照：改标题这类真实设置必须推进时间（侧栏排序依赖它）。
+        self.storage.update_conversation_settings(self.conv_id, title="改个名")
+        renamed = self.storage.get_conversation(self.conv_id, include_messages=False)
+        self.assertGreaterEqual(int(renamed["updated_at"]), int(after["updated_at"]))
 
     def test_favorite_keeps_other_fields(self) -> None:
         self.storage.update_conversation_settings(self.conv_id, title="自定义标题", system_prompt="旧提示词")
         before = self.storage.get_conversation(self.conv_id, include_messages=False)
-        self.storage.update_conversation_settings(self.conv_id, favorite=True)
+        self.storage.set_conversation_favorite(self.conv_id, True)
         after = self.storage.get_conversation(self.conv_id, include_messages=False)
         for key in (
             "title",
@@ -105,6 +116,7 @@ class FavoriteStorageTests(unittest.TestCase):
             "workspace_group",
             "permission_mode",
             "model_key",
+            "updated_at",
         ):
             with self.subTest(field=key):
                 self.assertEqual(before[key], after[key])
@@ -132,9 +144,12 @@ class FavoriteApiTests(unittest.TestCase):
         self.assertIn("favorite", payload.get("error", ""))
 
     def test_accepts_boolean_and_returns_field(self) -> None:
+        before = self.app.storage.get_conversation(self.conv_id, include_messages=False)
         payload, status = self.app.api_update_conversation_settings(self.conv_id, {"favorite": True})
         self.assertEqual(int(status), 200)
         self.assertEqual(int(payload["favorite"]), 1)
+        after = self.app.storage.get_conversation(self.conv_id, include_messages=False)
+        self.assertEqual(before["updated_at"], after["updated_at"], "接口路径也在推进 updated_at")
         payload, status = self.app.api_update_conversation_settings(self.conv_id, {"favorite": False})
         self.assertEqual(int(status), 200)
         self.assertEqual(int(payload["favorite"]), 0)
@@ -201,6 +216,27 @@ class ConversationPromptRetiredTests(unittest.TestCase):
         # 收藏分组必须在工作区分组循环之后追加（侧栏最下方）。
         loop_end = source.index("const favoriteList = sortConv(")
         self.assertLess(source.index("for (const wsName of orderedNames)"), loop_end)
+
+    def test_favorite_has_dedicated_storage_path(self) -> None:
+        """收藏只能走 set_conversation_favorite（不推进 updated_at），别塞回通用设置更新。"""
+        source = (ROOT / "naiba/storage/store.py").read_text(encoding="utf-8")
+        self.assertIn("def set_conversation_favorite(", source)
+        start = source.index("def update_conversation_settings(")
+        end = source.index("def set_enabled_tool_ids(", start)
+        block = source[start:end]
+        self.assertNotIn("favorite: bool | None", block, "通用设置更新又加了 favorite 参数")
+        self.assertNotIn('values["favorite"]', block, "通用设置更新又写 favorite（会推进 updated_at）")
+        app = (ROOT / "naiba/app.py").read_text(encoding="utf-8")
+        self.assertIn("set_conversation_favorite(conversation_id, favorite)", app)
+
+    def test_frontend_toggle_uses_settings_endpoint_without_reorder(self) -> None:
+        source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        # 收藏只提交 favorite 一个字段：不带任何会推进 updated_at 的字段（否则侧栏重排）。
+        self.assertIn("body: { favorite: next }", source)
+        # 工作区分组的排序口径只有 updated_at / 标题，不含 favorite。
+        sort_block = source[source.index("const sortConv = (list) => {"):]
+        sort_block = sort_block[: sort_block.index("};")]
+        self.assertNotIn("favorite", sort_block)
 
     def test_sidebar_scroll_clamp_uses_real_scroll_height(self) -> None:
         """虚拟窗口的滚动上限必须取浏览器真实 scrollHeight（含容器 padding）。
