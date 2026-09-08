@@ -294,6 +294,29 @@ class AgentCardsMarkupTests(unittest.TestCase):
         avatar_rule = avatar_rule[: avatar_rule.index("}")]
         self.assertIn("object-fit: cover", avatar_rule, "头像必须中心裁切填充，不能拉伸变形")
 
+    def test_skill_picker_uses_cards_and_matches_tool_height(self) -> None:
+        """固定 Skill 与工具集同款卡片，且两个列表共用同一高度（用户要求：拉高到一样高）。"""
+        source = self._settings()
+        body = source[source.index("export function renderAgentSkillPicker()"):]
+        body = body[: body.index("\n}")]
+        self.assertIn('class="skill-card"', body)
+        self.assertNotIn('class="skill-item"', body, "技能页的列表样式不该再被 Agent 弹层复用")
+        css = self._css()
+        skills_rule = css[css.index(".agent-skills {"):]
+        skills_rule = skills_rule[: skills_rule.index("}")]
+        self.assertIn("--agent-list-h:", skills_rule, "两个列表必须共用同一个高度变量")
+        skill_list = css[css.index(".agent-skills .skill-list {"):]
+        skill_list = skill_list[: skill_list.index("}")]
+        self.assertIn("height: var(--agent-list-h)", skill_list)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", skill_list)
+        card = css[css.index(".agent-skills .skill-card {"):]
+        card = card[: card.index("}")]
+        self.assertIn("display: flex", card)
+        self.assertIn("border: 1px solid var(--line)", card)
+        tool_scope = css[css.index("#agentToolScope {"):]
+        tool_scope = tool_scope[: tool_scope.index("}")]
+        self.assertIn("height: var(--agent-list-h)", tool_scope, "工具集必须用同一高度变量，否则两边不等高")
+
     def test_scrollable_lists_are_not_clipped(self) -> None:
         """固定 Skill / 工具集列表是滚动容器：网格行必须按内容定高，否则被裁掉且点不到。"""
         css = self._css()
