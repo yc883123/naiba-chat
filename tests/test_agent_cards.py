@@ -364,6 +364,29 @@ class AgentCardsMarkupTests(unittest.TestCase):
         provider_body = provider_body[: provider_body.index("}")]
         self.assertIn("grid-auto-rows: max-content", provider_body)
 
+    def test_expanded_tool_cards_compact_and_distinct_from_parent(self) -> None:
+        """展开后的工具卡片：紧凑 + 与父分组区分度（用户实测"太宽松、父子分不清"）。"""
+        css = self._css()
+        grid = css[css.index(".permission-grid {"):]
+        grid = grid[: grid.index("}")]
+        self.assertIn("gap: 7px", grid)
+        card = css[css.index(".permission-grid > label {"):]
+        card = card[: card.index("}")]
+        self.assertIn("min-height: 54px", card, "卡片高度要收紧（原 68px）")
+        self.assertIn("padding: 8px 10px", card)
+        self.assertIn("background: var(--surface)", card, "子卡片白底")
+        self.assertIn("border: 1px solid var(--line-strong)", card, "描边要加强，与父区分")
+        self.assertIn("box-shadow", card)
+        desc = css[css.index(".permission-grid small {"):]
+        desc = desc[: desc.index("}")]
+        self.assertIn("-webkit-line-clamp: 2", desc, "说明两行截断，保证卡片高度一致")
+        expanded = css[css.index(".agent-tool-group .permission-grid {"):]
+        expanded = expanded[: expanded.index("}")]
+        self.assertIn("background: var(--surface-2)", expanded, "展开区要浅灰底，衬出白色子卡片")
+        settings = (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
+        self.assertIn("label.title = `${tool.name}：${tool.description}`", settings,
+                      "说明被截断，完整描述要进 title 悬停可见")
+
     def test_index_html_still_has_no_duplicate_ids(self) -> None:
         ids = re.findall(r'\sid="([^"]+)"', self._index())
         duplicates = {value for value in ids if ids.count(value) > 1}
