@@ -832,23 +832,48 @@ export async function refreshAgentsFromServer() {
   state.bootstrap.default_agent_id = data.default_agent_id || 'general';
 }
 
+// 卡片上的提示词摘要长度（超出截断，完整内容在弹层里看）。
+const AGENT_PROMPT_PREVIEW_LIMIT = 140;
+
+function agentCardMarkup(agent, defaultId) {
+  const id = escapeHtml(agent.id || '');
+  const name = escapeHtml(agent.name || '未命名 Agent');
+  const skills = Array.isArray(agent.skill_ids) ? agent.skill_ids.length : 0;
+  const prompt = String(agent.system_prompt || '').trim();
+  const preview = prompt.length > AGENT_PROMPT_PREVIEW_LIMIT
+    ? `${prompt.slice(0, AGENT_PROMPT_PREVIEW_LIMIT)}…`
+    : prompt;
+  const badges = [
+    agent.id === defaultId ? '<span class="agent-card-badge">默认</span>' : '',
+    agent.built_in ? '<span class="agent-card-tag">内置</span>' : '',
+  ].join('');
+  return `
+    <div class="agent-card${agent.id === defaultId ? ' is-default' : ''}" data-agent-card="${id}" role="button" tabindex="0" aria-label="编辑 ${name}">
+      ${agent.built_in ? '' : `<button class="agent-card-delete" type="button" data-agent-delete="${id}" title="删除 ${name}" aria-label="删除 ${name}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>`}
+      <span class="agent-card-name" title="${name}">${name}</span>
+      <span class="agent-card-meta">${skills ? `${skills} 个固定 Skill` : '无固定 Skill'}</span>
+      <p class="agent-card-prompt">${preview ? escapeHtml(preview) : '未设置系统提示词'}</p>
+      <span class="agent-card-foot">${badges}</span>
+    </div>`;
+}
+
 export function renderAgentManager() {
-  const list = $('#agentList');
+  const list = $('#agentCards');
   if (!list) return;
   const agents = state.bootstrap?.agents || [];
   const defaultId = String(state.bootstrap?.default_agent_id || '');
-  list.innerHTML = agents.map((agent) => `
-    <div class="agent-item ${agent.id === defaultId ? 'default' : ''}">
-      <div class="agent-item-info">
-        <b>${escapeHtml(agent.name)}${agent.id === defaultId ? '<em>默认</em>' : ''}${agent.built_in ? '<em>内置</em>' : ''}</b>
-        <small>${agent.skill_ids?.length ? `${agent.skill_ids.length} 个固定 Skill` : '无固定 Skill'}</small>
-        ${agent.system_prompt ? `<p>${escapeHtml(agent.system_prompt)}</p>` : ''}
-      </div>
-      <div class="agent-item-actions">
-        <button class="control-button" data-agent-edit="${escapeHtml(agent.id)}" type="button">编辑</button>
-        ${agent.built_in ? '' : `<button class="danger-button" data-agent-delete="${escapeHtml(agent.id)}" type="button">删除</button>`}
-      </div>
-    </div>`).join('') || '<p class="activity">尚未添加 Agent，点击下方按钮新增。</p>';
+  // 「新增 Agent」卡片固定排在最后一张（列表为空时它就是唯一一张卡）。
+  list.innerHTML = agents.map((agent) => agentCardMarkup(agent, defaultId)).join('') + `
+    <button type="button" class="agent-card agent-card-add" data-agent-add>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
+      <span>新增 Agent</span>
+    </button>`;
+}
+
+export function openAgentCard(agentId) {
+  const agent = (state.bootstrap?.agents || []).find((item) => item.id === agentId);
+  if (!agent) return;
+  showAgentForm(agent);
 }
 
 export function renderAgentSkillPicker() {
@@ -885,8 +910,10 @@ export function showAgentForm(agent = null) {
   if (presetSelect) presetSelect.value = '';
   renderAgentPromptPresetSelect();
   $('#agentError').textContent = '';
-  $('#addAgent').hidden = true;
-  $('#agentForm').hidden = false;
+  // 卡片点开即编辑（新增时 ID 可填，编辑已有 Agent 时 ID 锁定）。
+  $('#agentDialogTitle').textContent = state.agentFormIsNew ? '新增 Agent' : (agent?.name || 'Agent 设置');
+  const dialog = $('#agentDialog');
+  if (dialog && !dialog.open) dialog.showModal();
   $('#agentName').focus();
 }
 
@@ -1326,9 +1353,10 @@ export function toggleAllToolGroups() {
   if (btn) btn.textContent = expand ? '收起全部' : '展开全部';
 }
 
+// 关闭 Agent 弹层（Esc、右上角关闭、取消、保存成功四条路径都走这里）。
 export function hideAgentForm() {
-  $('#agentForm').hidden = true;
-  $('#addAgent').hidden = false;
+  const dialog = $('#agentDialog');
+  if (dialog?.open) dialog.close();
   $('#agentError').textContent = '';
 }
 
@@ -1364,6 +1392,8 @@ export async function deleteAgent(agentId) {
   try {
     await api(`/api/agents/${encodeURIComponent(agentId)}`, { method: 'DELETE' });
     await refreshAgentsFromServer();
+    // 正在编辑被删掉的 Agent：连弹层一起关掉，避免表单停在已不存在的条目上。
+    if ($('#agentFormId').value === agentId) hideAgentForm();
     renderAgents();
     renderAgentManager();
     applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));

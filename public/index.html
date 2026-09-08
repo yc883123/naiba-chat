@@ -343,66 +343,7 @@
         </section>
         <section data-settings-panel="agent" hidden>
           <div class="agent-heading"><h3>Agent 管理</h3><p>每个 Agent 拥有独立的预设、规则与固定 Skill，对话可随时切换。</p></div>
-          <div class="agent-manager">
-            <div class="agent-list" id="agentList"></div>
-            <button class="control-button" id="addAgent" type="button">新增 Agent</button>
-            <form id="agentForm" class="agent-form" hidden>
-              <input id="agentFormId" type="hidden">
-              <label>Agent ID
-                <input id="agentId" type="text" placeholder="英文、数字、下划线或连字符">
-              </label>
-              <label>名称
-                <input id="agentName" type="text" placeholder="例如 通用 Agent">
-              </label>
-              <label>系统提示词（预设与规则）
-                <textarea id="agentSystemPromptEdit" rows="5" placeholder="角色、规则和输出偏好"></textarea>
-              </label>
-              <div class="agent-prompt-tools">
-                <label class="agent-prompt-preset">套用快捷提示词
-                  <select id="agentPromptPresetSelect" title="选择一条快捷提示词填入上方系统提示词（已有内容时会先确认）"><option value="">选择快捷提示词…</option></select>
-                </label>
-                <span class="character-card-import">
-                  <button class="control-button" id="importAgentCharacterCard" type="button">导入角色卡 PNG</button>
-                  <input id="agentCharacterCardFileInput" type="file" accept="image/png" hidden>
-                </span>
-                <small class="agent-prompt-hint">导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；快捷提示词在「设置 → 快捷提示词」中管理。</small>
-              </div>
-              <div class="agent-skills">
-                <div class="agent-skills-head"><span><b>固定 Skill</b><small>该 Agent 启用时自动加载</small></span></div>
-                <div class="skill-list" id="agentSkillList"></div>
-              </div>
-              <div class="agent-skills">
-                <div class="agent-skills-head tool-scope-head">
-                  <span><b>工具集</b><small>该 Agent 启用的工具（会话启动时固化，不可中途更改）</small></span>
-                  <span class="tool-scope-meta">
-                    <em id="agentToolPresetState">当前：自定义</em>
-                    <code id="agentToolCount">已选 0 / 0 个工具</code>
-                    <button type="button" class="control-button tiny" id="toggleAllToolGroups">展开全部</button>
-                  </span>
-                </div>
-                <div class="tool-preset-wrap">
-                  <div class="tool-preset-row">
-                    <span class="tool-preset-label">工具预设</span>
-                    <select id="agentToolPresetSelect" class="tool-preset-select" title="选一个预设立即套用；手动勾选下方工具后即变为「自定义」，可把组合存成模板，下次一键复刻"></select>
-                    <input id="agentToolTemplateName" type="text" maxlength="24" placeholder="模板名（留空自动命名）" hidden>
-                    <button type="button" class="control-button tiny" id="agentToolTemplateSave" hidden>存为模板</button>
-                    <span class="tool-preset-tip">预设一键套用 · 手动勾选即自定义，可存模板复刻</span>
-                  </div>
-                  <div class="tool-template-row" id="agentToolTemplateRow" hidden>
-                    <span class="tool-template-label">我的模板</span>
-                    <div class="tool-template-chips" id="agentToolTemplates"></div>
-                  </div>
-                </div>
-                <p class="hint tool-unknown-hint" id="agentToolUnknownHint" hidden></p>
-                <div class="agent-tool-scope" id="agentToolScope"></div>
-              </div>
-              <p class="form-error" id="agentError"></p>
-              <div class="form-actions">
-                <button type="button" class="control-button" id="cancelAgent">取消</button>
-                <button type="button" class="primary-button" id="saveAgentForm">保存 Agent</button>
-              </div>
-            </form>
-          </div>
+          <div class="agent-cards" id="agentCards"></div>
         </section>
         <section data-settings-panel="runtime" hidden>
           <h3>运行设置</h3>
@@ -677,6 +618,74 @@
           <button type="button" class="control-button" id="unloadProviderModel" hidden>卸载本地模型</button>
           <button type="button" class="control-button" id="cancelProvider">取消</button>
           <button class="primary-button" id="saveProvider" type="submit">保存设置</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Agent 设置：卡片点开后才弹出，字段与工具/Skill 选择器保持原样 -->
+  <dialog id="agentDialog" class="agent-dialog">
+    <form id="agentForm" class="agent-form">
+      <input id="agentFormId" type="hidden">
+      <div class="dialog-toolbar">
+        <div><h2 id="agentDialogTitle">Agent 设置</h2><p id="agentDialogSubtitle">独立预设与固定 Skill</p></div>
+        <button class="icon-button" type="button" data-close="agentDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+      </div>
+      <div class="agent-form-body">
+        <label>Agent ID
+          <input id="agentId" type="text" placeholder="英文、数字、下划线或连字符">
+        </label>
+        <label>名称
+          <input id="agentName" type="text" placeholder="例如 通用 Agent">
+        </label>
+        <label>系统提示词（预设与规则）
+          <textarea id="agentSystemPromptEdit" rows="5" placeholder="角色、规则和输出偏好"></textarea>
+        </label>
+        <div class="agent-prompt-tools">
+          <label class="agent-prompt-preset">套用快捷提示词
+            <select id="agentPromptPresetSelect" title="选择一条快捷提示词填入上方系统提示词（已有内容时会先确认）"><option value="">选择快捷提示词…</option></select>
+          </label>
+          <span class="character-card-import">
+            <button class="control-button" id="importAgentCharacterCard" type="button">导入角色卡 PNG</button>
+            <input id="agentCharacterCardFileInput" type="file" accept="image/png" hidden>
+          </span>
+          <small class="agent-prompt-hint">导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；快捷提示词在「设置 → 快捷提示词」中管理。</small>
+        </div>
+        <div class="agent-skills">
+          <div class="agent-skills-head"><span><b>固定 Skill</b><small>该 Agent 启用时自动加载</small></span></div>
+          <div class="skill-list" id="agentSkillList"></div>
+        </div>
+        <div class="agent-skills">
+          <div class="agent-skills-head tool-scope-head">
+            <span><b>工具集</b><small>该 Agent 启用的工具（会话启动时固化，不可中途更改）</small></span>
+            <span class="tool-scope-meta">
+              <em id="agentToolPresetState">当前：自定义</em>
+              <code id="agentToolCount">已选 0 / 0 个工具</code>
+              <button type="button" class="control-button tiny" id="toggleAllToolGroups">展开全部</button>
+            </span>
+          </div>
+          <div class="tool-preset-wrap">
+            <div class="tool-preset-row">
+              <span class="tool-preset-label">工具预设</span>
+              <select id="agentToolPresetSelect" class="tool-preset-select" title="选一个预设立即套用；手动勾选下方工具后即变为「自定义」，可把组合存成模板，下次一键复刻"></select>
+              <input id="agentToolTemplateName" type="text" maxlength="24" placeholder="模板名（留空自动命名）" hidden>
+              <button type="button" class="control-button tiny" id="agentToolTemplateSave" hidden>存为模板</button>
+              <span class="tool-preset-tip">预设一键套用 · 手动勾选即自定义，可存模板复刻</span>
+            </div>
+            <div class="tool-template-row" id="agentToolTemplateRow" hidden>
+              <span class="tool-template-label">我的模板</span>
+              <div class="tool-template-chips" id="agentToolTemplates"></div>
+            </div>
+          </div>
+          <p class="hint tool-unknown-hint" id="agentToolUnknownHint" hidden></p>
+          <div class="agent-tool-scope" id="agentToolScope"></div>
+        </div>
+      </div>
+      <div class="agent-form-footer">
+        <p class="form-error" id="agentError"></p>
+        <div class="form-actions">
+          <button type="button" class="control-button" id="cancelAgent">取消</button>
+          <button type="button" class="primary-button" id="saveAgentForm">保存 Agent</button>
         </div>
       </div>
     </form>
