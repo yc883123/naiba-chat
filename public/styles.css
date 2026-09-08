@@ -567,8 +567,11 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .composer-input textarea::placeholder { color: var(--muted); opacity: 1; }
 .composer-input textarea::selection { background: rgba(var(--brand-500-rgb), .18); color: transparent; }
 .skill-ref { color: var(--skill-ref); font-weight: 600; }
+/* @ 工作区文件/目录引用：与 / Skill 引用同族但换色，便于区分 */
+.file-ref { color: var(--success); font-weight: 600; }
 /* 镜像层里的高亮引用必须与 textarea 采用完全相同的字重（不能加粗），否则换行点不同、光标错位 */
-.composer-input .input-mirror .skill-ref { font-weight: 400; }
+.composer-input .input-mirror .skill-ref,
+.composer-input .input-mirror .file-ref { font-weight: 400; }
 
 .skill-popup {
   position: fixed;
@@ -595,6 +598,57 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .skill-popup-item.selected .skill-popup-main b,
 .skill-popup-item:hover .skill-popup-main b { color: var(--skill-ref); }
 .skill-popup-item .skill-size { font-style: normal; font-size: 10px; color: var(--muted); flex: none; white-space: nowrap; }
+
+/* @ 工作区引用弹层：面包屑 + 目录/文件行（目录行带 Tab 提示与进入箭头） */
+.file-popup {
+  position: fixed;
+  min-width: 320px; max-width: 520px;
+  max-height: 300px; overflow-y: auto; overflow-x: hidden; padding: 4px;
+  background: var(--surface); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-3);
+  z-index: 40;
+}
+.file-popup[hidden] { display: none; }
+.file-popup-head {
+  display: flex; align-items: baseline; gap: 8px; padding: 5px 8px 6px;
+  border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px;
+}
+.file-popup-crumb { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-popup-note { flex: none; color: var(--warning); }
+.file-popup-empty { padding: 10px 12px; color: var(--muted); font-size: 12px; }
+.file-popup-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; border-radius: 6px; cursor: pointer;
+}
+.file-popup-item.selected,
+.file-popup-item:hover { background: var(--surface-2); }
+.file-popup-icon { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; color: var(--muted); }
+.file-popup-icon svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.file-popup-item[data-kind="directory"] .file-popup-icon { color: var(--skill-ref); }
+.file-popup-item[data-kind="file"].selected .file-popup-icon,
+.file-popup-item[data-kind="file"]:hover .file-popup-icon { color: var(--success); }
+/* Tab 键提示：仅在选中目录行时出现，提示「按 Tab 展开子目录」 */
+.file-popup-tab {
+  display: none; flex: none; padding: 1px 5px; border: 1px solid var(--line-strong);
+  border-bottom-width: 2px; border-radius: 4px; background: var(--surface);
+  color: var(--muted); font-size: 10px; line-height: 1.4;
+}
+.file-popup-item.selected .file-popup-tab { display: inline-block; }
+.file-popup-name { flex: 1; min-width: 0; font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-popup-item.selected .file-popup-name { color: var(--skill-ref); }
+.file-popup-meta { flex: none; color: var(--muted); font-size: 11px; white-space: nowrap; }
+.file-popup-enter {
+  flex: none; width: 26px; height: 26px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background: var(--surface); color: var(--muted); font-size: 15px; line-height: 1;
+  display: inline-grid; place-items: center; cursor: pointer;
+}
+.file-popup-enter:hover { border-color: var(--line-strong); background: var(--surface-2); color: var(--skill-ref); }
+.file-popup-foot { padding: 6px 8px 4px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
+@media (hover: none) {
+  /* 手机端：条目加大点击区，避免误触 */
+  .file-popup-item { padding: 10px 8px; }
+  .file-popup-enter { width: 32px; height: 32px; }
+}
 
 /* Skill 对话框：点击插入，去掉“选中态” */
 .skill-item.skill-click { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; border: 0; background: none; text-align: left; font: inherit; cursor: pointer; }

@@ -43,13 +43,51 @@ export function highlightSkillRefsHtml(text) {
   return out;
 }
 
+// 识别文本里所有 <(^|\s)@…> 引用（@ 前必须是行首或空白；支持 @"含 空格 的路径"）。
+// 只做"看起来像引用"的识别，真实是否存在由后端 resolve_file_references 判定。
+const FILE_REF_TOKEN_RE = /(^|\s)(@(?:"[^"\n]+"|[^\s@]+))/g;
+export function tokenizeFileRefs(text) {
+  const matches = [];
+  const value = String(text || '');
+  FILE_REF_TOKEN_RE.lastIndex = 0;
+  let m;
+  while ((m = FILE_REF_TOKEN_RE.exec(value)) !== null) {
+    const tokenText = m[2];
+    const start = m.index + m[1].length;
+    matches.push({ start, end: start + tokenText.length, text: tokenText, className: 'file-ref' });
+  }
+  return matches;
+}
+
+// skill 引用 + @ 文件引用合并（按位置排序，重叠时保留先出现的）。
+export function composerRefTokens(text) {
+  const tokens = [...tokenizeSkillRefs(text), ...tokenizeFileRefs(text)];
+  tokens.sort((a, b) => a.start - b.start);
+  return tokens;
+}
+
+// 镜像层/气泡通用高亮：两类引用都上色。
+export function highlightComposerRefsHtml(text) {
+  const tokens = composerRefTokens(text);
+  if (!tokens.length) return escapeHtml(text);
+  let out = ''; let pos = 0;
+  for (const tok of tokens) {
+    if (tok.start < pos) continue;
+    out += escapeHtml(text.slice(pos, tok.start));
+    out += `<span class="${tok.className || 'skill-ref'}">${escapeHtml(tok.text)}</span>`;
+    pos = tok.end;
+  }
+  out += escapeHtml(text.slice(pos));
+  return out;
+}
+
 export function renderInputMirror() {
   const mirror = $('#inputMirror');
   const input = $('#messageInput');
   if (!mirror || !input) return;
   const value = input.value;
   // 空内容时用一个零宽字符撑起镜像层；非空时只放原文本（不额外追加零宽字符，避免影响换行）。
-  mirror.innerHTML = value ? highlightSkillRefsHtml(value) : '\u200b';
+  mirror.innerHTML = value ? highlightComposerRefsHtml(value) : '\u200b';
   mirror.scrollTop = input.scrollTop;
 }
 
@@ -69,17 +107,22 @@ export function currentSlashToken(value, cursor) {
 
 export const popupState = { open: false, selectedIndex: 0, items: [], token: null };
 
-export function positionSkillPopup() {
-  const popup = $('#skillPopup');
+export function positionComposerPopup(popup) {
   const input = $('#messageInput');
   if (!popup || !input || popup.hidden) return;
   const rect = input.getBoundingClientRect();
   const ph = popup.offsetHeight;
   let top = rect.top - ph - 6;
   if (top < 8) top = rect.bottom + 6;
+  // 兜底：弹层高于可视区时贴住顶部，避免溢出到屏幕外。
+  top = Math.max(8, Math.min(top, window.innerHeight - ph - 8));
   popup.style.left = `${Math.max(8, rect.left)}px`;
   popup.style.width = `${rect.width}px`;
   popup.style.top = `${top}px`;
+}
+
+export function positionSkillPopup() {
+  positionComposerPopup($('#skillPopup'));
 }
 
 export function showSkillPopup(items, selectedIndex, token) {
@@ -237,22 +280,25 @@ export function stripSkillReferences(text) {
   return cleaned || text;
 }
 
-// 用户气泡：优先显示 display_content（含 /ref），并对命中 skill 的引用高亮；保留 markdown。
+// 用户气泡：优先显示 display_content（含 /ref 与 @文件引用），并对引用高亮；保留 markdown。
 export function renderUserContent(text) {
-  const tokens = tokenizeSkillRefs(text);
+  const tokens = composerRefTokens(text);
   if (!tokens.length) return markdown(text);
   let protectedText = ''; let pos = 0; let idx = 0;
   const mapping = [];
   for (const tok of tokens) {
+    if (tok.start < pos) continue;
     protectedText += text.slice(pos, tok.start);
     const ph = `@@SKILLREF${idx++}@@`;
-    mapping.push({ ph, text: tok.text });
+    mapping.push({ ph, text: tok.text, className: tok.className || 'skill-ref' });
     protectedText += ph;
     pos = tok.end;
   }
   protectedText += text.slice(pos);
   let html = markdown(protectedText);
-  for (const m of mapping) html = html.split(m.ph).join(`<span class="skill-ref">${escapeHtml(m.text)}</span>`);
+  for (const m of mapping) {
+    html = html.split(m.ph).join(`<span class="${m.className}">${escapeHtml(m.text)}</span>`);
+  }
   return html;
 }
 

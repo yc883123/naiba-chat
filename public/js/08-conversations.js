@@ -10,6 +10,7 @@ import { readAsDataUrl } from "./10-upload.js";
 import { detachRunSubscription, resumeConversationRun } from "./11-run-stream.js";
 import { applyConversationLightweight, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
 import { prefillPresetSkillsInComposer } from "./13-skill-refs.js";
+import { clearFileRefCache, hideFilePopup } from "./16-file-refs.js";
 import { closeFilePanel, closeSidebar } from "./14-file-panel.js";
 export async function loadConversations() {
   const result = await api('/api/conversations');
@@ -264,6 +265,9 @@ export async function onComposerWorkspaceChange(event) {
     const index = state.conversations.findIndex((c) => c.id === id);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
     if (updated.workspace_dir) state.workspaceDir = updated.workspace_dir;
+    // 工作区换了：@ 引用弹层的目录缓存必须失效（相对路径相同但根不同）
+    hideFilePopup();
+    clearFileRefCache();
     renderSidebar();
     renderComposerWorkspace();
     toast(group ? `已切换到工作区「${group}」` : '已移至未分组');
@@ -415,6 +419,9 @@ export async function openConversation(id) {
     hideChoiceButtons();
     // 文件面板属于当前会话；切换会话时收起并清空打开的标签
     closeFilePanel(true);
+    // @ 引用弹层与目录缓存同样属于当前会话工作区
+    hideFilePopup();
+    clearFileRefCache();
   }
   const conversation = await api(`/api/conversations/${id}`);
   state.conversationId = id;

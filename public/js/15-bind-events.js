@@ -14,6 +14,7 @@ import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
 import { cancelCurrentRun, handlePasteImage, openStarterPromptDialog, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleLightweightFeature, toggleRichText, updateDeepReasoningButton } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
 import { activateFileTab, activeFileTab, applyFilePanelOpenClass, cancelFileEdit, closeFilePanel, closeSidebar, filePanelState, filePanelUsable, openFilePanel, openSidebar, removeFileTab, reopenFilePanel, restoreLeftSidebarCollapse, saveFileTab, setLeftSidebarCollapsed, sidebarDesktop, startFileEdit, updateFileTabsButton } from "./14-file-panel.js";
+import { handleFilePopupClick, handleFilePopupKey, positionFilePopup, updateFilePopup } from "./16-file-refs.js";
 export function bindEvents() {
   document.addEventListener('contextmenu', (event) => {
     hideTextContextMenu();
@@ -179,13 +180,15 @@ export function bindEvents() {
     if (state.chatRunId || state.abortController) cancelCurrentRun();
     else sendMessage();
   });
-  $('#messageInput').addEventListener('input', () => { resizeTextarea(); renderInputMirror(); updateSkillPopup(); updateSendButtonState(); });
+  $('#messageInput').addEventListener('input', () => { resizeTextarea(); renderInputMirror(); updateSkillPopup(); updateFilePopup(); updateSendButtonState(); });
   $('#messageInput').addEventListener('select', updateSkillPopup);
-  $('#messageInput').addEventListener('click', updateSkillPopup);
-  $('#messageInput').addEventListener('focus', updateSkillPopup);
-  $('#messageInput').addEventListener('scroll', () => { const mirror = $('#inputMirror'); if (mirror) mirror.scrollTop = $('#messageInput').scrollTop; positionSkillPopup(); });
-  window.addEventListener('resize', positionSkillPopup);
+  $('#messageInput').addEventListener('click', () => { updateSkillPopup(); updateFilePopup(); });
+  $('#messageInput').addEventListener('focus', () => { updateSkillPopup(); updateFilePopup(); });
+  $('#messageInput').addEventListener('scroll', () => { const mirror = $('#inputMirror'); if (mirror) mirror.scrollTop = $('#messageInput').scrollTop; positionSkillPopup(); positionFilePopup(); });
+  window.addEventListener('resize', () => { positionSkillPopup(); positionFilePopup(); });
   $('#messageInput').addEventListener('keydown', (event) => {
+    // @ 工作区引用弹层优先消费按键（Tab 进目录 / Shift+Tab 返回 / Enter 引用）。
+    if (handleFilePopupKey(event)) return;
     if (popupState.open) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -214,6 +217,8 @@ export function bindEvents() {
     }
   });
   $('#skillPopup').addEventListener('mousedown', (event) => event.preventDefault());
+  $('#filePopup').addEventListener('mousedown', (event) => event.preventDefault());
+  $('#filePopup').addEventListener('click', handleFilePopupClick);
   $('#skillPopup').addEventListener('click', (event) => {
     const button = event.target.closest('[data-skill-index]');
     if (!button) return;
