@@ -389,6 +389,7 @@ export function populateRuntimeSettings() {
   if ($('#imageUploadOriginal')) $('#imageUploadOriginal').checked = Boolean(imaging.image_upload_original);
   if ($('#imageMaxPixels')) $('#imageMaxPixels').value = Number(imaging.image_max_pixels || 2000000);
   if ($('#thumbnailMaxPixels')) $('#thumbnailMaxPixels').value = Number(imaging.thumbnail_max_pixels || 500000);
+  if ($('#autoCleanLimitMb')) $('#autoCleanLimitMb').value = Number(imaging.auto_clean_limit_mb ?? 256);
   renderImageCompressRow();
   if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(Number(state.bootstrap.image_cache_bytes || 0));
   renderProxySettings();
@@ -1338,6 +1339,7 @@ export async function saveRuntimeSettings() {
       image_upload_original: Boolean($('#imageUploadOriginal')?.checked),
       image_max_pixels: Number($('#imageMaxPixels')?.value || 2000000),
       thumbnail_max_pixels: Number($('#thumbnailMaxPixels')?.value || 500000),
+      auto_clean_limit_mb: Number($('#autoCleanLimitMb')?.value ?? 256),
     },
     proxy,
   };

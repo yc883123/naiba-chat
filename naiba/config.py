@@ -71,6 +71,9 @@ def default_config() -> dict[str, Any]:
             "image_upload_original": False,
             "image_max_pixels": 2000000,
             "thumbnail_max_pixels": 500000,
+            # 图片缓存自动清理阈值（MB）：上传后总大小超限时自动删除最旧且未被
+            # 消息/快照引用的缓存（引用中的文件永不自动删除）；0=关闭自动清理。
+            "auto_clean_limit_mb": 256,
         },
         "providers": [],
         # MCP 服务默认不注册；只有用户显式配置并授权时才可连接。
@@ -1026,6 +1029,14 @@ class ConfigStore:
                                     merged[field] = max(1, int(merged.get(field) or 0))
                                 except (TypeError, ValueError):
                                     raise ValueError(f"{field} 必须是正整数") from None
+                            # 缓存自动清理阈值（MB）：0=关闭；1-4096 区间上限防误填。
+                            try:
+                                auto_mb = int(merged.get("auto_clean_limit_mb", 256) or 0)
+                            except (TypeError, ValueError):
+                                raise ValueError("auto_clean_limit_mb 必须是整数") from None
+                            if auto_mb < 0 or auto_mb > 4096:
+                                raise ValueError("缓存自动清理阈值必须在 0-4096 MB 之间")
+                            merged["auto_clean_limit_mb"] = auto_mb
                         self.data[key] = merged
                     elif key == "proxy":
                         incoming = values[key]

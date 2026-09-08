@@ -518,7 +518,8 @@
                 <span id="imageCompressRow"><label class="field-narrow">上传最大像素数<input id="imageMaxPixels" type="number" min="1000" step="1000" value="2000000"><small class="hint">超过将压缩尺寸（保留原格式）。</small></label></span>
                 <label class="field-narrow">缩略图显示尺寸（像素）<input id="thumbnailMaxPixels" type="number" min="1000" step="1000" value="500000"><small class="hint">缩略图始终以 WebP 生成并保存在原图旁。</small></label>
               </div>
-              <div class="hint image-cache-row">当前缓存图片总大小：<code id="imageCacheSize">-</code><button class="control-button" id="cleanImageCache" type="button" title="只保留最新的、总大小不超过 128MB 的图片">清理旧图片缓存</button></div>
+              <label class="field-narrow">缓存自动清理阈值（MB）<input id="autoCleanLimitMb" type="number" min="0" step="64" value="256"><small class="hint">上传后缓存总大小超过该值时，自动删除<strong>最旧且未被消息引用的</strong>缓存图片；被历史消息引用的图片永不自动删除。填 0 表示关闭自动清理。</small></label>
+              <div class="hint image-cache-row">当前缓存图片总大小：<code id="imageCacheSize">-</code><button class="control-button" id="cleanImageCache" type="button" title="只保留最新的、总大小不超过 128MB 的图片（不区分是否被引用，可能影响历史消息中的图片）">清理旧图片缓存</button></div>
             </div>
             <div class="field-wide storage-maintenance">
               <span class="settings-label"><b>历史数据管理</b></span>

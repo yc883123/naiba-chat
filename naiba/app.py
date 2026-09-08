@@ -1114,8 +1114,17 @@ class NaibaChatApp:
             return {"error": "单个文件不能超过 80 MB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE
         imaging = dict(self.config.data.get("imaging") or {}) if getattr(self, "config", None) else {}
         result = store_uploaded_file(data, original_name, self._paths.data_dir, imaging)
-        # 上传后超限自动清理（宽松阈值，避免频繁误清近期引用）。
-        auto_clean_uploads(self._paths.data_dir)
+        # 上传后超限自动清理（B1：只删未被消息/快照引用的缓存；阈值可在设置页调整，0=关闭）。
+        try:
+            auto_clean_mb = int(imaging.get("auto_clean_limit_mb", 256) or 256)
+        except (TypeError, ValueError):
+            auto_clean_mb = 256
+        if auto_clean_mb > 0:
+            auto_clean_uploads(
+                self._paths.data_dir,
+                limit=auto_clean_mb * 1024 * 1024,
+                referenced_checker=self.storage.upload_path_referenced,
+            )
         return result, HTTPStatus.OK
 
     def _delete_upload(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:

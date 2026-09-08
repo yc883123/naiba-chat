@@ -84,6 +84,52 @@ class StoreUploadedFileTests(unittest.TestCase):
         self.assertTrue(result["thumb_path"])
         self.assertTrue(Path(result["thumb_path"]).is_file())
 
+    def test_auto_clean_with_reference_guard(self) -> None:
+        """B1：自动清理带引用保护——被引用的最旧组永久保留，只删未引用组。"""
+        from datetime import datetime, timedelta
+
+        # 旧组（被引用）与新组（未引用）
+        old_pdf = _small_pdf(b"OLD-REFERENCED")
+        new_pdf = _small_pdf(b"NEW-UNREFERENCED")
+        old_dir = upload_target_dir(self.data_dir, datetime.now() - timedelta(days=2))
+        old_dir.mkdir(parents=True, exist_ok=True)
+        old_file = old_dir / "naiba_chat_old_ref.pdf"
+        old_file.write_bytes(old_pdf)
+        new_dir = upload_target_dir(self.data_dir)
+        new_dir.mkdir(parents=True, exist_ok=True)
+        new_file = new_dir / "naiba_chat_new_unref.pdf"
+        new_file.write_bytes(new_pdf)
+
+        def checker(path: Path) -> bool:
+            return path.name == old_file.name  # 旧组被"消息引用"
+
+        result = _clean_uploads_cache(limit=1, data_dir=self.data_dir, referenced_checker=checker)
+        self.assertTrue(old_file.is_file(), "被引用的旧组不得被自动清理")
+        self.assertFalse(new_file.exists(), "未引用组超限时应被删除")
+        self.assertEqual(result["removed"], 1)
+
+    def test_manual_clean_without_checker_keeps_referenced_unaware(self) -> None:
+        """手动清理（无 checker）保持按时间保留语义，不感知引用。"""
+        import os
+        from datetime import datetime, timedelta
+
+        pdf = _small_pdf()
+        old_dir = upload_target_dir(self.data_dir, datetime.now() - timedelta(days=2))
+        old_dir.mkdir(parents=True, exist_ok=True)
+        old_file = old_dir / "naiba_chat_old.pdf"
+        old_file.write_bytes(pdf)
+        old_mtime = (datetime.now() - timedelta(days=2)).timestamp()
+        os.utime(old_file, (old_mtime, old_mtime))
+        new_dir = upload_target_dir(self.data_dir)
+        new_dir.mkdir(parents=True, exist_ok=True)
+        new_file = new_dir / "naiba_chat_new.pdf"
+        new_file.write_bytes(pdf)
+        # limit 单位是字节：设为新文件大小+1（可容纳最新组，最旧组必超）
+        result = _clean_uploads_cache(limit=new_file.stat().st_size + 1, data_dir=self.data_dir)
+        self.assertEqual(result["removed"], 1)  # 删最旧
+        self.assertFalse(old_file.exists())
+        self.assertTrue(new_file.is_file())
+
     def test_upload_limit_constant_aligned(self) -> None:
         self.assertEqual(UPLOAD_MAX_BYTES, 80 * 1024 * 1024)
 

@@ -22,7 +22,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from naiba.core.paths import path_within
 
@@ -177,15 +177,23 @@ def remove_uploaded_file(data_dir: Path, raw_path: str | Path) -> bool:
     return removed > 0
 
 
-def auto_clean_uploads(data_dir: Path, limit: int = UPLOAD_AUTO_CLEAN_LIMIT) -> dict[str, Any] | None:
-    """上传后超限自动清理：仅超过 limit 时触发（与手动 128MB 分离的宽松阈值）。"""
+def auto_clean_uploads(
+    data_dir: Path,
+    limit: int = UPLOAD_AUTO_CLEAN_LIMIT,
+    referenced_checker: Callable[[Path], bool] | None = None,
+) -> dict[str, Any] | None:
+    """上传后超限自动清理：仅超过 limit 时触发；默认带引用保护（B1）。
+
+    referenced_checker 提供时只删未被引用的组（历史消息引用永久保留），
+    未提供时退化为手动清理的按时间保留语义（调用方应始终提供）。
+    """
     try:
         total = _uploads_total_bytes(data_dir)
     except OSError:
         return None
     if total <= limit:
         return None
-    result = _clean_uploads_cache(limit=limit, data_dir=data_dir)
+    result = _clean_uploads_cache(limit=limit, data_dir=data_dir, referenced_checker=referenced_checker)
     result["trigger"] = "auto"
     return result
 
@@ -327,10 +335,17 @@ def _uploads_total_bytes(data_dir: Path) -> int:
 
 
 def _clean_uploads_cache(
-    limit: int = IMAGE_CACHE_CLEAN_LIMIT, data_dir: Path | None = None
+    limit: int = IMAGE_CACHE_CLEAN_LIMIT,
+    data_dir: Path | None = None,
+    referenced_checker: Callable[[Path], bool] | None = None,
 ) -> dict[str, Any]:
-    """清理旧图片缓存（uploads + generated）：只保留最新的、总大小不超过 limit 的图片
-    （主图+缩略图成组，跨两个文件夹合并后统一按时间戳从新到旧）。
+    """清理旧图片缓存（uploads + generated）。
+
+    ``referenced_checker=None``（手动清理）：按组（主图+缩略图）× 时间戳从新到旧，
+    保留总大小不超过 limit 的最新的（旧行为）；
+    ``referenced_checker`` 提供（自动清理 B1）：从最旧开始逐组删除**未被引用**的组
+    （checker 返回 True=被消息/快照引用，永久保留），直到剩余 ≤ limit；引用文件
+    过多时允许超限（宁可缓存超限也不删用户历史引用的图）。
 
     返回 {removed: 删除文件数, freed: 释放字节数, size: 清理后剩余字节数}。
     """
@@ -380,6 +395,35 @@ def _clean_uploads_cache(
         (_group_mtime(paths), key, paths) for key, paths in groups.items()
     ]
     entries.sort(key=lambda item: item[0], reverse=True)  # 新 -> 旧
+
+    if referenced_checker is not None:
+        # B1 自动清理：从最旧开始删未引用组，直到 ≤ limit；引用组永远保留。
+        remaining = sum(_group_size(paths) for _, _, paths in entries)
+        removed = 0
+        freed = 0
+        for mtime, key, paths in sorted(entries, key=lambda item: item[0]):  # 旧 -> 新
+            if remaining <= limit:
+                break
+            main_file = next(
+                (p for p in paths if not p.name.endswith("_thumb.webp")), paths[0]
+            )
+            try:
+                if referenced_checker(main_file):
+                    continue  # 被消息/快照引用：永久保留（允许超限）
+            except (OSError, ValueError):
+                continue
+            group_size = _group_size(paths)
+            for p in paths:
+                try:
+                    size = p.stat().st_size
+                    p.unlink()
+                    removed += 1
+                    freed += size
+                except OSError:
+                    continue
+            remaining -= group_size
+        return {"removed": removed, "freed": freed, "size": _uploads_total_bytes(data_dir)}
+
     kept_keys: set[str] = set()
     kept_size = 0
     for mtime, key, paths in entries:
