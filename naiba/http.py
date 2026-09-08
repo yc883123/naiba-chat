@@ -32,7 +32,7 @@ from naiba.core.exceptions import ActiveRunError
 from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
 from naiba.paths import PathContext, default_path_context, static_asset_version
-from naiba.storage.media import _clean_uploads_cache, UPLOAD_MAX_BYTES
+from naiba.storage.media import UPLOAD_MAX_BYTES
 
 # multipart 上传的传输层兜底上限（文件 80MB + 表单/边界开销）。
 _UPLOAD_BODY_LIMIT = 100 * 1024 * 1024
@@ -438,12 +438,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/imaging/clean":
-            try:
-                result = _clean_uploads_cache(data_dir=self.app.paths.data_dir)
-            except OSError as exc:
-                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
-            else:
-                self._json(result)
+            self._json(*self.app.api_clean_image_cache())
         elif path == "/api/settings":
             try:
                 self._json(*self.app.api_update_runtime_settings(body))

@@ -42,7 +42,7 @@ from naiba.search import WebSearchRuntime
 from naiba.skills.catalog import SkillCatalog
 from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
 from naiba.storage.media import (
-    _process_uploaded_image, _uploads_total_bytes, auto_clean_uploads,
+    _clean_uploads_cache, _process_uploaded_image, _uploads_total_bytes, auto_clean_uploads,
     is_uploads_path, remove_uploaded_file, store_uploaded_file,
 )
 from naiba.storage.store import ChatStorage
@@ -1125,6 +1125,24 @@ class NaibaChatApp:
                 limit=auto_clean_mb * 1024 * 1024,
                 referenced_checker=self.storage.upload_path_referenced,
             )
+        return result, HTTPStatus.OK
+
+    def api_clean_image_cache(self) -> tuple[dict[str, Any], int]:
+        """手动清理缓存文件（设置页按钮）：与自动清理共用同一阈值口径
+        （imaging.auto_clean_limit_mb，默认 256MB；0=关闭自动清理时手动回退默认值），
+        按时间从旧到新保留最新文件、不区分引用（UI 已明确告知此语义）。
+        """
+        imaging = dict(self.config.data.get("imaging") or {}) if getattr(self, "config", None) else {}
+        try:
+            limit_mb = int(imaging.get("auto_clean_limit_mb", 256) or 256)
+        except (TypeError, ValueError):
+            limit_mb = 256
+        if limit_mb <= 0:
+            limit_mb = 256
+        try:
+            result = _clean_uploads_cache(limit=limit_mb * 1024 * 1024, data_dir=self._paths.data_dir)
+        except OSError as exc:
+            return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
         return result, HTTPStatus.OK
 
     def _delete_upload(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:

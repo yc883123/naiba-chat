@@ -519,7 +519,7 @@
                 <label class="field-narrow">缩略图显示尺寸（像素）<input id="thumbnailMaxPixels" type="number" min="1000" step="1000" value="500000"><small class="hint">缩略图始终以 WebP 生成并保存在原图旁。</small></label>
               </div>
               <label class="field-narrow">缓存自动清理阈值（MB）<input id="autoCleanLimitMb" type="number" min="0" step="64" value="256"><small class="hint">上传后缓存文件总大小超过该值时，自动删除<strong>最旧且未被消息引用的</strong>缓存文件；被历史消息引用的文件永不自动删除。填 0 表示关闭自动清理。</small></label>
-              <div class="hint image-cache-row">当前缓存文件总大小（图片/PDF/视频/音频等）：<code id="imageCacheSize">-</code><button class="control-button" id="cleanImageCache" type="button" title="按时间从旧到新删除最旧文件（图片/PDF/视频等），只保留总大小不超过 128MB 的最新文件；不区分文件是否被消息引用，可能影响历史消息中已展示的文件">清理旧缓存文件</button></div>
+              <div class="hint image-cache-row">当前缓存文件总大小（图片/PDF/视频/音频等）：<code id="imageCacheSize">-</code><button class="control-button" id="cleanImageCache" type="button" title="按时间从旧到新删除最旧文件（图片/PDF/视频等），按上方「缓存自动清理阈值」保留最新文件；不区分文件是否被消息引用，可能影响历史消息中已展示的文件">清理旧缓存文件</button></div>
             </div>
             <div class="field-wide storage-maintenance">
               <span class="settings-label"><b>历史数据管理</b></span>
