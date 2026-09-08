@@ -11,7 +11,7 @@ import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAge
 import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
 import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
-import { cancelCurrentRun, handlePasteImage, openStarterPromptDialog, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleLightweightFeature, toggleRichText, updateDeepReasoningButton } from "./12-chat-input.js";
+import { cancelCurrentRun, closeQuickMessagePanel, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, quickPanelState, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleLightweightFeature, toggleQuickMessagePanel, toggleRichText, updateDeepReasoningButton } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
 import { activateFileTab, activeFileTab, applyFilePanelOpenClass, cancelFileEdit, closeFilePanel, closeSidebar, filePanelState, filePanelUsable, openFilePanel, openSidebar, removeFileTab, reopenFilePanel, restoreLeftSidebarCollapse, saveFileTab, setLeftSidebarCollapsed, sidebarDesktop, startFileEdit, updateFileTabsButton } from "./14-file-panel.js";
 import { handleFilePopupClick, handleFilePopupKey, positionFilePopup, updateFilePopup } from "./16-file-refs.js";
@@ -260,6 +260,21 @@ export function bindEvents() {
     if (event.target.closest?.('#composerMetaMoreButton')) return;
     panel.hidden = true;
     $('#composerMetaMoreButton')?.setAttribute('aria-expanded', 'false');
+  });
+  // composer-meta「快捷消息」面板：按钮开合 + 点击委托（插入/编辑/删除/新建）+ 点外部关闭
+  $('#quickMessageButton')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    toggleQuickMessagePanel();
+  });
+  $('#quickMessagePanel')?.addEventListener('click', handleQuickMessagePanelClick);
+  window.addEventListener('resize', positionQuickMessagePanel);
+  window.addEventListener('scroll', positionQuickMessagePanel, true);
+  document.addEventListener('click', (event) => {
+    if (!quickPanelState.open) return;
+    if (event.target.closest?.('#quickMessagePanel')) return;
+    if (event.target.closest?.('#quickMessageButton')) return;
+    if (event.target.closest?.('#starterPromptDialog')) return;
+    closeQuickMessagePanel();
   });
   $('#fileInput').addEventListener('change', (event) => { uploadFiles([...event.target.files]); event.target.value = ''; });
   const composerWrap = document.querySelector('.composer-wrap');

@@ -199,22 +199,28 @@ export function commitSkillSelection(skill) {
   input.focus();
 }
 
-// 在光标处插入一个 skill 引用（顶栏点击 / 预填复用）。
-export function insertSkillRefAtCursor(skill) {
+// 在光标处插入文本（必要时补前导空格、末尾补一个空格），供 Skill 引用 / 快捷消息复用。
+export function insertTextAtCursor(text, { trailingSpace = true } = {}) {
   const input = $('#messageInput');
   if (!input) return;
-  const refText = '/' + (skill.ref || skill.name);
+  const value = String(text || '');
   const cs = input.selectionStart ?? input.value.length;
   const ce = input.selectionEnd ?? input.value.length;
   const before = input.value.slice(0, cs);
   const after = input.value.slice(ce);
   const needsLeading = cs > 0 && !/\s/.test(input.value[cs - 1]);
-  const insertion = (needsLeading ? ' ' : '') + refText + ' ';
+  const insertion = (needsLeading ? ' ' : '') + value + (trailingSpace ? ' ' : '');
   input.value = before + insertion + after;
   const newCursor = before.length + insertion.length;
   input.setSelectionRange(newCursor, newCursor);
   resizeTextarea();
   renderInputMirror();
+  return newCursor;
+}
+
+// 在光标处插入一个 skill 引用（顶栏点击 / 预填复用）。
+export function insertSkillRefAtCursor(skill) {
+  insertTextAtCursor('/' + (skill.ref || skill.name));
 }
 
 // 新会话：把当前 Agent 预设 skill 以 /ref 引用预填到输入框（用户删掉即不引用，统一途径）。

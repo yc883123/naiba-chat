@@ -8,10 +8,10 @@ import { updateContextComposerLock, updateContextUsage, usageMarkup } from "./03
 import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, renderMessages, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
-import { createConversation, openConversation, renderConversationRuleBar } from "./08-conversations.js";
+import { createConversation, openConversation } from "./08-conversations.js";
 import { uploadFiles } from "./10-upload.js";
 import { SKILL_INSTALL_PRESET, clearElapsedStatus, clearRunReconnectTimers, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
-import { renderInputMirror, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
+import { insertTextAtCursor, renderInputMirror, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
 export async function startSkillInstall() {
   if (state.chatRunId || state.abortController) {
     toast('请先等待当前任务结束或停止后再安装 Skill');
@@ -50,6 +50,8 @@ export function renderStarterPrompts() {
   grid.querySelectorAll('.custom-starter').forEach((el) => el.remove());
   state.customPrompts.forEach((p, i) => {
     if (!p || !p.text) return;
+    // 增删改一律按后端给的原始序号 index（后端会跳过非法条目，数组下标不等于 index）。
+    const entryIndex = Number.isFinite(Number(p.index)) ? Number(p.index) : i;
     const wrap = document.createElement('div');
     wrap.className = 'custom-starter';
     const main = document.createElement('button');
@@ -62,13 +64,13 @@ export function renderStarterPrompts() {
     edit.className = 'starter-edit';
     edit.title = '编辑此指令';
     edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg>';
-    edit.addEventListener('click', (e) => { e.stopPropagation(); openStarterPromptDialog(i); });
+    edit.addEventListener('click', (e) => { e.stopPropagation(); openStarterPromptDialog(entryIndex); });
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'starter-del';
     del.title = '删除此指令';
     del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
-    del.addEventListener('click', (e) => { e.stopPropagation(); removeStarterPrompt(i); });
+    del.addEventListener('click', (e) => { e.stopPropagation(); removeStarterPrompt(entryIndex); });
     wrap.appendChild(main);
     wrap.appendChild(edit);
     wrap.appendChild(del);
@@ -78,7 +80,10 @@ export function renderStarterPrompts() {
 
 export function openStarterPromptDialog(index = -1) {
   state.editingStarterPrompt = index;
-  const p = (index >= 0 ? state.customPrompts[index] : null) || {};
+  // 按原始序号查找（数组下标可能与 index 不等，见 renderStarterPrompts）。
+  const p = (index >= 0
+    ? state.customPrompts.find((item) => Number(item?.index) === Number(index))
+    : null) || {};
   $('#starterPromptTitle').value = p.title || '';
   $('#starterPromptText').value = p.text || '';
   $('#starterPromptDialog').showModal();
@@ -96,6 +101,7 @@ export async function saveStarterPrompt() {
     state.customPrompts = r.prompts || [];
     state.editingStarterPrompt = -1;
     renderStarterPrompts();
+    await refreshQuickMessagesIfOpen();
     $('#starterPromptDialog').close();
     toast(editing >= 0 ? '已更新自定义指令' : '已保存自定义指令');
   } catch (error) {
@@ -108,10 +114,141 @@ export async function removeStarterPrompt(index) {
     const r = await api(`/api/starter-prompts/${index}`, { method: 'DELETE' });
     state.customPrompts = r.prompts || [];
     renderStarterPrompts();
+    await refreshQuickMessagesIfOpen();
     toast('已删除自定义指令');
   } catch (error) {
     toast(`删除失败：${error.message}`);
   }
+}
+
+// ---- 快捷消息面板（复用「自定义指令」数据；按使用次数 + 新鲜度排序）----
+// 排序由后端 GET /api/starter-prompts?sort=usage 给出：min(次数,50)×2 + 新鲜度加分，
+// 并列取新增时间倒序——新条目有曝光窗口，高频条目稳定靠前。
+export const quickPanelState = { open: false, items: [], loading: false };
+
+const QUICK_EDIT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg>';
+const QUICK_DELETE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
+
+function renderQuickMessages() {
+  const list = $('#quickMessageList');
+  if (!list) return;
+  if (quickPanelState.loading) {
+    // 每次打开都重新取：先占位，避免闪出上一轮的旧顺序。
+    list.innerHTML = '<div class="quick-msg-empty">正在读取快捷消息…</div>';
+    return;
+  }
+  if (!quickPanelState.items.length) {
+    list.innerHTML = '<div class="quick-msg-empty">还没有快捷消息，点右上角「＋ 新建」添加</div>';
+    return;
+  }
+  list.innerHTML = quickPanelState.items.map((item) => {
+    const preview = String(item.text || '').replace(/\s+/g, ' ').slice(0, 80);
+    return `<div class="quick-msg-item" role="menuitem" tabindex="-1" data-quick-index="${item.index}" title="点击插入到输入框">
+      <div class="quick-msg-main">
+        <b>${escapeHtml(item.title || '自定义指令')}</b>
+        <small>${escapeHtml(preview)}</small>
+      </div>
+      <button type="button" class="quick-msg-action" data-quick-edit="${item.index}" title="编辑" aria-label="编辑">${QUICK_EDIT_SVG}</button>
+      <button type="button" class="quick-msg-action" data-quick-delete="${item.index}" title="删除" aria-label="删除">${QUICK_DELETE_SVG}</button>
+    </div>`;
+  }).join('');
+}
+
+async function loadQuickMessages() {
+  quickPanelState.loading = true;
+  renderQuickMessages();
+  try {
+    const result = await api('/api/starter-prompts?sort=usage');
+    quickPanelState.items = Array.isArray(result.prompts) ? result.prompts : [];
+  } catch (error) {
+    quickPanelState.items = [];
+    toast(`读取快捷消息失败：${error.message}`);
+  } finally {
+    quickPanelState.loading = false;
+  }
+}
+
+async function refreshQuickMessagesIfOpen() {
+  if (!quickPanelState.open) return;
+  await loadQuickMessages();
+  renderQuickMessages();
+}
+
+export function closeQuickMessagePanel() {
+  quickPanelState.open = false;
+  quickPanelState.loading = false;
+  const panel = $('#quickMessagePanel');
+  const button = $('#quickMessageButton');
+  if (panel) panel.hidden = true;
+  button?.setAttribute('aria-expanded', 'false');
+}
+
+// 面板固定定位：右对齐按钮、优先向上展开，贴边时夹在视口内（不依赖 composer 的 overflow）。
+export function positionQuickMessagePanel() {
+  const panel = $('#quickMessagePanel');
+  const button = $('#quickMessageButton');
+  if (!panel || !button || panel.hidden) return;
+  const rect = button.getBoundingClientRect();
+  const width = panel.offsetWidth;
+  const height = panel.offsetHeight;
+  const margin = 8;
+  let top = rect.top - height - 6;
+  if (top < margin) top = Math.min(rect.bottom + 6, window.innerHeight - height - margin);
+  const left = Math.max(margin, Math.min(rect.right - width, window.innerWidth - width - margin));
+  panel.style.top = `${Math.max(margin, top)}px`;
+  panel.style.left = `${left}px`;
+}
+
+export async function toggleQuickMessagePanel() {
+  if (quickPanelState.open) {
+    closeQuickMessagePanel();
+    return;
+  }
+  quickPanelState.open = true;
+  const panel = $('#quickMessagePanel');
+  const button = $('#quickMessageButton');
+  if (panel) panel.hidden = false;
+  button?.setAttribute('aria-expanded', 'true');
+  // 每次打开都重新取：排序随使用次数与新增时间变化。
+  await loadQuickMessages();
+  if (!quickPanelState.open) return;
+  renderQuickMessages();
+  positionQuickMessagePanel();
+}
+
+// 点击插入到输入框（不自动发送），并记一次使用（失败只记日志，不阻断插入）。
+export function insertQuickMessage(index) {
+  const entry = quickPanelState.items.find((item) => Number(item.index) === Number(index));
+  if (!entry) return;
+  insertTextAtCursor(entry.text);
+  closeQuickMessagePanel();
+  $('#messageInput')?.focus();
+  api(`/api/starter-prompts/${entry.index}/use`, { method: 'POST', body: {} }).catch((error) => {
+    console.debug('[naiba] 记录快捷消息使用失败:', error.message);
+  });
+}
+
+export function handleQuickMessagePanelClick(event) {
+  const editButton = event.target.closest('[data-quick-edit]');
+  if (editButton) {
+    event.stopPropagation();
+    openStarterPromptDialog(Number(editButton.dataset.quickEdit));
+    return;
+  }
+  const deleteButton = event.target.closest('[data-quick-delete]');
+  if (deleteButton) {
+    event.stopPropagation();
+    removeStarterPrompt(Number(deleteButton.dataset.quickDelete));
+    return;
+  }
+  if (event.target.closest('#quickMessageAdd')) {
+    event.stopPropagation();
+    openStarterPromptDialog(-1);
+    return;
+  }
+  const item = event.target.closest('[data-quick-index]');
+  if (!item) return;
+  insertQuickMessage(Number(item.dataset.quickIndex));
 }
 
 export const SKILL_EDIT_PRESET =
@@ -691,8 +828,6 @@ export function showChoiceButtons(choices, choiceGroups = []) {
   container.setAttribute('role', 'group');
   container.setAttribute('aria-label', '可选回复');
   composerWrap.insertBefore(container, composer);
-  const ruleBar = $('#conversationRuleBar');
-  if (ruleBar) ruleBar.hidden = true;
 
   const selected = [];
   let groupIndex = 0;
@@ -776,7 +911,6 @@ export function showChoiceButtons(choices, choiceGroups = []) {
 export function hideChoiceButtons() {
   const existing = $('#choiceButtons');
   if (existing) existing.remove();
-  renderConversationRuleBar();
 }
 
 export function fillComposer(text) {

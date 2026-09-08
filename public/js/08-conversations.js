@@ -8,7 +8,7 @@ import { activeTaskStatuses, loadTasks, renderPermissionModeSwitch, taskStatusLa
 import { applyConversationAgent, applyConversationModel } from "./07-models-agents.js";
 import { readAsDataUrl } from "./10-upload.js";
 import { detachRunSubscription, resumeConversationRun } from "./11-run-stream.js";
-import { applyConversationLightweight, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
+import { applyConversationLightweight, closeQuickMessagePanel, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
 import { prefillPresetSkillsInComposer } from "./13-skill-refs.js";
 import { clearFileRefCache, hideFilePopup } from "./16-file-refs.js";
 import { closeFilePanel, closeSidebar } from "./14-file-panel.js";
@@ -409,7 +409,6 @@ export async function createConversation(workspaceGroup = '', workspaceDir = '',
   renderPermissionModeSwitch();
   closeSidebar();
   if (prefillSkills) prefillPresetSkillsInComposer(conversation);
-  renderConversationRuleBar();
   $('#messageInput').focus();
 }
 
@@ -422,6 +421,7 @@ export async function openConversation(id) {
     // @ 引用弹层与目录缓存同样属于当前会话工作区
     hideFilePopup();
     clearFileRefCache();
+    closeQuickMessagePanel();
   }
   const conversation = await api(`/api/conversations/${id}`);
   state.conversationId = id;
@@ -462,7 +462,6 @@ export async function openConversation(id) {
   updateDeepReasoningButton();
   applyConversationLightweight(conversation);
   await resumeConversationRun(id);
-  renderConversationRuleBar();
   closeSidebar();
 }
 
@@ -492,7 +491,6 @@ export async function syncCurrentConversation() {
     state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
     updateDeepReasoningButton();
     applyConversationLightweight(conversation);
-    renderConversationRuleBar();
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
@@ -565,37 +563,6 @@ export function renderRunTasks() {
       <div class="task-actions"><span class="task-status ${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span></div>
     </div>`;
   }).join('');
-}
-
-export function renderConversationRuleBar() {
-  const bar = $('#conversationRuleBar');
-  const text = $('#conversationRuleText');
-  if (!bar || !text) return;
-  const conversation = state.conversations.find((item) => item.id === state.conversationId);
-  if (!state.conversationId || !conversation) {
-    bar.hidden = true;
-    return;
-  }
-  // 选项按钮（#choiceButtons）展开时让位，避免规则栏与按钮重叠。
-  // 按钮存在期间只维护 hidden 状态、绝不显示；按钮被 hideChoiceButtons() 移除后，
-  // 下一次渲染自然走 hidden=false 把规则栏还回来。
-  if ($('#choiceButtons')) {
-    bar.hidden = true;
-    return;
-  }
-  bar.hidden = false;
-  const prompt = String(conversation.system_prompt || '').trim();
-  if (!prompt) {
-    text.textContent = '本次对话规则：未设置';
-    bar.classList.remove('has-rule');
-    bar.title = '在「对话设置」中设置本次对话规则';
-  } else {
-    const compact = prompt.replace(/\s+/g, ' ');
-    const summary = compact.length > 40 ? `${compact.slice(0, 40)}…` : compact;
-    text.textContent = `本次对话规则：${summary}`;
-    bar.classList.add('has-rule');
-    bar.title = '在「对话设置」中查看或修改';
-  }
 }
 
 export async function importCharacterCard(file) {
@@ -743,7 +710,6 @@ export async function saveConversationSettings(event) {
     if (id === state.conversationId) {
       applyConversationLightweight(updated);
     }
-    renderConversationRuleBar();
     toast('对话设置已保存');
   } catch (error) {
     toast(`保存失败：${error.message}`);

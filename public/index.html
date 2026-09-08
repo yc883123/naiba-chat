@@ -127,10 +127,6 @@
       <section class="composer-wrap">
         <div class="active-task-bar" id="activeTaskBar" hidden></div>
         <div class="pending-files" id="pendingFiles"></div>
-        <div class="conversation-rule-bar" id="conversationRuleBar" hidden>
-          <span class="conversation-rule-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h16v2H4zM4 9h16v2H4zM4 14h10v2H4z"></path></svg></span>
-          <span class="conversation-rule-text" id="conversationRuleText">本次对话规则：未设置</span>
-        </div>
         <form class="composer" id="composerForm">
           <input id="fileInput" type="file" multiple hidden>
           <button class="icon-button attach-button" type="button" id="attachButton" title="添加文件" aria-label="添加文件">
@@ -196,6 +192,17 @@
                 </div>
               </div>
               <label class="rich-text-toggle-inline" title="开启后渲染安全白名单内的 HTML 富文本"><input id="richTextToggle" type="checkbox"> 富文本</label>
+            </div>
+            <div class="composer-meta-more">
+              <button type="button" class="composer-meta-more-button" id="quickMessageButton" aria-haspopup="menu" aria-expanded="false" title="快捷消息：点击插入常用提示词">快捷消息</button>
+              <div class="quick-msg-panel" id="quickMessagePanel" hidden>
+                <div class="quick-msg-head">
+                  <span>快捷消息</span>
+                  <button type="button" id="quickMessageAdd" title="新建快捷消息">＋ 新建</button>
+                </div>
+                <div class="quick-msg-list" id="quickMessageList" role="menu"></div>
+                <div class="quick-msg-foot">点击插入到输入框 · ✎ 编辑 · ✕ 删除</div>
+              </div>
             </div>
           </div>
           <span id="runtimeStatus">就绪</span>

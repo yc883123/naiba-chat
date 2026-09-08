@@ -7,7 +7,7 @@ import { messageElement, scrollToBottom, setStickToBottom } from "./04-messages.
 import { loadTasks } from "./06-tasks-plans.js";
 import { createConversation, loadConversations, openConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
-import { handleChatEvent, hideChoiceButtons, setBusy } from "./12-chat-input.js";
+import { closeQuickMessagePanel, handleChatEvent, hideChoiceButtons, setBusy } from "./12-chat-input.js";
 import { hideSkillPopup, parseSkillReferences, renderInputMirror, resizeTextarea, stripSkillReferences } from "./13-skill-refs.js";
 import { hideFilePopup } from "./16-file-refs.js";
 export function clearRunReconnectTimers() {
@@ -454,6 +454,7 @@ export async function sendChatMessage(textOverride = '') {
   renderInputMirror();
   hideSkillPopup();
   hideFilePopup();
+  closeQuickMessagePanel();
   if ($('#emptyState')) $('#emptyState').hidden = true;
   $('#messages').append(messageElement({ role: 'user', content: messageText, metadata: { attachments, display_content: text } }));
   const row = createRunRow({ id: '', kind: 'chat' });
