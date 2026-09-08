@@ -154,7 +154,9 @@ export function renderSidebarWindow(targetScrollTop, { force = false } = {}) {
   const tree = $('#sidebarWorkspaceTree');
   if (!tree) return;
   if (!sidebarRowCache.length) {
-    tree.innerHTML = '<div class="workspace-empty">暂无对话</div>';
+    // 顶栏「新会话」按钮已移除（每个工作区分组自带「＋ 新会话」）；这里保留一个兜底入口，
+    // 否则"一条会话都没有"时侧栏没有任何新建入口。
+    tree.innerHTML = '<div class="workspace-empty">暂无对话<button class="workspace-new-chat" data-action="new-chat" type="button">＋ 新建会话</button></div>';
     resetSidebarWindowRange();
     return;
   }
@@ -283,13 +285,46 @@ export function renderSidebar() {
   let st = tree.scrollTop;
   if (sidebarScrollToActive) {
     sidebarScrollToActive = false;
-    const idx = rows.findIndex((r) => r.type === 'item' && r.c.id === state.conversationId);
-    if (idx >= 0) st = offsets[idx];
+    st = sidebarScrollForActive(rows, offsets, st, tree.clientHeight || 0);
   }
   // renderSidebarWindow 内部会按「夹紧后的真实滚动位置」切窗口并回写 scrollTop，
   // 不再在窗口算完后单独赋值——避免高度突变时窗口与滚动状态错位。
   // force：行缓存刚重建，即使区间索引相同也必须重绘（内容可能已变）。
   renderSidebarWindow(st, { force: true });
+}
+
+// 当前会话行的滚动定位：**最小滚动**——已可见就一动不动；不可见才把最近的那一份
+// （同一会话可能同时出现在工作区分组与「已收藏」分组）刚好带进视口，绝不强制顶到最上。
+// 此前一律 `st = offsets[idx]`，点一下列表就整片滚到顶，用户根本找不回原来的位置。
+export function sidebarScrollForActive(rows, offsets, currentScrollTop, viewHeight) {
+  const indexes = [];
+  rows.forEach((row, index) => {
+    if (row.type === 'item' && row.c.id === state.conversationId) indexes.push(index);
+  });
+  if (!indexes.length) return currentScrollTop;
+  const viewTop = Math.max(0, Number(currentScrollTop) || 0);
+  const viewBottom = viewTop + viewHeight;
+  const span = (index) => {
+    const top = offsets[index];
+    return { top, bottom: top + sidebarRowHeight(rows[index]) };
+  };
+  if (indexes.some((index) => {
+    const { top, bottom } = span(index);
+    return bottom > viewTop && top < viewBottom;
+  })) {
+    return viewTop; // 已可见：保持用户当前的位置
+  }
+  let best = indexes[0];
+  let bestDistance = Infinity;
+  for (const index of indexes) {
+    const { top, bottom } = span(index);
+    const distance = top > viewBottom ? top - viewBottom : (bottom < viewTop ? viewTop - bottom : 0);
+    if (distance < bestDistance) { bestDistance = distance; best = index; }
+  }
+  const { top, bottom } = span(best);
+  if (bottom > viewBottom) return bottom - viewHeight;
+  if (top < viewTop) return top;
+  return viewTop;
 }
 
 export function renderComposerWorkspace() {
@@ -343,6 +378,8 @@ export async function onSidebarTreeClick(event) {
       renderSidebar();
     } else if (action === 'new-in-group') {
       createConversation(actionEl.dataset.workspaceGroup || '', actionEl.dataset.workspaceDir || '', true);
+    } else if (action === 'new-chat') {
+      createConversation('', '', true);
     } else if (action === 'delete-workspace') {
       deleteWorkspace(actionEl.dataset.workspaceName || '');
     } else if (action === 'toggle-favorite') {
