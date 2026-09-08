@@ -5,7 +5,7 @@
 import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 import { updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
-import { getStreamingProseSegment, messageElement, moveBottomProseInline, renderMessages, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
+import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, renderMessages, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation, renderConversationRuleBar } from "./08-conversations.js";
@@ -550,7 +550,7 @@ function handleChoiceEvent(event) {
   showChoiceButtons(event.choices, event.choice_groups);
 }
 
-function handleCancelledEvent(event, { row, answer, setActivity }) {
+function handleCancelledEvent(event, { row, answer, setActivity, conversationId }) {
   clearElapsedStatus();
   clearVisionProgress();
   setActivity('');
@@ -573,6 +573,8 @@ function handleCancelledEvent(event, { row, answer, setActivity }) {
     }
     setActivity(event.message || '任务已取消');
   }
+  // 首轮上下文折叠卡：终态事件前后端已把 first_turn 落盘，即时拉取展示（首轮取消同样有上下文可看）。
+  if (conversationId) void refreshFirstTurnCard(conversationId);
 }
 
 function handleRunFailedEvent(event, { answer, setActivity }) {
@@ -606,7 +608,7 @@ function handleUsageEvent(event, { row, answer }) {
   box.innerHTML = usageMarkup(event.usage || {});
 }
 
-function handleDoneEvent(event, { row, answer, collapseReasoning }) {
+function handleDoneEvent(event, { row, answer, collapseReasoning, conversationId }) {
   clearElapsedStatus();
   clearVisionProgress();
   collapseReasoning();
@@ -627,9 +629,12 @@ function handleDoneEvent(event, { row, answer, collapseReasoning }) {
     answer.innerHTML = '<p>计划执行完成</p>';
   }
   $('#runtimeStatus').textContent = '就绪';
+  // 首轮上下文折叠卡：后端在终态事件落盘之前已抢先写入 first_turn（见 run/chat.py），
+  // done 后立即拉取展示，不必等下次 openConversation / 同步轮询。
+  if (conversationId) void refreshFirstTurnCard(conversationId);
 }
 
-function handleErrorEvent(event, { row, answer, collapseReasoning }) {
+function handleErrorEvent(event, { row, answer, collapseReasoning, conversationId }) {
   clearElapsedStatus();
   clearVisionProgress();
   collapseReasoning();
@@ -658,6 +663,8 @@ function handleErrorEvent(event, { row, answer, collapseReasoning }) {
     }
   }
   $('#runtimeStatus').textContent = '执行失败';
+  // 失败轮次同样可能是首轮：first_turn 已由收尾路径落盘，即时拉取展示。
+  if (conversationId) void refreshFirstTurnCard(conversationId);
 }
 
 export function showChoiceButtons(choices, choiceGroups = []) {

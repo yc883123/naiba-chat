@@ -287,6 +287,49 @@ export function firstTurnCardMarkup(firstTurn) {
   </details>`;
 }
 
+// 「首次请求上下文」折叠卡的就地刷新（终态事件后调用）：数据源与 openConversation 一致
+// （GET /api/conversations/{id}/first_turn）。只增删/替换折叠卡节点、不整页重渲染，
+// 避免打断已完成消息行的 DOM；renderMessages 也复用之，保证两条渲染路径同序
+// （empty → 折叠卡 → 消息）。
+export async function refreshFirstTurnCard(conversationId = state.conversationId) {
+  if (!conversationId || conversationId !== state.conversationId) return;
+  let firstTurn = null;
+  try {
+    const data = await api(`/api/conversations/${conversationId}/first_turn`);
+    const hasSystem = data && typeof data === 'object' && Boolean(data.system || data.prompt);
+    firstTurn = hasSystem ? data : null;
+  } catch (_) {
+    firstTurn = null; // 老会话无此数据 / 接口瞬时失败：静默（与 openConversation 同策略）
+  }
+  if (conversationId !== state.conversationId) return; // 拉取期间已切换会话：丢弃
+  state.firstTurnInfo = firstTurn;
+  upsertFirstTurnCard();
+}
+
+function upsertFirstTurnCard() {
+  const container = $('#messages');
+  if (!container) return;
+  const existing = container.querySelector('.first-turn-card');
+  const markup = state.firstTurnInfo ? firstTurnCardMarkup(state.firstTurnInfo) : '';
+  if (!markup) {
+    if (existing) existing.remove();
+    return;
+  }
+  const template = document.createElement('template');
+  template.innerHTML = markup.trim();
+  const card = template.content.firstElementChild;
+  if (!card) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) existing.replaceWith(card);
+  else {
+    const empty = $('#emptyState');
+    if (empty && empty.parentNode === container) empty.insertAdjacentElement('afterend', card);
+    else container.prepend(card);
+  }
+}
+
 export function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
@@ -304,12 +347,7 @@ export function renderMessages(messages) {
     container.append(empty);
     // 首轮上下文折叠卡：固定在最顶部（第一条消息上方），展示第一轮发送给模型的
     // 系统提示词与工具集（默认折叠）。
-    const firstTurnMarkup = state.firstTurnInfo ? firstTurnCardMarkup(state.firstTurnInfo) : '';
-    if (firstTurnMarkup) {
-      const template = document.createElement('template');
-      template.innerHTML = firstTurnMarkup.trim();
-      container.append(template.content.firstElementChild);
-    }
+    upsertFirstTurnCard();
     if (visibleMessages.length) {
       visibleMessages.forEach((message) => container.append(messageElement(message)));
       scrollToBottom();
