@@ -2,7 +2,7 @@
 // 15-bind-events.js —— 拆分自 public/app.js 第 6658-7653 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast } from "./01-core.js";
+import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
 import { branchMessage, isNearBottom, setStickToBottom, startEditMessage } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
@@ -33,6 +33,11 @@ export function bindEvents() {
       ? range.endContainer : range.endContainer.parentElement;
     const messageBody = startNode?.closest('.message-body');
     if (!messageBody || endNode?.closest('.message-body') !== messageBody) return;
+    // 模态弹层不清除 window.getSelection()：设置页里右键会拿着底层会话的残留选区，
+    // 弹出"复制选中/快速发送"（会话页菜单）。这里把选区菜单限制在同一弹层内。
+    const dialog = event.target.closest?.('dialog[open]');
+    if (dialog && !dialog.contains(messageBody)) return;
+    if (!dialog && topLayerContainer() !== document.body) return;
     event.preventDefault();
     showTextContextMenu(event, selection.toString(), 'selection', null);
   });

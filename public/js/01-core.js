@@ -248,6 +248,21 @@ export function hideTextContextMenu() {
   if (menu) menu.hidden = true;
 }
 
+// 最上层的模态 <dialog>（浏览器 top layer）；没有则返回 body。
+// 用途：模态弹层永远盖住 body 上的 fixed 元素（z-index 无效），浮层要么挂进它、要么用 popover。
+// `:modal` 只匹配 showModal() 打开的对话框，可排除 toast（它是 <dialog> 但用 show()，非模态）。
+export function topLayerContainer() {
+  const open = [...document.querySelectorAll('dialog[open]')];
+  const modals = open.filter((dialog) => {
+    try {
+      return dialog.matches(':modal');
+    } catch (_) {
+      return !dialog.classList.contains('toast');
+    }
+  });
+  return modals.length ? modals[modals.length - 1] : document.body;
+}
+
 export function showTextContextMenu(event, selection = '', mode = 'selection', target = null) {
   const menu = ensureContextMenu();
   contextMenuSelection = selection;
@@ -262,6 +277,10 @@ export function showTextContextMenu(event, selection = '', mode = 'selection', t
     contextMenuRangeEnd = 0;
   }
   setContextMenuItems();
+  // 模态弹层在 top layer：body 上的 fixed 菜单会被弹层盖住（z-index 无效），
+  // 必须把菜单挂进最上层那个弹层内部；没有弹层时挂回 body。
+  const container = topLayerContainer();
+  if (menu.parentElement !== container) container.append(menu);
   menu.hidden = false;
   const width = menu.offsetWidth;
   const height = menu.offsetHeight;
@@ -284,8 +303,13 @@ export function focusContextTarget() {
 export function editableSelectedText() {
   const el = contextMenuTarget;
   if (!el) return '';
-  if (typeof el.value === 'string' && typeof el.selectionStart === 'number') {
-    return el.value.substring(el.selectionStart, el.selectionEnd);
+  if (typeof el.value === 'string') {
+    if (typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
+      return el.value.substring(el.selectionStart, el.selectionEnd);
+    }
+    // number/email 等类型不暴露 selectionStart（恒为 null）：退化为整值复制，
+    // 否则这些输入框右键「复制」永远提示"没有可复制的内容"。
+    return el.value;
   }
   const sel = window.getSelection();
   return sel ? sel.toString() : '';
