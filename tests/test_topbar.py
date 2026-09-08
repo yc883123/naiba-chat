@@ -35,7 +35,6 @@ class TopbarStyleTests(unittest.TestCase):
         actions = index[index.index('class="topbar-actions"'):]
         actions = actions[: actions.index("</header>")]
         self.assertIn('id="reloadPage"', actions, "刷新按钮不在顶栏操作区")
-        self.assertIn('id="unloadModel"', actions, "卸载模型按钮不在顶栏操作区")
         bind = self._bind()
         self.assertNotIn("topbarMoreButton", bind, "溢出菜单的绑定未清理")
         self.assertIn("$('#reloadPage')?.addEventListener", bind)
@@ -65,6 +64,38 @@ class TopbarStyleTests(unittest.TestCase):
         self.assertIn(".mcp-button.disconnected i", css)
         self.assertIn(".mcp-button.connected i", css)
         self.assertIn(".mcp-button.error i", css)
+
+    def test_topbar_unload_button_removed(self) -> None:
+        """顶栏「卸载模型」按钮已删（本地模型卸载统一在设置页）。"""
+        index = self._index()
+        self.assertNotIn('id="unloadModel"', index)
+        bind = self._bind()
+        self.assertNotIn("unloadCurrentModel", bind)
+        models = (ROOT / "public/js/07-models-agents.js").read_text(encoding="utf-8")
+        self.assertNotIn("unloadCurrentModel", models)
+        self.assertNotIn("$('#unloadModel')", models)
+
+    def test_file_button_shares_topbar_style(self) -> None:
+        """文件面板按钮必须与其它顶栏按钮同款（此前用侧栏深色底，与浅色主题格格不入）。"""
+        css = self._css()
+        rule = css[css.index(".file-reopen-button:not([hidden]) {"):]
+        rule = rule[: rule.index("}")]
+        self.assertNotIn("var(--sidebar)", rule, "又用上侧栏深色底")
+        self.assertNotIn("color: var(--sidebar-text)", rule)
+
+    def test_topbar_buttons_do_not_wrap_or_shrink(self) -> None:
+        """顶栏操作区不被压缩、按钮文字不换行（否则会挤成竖排文字）。"""
+        css = self._css()
+        actions = css[css.index(".topbar-actions {"):]
+        actions = actions[: actions.index("}")]
+        self.assertIn("flex: none", actions)
+        self.assertIn(".topbar-actions > * { flex: none; }", css)
+        base = css[css.index(".control-button, .mcp-button, .text-button {"):]
+        base = base[: base.index("}")]
+        self.assertIn("white-space: nowrap", base)
+        self.assertNotIn("#openSkills .button-label", css, "窄屏不应再隐藏 Skill/任务文字标签")
+        self.assertNotIn("#openTasks .button-label", css)
+        self.assertNotIn(".mcp-button span { display: none; }", css)
 
     def test_topbar_control_button_icons_are_outlined(self) -> None:
         """搬回操作区的按钮必须有线性 SVG 样式，否则裸 SVG 会渲染成黑色实心块。"""
