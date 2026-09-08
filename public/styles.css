@@ -426,6 +426,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .n-tok { display: inline-block; min-width: 6ch; text-align: right; }
 .n-sec { display: inline-block; min-width: 3ch; text-align: right; }
 .n-rate { display: inline-block; min-width: 4ch; text-align: right; }
+/* 速率按 %4d 打印（右对齐补空格），需要保留空白才看得见对齐效果 */
+.n-speed { display: inline-block; white-space: pre; text-align: right; }
 .message-sources { margin-top: 10px; color: var(--muted); font-size: 12px; }
 .message-sources summary { cursor: pointer; color: var(--text); }
 .message-sources ol { margin: 8px 0 0; padding-left: 22px; }

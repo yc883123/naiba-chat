@@ -596,6 +596,30 @@ export function formatDateTime(ms) {
   return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+// 生成速率（token/s）：输出 tokens ÷ 请求耗时秒。
+// 没有耗时的旧数据返回 null（不显示该字段）；耗时存在但输出为 0 时返回 0（如实显示）。
+function requestTokenSpeed(item) {
+  const ms = Number(item?.request_ms || 0);
+  if (!(ms > 0)) return null;
+  const output = Math.max(0, Number(item?.output_tokens || 0));
+  return output / (ms / 1000);
+}
+
+// 本轮平均速率：按请求明细的「输出总量 ÷ 请求总耗时」加权（而不是各次速率的算术平均），
+// 无可用明细（旧数据）时返回 null。
+function averageTokenSpeed(details) {
+  const rows = (Array.isArray(details) ? details : []).filter((item) => Number(item?.request_ms || 0) > 0);
+  if (!rows.length) return null;
+  const output = rows.reduce((sum, item) => sum + Math.max(0, Number(item.output_tokens || 0)), 0);
+  const ms = rows.reduce((sum, item) => sum + Number(item.request_ms || 0), 0);
+  return ms > 0 ? output / (ms / 1000) : null;
+}
+
+// %4d 打印：右对齐补空格到 4 位（配合 .n-speed 的 white-space: pre 保留空格）。
+function formatSpeedPadded(rate) {
+  return String(Math.round(rate)).padStart(4, ' ');
+}
+
 function usageRequestLine(item) {
   const input = Math.max(0, Number(item.input_tokens || 0));
   const output = Math.max(0, Number(item.output_tokens || 0));
@@ -603,8 +627,10 @@ function usageRequestLine(item) {
   const total = Math.max(0, Number(item.total_tokens || 0)) || input + output;
   const rate = input ? (cached / input * 100).toFixed(1) : '0.0';
   const ms = Number(item.request_ms || 0);
-  // 数值列对齐：token %6d / 时长 %3.1f / 命中率 %2.1f（CSS 定宽右对齐，无需千分位）。
-  return `<div class="usage-request-line">第 ${Number(item.index || 0)} 次请求：输入 <span class="n-tok">${input}</span> · 输出 <span class="n-tok">${output}</span> · 总 <span class="n-tok">${total}</span> · 命中率 <span class="n-rate">${rate}%</span>（命中 <span class="n-tok">${cached}</span> / 重算 <span class="n-tok">${Math.max(0, input - cached)}</span>）${ms > 0 ? ` · 耗时 <span class="n-sec">${(ms / 1000).toFixed(1)}</span>s` : ''}</div>`;
+  const speed = requestTokenSpeed(item);
+  // 数值列对齐：token %6d / 时长 %3.1f / 命中率 %2.1f / 速率 %4d（CSS 定宽右对齐，无需千分位）。
+  const speedHtml = speed === null ? '' : ` · 速率 <span class="n-speed">${formatSpeedPadded(speed)}</span> token/s`;
+  return `<div class="usage-request-line">第 ${Number(item.index || 0)} 次请求：输入 <span class="n-tok">${input}</span> · 输出 <span class="n-tok">${output}</span> · 总 <span class="n-tok">${total}</span> · 命中率 <span class="n-rate">${rate}%</span>（命中 <span class="n-tok">${cached}</span> / 重算 <span class="n-tok">${Math.max(0, input - cached)}</span>）${speedHtml}${ms > 0 ? ` · 耗时 <span class="n-sec">${(ms / 1000).toFixed(1)}</span>s` : ''}</div>`;
 }
 
 export function usageMarkup(usage, createdAt = null) {
@@ -640,8 +666,11 @@ export function usageMarkup(usage, createdAt = null) {
   const durationLabel = durationValue > 0
     ? `本轮${durationMs > 0 ? '总' : '已'}耗时 ${(durationValue / 1000).toFixed(1)}s`
     : '';
+  // 平均速率（输出 tokens ÷ 请求总耗时）：有逐次明细时显示，旧数据无耗时则不显示。
+  const avgSpeed = averageTokenSpeed(details);
+  const speedLabel = avgSpeed === null ? '' : `平均${Math.round(avgSpeed)} token/s `;
   const durationLine = durationLabel
-    ? `<div class="usage-line usage-duration">${durationLabel}，共 ${requests} 次请求${durationMs > 0 && when ? `。${when}` : ''}</div>`
+    ? `<div class="usage-line usage-duration">${durationLabel}，${speedLabel}共 ${requests} 次请求${durationMs > 0 && when ? `。${when}` : ''}</div>`
     : '';
   // 只保留视觉 lane（聊天"lane 耗时"是最后一次请求的诊断值，与"本轮总耗时"重复且易误导，已移除）。
   const laneLine = (visualMs || visionCacheHit)
