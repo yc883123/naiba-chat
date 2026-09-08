@@ -461,7 +461,7 @@ export async function cleanImageCache() {
     const result = await api('/api/imaging/clean', { method: 'POST', body: {} });
     state.bootstrap.image_cache_bytes = Number(result.size || 0);
     $('#imageCacheSize').textContent = formatBytes(Number(result.size || 0));
-    toast(`已清理 ${formatBytes(Number(result.freed || 0))}（删除 ${Number(result.removed || 0)} 个文件）`);
+    toast(`已清理 ${formatBytes(Number(result.freed || 0))}（删除 ${Number(result.removed || 0)} 个文件，按时间从旧到新）`);
   } catch (error) {
     toast(`清理失败：${error.message}`);
   } finally {
