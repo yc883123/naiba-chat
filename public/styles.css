@@ -795,9 +795,23 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .plan-edit-dialog .field-wide { display: block; margin: 10px 0; }
 .plan-edit-dialog .field-wide input { width: 100%; }
 .text-button { border: 0; min-height: 20px; color: var(--red); background: none; }
-.pending-files { display: flex; gap: 6px; overflow-x: auto; }
-.pending-files .file-chip { margin-bottom: 6px; white-space: nowrap; }
-.pending-files button { border: 0; background: none; color: var(--muted); }
+/* 待发送附件：输入框上方的竖直列表——固定高度（约 4 行）后内部滚动，
+   文件名一行截断（title 显示全名），图片显示预览缩略图（点击可看大图）。
+   此前是横向 chip 条：文件名一长就显示不全，还要横向拖滚动条。 */
+/* grid-template-columns: minmax(0, 1fr) 是关键：默认的 auto 列会被"最长的不可断行文件名"
+   撑到内容宽度（实测行宽 1338px > 容器 870px，文件名反而不截断、整列横向溢出），
+   约束成 1fr 后每行都等于容器宽度，配合 .pending-name 的 min-width:0 才能正常 ellipsis。 */
+.pending-files { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; max-height: 180px; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; padding: 2px; margin-bottom: 6px; scrollbar-gutter: stable; }
+.pending-files[hidden] { display: none; }
+.pending-item { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 3px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); font-size: 12px; }
+.pending-thumb { width: 32px; height: 32px; flex: none; border-radius: 4px; object-fit: cover; background: var(--surface-2); cursor: zoom-in; }
+.pending-thumb-file { display: grid; place-items: center; color: var(--muted); cursor: default; }
+.pending-thumb-file svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.pending-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.pending-status { flex: none; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pending-remove { width: 22px; height: 22px; flex: none; display: grid; place-items: center; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--muted); padding: 0; cursor: pointer; }
+.pending-remove:hover { background: var(--surface-2); color: var(--red); }
+.pending-remove svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 
 dialog { border: 1px solid var(--line); border-radius: var(--r-xl); color: var(--text); padding: 0; box-shadow: 0 18px 70px rgba(30, 33, 56, .24); }
 dialog::backdrop { background: rgba(20, 22, 40, .45); }

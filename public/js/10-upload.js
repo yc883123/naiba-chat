@@ -88,19 +88,32 @@ export function readAsDataUrl(file) {
   });
 }
 
+// 非图片附件的占位图标（与图片缩略图同尺寸，保证整列左缘对齐）。
+const FILE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>';
+
+// 待发送附件：输入框上方的**竖直列表**（固定高度、可滚动、文件名截断、图片带预览）。
+// 此前是横向 chip 条，文件名一长就一屏显示不全、还要横向拖滚动条。
 export function renderPendingFiles() {
-  $('#pendingFiles').innerHTML = state.pendingFiles.map((file, index) => {
+  const container = $('#pendingFiles');
+  if (!container) return;
+  container.innerHTML = state.pendingFiles.map((file, index) => {
     const isImage = Boolean(file.path || file.thumb_path) && mediaKind(file.path, file.name) === 'image';
     // 上传中/无 path 时不渲染缩略图（旧逻辑会请求空路径 /api/file?path= → 404 破图）。
     const thumbUrl = file.path ? attachmentThumbUrl(file) : '';
-    const image = (isImage && thumbUrl)
-      ? `<img class="thumbnail" src="${escapeHtml(thumbUrl)}" alt="" draggable="false" data-large-url="${escapeHtml(fileUrl(file.path))}">`
-      : '';
+    const preview = (isImage && thumbUrl)
+      ? `<img class="pending-thumb" src="${escapeHtml(thumbUrl)}" alt="" draggable="false" data-large-url="${escapeHtml(fileUrl(file.path))}">`
+      : `<span class="pending-thumb pending-thumb-file" aria-hidden="true">${FILE_ICON}</span>`;
     const status = file.uploading
-      ? `上传中${file.progress > 0 ? ` · ${file.progress}%` : ''} · `
+      ? `<span class="pending-status">${file.progress > 0 ? `${file.progress}%` : '上传中'}</span>`
       : '';
-    return `<span class="file-chip">${status}${image}${escapeHtml(file.name)}<button data-remove-file="${index}" title="移除" aria-label="移除"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></span>`;
+    return `<div class="pending-item${file.uploading ? ' is-uploading' : ''}">
+      ${preview}
+      <span class="pending-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</span>
+      ${status}
+      <button type="button" class="pending-remove" data-remove-file="${index}" title="移除" aria-label="移除 ${escapeHtml(file.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+    </div>`;
   }).join('');
+  container.hidden = state.pendingFiles.length === 0;
   // 待发送附件增减直接决定"能否发送"（纯附件轮次合法）：单点刷新发送按钮状态。
   updateSendButtonState();
 }
