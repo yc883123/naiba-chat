@@ -80,7 +80,9 @@ def store_uploaded_file(
     target.write_bytes(main_bytes)
     thumb_path = ""
     if thumb_name and thumb_bytes:
-        thumb_file = target_dir / thumb_name
+        # 缩略图必须与主图同 stem（<主图 stem>_thumb.webp）：前端兜底、去重复用（_thumb_path_for）
+        # 与删除成组（remove_uploaded_file）都按这一约定推导；用原始文件名会导致三处全部找不到。
+        thumb_file = target_dir / f"{target.stem}_thumb.webp"
         thumb_file.write_bytes(thumb_bytes)
         thumb_path = str(thumb_file)
     return {

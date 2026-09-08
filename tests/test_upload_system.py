@@ -83,6 +83,15 @@ class StoreUploadedFileTests(unittest.TestCase):
             self.assertLessEqual(img.width * img.height, 2000000)
         self.assertTrue(result["thumb_path"])
         self.assertTrue(Path(result["thumb_path"]).is_file())
+        # 缩略图必须与主图同 stem：前端兜底、去重复用与删除成组都按此约定推导。
+        self.assertEqual(Path(result["thumb_path"]).name, f"{main.stem}_thumb.webp")
+        # 同内容再传一次：命中去重并复用同一份缩略图（不能返回空 thumb_path）。
+        again = store_uploaded_file(
+            png, "big-again.png", self.data_dir,
+            {"image_upload_original": False, "image_max_pixels": 2000000, "thumbnail_max_pixels": 500000},
+        )
+        self.assertTrue(again["deduped"])
+        self.assertEqual(Path(again["thumb_path"]).resolve(), Path(result["thumb_path"]).resolve())
 
     def test_auto_clean_with_reference_guard(self) -> None:
         """B1：自动清理带引用保护——被引用的最旧组永久保留，只删未引用组。"""
