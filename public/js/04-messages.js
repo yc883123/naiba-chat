@@ -2,7 +2,7 @@
 // 04-messages.js —— 拆分自 public/app.js 第 1212-1501 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, api, draggedFileCache, emptyStateElement, escapeHtml, state, toast } from "./01-core.js";
+import { $, api, draggedFileCache, emptyStateElement, escapeHtml, notifyComposerChanged, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 import { activityMarkup, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, mediaTruncatedNotice, reasoningMarkup, remainingAttachments, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, uploadedFileMarkup, usageMarkup } from "./03-media.js";
 import { openConversation } from "./08-conversations.js";
@@ -129,6 +129,7 @@ export async function confirmEditMessage(row, newText) {
     resizeTextarea();
     renderInputMirror();
     updateSkillPopup();
+    notifyComposerChanged(input);
     await sendMessage();
   } catch (error) {
     toast(`编辑失败：${error.message}`);

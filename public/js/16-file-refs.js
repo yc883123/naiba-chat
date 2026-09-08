@@ -8,7 +8,7 @@
 // 发送时由后端把 @相对路径 解析为工作区内的绝对路径（见 core/conv_files.resolve_file_references）。
 // ============================================================
 
-import { $, api, escapeHtml, state } from "./01-core.js";
+import { $, api, escapeHtml, notifyComposerChanged, state } from "./01-core.js";
 import { positionComposerPopup, renderInputMirror, resizeTextarea } from "./13-skill-refs.js";
 
 const DIR_CACHE = new Map();   // `${conversationId}|${rel}` → browse 响应（会话内复用）
@@ -106,6 +106,8 @@ function replaceActiveToken(text, { keepPopup = false } = {}) {
   input.setSelectionRange(cursor, cursor);
   resizeTextarea();
   renderInputMirror();
+  // @ 引用同样是程序化改值：通知输入管线，发送按钮才会随内容刷新。
+  notifyComposerChanged(input);
   if (keepPopup) updateFilePopup();
 }
 

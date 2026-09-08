@@ -366,6 +366,19 @@ export async function runTextContextAction(action) {
   }
 }
 
+// 程序化改输入框（快捷消息 / 技能引用 / @ 引用 / 选择按钮 / 编辑回填…）不会触发 input 事件，
+// 因此发送按钮可用性等"单点写入"不会刷新。凡是以代码写 `#messageInput.value` 的地方，
+// 改完必须调它一次：派发合成 input 事件，让 15-bind-events 的输入管线统一处理
+// （resizeTextarea / renderInputMirror / updateSkillPopup / updateFilePopup /
+// updateSendButtonState——发送按钮唯一写入点，见维护说明 §九.25）。
+export function notifyComposerChanged(input = null) {
+  const target = input || document.querySelector('#messageInput');
+  if (target && typeof target.dispatchEvent === 'function') {
+    target.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  return target;
+}
+
 export function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')

@@ -2,7 +2,7 @@
 // 13-skill-refs.js —— 拆分自 public/app.js 第 6069-6328 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, escapeHtml, state } from "./01-core.js";
+import { $, escapeHtml, notifyComposerChanged, state } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 export function skillList() { return Array.isArray(state.bootstrap?.skills) ? state.bootstrap.skills : []; }
 
@@ -196,6 +196,7 @@ export function commitSkillSelection(skill) {
   resizeTextarea();
   renderInputMirror();
   hideSkillPopup();
+  notifyComposerChanged(input);
   input.focus();
 }
 
@@ -215,6 +216,8 @@ export function insertTextAtCursor(text, { trailingSpace = true } = {}) {
   input.setSelectionRange(newCursor, newCursor);
   resizeTextarea();
   renderInputMirror();
+  // 快捷消息 / 技能引用都走这里：改完必须通知输入管线，否则发送按钮不会刷新为可发送。
+  notifyComposerChanged(input);
   return newCursor;
 }
 
@@ -237,6 +240,7 @@ export function prefillPresetSkillsInComposer(conversation) {
   resizeTextarea();
   renderInputMirror();
   input.setSelectionRange(input.value.length, input.value.length);
+  notifyComposerChanged(input);
   input.focus();
 }
 
@@ -257,6 +261,7 @@ export function appendPresetSkillsToComposer(agentId) {
   resizeTextarea();
   renderInputMirror();
   input.setSelectionRange(input.value.length, input.value.length);
+  notifyComposerChanged(input);
   input.focus();
 }
 

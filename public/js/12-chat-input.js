@@ -2,7 +2,7 @@
 // 12-chat-input.js —— 拆分自 public/app.js 第 5238-6068 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
+import { $, $$, api, escapeHtml, notifyComposerChanged, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 import { toolMediaMarkup, updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
 import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
@@ -889,6 +889,7 @@ export function fillComposer(text) {
   resizeTextarea();
   renderInputMirror();
   updateSkillPopup();
+  notifyComposerChanged(input);
   input.focus();
 }
 
