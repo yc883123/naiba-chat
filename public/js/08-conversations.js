@@ -393,7 +393,10 @@ export async function onSidebarTreeClick(event) {
   }
   const item = event.target.closest('.conversation-item');
   if (!item) return;
-  if (event.target.closest('.conversation-open')) openConversation(item.dataset.conversationId);
+  // 整条都可点（含上下边缘、左侧留白、按钮之间的空隙）：此前只有中间的文字按钮能命中，
+  // 鼠标落在条目上下边缘时既不变手型也不切换会话，判定区与视觉区不一致。
+  // 五角星与「⋯」在上面的 [data-action] 分支已处理并 return。
+  openConversation(item.dataset.conversationId);
 }
 
 // ---- 会话条目「⋯」菜单 / 收藏 / 重命名 ----
