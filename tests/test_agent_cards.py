@@ -385,7 +385,9 @@ class AgentCardsMarkupTests(unittest.TestCase):
         self.assertIn("background: var(--surface)", expanded, "展开区必须白底")
         head = css[css.index(".agent-tool-group-head {"):]
         head = head[: head.index("}")]
-        self.assertIn("background: var(--surface-2)", head, "分组头条子必须浅灰底，靠条子区分层次")
+        self.assertNotIn("background:", head, "折叠时分组头保持原样（无灰底）")
+        self.assertIn(".agent-tool-group:not(.collapsed) .agent-tool-group-head { background: var(--surface-2); }",
+                      css, "只有展开的那一组，分组头才变浅灰条子")
         settings = (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
         self.assertIn("label.title = `${tool.name}：${tool.description}`", settings,
                       "说明被截断，完整描述要进 title 悬停可见")
