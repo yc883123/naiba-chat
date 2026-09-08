@@ -212,7 +212,7 @@ class PromptListsIndependenceTests(unittest.TestCase):
 
 
 class StarterPresetSeedTests(unittest.TestCase):
-    """内置开始页预设：一次性并入 → 可编辑/可删除 → 可一键恢复。"""
+    """内置开始页预设：并入 → 可编辑/可删除 → 删除不复活 → 新预设自动补齐 → 一键恢复。"""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -222,32 +222,60 @@ class StarterPresetSeedTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def test_builtin_presets_seeded_once_with_desc_and_icon(self):
-        presets = [item for item in self.config.get_starter_prompts() if item.get("icon")]
+    def _titles(self):
+        return [item["title"] for item in self.config.get_starter_prompts()]
+
+    def test_builtin_presets_seeded_with_id_desc_and_icon(self):
+        presets = [item for item in self.config.get_starter_prompts() if item.get("preset_id")]
         self.assertEqual(len(presets), len(BUILTIN_STARTER_PRESETS))
         for item in presets:
-            self.assertTrue(item.get("title") and item.get("text") and item.get("desc"))
+            self.assertTrue(item.get("title") and item.get("text") and item.get("desc") and item.get("icon"))
         self.assertEqual(self.config.count_missing_starter_presets(), 0)
 
-    def test_seed_does_not_run_twice_and_deleted_preset_stays_deleted(self):
-        first = self.config.get_starter_prompts()
-        index = next(i for i, item in enumerate(first) if item["title"] == "列出可用工具")
+    def test_deleted_preset_is_recorded_and_never_resurrected(self):
+        index = next(i for i, item in enumerate(self.config.get_starter_prompts()) if item["title"] == "列出可用工具")
         self.config.remove_starter_prompt(index)
-        self.assertNotIn("列出可用工具", [item["title"] for item in self.config.get_starter_prompts()])
-        # 重新加载配置：不得把用户删掉的预设"复活"
+        self.assertNotIn("列出可用工具", self._titles())
+        # 重新加载（模拟下次启动 / 升级到新版本）：不得复活
         reloaded = ConfigStore(self.path)
         self.assertNotIn("列出可用工具", [item["title"] for item in reloaded.get_starter_prompts()])
         self.assertEqual(reloaded.count_missing_starter_presets(), 1)
+        self.assertIn("list-tools", reloaded.data.get("starter_presets_dismissed") or [])
 
-    def test_restore_readds_missing_presets_only(self):
+    def test_renamed_preset_is_not_duplicated_on_reload(self):
+        """改过标题的内置预设靠 preset_id 识别，重载后不会被当成缺失而重复插入。"""
+        prompts = self.config.get_starter_prompts()
+        index = next(i for i, item in enumerate(prompts) if item.get("preset_id") == "list-tools")
+        self.config.update_starter_prompt(index, "列出我的工具", "列出我所有工具。")
+        reloaded = ConfigStore(self.path)
+        titles = [item["title"] for item in reloaded.get_starter_prompts()]
+        self.assertIn("列出我的工具", titles)
+        self.assertNotIn("列出可用工具", titles, "改名后不得再插一份默认预设")
+        self.assertEqual(reloaded.count_missing_starter_presets(), 0)
+
+    def test_new_builtin_preset_added_in_newer_version_is_topped_up(self):
+        """版本新增的内置预设（未被删除过）在下次启动自动补齐。"""
+        # 模拟"上一版还没有这条预设"：删掉它并清空删除记录（等价于从未存在）
+        prompts = self.config.get_starter_prompts()
+        index = next(i for i, item in enumerate(prompts) if item.get("preset_id") == "await-instructions")
+        self.config.remove_starter_prompt(index)
+        self.config.data["starter_presets_dismissed"] = []
+        self.config.save()
+        reloaded = ConfigStore(self.path)
+        self.assertIn("等待用户指令", [item["title"] for item in reloaded.get_starter_prompts()])
+
+    def test_restore_readds_missing_presets_and_clears_dismissed(self):
         self.config.remove_starter_prompt(0)
         self.assertEqual(self.config.count_missing_starter_presets(), 1)
         restored = self.config.restore_starter_presets()
         titles = [item["title"] for item in restored]
         self.assertIn(BUILTIN_STARTER_PRESETS[0]["title"], titles)
         self.assertEqual(self.config.count_missing_starter_presets(), 0)
-        # 恢复后不产生重复条目
-        self.assertEqual(len(titles), len(set(titles)))
+        self.assertEqual(self.config.data.get("starter_presets_dismissed"), [])
+        self.assertEqual(len(titles), len(set(titles)), "恢复后不得出现重复条目")
+        # 清空清单后，再启动也不会重复
+        again = ConfigStore(self.path)
+        self.assertEqual(len([item for item in again.get_starter_prompts()]), len(titles))
 
     def test_update_preserves_desc_and_icon(self):
         prompts = self.config.get_starter_prompts()
@@ -257,6 +285,21 @@ class StarterPresetSeedTests(unittest.TestCase):
         self.assertEqual(entry["title"], "改名后的预设")
         self.assertEqual(entry["text"], "新的指令正文")
         self.assertTrue(entry.get("desc") and entry.get("icon"), "编辑不得丢掉副标题/图标")
+
+    def test_legacy_seed_flag_migrates_to_dismissed_list(self):
+        """旧方案（一次性标记）的配置：当前缺失的内置预设视为"用户已删除"。"""
+        self.config.remove_starter_prompt(0)
+        legacy = ConfigStore(self.path)
+        legacy.data.pop("starter_presets_dismissed", None)
+        legacy.data["starter_presets_seeded"] = True
+        for item in legacy.data.get("starter_prompts") or []:
+            item.pop("preset_id", None)  # 模拟旧版条目（无 preset_id）
+        legacy.save()
+        migrated = ConfigStore(self.path)
+        titles = [item["title"] for item in migrated.get_starter_prompts()]
+        self.assertNotIn(BUILTIN_STARTER_PRESETS[0]["title"], titles, "旧版删掉的不该被复活")
+        self.assertEqual(migrated.count_missing_starter_presets(), 1)
+        self.assertIn(BUILTIN_STARTER_PRESETS[0]["id"], migrated.data.get("starter_presets_dismissed") or [])
 
 
 if __name__ == "__main__":

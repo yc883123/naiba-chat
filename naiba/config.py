@@ -473,11 +473,15 @@ def quick_message_score(entry: dict[str, Any], now_ms: int) -> float:
 
 
 # ---- 开始页「自定义指令」的内置预设 ----
-# 这些卡片此前写死在 index.html 里（不可编辑、不可删除）；现在一次性并入
-# `starter_prompts`，与用户自建条目同权（可编辑/可删除），并支持一键恢复默认。
-# 键：title 标题 / text 指令正文 / desc 副标题 / icon 图标名（前端映射为 SVG）。
+# 这些卡片此前写死在 index.html 里（不可编辑、不可删除）；现在并入 `starter_prompts`，
+# 与用户自建条目同权（可编辑/可删除）。每个预设带**稳定 id**：
+# - 用户改标题/改正文不影响识别（条目上记 `preset_id`）；
+# - 用户删除的 id 记入 `starter_presets_dismissed`，永不自动复活（要恢复走「恢复默认预设」）；
+# - 版本新增的预设（id 不在列表里、也没被删过）会在下次启动自动补齐。
+# 键：id 稳定标识 / title 标题 / text 指令正文 / desc 副标题 / icon 图标名（前端映射为 SVG）。
 BUILTIN_STARTER_PRESETS: tuple[dict[str, str], ...] = (
     {
+        "id": "comfy-mcp",
         "title": "通过 MCP 调用 ComfyUI",
         "desc": "连接 ComfyUI MCP 服务",
         "icon": "list",
@@ -490,6 +494,7 @@ BUILTIN_STARTER_PRESETS: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "id": "comfy-http",
         "title": "通过 HTTP 调用 ComfyUI",
         "desc": "启动 ComfyUI 后使用",
         "icon": "sparkle",
@@ -503,6 +508,7 @@ BUILTIN_STARTER_PRESETS: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "id": "comfy-mcp-setup",
         "title": "设置本地 Comfy MCP",
         "desc": "配置连接与工具",
         "icon": "link",
@@ -516,18 +522,21 @@ BUILTIN_STARTER_PRESETS: tuple[dict[str, str], ...] = (
         ),
     },
     {
+        "id": "list-tools",
         "title": "列出可用工具",
         "desc": "查看当前能力",
         "icon": "wrench",
         "text": "列出你当前所有可用工具。",
     },
     {
+        "id": "list-files",
         "title": "列出所有文件",
         "desc": "浏览当前目录",
         "icon": "folder",
         "text": "列出当前文件夹下的所有文件。",
     },
     {
+        "id": "await-instructions",
         "title": "等待用户指令",
         "desc": "先理解系统指令",
         "icon": "clock",
@@ -535,9 +544,31 @@ BUILTIN_STARTER_PRESETS: tuple[dict[str, str], ...] = (
     },
 )
 
-# 一次性并入的标记：置位后不再自动补回，用户删掉的预设不会被"复活"
-# （需要恢复时走「恢复默认预设」按钮 / `restore_starter_presets`）。
-STARTER_PRESET_SEED_KEY = "starter_presets_seeded"
+# 用户主动删除的内置预设 id 清单：这些 id 不再自动补回（「恢复默认预设」会清空它）。
+STARTER_PRESET_DISMISSED_KEY = "starter_presets_dismissed"
+# 旧方案（一次性并入布尔标记）的迁移来源：置位时把"当前缺失的内置预设"视为用户已删除。
+_LEGACY_STARTER_PRESET_SEED_KEY = "starter_presets_seeded"
+
+
+def _starter_preset_id(entry: Any) -> str:
+    """条目对应的内置预设 id：优先 `preset_id`，旧条目按标题回退匹配（空串=用户自建）。"""
+    if not isinstance(entry, dict):
+        return ""
+    explicit = str(entry.get("preset_id") or "")
+    if explicit:
+        return explicit
+    title = str(entry.get("title") or "").strip().casefold()
+    for preset in BUILTIN_STARTER_PRESETS:
+        if preset["title"].casefold() == title:
+            return preset["id"]
+    return ""
+
+
+def _starter_preset_entry(preset: dict[str, str]) -> dict[str, str]:
+    """内置预设 → 存入 `starter_prompts` 的条目（`id` 改名为 `preset_id`）。"""
+    entry = dict(preset)
+    entry["preset_id"] = entry.pop("id")
+    return entry
 
 
 class ConfigStore:
@@ -607,7 +638,7 @@ class ConfigStore:
             }
         self.data = defaults
         self._migrate_conversation_prompt_presets()
-        self._migrate_starter_presets()
+        self._sync_starter_presets()
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
         self._migrate_default_agent_skills()
@@ -703,29 +734,48 @@ class ConfigStore:
             })
         self.data["conversation_prompt_presets"] = normalized
 
-    def _migrate_starter_presets(self) -> None:
-        """把内置开始页预设一次性并入 `starter_prompts`（使它们可编辑/可删除）。
+    def _sync_starter_presets(self) -> None:
+        """按"已删除 id 清单"补齐缺失的内置预设（每次加载都跑，幂等）。
 
-        只在标记未置位时执行一次；用户此后删除的预设不会被自动补回
-        （需要时走「恢复默认预设」）。已存在同名条目的不重复插入。
+        - 版本新增的内置预设（id 未被删除过）会自动出现；
+        - 用户删掉的 id 记在 `starter_presets_dismissed` 里，永不自动复活
+          （点「恢复默认预设」才回来）；
+        - 旧条目按标题回退识别并补写 `preset_id`：改过标题的条目靠 id 识别，
+          不会被当成"缺失"而重复插入。
         """
-        if self.data.get(STARTER_PRESET_SEED_KEY):
-            return
         prompts = self.data.get("starter_prompts")
         if not isinstance(prompts, list):
             prompts = []
-        existing = {
-            str(item.get("title") or "").casefold()
-            for item in prompts
-            if isinstance(item, dict)
-        }
+        prompts = [item for item in prompts if isinstance(item, dict)]
+        dismissed = self.data.get(STARTER_PRESET_DISMISSED_KEY)
+        dismissed_ids = {str(item) for item in dismissed} if isinstance(dismissed, list) else set()
+        # 旧方案迁移：曾置位一次性标记 → 当前缺失的内置预设视为"用户删掉的"
+        if self.data.pop(_LEGACY_STARTER_PRESET_SEED_KEY, False):
+            present = {_starter_preset_id(item) for item in prompts}
+            for preset in BUILTIN_STARTER_PRESETS:
+                if preset["id"] not in present:
+                    dismissed_ids.add(preset["id"])
+        # 回写 preset_id（旧条目按标题匹配）
+        changed = False
+        for item in prompts:
+            if not item.get("preset_id"):
+                matched = _starter_preset_id(item)
+                if matched:
+                    item["preset_id"] = matched
+                    changed = True
+        present_ids = {_starter_preset_id(item) for item in prompts}
         seeded = [
-            dict(preset) for preset in BUILTIN_STARTER_PRESETS
-            if str(preset["title"]).casefold() not in existing
+            _starter_preset_entry(preset)
+            for preset in BUILTIN_STARTER_PRESETS
+            if preset["id"] not in present_ids and preset["id"] not in dismissed_ids
         ]
-        self.data["starter_prompts"] = seeded + [item for item in prompts if isinstance(item, dict)]
-        self.data[STARTER_PRESET_SEED_KEY] = True
-        self.save()
+        if seeded:
+            prompts = seeded + prompts
+            changed = True
+        if changed or self.data.get(STARTER_PRESET_DISMISSED_KEY) != sorted(dismissed_ids):
+            self.data["starter_prompts"] = prompts
+            self.data[STARTER_PRESET_DISMISSED_KEY] = sorted(dismissed_ids)
+            self.save()
 
     def save(self) -> None:
         with self.lock:
@@ -908,7 +958,14 @@ class ConfigStore:
         with self.lock:
             prompts = self.data.setdefault("starter_prompts", [])
             if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
-                prompts.pop(int(index))
+                removed = prompts.pop(int(index))
+                # 删的是内置预设 → 记入"已删除"清单：以后启动不再自动补回
+                preset_id = _starter_preset_id(removed)
+                if preset_id:
+                    dismissed = self.data.get(STARTER_PRESET_DISMISSED_KEY)
+                    dismissed_ids = {str(item) for item in dismissed} if isinstance(dismissed, list) else set()
+                    dismissed_ids.add(preset_id)
+                    self.data[STARTER_PRESET_DISMISSED_KEY] = sorted(dismissed_ids)
                 self.save()
         return self.get_starter_prompts()
 
@@ -932,38 +989,35 @@ class ConfigStore:
         """当前列表里缺失的内置预设数量（前端据此显示「恢复默认预设」）。"""
         with self.lock:
             prompts = self.data.get("starter_prompts")
-            titles = {
-                str(item.get("title") or "").casefold()
+            present = {
+                _starter_preset_id(item)
                 for item in (prompts if isinstance(prompts, list) else [])
                 if isinstance(item, dict)
             }
-            return sum(
-                1 for preset in BUILTIN_STARTER_PRESETS
-                if str(preset["title"]).casefold() not in titles
-            )
+            return sum(1 for preset in BUILTIN_STARTER_PRESETS if preset["id"] not in present)
 
     def restore_starter_presets(self) -> list[dict[str, str]]:
-        """把缺失的内置开始页预设补回列表头部（用户删掉/改坏后可一键恢复）。
+        """把缺失的内置开始页预设补回列表头部，并清空"已删除"清单（一键恢复默认）。
 
-        只补"标题不存在"的条目：已存在同名条目（可能是用户改过的）保持原样，不覆盖。
+        只补缺失 id 的条目：用户改过的同名条目（带 `preset_id`）保持原样、不覆盖。
         """
         with self.lock:
             prompts = self.data.get("starter_prompts")
             if not isinstance(prompts, list):
                 prompts = []
-            existing = {
-                str(item.get("title") or "").casefold()
-                for item in prompts
-                if isinstance(item, dict)
-            }
+            prompts = [item for item in prompts if isinstance(item, dict)]
+            present = {_starter_preset_id(item) for item in prompts}
             seeded = [
-                dict(preset) for preset in BUILTIN_STARTER_PRESETS
-                if str(preset["title"]).casefold() not in existing
+                _starter_preset_entry(preset) for preset in BUILTIN_STARTER_PRESETS
+                if preset["id"] not in present
             ]
             if seeded:
-                self.data["starter_prompts"] = seeded + [
-                    item for item in prompts if isinstance(item, dict)
-                ]
+                self.data["starter_prompts"] = seeded + prompts
+            # 恢复默认 = 清空"已删除"清单（此后缺失的内置预设又会自动补齐）
+            had_dismissed = bool(self.data.get(STARTER_PRESET_DISMISSED_KEY))
+            if had_dismissed:
+                self.data[STARTER_PRESET_DISMISSED_KEY] = []
+            if seeded or had_dismissed:
                 self.save()
         return self.get_starter_prompts()
 
