@@ -478,11 +478,15 @@ function renderTurnRail() {
   turnRailActive = active;
   rail.replaceChildren();
   for (let index = start; index < end; index += 1) {
+    // 固定尺寸的透明块 = 判定区；可见的线是块里的内层元素（线变长变粗不影响块尺寸）
     const tick = document.createElement('button');
     tick.type = 'button';
     tick.className = 'turn-tick';
     tick.dataset.turnIndex = String(index);
     tick.setAttribute('aria-label', `第 ${index + 1} 轮对话`);
+    const line = document.createElement('span');
+    line.className = 'turn-tick-line';
+    tick.append(line);
     if (index === active) tick.classList.add('active');
     rail.append(tick);
   }
@@ -519,9 +523,8 @@ function showTurnTip(tick) {
   if (!turn) return;
   const tip = ensureTurnTip();
   tip.innerHTML = `
-    <b>第 ${index + 1} 轮 · 用户</b>
+    <div class="turn-tip-index">第 ${index + 1} 轮</div>
     <div class="turn-tip-user">${escapeHtml(turn.user || '（无文字，仅附件）')}</div>
-    <b>AI 回复</b>
     <div class="turn-tip-reply">${escapeHtml(turn.reply || '（暂无回复）')}</div>`;
   tip.hidden = false;
   const rect = tick.getBoundingClientRect();
@@ -567,9 +570,8 @@ export function initTurnRail() {
     const tick = event.target.closest('.turn-tick');
     if (tick) showTurnTip(tick);
   });
-  rail.addEventListener('mouseout', (event) => {
-    if (event.target.closest('.turn-tick')) hideTurnTip();
-  });
+  // 用 mouseleave（整条轨道）而不是每根线的 mouseout：块之间切换时不会闪。
+  rail.addEventListener('mouseleave', hideTurnTip);
   rail.addEventListener('focusin', (event) => {
     const tick = event.target.closest('.turn-tick');
     if (tick) showTurnTip(tick);
