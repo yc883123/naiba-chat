@@ -71,27 +71,56 @@ class TurnRailTests(unittest.TestCase):
         self.assertIn("--turn-rail-w: 0px", mobile)
         self.assertIn(".turn-rail { display: none; }", mobile)
 
-    def test_tick_styles_active_and_hover_grow(self) -> None:
+    def test_tick_has_fixed_block_and_inner_line(self) -> None:
+        """判定区 = 固定尺寸的透明块；悬停/高亮只改内层线 → 所有条位置不抖。"""
         css = self._css()
         tick = css[css.index(".turn-tick {"):]
         tick = tick[: tick.index("}")]
-        self.assertIn("height: 3px", tick)
-        self.assertIn("width: 20px", tick)
-        hover = css[css.index(".turn-tick:hover {"):]
+        self.assertIn("width: var(--turn-rail-w", tick, "块宽度固定")
+        self.assertIn("height: 9px", tick, "块高度固定（判定区高度）")
+        self.assertIn("background: transparent", tick, "块本身不可见")
+        self.assertIn("justify-content: flex-end", tick, "线右对齐、向左生长")
+        line = css[css.index(".turn-tick-line {"):]
+        line = line[: line.index("}")]
+        self.assertIn("width: 20px", line)
+        self.assertIn("height: 3px", line)
+        hover = css[css.index(".turn-tick:hover .turn-tick-line {"):]
         hover = hover[: hover.index("}")]
-        self.assertIn("width: 26px", hover, "悬停微微增长")
+        self.assertIn("width: 26px", hover, "悬停只加长内层线")
         self.assertIn("height: 5px", hover)
-        active = css[css.index(".turn-tick.active {"):]
+        active = css[css.index(".turn-tick.active .turn-tick-line {"):]
         active = active[: active.index("}")]
         self.assertIn("width: 26px", active)
-        self.assertIn("height: 5px", active)
         self.assertIn("background: var(--text)", active, "当前轮次要最显眼")
+        rail = css[css.index(".turn-rail {"):]
+        rail = rail[: rail.index("}")]
+        self.assertIn("gap: 0", rail, "间距交给固定块高度，不再用 gap 撑开")
+
+    def test_tip_uses_typography_not_labels(self) -> None:
+        """概要不写「用户/AI」标签：第 N 轮小字 + 用户消息大而粗 + AI 回复小而浅。"""
+        css = self._css()
+        index_line = css[css.index(".turn-tip-index {"):]
+        index_line = index_line[: index_line.index("}")]
+        self.assertIn("font-size: 11px", index_line)
         user = css[css.index(".turn-tip-user {"):]
         user = user[: user.index("}")]
+        self.assertIn("font-size: 13.5px", user)
+        self.assertIn("font-weight: 600", user)
         self.assertIn("-webkit-line-clamp: 1", user, "用户消息一行")
         reply = css[css.index(".turn-tip-reply {"):]
         reply = reply[: reply.index("}")]
+        self.assertIn("font-size: 11.5px", reply)
+        self.assertIn("font-weight: 400", reply)
+        self.assertIn("color: var(--muted)", reply)
         self.assertIn("-webkit-line-clamp: 2", reply, "AI 回复两行")
+        source = self._messages()
+        tip = source[source.index("function showTurnTip("):]
+        tip = tip[: tip.index("\n}")]
+        self.assertIn('class="turn-tip-index"', tip)
+        self.assertIn("第 ${index + 1} 轮", tip)
+        self.assertNotIn("用户</b>", tip, "不要再输出「用户」标签")
+        self.assertNotIn("AI 回复</b>", tip, "不要再输出「AI 回复」标签")
+        self.assertIn("escapeHtml", tip, "概要文本必须转义")
 
     def test_rail_logic(self) -> None:
         source = self._messages()
