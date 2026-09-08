@@ -451,6 +451,14 @@ export function formatBytes(bytes) {
   return `${n.toFixed(n >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+export async function refreshImageCacheSize() {
+  try {
+    const result = await api('/api/imaging/stats');
+    state.bootstrap.image_cache_bytes = Number(result.image_cache_bytes || 0);
+    if ($('#imageCacheSize')) $('#imageCacheSize').textContent = formatBytes(state.bootstrap.image_cache_bytes);
+  } catch (_) { /* 打开设置页时统计失败不打扰用户 */ }
+}
+
 export async function cleanImageCache() {
   const btn = $('#cleanImageCache');
   if (!btn) return;

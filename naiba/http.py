@@ -32,7 +32,7 @@ from naiba.core.exceptions import ActiveRunError
 from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
 from naiba.paths import PathContext, default_path_context, static_asset_version
-from naiba.storage.media import UPLOAD_MAX_BYTES
+from naiba.storage.media import UPLOAD_MAX_BYTES, _uploads_total_bytes
 
 # multipart 上传的传输层兜底上限（文件 80MB + 表单/边界开销）。
 _UPLOAD_BODY_LIMIT = 100 * 1024 * 1024
@@ -138,6 +138,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/storage/stats":
             self._json(self.app.storage.storage_usage())
+        elif path == "/api/imaging/stats":
+            self._json({"image_cache_bytes": _uploads_total_bytes(self.app.paths.data_dir)})
         elif path == "/api/bootstrap":
             self._json(self.app.bootstrap())
         elif path == "/api/update":
