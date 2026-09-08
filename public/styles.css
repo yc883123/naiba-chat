@@ -1339,12 +1339,14 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 
 .agent-tool-scope { padding: 10px; display: grid; gap: 7px; }
 .agent-tool-group { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
-/* 一行呈现：折叠箭头 · 全选框 · 分类名 · 小字说明（占满剩余宽度、超出省略）· 计数 */
+/* 一行呈现：折叠箭头 · 全选框 · 分类名 · 小字说明（占满剩余宽度、超出省略）· 计数。
+   分组头用浅灰底当"条子"，展开区保持白底，层次由条子区分。 */
 .agent-tool-group-head {
   display: grid; grid-template-columns: auto auto max-content minmax(0, 1fr) auto;
   align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; user-select: none;
+  background: var(--surface-2);
 }
-.agent-tool-group-head:hover { background: var(--surface-2); }
+.agent-tool-group-head:hover { background: var(--line); }
 .agent-tool-group-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .agent-tool-group-head .group-select-all { width: 16px; height: 16px; margin: 0; padding: 0; border: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
 .group-caret { display: inline-block; color: var(--muted); font-size: 10px; transition: transform .15s ease; }
@@ -1352,8 +1354,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .group-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
 .group-count { flex: none; font-size: 11px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; }
 .group-desc { min-width: 0; font-size: 11px; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 展开区用浅灰底、子卡片白底 + 强描边 + 投影：父（分组）与子（工具卡）区分度更明显 */
-.agent-tool-group .permission-grid { padding: 8px 10px 10px; border-top: 1px solid var(--line); background: var(--surface-2); }
+/* 展开区白底（分组头是浅灰"条子"），子卡片靠强描边 + 投影浮在白底上 */
+.agent-tool-group .permission-grid { padding: 8px 10px 10px; border-top: 1px solid var(--line); background: var(--surface); }
 .agent-tool-group.collapsed .permission-grid { display: none; }
 
 @media (max-width: 520px) {

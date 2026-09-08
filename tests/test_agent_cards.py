@@ -382,7 +382,10 @@ class AgentCardsMarkupTests(unittest.TestCase):
         self.assertIn("-webkit-line-clamp: 2", desc, "说明两行截断，保证卡片高度一致")
         expanded = css[css.index(".agent-tool-group .permission-grid {"):]
         expanded = expanded[: expanded.index("}")]
-        self.assertIn("background: var(--surface-2)", expanded, "展开区要浅灰底，衬出白色子卡片")
+        self.assertIn("background: var(--surface)", expanded, "展开区必须白底")
+        head = css[css.index(".agent-tool-group-head {"):]
+        head = head[: head.index("}")]
+        self.assertIn("background: var(--surface-2)", head, "分组头条子必须浅灰底，靠条子区分层次")
         settings = (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
         self.assertIn("label.title = `${tool.name}：${tool.description}`", settings,
                       "说明被截断，完整描述要进 title 悬停可见")
