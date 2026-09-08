@@ -68,6 +68,18 @@ class PendingFilesMarkupTests(unittest.TestCase):
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, name_rule)
 
+    def test_rows_stand_out_from_background(self) -> None:
+        """行必须与页面背景有明显区分（用户实测："文件框跟背景区分度太差"）。"""
+        css = self._css()
+        rule = css[css.index(".pending-item {"):]
+        rule = rule[: rule.index("}")]
+        self.assertIn("background: var(--surface-2)", rule, "行填充色应与页面背景不同")
+        self.assertIn("border: 1px solid var(--line-strong)", rule, "描边应加强到 line-strong")
+        self.assertIn("box-shadow", rule)
+        thumb = css[css.index(".pending-thumb {"):]
+        thumb = thumb[: thumb.index("}")]
+        self.assertIn("background: var(--surface)", thumb, "缩略图/图标方块应为白色内嵌块")
+
     def test_remove_binding_still_present(self) -> None:
         bind = (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
         self.assertIn("$('#pendingFiles').addEventListener('click'", bind)
