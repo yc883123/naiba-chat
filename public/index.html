@@ -319,6 +319,23 @@
 
 
 
+  <dialog id="newWorkspaceDialog" class="rename-conversation-dialog">
+    <form id="newWorkspaceForm" method="dialog">
+      <div class="dialog-toolbar">
+        <div><h2>新建工作区</h2><p id="newWorkspaceDirHint">已选择目录</p></div>
+        <button class="icon-button" type="button" data-close="newWorkspaceDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+      </div>
+      <label class="field-wide">
+        工作区名称
+        <input id="newWorkspaceName" type="text" maxlength="60" placeholder="例如 视频项目">
+      </label>
+      <div class="form-actions">
+        <button class="control-button" type="button" data-close="newWorkspaceDialog">取消</button>
+        <button class="primary-button" id="saveNewWorkspace" type="submit">创建工作区</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="settingsDialog" class="settings-dialog">
     <div class="dialog-toolbar">
       <div><h2>设置</h2><p>模型与运行参数</p></div>

@@ -141,11 +141,21 @@ export function sidebarRowHtml(row) {
   </div>`;
 }
 
-export function renderSidebarWindow(targetScrollTop) {
+// 已渲染的窗口区间（行索引 + 总高度）。滚动时若区间没变就**不重写 DOM**：
+// 每帧 innerHTML 重写要重新解析/布局整棵子树，是"滚轮发滞"的主要来源；
+// 行高固定，视口内滚过一行才需要换窗口（约每 34px 一次）。
+let sidebarWindowRange = { start: -1, end: -1, totalH: 0, rendered: false };
+
+export function resetSidebarWindowRange() {
+  sidebarWindowRange = { start: -1, end: -1, totalH: 0, rendered: false };
+}
+
+export function renderSidebarWindow(targetScrollTop, { force = false } = {}) {
   const tree = $('#sidebarWorkspaceTree');
   if (!tree) return;
   if (!sidebarRowCache.length) {
     tree.innerHTML = '<div class="workspace-empty">暂无对话</div>';
+    resetSidebarWindowRange();
     return;
   }
   const vh = tree.clientHeight || Math.max(240, Math.round(window.innerHeight * 0.4));
@@ -163,9 +173,19 @@ export function renderSidebarWindow(targetScrollTop) {
   let end = sidebarRowAt(sidebarOffsetCache, st + vh + SIDE_BUFFER) + 1;
   if (end <= start) end = start + 1;
   end = Math.min(sidebarRowCache.length, end);
+  const unchanged = sidebarWindowRange.rendered
+    && sidebarWindowRange.start === start
+    && sidebarWindowRange.end === end
+    && sidebarWindowRange.totalH === sidebarTotalH;
+  if (!force && unchanged) {
+    // 窗口没变：只保证滚动位置与夹紧值一致，不动 DOM。
+    if (tree.scrollTop !== st) tree.scrollTop = st;
+    return;
+  }
   const html = sidebarRowCache.slice(start, end).map(sidebarRowHtml).join('');
   tree.innerHTML = `<div class="sidebar-virtual" style="height:${sidebarTotalH}px">`
     + `<div class="sidebar-virtual-window" style="top:${sidebarOffsetCache[start]}px">${html}</div></div>`;
+  sidebarWindowRange = { start, end, totalH: sidebarTotalH, rendered: true };
   // 高度突变后浏览器可能自行钳位 scrollTop；把夹紧后的值再写回一次，保证窗口与滚动一致。
   if (tree.scrollTop !== st) tree.scrollTop = st;
 }
@@ -268,7 +288,8 @@ export function renderSidebar() {
   }
   // renderSidebarWindow 内部会按「夹紧后的真实滚动位置」切窗口并回写 scrollTop，
   // 不再在窗口算完后单独赋值——避免高度突变时窗口与滚动状态错位。
-  renderSidebarWindow(st);
+  // force：行缓存刚重建，即使区间索引相同也必须重绘（内容可能已变）。
+  renderSidebarWindow(st, { force: true });
 }
 
 export function renderComposerWorkspace() {
@@ -445,17 +466,41 @@ export async function pick_workspace_directory(initial = '') {
   }
 }
 
+// 新建工作区：先选目录，再在对话框里填名称（不用 window.prompt——pywebview 下不可靠）。
 export async function createWorkspace() {
   const result = await pick_workspace_directory();
   if (!result || result.cancelled || !result.path) return;
   const dir = result.resolved || result.path;
-  const suggestedName = String(dir.split(/[\\/]/).filter(Boolean).pop() || '新工作区');
-  const name = (window.prompt('工作区名称：', suggestedName) || '').trim();
-  if (!name) return;
+  state.newWorkspaceDir = dir;
+  $('#newWorkspaceDirHint').textContent = dir;
+  $('#newWorkspaceName').value = String(dir.split(/[\\/]/).filter(Boolean).pop() || '新工作区');
+  $('#newWorkspaceDialog').showModal();
+  $('#newWorkspaceName').focus();
+  $('#newWorkspaceName').select();
+}
+
+export async function saveNewWorkspace(event) {
+  event.preventDefault();
+  const dir = String(state.newWorkspaceDir || '').trim();
+  const name = String($('#newWorkspaceName').value || '').trim();
+  if (!dir) {
+    toast('请先选择工作区目录');
+    $('#newWorkspaceDialog').close();
+    return;
+  }
+  if (!name) {
+    toast('工作区名称不能为空');
+    $('#newWorkspaceName').focus();
+    return;
+  }
+  const button = $('#saveNewWorkspace');
+  if (button) button.disabled = true;
   try {
     const data = await api('/api/workspaces', { method: 'POST', body: { name, dir } });
     state.workspaces = data.workspaces || [];
     state.expandedGroups.add(name);
+    state.newWorkspaceDir = '';
+    $('#newWorkspaceDialog').close();
     toast(`已创建工作区「${name}」`);
     // 新建工作区后立即在该工作区内创建一个新对话并打开，选择框同步显示该工作区。
     try {
@@ -465,6 +510,8 @@ export async function createWorkspace() {
     }
   } catch (error) {
     toast(`创建工作区失败：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 

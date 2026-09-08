@@ -53,6 +53,7 @@ export const state = {
   elapsedSince: 0,
   taskSubmitting: false,
   renameConversationId: '',
+  newWorkspaceDir: '',
   providerEditing: false,
   providerIsNew: false,
   providerKindTab: 'online',

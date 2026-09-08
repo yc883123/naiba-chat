@@ -171,7 +171,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 /* overflow-anchor:none：虚拟列表每次滚动都重写 innerHTML，Chrome 的滚动锚定会与
    重绘互相拉扯（表现为滚轮一顿一顿、位移被吃掉），关掉锚定由 JS 统一接管位移。 */
-.conversation-list { flex: 1; overflow: auto; overflow-anchor: none; padding: 4px 8px 12px; }
+.conversation-list { flex: 1; overflow: auto; overflow-anchor: none; scrollbar-gutter: stable; padding: 4px 8px 12px; }
 .conversation-group { margin-bottom: 2px; }
 .conversation-group-header { display: flex; align-items: center; gap: 5px; padding: 5px 10px; color: var(--sidebar-muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .4px; user-select: none; cursor: default; }
 .conversation-group-icon { font-size: 10px; transition: transform .15s; }
@@ -199,14 +199,18 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .workspace-search-input { margin: 0 14px 6px; height: 32px; border: 1px solid var(--sidebar-line); border-radius: var(--r-md); background: rgba(0,0,0,.28); color: var(--sidebar-text); padding: 0 10px; font-size: 13px; }
 .workspace-search-input[hidden] { display: none; }
 .workspace-group { margin: 2px 8px; }
-.workspace-group-header { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: var(--r-md); cursor: pointer; user-select: none; color: var(--sidebar-text); }
+/* 分组表头：删除按钮**绝对定位 + visibility 切换**——它绝不参与布局，否则 hover 时
+   （display:none → inline-grid，20px 高于文字行）会把表头从 28px 撑到 32px，
+   而虚拟列表的行高是启动时量一次并缓存下来的，高度突变会让窗口与滚动位置错位、
+   整个侧栏跟着抖（实测闪烁根因）。padding-right 常驻预留按钮位置，避免与计数重叠。 */
+.workspace-group-header { position: relative; display: flex; align-items: center; gap: 6px; padding: 6px 26px 6px 8px; border-radius: var(--r-md); cursor: pointer; user-select: none; color: var(--sidebar-text); }
 .workspace-group-header:hover { background: var(--sidebar-hover); }
 .workspace-caret { font-size: 10px; color: var(--sidebar-muted); transition: transform .15s; flex: none; }
 .workspace-group.expanded .workspace-caret { transform: rotate(90deg); }
 .workspace-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; }
 .workspace-count { background: rgba(255,255,255,.08); color: var(--sidebar-muted); font-size: 10px; padding: 1px 6px; border-radius: 8px; flex: none; }
-.workspace-delete { flex: none; width: 20px; height: 20px; display: none; place-items: center; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--sidebar-muted); font-size: 13px; line-height: 1; cursor: pointer; }
-.workspace-group-header:hover .workspace-delete { display: inline-grid; }
+.workspace-delete { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-xs); background: none; color: var(--sidebar-muted); font-size: 13px; line-height: 1; cursor: pointer; visibility: hidden; }
+.workspace-group-header:hover .workspace-delete { visibility: visible; }
 .workspace-delete:hover { background: var(--overlay-2); color: var(--danger-soft); }
 .workspace-group-body { display: none; margin-top: 2px; }
 .workspace-group.expanded .workspace-group-body { display: block; }
