@@ -1,0 +1,179 @@
+# -*- coding: utf-8 -*-
+"""Agent 自动 ID 与自定义头像的守门测试。
+
+本轮三件事中的两件落在后端：
+1. **不再让用户手填 Agent ID**：`ConfigStore.upsert_agent` 在 id 留空时分配
+   `agent_<12 位 hex>` 形态的持久化唯一 id（跨重启不变、不与既有 id 冲突）；
+2. **自定义头像**：`storage/avatars.py` 把上传图片**中心裁切为正方形**、缩到 256px、
+   存 WebP（内容哈希命名，换图即换名且删除上一份），`/api/agents/avatar` 写入
+   `agents[].avatar`，`/api/agents/avatar/<name>` 读取；
+3. 头像字段必须在"表单保存不带头像"时被保留（否则每次改名都会清掉头像）。
+"""
+from __future__ import annotations
+
+import io
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from naiba.config import ConfigStore  # noqa: E402
+from naiba.storage.avatars import (  # noqa: E402
+    AVATAR_MAX_BYTES,
+    AVATAR_SIZE,
+    avatar_dir,
+    is_avatar_filename,
+    read_agent_avatar,
+    store_agent_avatar,
+)
+
+
+def _png(size: tuple[int, int] = (800, 400), color: tuple[int, int, int] = (120, 80, 200)) -> bytes:
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", size, color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class AgentAutoIdTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.config_path = self.root / "config.json"
+        self.store = ConfigStore(self.config_path)
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_new_agent_gets_generated_unique_id(self) -> None:
+        import re
+
+        first = self.store.upsert_agent({"name": "甲", "system_prompt": "", "skill_ids": []})
+        second = self.store.upsert_agent({"name": "乙", "system_prompt": "", "skill_ids": []})
+        for agent in (first, second):
+            with self.subTest(agent=agent["name"]):
+                self.assertRegex(agent["id"], r"^agent_[0-9a-f]{12}$")
+        self.assertNotEqual(first["id"], second["id"])
+
+    def test_generated_id_is_persistent(self) -> None:
+        created = self.store.upsert_agent({"name": "持久", "system_prompt": "", "skill_ids": []})
+        reloaded = ConfigStore(self.config_path)
+        ids = [agent["id"] for agent in reloaded.public_agents()]
+        self.assertIn(created["id"], ids)
+        again = reloaded.upsert_agent({"id": created["id"], "name": "改名", "system_prompt": "", "skill_ids": []})
+        self.assertEqual(again["id"], created["id"])
+
+    def test_explicit_id_still_accepted_for_api_compat(self) -> None:
+        saved = self.store.upsert_agent({"id": "my_agent", "name": "手填", "system_prompt": "", "skill_ids": []})
+        self.assertEqual(saved["id"], "my_agent")
+
+    def test_invalid_explicit_id_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            self.store.upsert_agent({"id": "bad id!", "name": "非法", "system_prompt": "", "skill_ids": []})
+
+    def test_avatar_preserved_when_form_omits_it(self) -> None:
+        created = self.store.upsert_agent({"name": "带头像", "system_prompt": "", "skill_ids": []})
+        self.store.upsert_agent({**created, "avatar": "abc_0123456789ab.webp"})
+        # 表单保存只带 id/name/prompt/skills/scope —— 头像不能被清掉。
+        updated = self.store.upsert_agent({
+            "id": created["id"], "name": "改名", "system_prompt": "", "skill_ids": [],
+        })
+        self.assertEqual(updated["avatar"], "abc_0123456789ab.webp")
+        saved = json.loads(self.config_path.read_text(encoding="utf-8"))
+        stored = next(item for item in saved["agents"] if item.get("id") == created["id"])
+        self.assertEqual(stored["avatar"], "abc_0123456789ab.webp")
+
+
+class AgentAvatarStorageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.data_dir = Path(self.tmp.name) / "data"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_center_crops_to_square_webp(self) -> None:
+        from PIL import Image
+
+        name = store_agent_avatar(self.data_dir, "agent_test", _png((800, 400)))
+        data = read_agent_avatar(self.data_dir, name)
+        self.assertIsNotNone(data)
+        with Image.open(io.BytesIO(data)) as img:
+            self.assertEqual(img.size, (AVATAR_SIZE, AVATAR_SIZE))
+            self.assertEqual(img.format, "WEBP")
+
+    def test_content_addressed_naming_and_old_file_removed(self) -> None:
+        first = store_agent_avatar(self.data_dir, "agent_test", _png(color=(10, 20, 30)))
+        second = store_agent_avatar(
+            self.data_dir, "agent_test", _png(color=(200, 10, 10)), previous=first
+        )
+        self.assertNotEqual(first, second, "换图必须换文件名（否则浏览器缓存命中旧图）")
+        self.assertFalse((avatar_dir(self.data_dir) / first).exists(), "旧头像文件应被删除")
+        self.assertTrue((avatar_dir(self.data_dir) / second).exists())
+        # 同样内容重复上传复用同一份文件名。
+        again = store_agent_avatar(self.data_dir, "agent_test", _png(color=(200, 10, 10)))
+        self.assertEqual(again, second)
+
+    def test_rejects_non_image_and_oversized(self) -> None:
+        with self.assertRaises(ValueError):
+            store_agent_avatar(self.data_dir, "agent_test", b"not an image")
+        with self.assertRaises(ValueError):
+            store_agent_avatar(self.data_dir, "agent_test", b"x" * (AVATAR_MAX_BYTES + 1))
+        with self.assertRaises(ValueError):
+            store_agent_avatar(self.data_dir, "agent_test", b"")
+
+    def test_read_rejects_unsafe_names(self) -> None:
+        for name in ("../config.json", "..\\config.json", "a/b.webp", "abc.webp", "", "x" * 200 + ".webp"):
+            with self.subTest(name=name):
+                self.assertFalse(is_avatar_filename(name))
+                self.assertIsNone(read_agent_avatar(self.data_dir, name))
+
+
+class AgentAvatarApiTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="naiba_agent_avatar_")
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        from naiba.app import NaibaChatApp
+        from naiba.paths import PathContext
+
+        self.paths = PathContext.local(root, root / "config.json")
+        self.app = NaibaChatApp(paths=self.paths)
+        created = self.app.config.upsert_agent({"name": "头像接口", "system_prompt": "", "skill_ids": []})
+        self.agent_id = str(created["id"])
+
+    def test_set_and_read_avatar(self) -> None:
+        payload, status = self.app.api_set_agent_avatar(self.agent_id, _png((300, 900)))
+        self.assertEqual(int(status), 200)
+        self.assertTrue(payload.get("ok"))
+        name = str(payload["agent"]["avatar"])
+        self.assertTrue(is_avatar_filename(name))
+        # 落库
+        agent = self.app.config.get_agent(self.agent_id)
+        self.assertEqual(agent.get("avatar"), name)
+        # 读取
+        data, read_status = self.app.api_read_agent_avatar(name)
+        self.assertEqual(int(read_status), 200)
+        self.assertIsInstance(data, (bytes, bytearray))
+        self.assertGreater(len(data), 0)
+
+    def test_unknown_agent_and_bad_image(self) -> None:
+        payload, status = self.app.api_set_agent_avatar("nope", _png())
+        self.assertEqual(int(status), 404)
+        self.assertIn("不存在", payload.get("error", ""))
+        payload, status = self.app.api_set_agent_avatar(self.agent_id, b"broken")
+        self.assertEqual(int(status), 400)
+        self.assertIn("图片", payload.get("error", ""))
+
+    def test_read_missing_avatar_404(self) -> None:
+        payload, status = self.app.api_read_agent_avatar("agent_x_0123456789ab.webp")
+        self.assertEqual(int(status), 404)
+
+
+if __name__ == "__main__":
+    unittest.main()

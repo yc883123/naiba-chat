@@ -34,12 +34,14 @@ LEGACY_SELECTORS = ("#agentList", "#addAgent", "agent-item", "agent-manager", "d
 
 FORM_FIELD_IDS = (
     "agentFormId",
-    "agentId",
     "agentName",
     "agentSystemPromptEdit",
     "agentPromptPresetSelect",
     "importAgentCharacterCard",
     "agentCharacterCardFileInput",
+    "pickAgentAvatar",
+    "agentAvatarFileInput",
+    "agentAvatarPreview",
     "agentSkillList",
     "agentToolPresetState",
     "agentToolCount",
@@ -151,7 +153,7 @@ class AgentCardsMarkupTests(unittest.TestCase):
         for field_id in FORM_FIELD_IDS:
             with self.subTest(field=field_id):
                 self.assertIn(f'id="{field_id}"', index)
-        for label in ("Agent ID", "名称", "系统提示词（预设与规则）", "固定 Skill", "工具集", "工具预设"):
+        for label in ("名称", "系统提示词（预设与规则）", "固定 Skill", "工具集", "工具预设"):
             with self.subTest(label=label):
                 self.assertIn(label, index)
 
@@ -250,6 +252,58 @@ class AgentCardsMarkupTests(unittest.TestCase):
         dialog = css[css.index(".agent-dialog {"):]
         dialog = dialog[: dialog.index("}")]
         self.assertIn("max-height", dialog, "弹层内部需可滚动，不能溢出视口")
+
+    def test_no_manual_agent_id_field(self) -> None:
+        """用户不再手填 Agent ID：表单里不得再有 ID 输入框，保存走隐藏字段。"""
+        index = self._index()
+        self.assertNotIn('id="agentId"', index)
+        self.assertNotIn("英文、数字、下划线或连字符", index)
+        source = self._settings()
+        self.assertNotIn("#agentId", source)
+        body = source[source.index("export async function saveAgentForm()"):]
+        body = body[: body.index("\n}")]
+        self.assertIn("id: $('#agentFormId').value.trim()", body)
+        self.assertIn("保存后自动分配 ID", source)
+
+    def test_avatar_button_next_to_character_card(self) -> None:
+        """「自定义头像」按钮必须紧挨「导入角色卡 PNG」，且选图只做预览、保存才上传。"""
+        index = self._index()
+        self.assertLess(index.index('id="importAgentCharacterCard"'), index.index('id="pickAgentAvatar"'))
+        self.assertLess(index.index('id="pickAgentAvatar"'), index.index('id="agentAvatarPreview"'))
+        source = self._settings()
+        for snippet in ("export function pickAgentAvatar(", "export function handleAgentAvatarFile(",
+                        "agentAvatarUrl(", "/api/agents/avatar/", "FormData()"):
+            with self.subTest(snippet=snippet):
+                self.assertIn(snippet, source)
+        bind = self._bind()
+        self.assertIn("$('#pickAgentAvatar')?.addEventListener('click', pickAgentAvatar)", bind)
+        self.assertIn("handleAgentAvatarFile(file)", bind)
+
+    def test_avatar_shown_on_cards_and_messages(self) -> None:
+        """头像要落到两处：Agent 卡片（小圆图）与助手消息气泡（替换「AI」圆标）。"""
+        source = self._settings()
+        self.assertIn('class="agent-card-avatar"', source)
+        messages = (ROOT / "public/js/04-messages.js").read_text(encoding="utf-8")
+        self.assertIn("export function currentAgentAvatarUrl(", messages)
+        self.assertIn('class="message-avatar message-avatar-img"', messages)
+        self.assertIn('<div class="message-avatar">AI</div>', messages, "没有头像时必须保留默认 AI 圆标")
+        css = self._css()
+        self.assertIn(".agent-card-avatar {", css)
+        self.assertIn(".agent-avatar-preview {", css)
+        avatar_rule = css[css.index(".message-avatar-img {"):]
+        avatar_rule = avatar_rule[: avatar_rule.index("}")]
+        self.assertIn("object-fit: cover", avatar_rule, "头像必须中心裁切填充，不能拉伸变形")
+
+    def test_scrollable_lists_are_not_clipped(self) -> None:
+        """固定 Skill / 工具集列表是滚动容器：网格行必须按内容定高，否则被裁掉且点不到。"""
+        css = self._css()
+        body = css[css.index(".agent-form-body {"):]
+        body = body[: body.index("}")]
+        self.assertIn("grid-auto-rows: max-content", body,
+                      "auto 行按最小内容高度定尺，滚动容器贡献 0 → 行高只剩表头")
+        provider_body = css[css.index(".provider-form-body {"):]
+        provider_body = provider_body[: provider_body.index("}")]
+        self.assertIn("grid-auto-rows: max-content", provider_body)
 
     def test_index_html_still_has_no_duplicate_ids(self) -> None:
         ids = re.findall(r'\sid="([^"]+)"', self._index())
