@@ -291,6 +291,14 @@ class ConversationPromptRetiredTests(unittest.TestCase):
         self.assertIn(".status-mark.error", css)
         self.assertNotIn(".server-state", css, "旧状态块样式未清理")
 
+    def test_collapsed_sidebar_keeps_chat_column_width(self) -> None:
+        """收起侧栏只重新居中，不放大对话列（否则助手左移、用户气泡右移、整体错开）。"""
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        rule = css[css.index(".app-shell.sidebar-collapsed {"):]
+        rule = rule[: rule.index("}")]
+        self.assertNotIn("--chat-max", rule, "收起态又改了 --chat-max（对话列会跳宽）")
+        self.assertIn("--sidebar-col: 0px", rule)
+
     def test_sidebar_scroll_clamp_uses_real_scroll_height(self) -> None:
         """虚拟窗口的滚动上限必须取浏览器真实 scrollHeight（含容器 padding）。
 
