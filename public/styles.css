@@ -1037,7 +1037,9 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .permission-grid b { font-size: 13px; }
 .permission-grid small { color: var(--muted); line-height: 1.35; }
 .agent-display { display: inline-block; max-width: min(220px, 20vw); height: 34px; line-height: 34px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
-#agentToolScope { height: var(--agent-list-h); max-height: var(--agent-list-h); overflow: auto; padding: 4px 2px; }
+/* 固定高度 + 默认 align-content:stretch 会把 12 个分组行均摊成 ~19.6px（分组头本身 59px 被裁掉），
+   必须用 grid-auto-rows: max-content 让行按内容定高、由容器内部滚动。 */
+#agentToolScope { height: var(--agent-list-h); max-height: var(--agent-list-h); overflow: auto; padding: 4px 2px; grid-auto-rows: max-content; align-content: start; }
 .skill-dir-add, .skill-install { display: flex; gap: 9px; margin-bottom: 18px; }
 .skill-dir-add input, .skill-install input[type="file"] { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }
 .skill-install input[type="file"] { padding: 8px; }
