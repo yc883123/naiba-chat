@@ -387,3 +387,197 @@ export function pendingChoiceMessage(messages) {
   return null;
 }
 
+/* ---------- 对话刻度轨（右侧）：每个用户轮次一条横条 ---------- */
+
+const TURN_RAIL_MAX = 30;          // 同时最多显示 30 条（以视口中心为基准的滑动窗口）
+const TURN_TIP_USER_CHARS = 160;   // 概要里用户消息最多保留的字符数（再多交给 CSS 省略号）
+const TURN_TIP_REPLY_CHARS = 320;
+
+let turnRailTurns = [];            // [{ anchor, user, reply }]
+let turnRailActive = -1;
+let turnRailWindow = { start: -1, end: -1 };
+let turnRailFrame = 0;
+let turnRailBound = false;
+
+function turnRailText(node, limit) {
+  if (!node) return '';
+  const clone = node.cloneNode(true);
+  clone.querySelectorAll('.message-actions, .run-activity').forEach((el) => el.remove());
+  const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+}
+
+// 一个「用户轮次」= 一条用户消息 + 它之后（下一条用户消息之前）的助手回复。
+function collectTurns() {
+  const rows = [...document.querySelectorAll('#messages .message-row[data-message-id]')]
+    .filter((row) => row.dataset.messageId);
+  const turns = [];
+  rows.forEach((row) => {
+    if (row.classList.contains('user')) {
+      turns.push({
+        anchor: row,
+        user: turnRailText(row.querySelector('.message-body'), TURN_TIP_USER_CHARS),
+        reply: '',
+      });
+      return;
+    }
+    if (!turns.length) return;
+    const reply = turnRailText(row.querySelector('.answer-content'), TURN_TIP_REPLY_CHARS);
+    if (reply) turns[turns.length - 1].reply = reply;  // 一轮多条助手消息时取最后一条有正文的
+  });
+  return turns;
+}
+
+function turnRailOffsets(container) {
+  const base = container.getBoundingClientRect().top - container.scrollTop;
+  return turnRailTurns.map((turn) => Math.round(turn.anchor.getBoundingClientRect().top - base));
+}
+
+// 视口中心落在哪一轮的垂直范围内，就高亮哪一条。
+function turnRailActiveIndex(container, offsets) {
+  if (!turnRailTurns.length) return -1;
+  const center = container.scrollTop + container.clientHeight / 2;
+  let active = 0;
+  for (let index = 0; index < offsets.length; index += 1) {
+    if (offsets[index] <= center) active = index;
+    else break;
+  }
+  return active;
+}
+
+function renderTurnRail() {
+  const rail = $('#turnRail');
+  const container = $('#messages');
+  if (!rail || !container) return;
+  turnRailTurns = collectTurns();
+  if (turnRailTurns.length < 2) {
+    rail.hidden = true;
+    turnRailWindow = { start: -1, end: -1 };
+    turnRailActive = -1;
+    hideTurnTip();
+    return;
+  }
+  const offsets = turnRailOffsets(container);
+  const active = turnRailActiveIndex(container, offsets);
+  const total = turnRailTurns.length;
+  const span = Math.min(TURN_RAIL_MAX, total);
+  const start = Math.max(0, Math.min(active - Math.floor(span / 2), total - span));
+  const end = start + span;
+  rail.hidden = false;
+  if (start === turnRailWindow.start && end === turnRailWindow.end) {
+    // 窗口没变：只挪高亮，不重写 DOM（教训 §九.37：每帧重写是迟滞主因）
+    if (active !== turnRailActive) {
+      turnRailActive = active;
+      rail.querySelectorAll('.turn-tick').forEach((tick) => {
+        tick.classList.toggle('active', Number(tick.dataset.turnIndex) === active);
+      });
+    }
+    return;
+  }
+  turnRailWindow = { start, end };
+  turnRailActive = active;
+  rail.replaceChildren();
+  for (let index = start; index < end; index += 1) {
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = 'turn-tick';
+    tick.dataset.turnIndex = String(index);
+    tick.setAttribute('aria-label', `第 ${index + 1} 轮对话`);
+    if (index === active) tick.classList.add('active');
+    rail.append(tick);
+  }
+}
+
+function scheduleTurnRail() {
+  if (turnRailFrame) return;
+  turnRailFrame = requestAnimationFrame(() => {
+    turnRailFrame = 0;
+    try {
+      renderTurnRail();
+    } catch (error) {
+      // 刻度轨是辅助显示，坏掉不能影响消息渲染——但必须留痕，不静默吞掉。
+      console.error('[naiba] 对话刻度轨渲染失败:', error);
+    }
+  });
+}
+
+function ensureTurnTip() {
+  let tip = $('#turnTip');
+  if (tip) return tip;
+  tip = document.createElement('div');
+  tip.id = 'turnTip';
+  tip.className = 'turn-tip';
+  tip.setAttribute('role', 'tooltip');
+  tip.hidden = true;
+  document.body.append(tip);
+  return tip;
+}
+
+function showTurnTip(tick) {
+  const index = Number(tick.dataset.turnIndex);
+  const turn = turnRailTurns[index];
+  if (!turn) return;
+  const tip = ensureTurnTip();
+  tip.innerHTML = `
+    <b>第 ${index + 1} 轮 · 用户</b>
+    <div class="turn-tip-user">${escapeHtml(turn.user || '（无文字，仅附件）')}</div>
+    <b>AI 回复</b>
+    <div class="turn-tip-reply">${escapeHtml(turn.reply || '（暂无回复）')}</div>`;
+  tip.hidden = false;
+  const rect = tick.getBoundingClientRect();
+  const left = Math.max(8, rect.left - tip.offsetWidth - 10);
+  const top = Math.max(8, Math.min(
+    rect.top + rect.height / 2 - tip.offsetHeight / 2,
+    window.innerHeight - tip.offsetHeight - 8,
+  ));
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+
+function hideTurnTip() {
+  const tip = $('#turnTip');
+  if (tip) tip.hidden = true;
+}
+
+function scrollToTurn(index) {
+  const turn = turnRailTurns[index];
+  const container = $('#messages');
+  if (!turn || !container) return;
+  // 把该轮的用户消息滚到视口垂直中心：这样"视口中心所在轮次"正好是点中的那一条，
+  // 跳转后高亮不会跑到隔壁（否则跳转即高亮漂移，用户会以为点错了）。
+  const base = container.getBoundingClientRect().top - container.scrollTop;
+  const rowRect = turn.anchor.getBoundingClientRect();
+  const top = rowRect.top - base - Math.max(0, (container.clientHeight - rowRect.height) / 2);
+  container.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+}
+
+export function initTurnRail() {
+  const rail = $('#turnRail');
+  const container = $('#messages');
+  if (!rail || !container || turnRailBound) return;
+  turnRailBound = true;
+  container.addEventListener('scroll', scheduleTurnRail, { passive: true });
+  window.addEventListener('resize', scheduleTurnRail);
+  window.addEventListener('scroll', hideTurnTip, true);
+  rail.addEventListener('click', (event) => {
+    const tick = event.target.closest('.turn-tick');
+    if (tick) scrollToTurn(Number(tick.dataset.turnIndex));
+  });
+  rail.addEventListener('mouseover', (event) => {
+    const tick = event.target.closest('.turn-tick');
+    if (tick) showTurnTip(tick);
+  });
+  rail.addEventListener('mouseout', (event) => {
+    if (event.target.closest('.turn-tick')) hideTurnTip();
+  });
+  rail.addEventListener('focusin', (event) => {
+    const tick = event.target.closest('.turn-tick');
+    if (tick) showTurnTip(tick);
+  });
+  rail.addEventListener('focusout', hideTurnTip);
+  // 消息区结构变化（整轮渲染 / 流式追加 / 编辑重渲染）时重建刻度
+  new MutationObserver(scheduleTurnRail).observe(container, { childList: true });
+  scheduleTurnRail();
+}
+
+
