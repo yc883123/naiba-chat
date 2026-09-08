@@ -925,6 +925,74 @@ def build_capability_tool_specs() -> list[ToolSpec]:
     ]
 
 
+def build_document_tool_specs() -> list[ToolSpec]:
+    """文档域工具声明：read_pdf（文本层提取）+ pdf_render_pages（整页渲染）
+    + pdf_zoom_region（局部高清放大）。执行逻辑在 naiba.pdf 服务 + documents Provider。
+    编排规则（先提取文本 → 扫描版渲染 → 细节放大）在系统提示常驻区，描述只答职责。"""
+    return [
+        ToolSpec(
+            name="read_pdf",
+            description=(
+                "提取 PDF 文档的文本层内容：按页返回（每页以 == 第 N 页 == 分隔），"
+                "单次最多 30000 字符/50 页，截断时提示续读页码；扫描版（无文本层）会提示改走页图。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": _string("PDF 文件绝对路径"),
+                    "start_page": {"type": "integer", "description": "从第几页开始提取（1 起始）", "default": 1},
+                    "end_page": {"type": "integer", "description": "提取到第几页（含该页；缺省最多 50 页）"},
+                },
+                "required": ["path"],
+            },
+            side_effect=False,
+            retryable=True,
+            timeout=60,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="pdf_render_pages",
+            description=(
+                "把 PDF 的页面渲染成 PNG 图片：适用于扫描版 PDF 或需要视觉精读的内容。"
+                "返回渲染结果页图路径列表，重复调用直接复用；单次最多 20 页，可分页续渲染。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": _string("PDF 文件绝对路径"),
+                    "pages": _string('页范围（如 "1-5,8"；缺省前 20 页；单次最多 20 页，可分页续渲染）', "1-20"),
+                },
+                "required": ["path"],
+            },
+            side_effect=True,
+            retryable=True,
+            timeout=120,
+            permission="auto",
+        ),
+        ToolSpec(
+            name="pdf_zoom_region",
+            description=(
+                "把 PDF 页面按区域高倍渲染成局部高清图：适用于整页图细节看不清"
+                "（小字/表格/图表）时放大精读。返回局部图路径，重复调用直接复用。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "path": _string("PDF 文件绝对路径"),
+                    "page": {"type": "integer", "description": "页码（1 起始）"},
+                    "region": _string('区域："x1,y1,x2,y2"（页面百分比 0-100）或 top/bottom/left/right/middle 半区关键词', ""),
+                    "scale": {"type": "integer", "description": "放大倍数 1-6（相对 PDF 原生分辨率）", "default": 3},
+                },
+                "required": ["path", "page", "region"],
+            },
+            side_effect=True,
+            retryable=True,
+            timeout=120,
+            permission="auto",
+        ),
+    ]
+
+
 def build_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register_many(build_core_tool_specs())
@@ -935,6 +1003,7 @@ def build_tool_registry() -> ToolRegistry:
     registry.register_many(build_vision_tool_specs())
     registry.register_many(build_search_tool_specs())
     registry.register_many(build_recall_tool_specs())
+    registry.register_many(build_document_tool_specs())
     # 别名表在查询层归一（Phase 5 后唯一来源；当前与 ToolExecutor.TOOL_ALIASES 双轨一致）
     registry.register_alias_map(HARNESS_ALIASES)
     return registry

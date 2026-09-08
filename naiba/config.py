@@ -137,6 +137,7 @@ _BUILT_IN_SCOPE_ALL = (
     "comfyui_prepare_workflow", "comfyui_batch",
     "install_skill", "unpack_skill_archive", "inspect_installed_skill",
     "vision_analyze", "vision_image_ops",
+    "read_pdf", "pdf_render_pages", "pdf_zoom_region",
 )
 
 
@@ -216,11 +217,13 @@ _TOOL_GROUP = {
     "comfyui_prepare_workflow": "ComfyUI", "comfyui_batch": "ComfyUI",
     "install_skill": "能力/Skill 管理", "unpack_skill_archive": "能力/Skill 管理", "inspect_installed_skill": "能力/Skill 管理",
     "vision_analyze": "视觉", "vision_image_ops": "视觉",
+    "read_pdf": "文档（PDF）", "pdf_render_pages": "文档（PDF）", "pdf_zoom_region": "文档（PDF）",
 }
 # 模型能力映射已随视觉单入口重构移除（vision_analyze 按会话能力换形态，不再按模型裁剪工具集）。
 _DEFAULT_SELECTED_TOOLS = frozenset({
     "read_file", "write_file", "list_directory", "search_files", "edit_file",
     "pwsh", "run_skill_script", "http_request", "web_search", "vision_analyze",
+    "read_pdf", "pdf_render_pages", "pdf_zoom_region",
 })
 
 
@@ -252,6 +255,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "comfyui_prepare_workflow", "comfyui_batch",
         "install_skill", "unpack_skill_archive", "inspect_installed_skill",
         "vision_analyze", "vision_image_ops",
+        "read_pdf", "pdf_render_pages", "pdf_zoom_region",
     )
     index = {name: i for i, name in enumerate(order)}
     entries.sort(key=lambda item: (index.get(item["name"], 999), item["name"]))
@@ -273,6 +277,7 @@ TOOL_GROUP_INFO: tuple[tuple[str, str], ...] = (
     ("能力/Skill 管理", "安装、解包、查看 Skill，让 Agent 自己扩展能力"),
     ("视觉（文本模型）", "文本模型通过视觉车道解读图片：描述、定位、检测、OCR、取色、裁剪、对比"),
     ("视觉（视觉模型）", "多模态模型直接看图。用支持图片的模型时优先开这个"),
+    ("文档（PDF）", "解析 PDF 文档：提取文本层、渲染页图、局部高清放大。只读，不改原文件"),
     ("其他", "未归类工具"),
 )
 
@@ -314,11 +319,11 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "id": "standard",
         "name": "标准模式",
         "tagline": "日常推荐",
-        "desc": "读写文件 + 搜索 + 跑命令 + 联网 + 看图，覆盖绝大多数日常任务。",
+        "desc": "读写文件 + 搜索 + 跑命令 + 联网 + 看图 + 解析 PDF，覆盖绝大多数日常任务。",
         "include": [
             "read_file", "write_file", "list_directory", "search_files",
             "edit_file", "pwsh", "run_skill_script", "http_request", "web_search",
-            "vision_analyze",
+            "vision_analyze", "read_pdf", "pdf_render_pages", "pdf_zoom_region",
         ],
     },
     {

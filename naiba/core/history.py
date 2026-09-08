@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from naiba.core.attachments import upload_reference_lines
 from naiba.core.contracts import MetadataKeys
 from naiba.core.diagnostics import _cache_debug_enabled
 from naiba.core.tool_results import model_visible_run, truncate_json_text
@@ -194,11 +195,7 @@ def build_model_history(
         content = str(item.get("content") or "")
         previous_uploads = (item.get("metadata") or {}).get(MetadataKeys.ATTACHMENTS) or []
         if item.get("role") == "user" and previous_uploads:
-            paths = [
-                f"[用户上传文件：{upload.get('path')}]"
-                for upload in previous_uploads
-                if upload.get("path")
-            ]
+            paths = upload_reference_lines(previous_uploads)
             if paths:
                 content += "\n" + "\n".join(paths)
             image_parts: list[dict[str, Any]] = []

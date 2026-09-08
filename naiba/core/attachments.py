@@ -40,6 +40,29 @@ def _is_media_product_path(raw: str) -> bool:
     return dot > 0 and lower[dot:] in MEDIA_PRODUCT_EXTS
 
 
+def upload_reference_lines(uploads: list[dict[str, Any]]) -> list[str]:
+    """用户上传附件的模型侧引用行（_run_chat 与历史重放共用，保证逐字节一致）。
+
+    PDF 附件追加固定处理指引：提取文本用 read_pdf；扫描版/看图用 pdf_render_pages
+    渲染页图后 vision_analyze；细节不清时 pdf_zoom_region 局部放大。
+    该文本条件出现、每轮稳定，不改变非 PDF 会话的前缀。
+    """
+    lines: list[str] = []
+    for item in uploads or []:
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        if path.lower().endswith(".pdf"):
+            lines.append(
+                f"[用户上传文件：{path}]"
+                "（PDF 文档：提取文本用 read_pdf；扫描版或需要看图时用 "
+                "pdf_render_pages 渲染页图后调用 vision_analyze；细节不清时用 pdf_zoom_region 局部放大）"
+            )
+        else:
+            lines.append(f"[用户上传文件：{path}]")
+    return lines
+
+
 _IMAGE_MEDIA_TERM_RE = re.compile(
     r"(图片|图像|照片|缩略图|位图|图标|png|jpe?g|webp|gif|image|picture|photo|imag|(?<![地纸表网草截导流框])图)",
     re.IGNORECASE,

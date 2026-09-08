@@ -21,7 +21,7 @@ from naiba.skills.context import DEFAULT_CONTEXT_WINDOW
 from naiba.skills.policy import normalize_skill_policy
 from naiba.core.exceptions import TaskCancelled
 from naiba.vision.runtime import VisionBudget
-from naiba.core.attachments import _image_intent, extract_attachments
+from naiba.core.attachments import _image_intent, extract_attachments, upload_reference_lines
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.exceptions import ActiveRunError
 from naiba.core.file_changes import file_changes_from_runs
@@ -415,7 +415,7 @@ class ConversationRunMixin:
                 raise TaskCancelled("任务已取消")
             message = str(run.get("message") or "")
             uploads = snapshot.get("attachments") or []
-            extra = [f"[用户上传文件：{item.get('path')}]" for item in uploads if item.get("path")]
+            extra = upload_reference_lines(uploads)
             effective = message + (("\n" + "\n".join(extra)) if extra else "")
             model_key = str(snapshot.get("model_key") or "")
             if not model_key and snapshot.get("provider_id"):
@@ -538,6 +538,9 @@ class ConversationRunMixin:
             prompt = (prompt + "\n\n图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径；"
                        "图片已作为原图直接可见时（多模态模型）无需调用；仅当用户明确要求裁剪、OCR、坐标、像素比较等"
                        "新操作时才调用 vision_image_ops。").strip()
+            prompt = (prompt + "\n\nPDF 处理策略：解析 PDF 文本层用 read_pdf；扫描版（无文本层）或需要看图时，先调用 "
+                       "pdf_render_pages 渲染页图，再将页图路径传给 vision_analyze；整页图细节看不清（小字/表格/图表）时，"
+                       "用 pdf_zoom_region 局部放大后再次 vision_analyze。").strip()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
             run_context: RunContext = {
                 "run_id": run_id,

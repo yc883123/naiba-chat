@@ -47,6 +47,7 @@ def _assembled_test_registry() -> Any:
     from naiba.tools.providers import capability as cap_provider
     from naiba.tools.providers import comfyui as comfyui_provider
     from naiba.tools.providers import core as core_provider
+    from naiba.tools.providers import documents as documents_provider
     from naiba.tools.providers import jobs as jobs_provider
     from naiba.tools.providers import search as search_provider
     from naiba.tools.providers import vision as vision_provider
@@ -77,6 +78,19 @@ def _assembled_test_registry() -> Any:
     reg.register_provider(
         vision_provider.VisionToolProvider(
             _FakeHandlers({spec.name for spec in registry_mod.build_vision_tool_specs()})
+        )
+    )
+    # documents 域（PDF 工具）：ctx 用临时代理（与 core 同构），缓存目录指向临时数据目录。
+    reg.register_provider(
+        documents_provider.DocumentToolProvider(
+            core_provider.ToolContext(
+                workspace=Path(tempfile.mkdtemp(prefix="naiba-doc-ws-")),
+                python_executable=sys.executable,
+                command_timeout=60,
+                mcp_registry=None,
+                mcp_register=None,
+            ),
+            lambda: Path(tempfile.mkdtemp(prefix="naiba-doc-data-")),
         )
     )
     return reg
