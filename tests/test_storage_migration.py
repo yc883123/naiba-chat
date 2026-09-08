@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from naiba.storage import store as storage_module  # noqa: E402
-from naiba.storage.store import ChatStorage  # noqa: E402
+from naiba.storage.store import CURRENT_SCHEMA_VERSION, ChatStorage  # noqa: E402
 
 
 def _insert_delta_events(db, run_id: str, count: int, chars: int):
@@ -57,10 +57,10 @@ class MigrationV14Tests(unittest.TestCase):
         storage.set_user_version(13)
         return storage
 
-    def test_fresh_db_reaches_v14_without_backup(self):
+    def test_fresh_db_reaches_current_version_without_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = ChatStorage(Path(tmp) / "chat.db")
-            self.assertEqual(storage.get_user_version(), 14)
+            self.assertEqual(storage.get_user_version(), CURRENT_SCHEMA_VERSION)
             self.assertFalse((Path(tmp) / "backups").exists(), "新库不应产生备份")
 
     def test_v13_data_migrated_and_backed_up(self):
@@ -104,9 +104,9 @@ class MigrationV14Tests(unittest.TestCase):
                     )
                 db.commit()
 
-            # 重新打开：触发 v14 迁移
+            # 重新打开：触发 v14 迁移（其后 v15 收藏列为纯增量，不影响压缩结果）
             reopened = ChatStorage(Path(tmp) / "chat.db")
-            self.assertEqual(reopened.get_user_version(), 14)
+            self.assertEqual(reopened.get_user_version(), CURRENT_SCHEMA_VERSION)
             with closing(sqlite3.connect(Path(tmp) / "chat.db")) as db:
                 # 1) 推理合流
                 deltas = db.execute(

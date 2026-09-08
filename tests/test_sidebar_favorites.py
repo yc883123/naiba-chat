@@ -1,0 +1,227 @@
+# -*- coding: utf-8 -*-
+"""侧栏收藏（favorite）与会话级系统提示词退役的守门。
+
+本轮两条互相关联的改动必须在同一处被钉住：
+
+1. ``conversations.favorite`` 是新增的纯增量列（迁移 v15，幂等），只作为侧栏「已收藏」
+   分组标记，不参与模型上下文、不影响任何冻结快照；
+2. 会话级系统提示词整体退役（UI 入口、注入点、角色卡导入全部迁到 Agent），
+   因此后端三处注入点不得再读取 ``conversation.system_prompt``，
+   前端也不得再出现旧的「对话设置」对话框元素。
+"""
+from __future__ import annotations
+
+import sqlite3
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from naiba.storage.store import CURRENT_SCHEMA_VERSION, MIGRATIONS, ChatStorage  # noqa: E402
+
+
+class FavoriteMigrationTests(unittest.TestCase):
+    """迁移 v15：列存在、幂等、旧库可升级。"""
+
+    def test_schema_version_registers_v15(self) -> None:
+        self.assertEqual(CURRENT_SCHEMA_VERSION, 15)
+        self.assertIn(15, MIGRATIONS)
+
+    def test_migration_adds_column_and_is_idempotent(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="naiba_favorite_mig_") as tmp:
+            storage = ChatStorage(Path(tmp) / "chat.db")
+            conn = sqlite3.connect(storage.db_path)
+            try:
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+                self.assertIn("favorite", columns, "初始化后必须已有 favorite 列")
+                # 重复执行不得抛错（列已存在时跳过），否则升级路径会被二次迁移打断。
+                MIGRATIONS[15](conn)
+                MIGRATIONS[15](conn)
+                again = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+                self.assertIn("favorite", again)
+            finally:
+                conn.close()
+
+    def test_legacy_database_upgrades(self) -> None:
+        """模拟 v14 老库：删列后重跑迁移必须补回且默认 0。"""
+        with tempfile.TemporaryDirectory(prefix="naiba_favorite_legacy_") as tmp:
+            db_path = Path(tmp) / "chat.db"
+            storage = ChatStorage(db_path)
+            conv = storage.create_conversation("legacy", "老会话")
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.execute("ALTER TABLE conversations DROP COLUMN favorite")
+                conn.commit()
+                MIGRATIONS[15](conn)
+                conn.commit()
+                row = conn.execute(
+                    "SELECT favorite FROM conversations WHERE id = ?", (str(conv["id"]),)
+                ).fetchone()
+                self.assertEqual(int(row[0]), 0)
+            finally:
+                conn.close()
+
+
+class FavoriteStorageTests(unittest.TestCase):
+    """收藏的读写回路与「不影响其他字段」的不变量。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="naiba_favorite_ws_")
+        self.addCleanup(self._tmp.cleanup)
+        self.storage = ChatStorage(Path(self._tmp.name) / "chat.db")
+        self.conv_id = str(self.storage.create_conversation("c1", "收藏测试")["id"])
+
+    def test_defaults_to_not_favorite(self) -> None:
+        row = self.storage.get_conversation(self.conv_id, include_messages=False)
+        self.assertEqual(int(row["favorite"]), 0)
+
+    def test_toggle_round_trip_through_list_and_get(self) -> None:
+        updated = self.storage.update_conversation_settings(self.conv_id, favorite=True)
+        self.assertEqual(int(updated["favorite"]), 1)
+        listed = next(
+            item for item in self.storage.list_conversations() if item["id"] == self.conv_id
+        )
+        self.assertEqual(int(listed["favorite"]), 1)
+        self.assertEqual(
+            int(self.storage.get_conversation(self.conv_id, include_messages=False)["favorite"]), 1
+        )
+        again = self.storage.update_conversation_settings(self.conv_id, favorite=False)
+        self.assertEqual(int(again["favorite"]), 0)
+
+    def test_favorite_keeps_other_fields(self) -> None:
+        self.storage.update_conversation_settings(self.conv_id, title="自定义标题", system_prompt="旧提示词")
+        before = self.storage.get_conversation(self.conv_id, include_messages=False)
+        self.storage.update_conversation_settings(self.conv_id, favorite=True)
+        after = self.storage.get_conversation(self.conv_id, include_messages=False)
+        for key in (
+            "title",
+            "title_customized",
+            "system_prompt",
+            "stream_enabled",
+            "agent_id",
+            "workspace_group",
+            "permission_mode",
+            "model_key",
+        ):
+            with self.subTest(field=key):
+                self.assertEqual(before[key], after[key])
+
+
+class FavoriteApiTests(unittest.TestCase):
+    """HTTP 层口径：favorite 只接受布尔值，其余字段透传不变。"""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="naiba_favorite_api_")
+        self.addCleanup(self._tmp.cleanup)
+        root = Path(self._tmp.name)
+        from naiba.app import NaibaChatApp
+        from naiba.paths import PathContext
+
+        self.paths = PathContext.local(root, root / "config.json")
+        self.app = NaibaChatApp(paths=self.paths)
+        created, status = self.app.api_create_conversation({"title": "接口收藏"})
+        self.assertEqual(int(status), 201)
+        self.conv_id = str(created["id"])
+
+    def test_rejects_non_boolean(self) -> None:
+        payload, status = self.app.api_update_conversation_settings(self.conv_id, {"favorite": "yes"})
+        self.assertEqual(int(status), 400)
+        self.assertIn("favorite", payload.get("error", ""))
+
+    def test_accepts_boolean_and_returns_field(self) -> None:
+        payload, status = self.app.api_update_conversation_settings(self.conv_id, {"favorite": True})
+        self.assertEqual(int(status), 200)
+        self.assertEqual(int(payload["favorite"]), 1)
+        payload, status = self.app.api_update_conversation_settings(self.conv_id, {"favorite": False})
+        self.assertEqual(int(status), 200)
+        self.assertEqual(int(payload["favorite"]), 0)
+
+    def test_unknown_conversation_returns_404(self) -> None:
+        payload, status = self.app.api_update_conversation_settings("nope", {"favorite": True})
+        self.assertEqual(int(status), 404)
+        self.assertIn("error", payload)
+
+
+class ConversationPromptRetiredTests(unittest.TestCase):
+    """会话级系统提示词必须彻底退役：后端注入点归零、前端旧入口不存在。"""
+
+    BACKEND_FILES = ("naiba/run/chat.py", "naiba/plans.py", "naiba/subagent.py")
+
+    def test_backend_no_conversation_prompt_injection(self) -> None:
+        for name in self.BACKEND_FILES:
+            with self.subTest(file=name):
+                source = (ROOT / name).read_text(encoding="utf-8")
+                self.assertNotIn("conversation_system_prompt", source, f"{name} 仍在注入会话级提示词")
+                self.assertNotIn(
+                    'conversation.get("system_prompt")', source, f"{name} 仍在读取会话级提示词"
+                )
+
+    def test_agent_prompt_is_the_only_source(self) -> None:
+        chat = (ROOT / "naiba/run/chat.py").read_text(encoding="utf-8")
+        self.assertIn('prompt = str(agent.get("system_prompt") or "").strip()', chat)
+
+    def test_frontend_removes_conversation_settings_entry_points(self) -> None:
+        index = (ROOT / "public/index.html").read_text(encoding="utf-8")
+        for snippet in (
+            "conversationSettingsDialog",
+            "conversationSystemPrompt",
+            "conversationPromptPresetSelect",
+            "openCurrentConversationSettings",
+            "importCharacterCardBtn",
+        ):
+            with self.subTest(snippet=snippet):
+                self.assertNotIn(snippet, index, "旧的会话级系统提示词入口仍在 index.html")
+
+    def test_agent_form_owns_preset_and_card_import(self) -> None:
+        index = (ROOT / "public/index.html").read_text(encoding="utf-8")
+        self.assertIn("agentPromptPresetSelect", index)
+        self.assertIn("importAgentCharacterCard", index)
+        # 导入按钮必须紧跟「系统提示词（预设与规则）」行之后。
+        prompt_row = index.index("系统提示词（预设与规则）")
+        self.assertLess(prompt_row, index.index("agentPromptPresetSelect"))
+        conversations = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        self.assertIn("export function mergeAgentPromptText(", conversations)
+        self.assertIn("export async function importAgentCharacterCard(", conversations)
+
+    def test_sidebar_item_uses_star_and_more_menu(self) -> None:
+        source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        self.assertIn('class="conversation-star', source)
+        self.assertIn('data-action="toggle-favorite"', source)
+        self.assertIn('data-action="open-conversation-menu"', source)
+        self.assertNotIn("conversation-settings", source, "齿轮入口应已退役")
+        self.assertNotIn("delete-conversation", source, "删除已并入「⋯」菜单")
+
+    def test_favorites_group_is_rendered_last(self) -> None:
+        source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        self.assertIn("SIDE_FAVORITES_GROUP", source)
+        self.assertIn("label: '已收藏'", source)
+        # 收藏分组必须在工作区分组循环之后追加（侧栏最下方）。
+        loop_end = source.index("const favoriteList = sortConv(")
+        self.assertLess(source.index("for (const wsName of orderedNames)"), loop_end)
+
+    def test_sidebar_scroll_clamp_uses_real_scroll_height(self) -> None:
+        """虚拟窗口的滚动上限必须取浏览器真实 scrollHeight（含容器 padding）。
+
+        旧实现用 sidebarTotalH - vh，少算了 .conversation-list 的上下 padding，
+        每次滚动都被回写成偏小的值——滚轮“越滚越慢”、列表底部永远到不了。
+        """
+        source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        self.assertIn("const maxScroll = Math.max(0, tree.scrollHeight - vh);", source)
+        self.assertNotIn("Math.max(0, sidebarTotalH - vh)", source, "滚动上限又退回少算 padding 的旧写法")
+
+    def test_sidebar_density_and_wheel_have_styles_and_handler(self) -> None:
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        self.assertIn("min-height: 34px", css)
+        self.assertIn(".conversation-star", css)
+        self.assertIn(".conversation-menu", css)
+        self.assertIn("overflow-anchor: none", css)
+        bind = (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
+        self.assertIn("'wheel'", bind)
+        self.assertIn("* 1.5", bind)
+
+
+if __name__ == "__main__":
+    unittest.main()
