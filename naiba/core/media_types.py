@@ -110,6 +110,38 @@ def _ext_of(value: str) -> str:
     return ext if len(ext) > 1 else ""
 
 
+def truncate_by_kind(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """按类型分桶截断（图 20 / 视频 8 / 音频 8），保持出现顺序。
+
+    返回 ``(kept, truncated)``：``truncated is None`` 表示未截断；否则为
+    ``{"total": N, "shown": M, "kinds": {kind: {"total": t, "shown": s}}}``——
+    截断必须可自述（静默截断 = 误导源，维护说明 §九.24），前端据此渲染提示块。
+    采集侧用它做**落盘前预截断**（避免一次列目录拷贝几百张图），消息侧用它做
+    单条消息的汇总上限，两处同一口径。
+    """
+    counts: dict[str, int] = {}
+    shown_counts: dict[str, int] = {}
+    kept: list[dict[str, Any]] = []
+    for record in records or []:
+        kind = str(record.get("kind") or media_kind_of(record.get("source")) or "")
+        counts[kind] = counts.get(kind, 0) + 1
+        limit = MEDIA_BUCKET_LIMITS.get(kind)
+        if limit is not None and shown_counts.get(kind, 0) >= limit:
+            continue
+        shown_counts[kind] = shown_counts.get(kind, 0) + 1
+        kept.append(record)
+    if len(kept) == len(records or []):
+        return kept, None
+    return kept, {
+        "total": len(records or []),
+        "shown": len(kept),
+        "kinds": {
+            kind: {"total": total, "shown": shown_counts.get(kind, 0)}
+            for kind, total in counts.items()
+        },
+    }
+
+
 def media_exts_payload() -> dict[str, Any]:
     """前端消费的媒体名单（``/api/bootstrap.media_exts``）。
 

@@ -21,7 +21,7 @@ from naiba.skills.context import DEFAULT_CONTEXT_WINDOW
 from naiba.skills.policy import normalize_skill_policy
 from naiba.core.exceptions import TaskCancelled
 from naiba.vision.runtime import VisionBudget
-from naiba.core.attachments import _image_intent, compose_user_content, extract_attachments
+from naiba.core.attachments import _image_intent, compose_user_content, union_run_media
 from naiba.core.conv_files import _conv_workspace_root, resolve_file_references
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.exceptions import ActiveRunError
@@ -554,8 +554,16 @@ class ConversationRunMixin:
                 # 会话工作区（snapshot 冻结值）：产物类工具（vision crop/pixel_diff 等）
                 # 落盘的默认位置——契约键，缺失会退到程序默认工作区（实测踩坑）。
                 "workspace_dir": str(snapshot.get("workspace_dir") or ""),
+                # 用户本轮是否明确要看图：枚举类工具的媒体声明 intent_gated 据此放行
+                # （判定用用户原文，不用路由增强文本——后者可能含历史助手措辞）。
+                "media_intent": _image_intent(message),
             }
-            worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
+            worker = SkillAgent(
+                self.app.catalog,
+                executor,
+                self.app.models.complete,
+                getattr(self.app, "media_collector", None),
+            )
             response, runs, reasonings, usage = worker.run(
                 effective,
                 history,
@@ -641,6 +649,9 @@ class ConversationRunMixin:
                 plan_status = str((plan or {}).get("status") or "")
             choice_groups = _detect_choice_groups(response)
             changed_files = file_changes_from_runs(runs)
+            # 消息级媒体 = 各次工具调用携带的媒体记录汇总（采集已在产出点完成；
+            # 这里只做去重 + 分桶上限，超限带自述信息，前端渲染提示块）。
+            attachments, attachments_truncated = union_run_media(runs)
             metadata = {
                 "skills": skills,
                 # 前端/历史展示与模型上下文同源（core.tool_results）：result 已脱敏+截断标记，
@@ -651,14 +662,7 @@ class ConversationRunMixin:
                 "activity": _safe_activity(self._all_run_events(run_id), reasonings, display_runs),
                 "usage": usage,
                 "performance": performance,
-                # 只有用户明确要求看/列出/查找图片时，才把枚举类工具(list_directory/search_files)
-                # 返回的图片作为附件显示；否则枚举结果只是路径，避免一堆不相干的图片出现在消息末尾。
-                "attachments": extract_attachments(
-                    runs,
-                    allow_enumerated_media=_image_intent(message),
-                    data_dir=self.app.config.resolve_data_dir(),
-                    imaging=self.app.config.data.get("imaging"),
-                ),
+                "attachments": attachments,
                 "sources": search_sources[:20],
                 "choices": choice_groups[0]["choices"] if choice_groups else [],
                 "choice_groups": choice_groups,
@@ -673,6 +677,8 @@ class ConversationRunMixin:
                 "trace": (run_context or {}).get("trace_messages") or [],
                 **({"error": sink.failure_message} if sink.failure_message else {}),
             }
+            if attachments_truncated:
+                metadata[MetadataKeys.ATTACHMENTS_TRUNCATED] = attachments_truncated
             # 消息末尾"修改文件"总结：仅在本轮确实有文件落盘时携带，避免空数组刷屏。
             if changed_files:
                 metadata[MetadataKeys.FILES] = changed_files
@@ -895,6 +901,9 @@ class ConversationRunMixin:
         if not content:
             content = "（已中止）"
         changed_files = file_changes_from_runs(tool_runs)
+        # 中止/取消的轮次同样展示已生成的媒体：runs 由事件重建，media 随事件带回
+        # （采集发生在产出点，不依赖"重新扫原始结果"——那条路在中止时已不可达）。
+        attachments, attachments_truncated = union_run_media(tool_runs)
         metadata: dict[str, Any] = {
             "aborted": True,
             "reasoning": reasoning,
@@ -903,13 +912,10 @@ class ConversationRunMixin:
             "skills": skills,
             "activity": activity,
             "trace": trace or [],
-            # 中止/取消的轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
-            "attachments": extract_attachments(
-                tool_runs,
-                data_dir=self.app.config.resolve_data_dir(),
-                imaging=self.app.config.data.get("imaging"),
-            ),
+            "attachments": attachments,
         }
+        if attachments_truncated:
+            metadata[MetadataKeys.ATTACHMENTS_TRUNCATED] = attachments_truncated
         if changed_files:
             metadata[MetadataKeys.FILES] = changed_files
         try:
@@ -1057,6 +1063,8 @@ class ConversationRunMixin:
         if not content:
             content = "（本次回答未完成）"
         changed_files = file_changes_from_runs(tool_runs)
+        # 失败轮次同样展示已生成的媒体（同取消路径：media 随事件带回）。
+        attachments, attachments_truncated = union_run_media(tool_runs)
         metadata: dict[str, Any] = {
             "partial": True,
             "reasoning": reasoning,
@@ -1066,13 +1074,10 @@ class ConversationRunMixin:
             "activity": activity,
             "trace": trace or [],
             "error": error,
-            # 失败轮次也要把已生成的图片/媒体作为附件展示，避免“生成过但历史里看不到缩略图”。
-            "attachments": extract_attachments(
-                tool_runs,
-                data_dir=self.app.config.resolve_data_dir(),
-                imaging=self.app.config.data.get("imaging"),
-            ),
+            "attachments": attachments,
         }
+        if attachments_truncated:
+            metadata[MetadataKeys.ATTACHMENTS_TRUNCATED] = attachments_truncated
         if changed_files:
             metadata[MetadataKeys.FILES] = changed_files
         try:

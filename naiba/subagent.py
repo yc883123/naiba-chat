@@ -98,7 +98,12 @@ def run_subagent_agent(
     skill_policy = params.get("skill_policy") or {"mode": "auto", "skill_ids": []}
 
     emit({"type": "job_status", "status": "running", "current_step": "子 Agent 推理中"})
-    worker = SkillAgent(app.catalog, CraftToolExecutor(app.executor), app.models.complete)
+    worker = SkillAgent(
+        app.catalog,
+        CraftToolExecutor(app.executor),
+        app.models.complete,
+        getattr(app, "media_collector", None),
+    )
     try:
         brain_has_vision = bool(
             app.vision.brain_supports_images(profile)

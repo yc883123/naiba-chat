@@ -102,9 +102,20 @@ def model_visible_run(run: dict[str, Any]) -> dict[str, Any]:
 
 
 def display_tool_run(run: dict[str, Any]) -> dict[str, Any]:
-    """原始 run → 展示 run（web 事件 / metadata.tool_runs）：可见 result + 展示用 arguments/reason。"""
+    """原始 run → 展示 run（web 事件 / metadata.tool_runs）：可见 result + 展示用 arguments/reason。
+
+    ``media``/``media_truncated`` 是**宿主**在工具产出时按声明提取的托管记录
+    （路径/缩略图/截断自述），随展示通道下发给前端就地渲染；它不进模型上下文
+    （``model_visible_run`` 不含，模型无从看到宿主缓存路径）。
+    """
     visible = model_visible_run(run)
     visible["arguments"] = (run or {}).get("arguments") if isinstance((run or {}).get("arguments"), dict) else {}
     if (run or {}).get("reason"):
         visible["reason"] = str((run or {}).get("reason") or "")
+    media = (run or {}).get("media")
+    if isinstance(media, list) and media:
+        visible["media"] = media
+    truncated = (run or {}).get("media_truncated")
+    if isinstance(truncated, dict) and truncated:
+        visible["media_truncated"] = truncated
     return visible

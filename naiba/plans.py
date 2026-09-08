@@ -740,7 +740,12 @@ class PlanManager:
             "craft", [str(t) for t in self.app.config.data.get("agent_tools", [])]
         )]
         executor = CraftToolExecutor(run_executor or self.app.executor)
-        worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
+        worker = SkillAgent(
+            self.app.catalog,
+            executor,
+            self.app.models.complete,
+            getattr(self.app, "media_collector", None),
+        )
         skill_policy = frozen.get("skill_policy") or {"mode": "auto", "skill_ids": []}
         content, runs, reasonings, usage = worker.run(
             instruction,

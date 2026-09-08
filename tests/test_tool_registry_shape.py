@@ -444,6 +444,8 @@ class ToolNameSetFreshnessTests(unittest.TestCase):
     背景：`attachments.ENUMERATION_TOOLS` 曾长期留着 `glob_files/glob/find_files` 三个
     早已退役（甚至从未存在）的名字，`session.py` 的视觉工具集则反过来漏掉了
     `vision_analyze/vision_image_ops`——硬编码名单与声明表各写各的，必然漂移。
+    枚举类工具的媒体门禁已改为**声明驱动**（`metadata["media"].policy == "intent_gated"`，
+    见 `tests/test_media_declarations.py`），此处不再有该硬编码集合。
 
     注意：**历史重放**用的集合是例外——旧会话落库的 `metadata.tool_runs` 里可能存着
     退役名，删掉会让老会话内容在重放时静默消失（golden history_images 曾抓到）。
@@ -452,7 +454,7 @@ class ToolNameSetFreshnessTests(unittest.TestCase):
 
     # 只服务"当前轮次分发"的集合：其中的名字必须是当前声明的工具。
     CURRENT_RUN_SETS = (
-        "ENUMERATION_TOOLS", "VISION_READONLY_TOOLS", "VISION_WRITING_TOOLS",
+        "VISION_READONLY_TOOLS", "VISION_WRITING_TOOLS",
         "SYSTEM_TOOLS_CRAFT", "SYSTEM_TOOLS_READONLY", "JOB_TOOLS",
         "CAPABILITY_TOOLS", "HARNESS_TOOLS",
     )
@@ -461,11 +463,9 @@ class ToolNameSetFreshnessTests(unittest.TestCase):
         return set(_assembled_test_registry().names())
 
     def _current_run_sets(self) -> dict[str, Any]:
-        from naiba.core.attachments import ENUMERATION_TOOLS
         from naiba.run import session as session_mod
 
         return {
-            "ENUMERATION_TOOLS": ENUMERATION_TOOLS,
             "VISION_READONLY_TOOLS": session_mod.VISION_READONLY_TOOLS,
             "VISION_WRITING_TOOLS": session_mod.VISION_WRITING_TOOLS,
             "SYSTEM_TOOLS_CRAFT": session_mod.SYSTEM_TOOLS_CRAFT,

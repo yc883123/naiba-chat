@@ -25,6 +25,7 @@ from naiba.core.diagnostics import _cache_debug_enabled, _debug_message_digest
 from naiba.core.history import encode_image_for_model
 from naiba.core.tool_results import display_tool_run, model_visible_run, truncate_json_text
 from naiba.core.exceptions import TaskCancelled
+from naiba.core.media_types import DEFAULT_MEDIA_DECLARATION
 from naiba.skills.catalog import SkillCatalog
 from naiba.tools.executor import ToolExecutor
 from naiba.skills.context import DEFAULT_CONTEXT_WINDOW
@@ -134,10 +135,54 @@ class SkillAgent:
 不要照抄示例，不要使用不存在的工具。工具结果会在下一轮发给你，最多执行有限步数，不要重复无效操作。
 """.strip()
 
-    def __init__(self, catalog: SkillCatalog, executor: ToolExecutor, model_complete: Callable[..., str]):
+    def __init__(
+        self,
+        catalog: SkillCatalog,
+        executor: ToolExecutor,
+        model_complete: Callable[..., str],
+        media_collector: Any = None,
+    ):
         self.catalog = catalog
         self.executor = executor
         self.model_complete = model_complete
+        # 媒体采集器（storage/media_collect.MediaCollector，装配根注入）：
+        # 工具产出点按声明提取媒体并托管缓存；None 时跳过采集（测试/轻量调用）。
+        self.media_collector = media_collector
+
+    def _collect_media(
+        self,
+        run: dict[str, Any],
+        tool_registry: Any,
+        run_context: RunContext | None,
+    ) -> None:
+        """按工具声明采集本次调用的媒体，写回 ``run["media"]``（失败不中断本轮）。
+
+        只在**工具产出点**运行：原始 result 仅此处可见（``display_tool_run`` 已按工具
+        脱敏）。采集结果随 tool_result 事件落库，取消/失败路径从事件重建时同样带回，
+        三条收尾路径口径一致。采集异常只记录（媒体是附属信息，不得让工具结果丢失）。
+        """
+        collector = self.media_collector
+        if collector is None:
+            return
+        tool = str(run.get("tool") or "")
+        getter = getattr(tool_registry, "media_declaration", None)
+        declaration = getter(tool) if callable(getter) else dict(DEFAULT_MEDIA_DECLARATION)
+        if declaration.get("extract") == "none" or declaration.get("policy") == "never":
+            return
+        intent = bool((run_context or {}).get("media_intent")) if isinstance(run_context, dict) else False
+        try:
+            collected = collector.collect(run, declaration, intent=intent)
+        except Exception as exc:  # noqa: BLE001 - 采集失败必须记录且不阻断工具结果
+            logger.exception("媒体采集失败（工具结果仍照常展示）：tool=%s error=%s", tool, exc)
+            return
+        if not isinstance(collected, dict):
+            return
+        media = collected.get("media")
+        if media:
+            run["media"] = media
+        truncated = collected.get("truncated")
+        if truncated:
+            run["media_truncated"] = truncated
 
     def run(
         self,
@@ -721,6 +766,8 @@ class SkillAgent:
                 # （附件提取、file_changes、step 图片注入）；模型与前端均以
                 # model_visible/display（core.tool_results）为准。
                 run = {"tool": tool, "arguments": arguments, "result": result, "success": success, "reason": str(call.get("reason") or "")}
+                # 媒体采集：在事件发射前写回 run["media"]（原始 result 仅此处可见）。
+                self._collect_media(run, tool_registry, run_context)
                 runs.append(run)
                 step_runs.append(run)
                 event({"type": "tool_result", **display_tool_run(run)})

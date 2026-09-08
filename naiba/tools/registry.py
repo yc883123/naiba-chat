@@ -283,6 +283,16 @@ class ToolRegistry:
         spec = self._specs.get(name)
         return spec.side_effect if spec else True
 
+    def media_declaration(self, name: str) -> dict[str, str]:
+        """取工具的媒体采集声明（别名归一；未注册/未声明走默认口径）。
+
+        声明由装配期 ``declare_media`` 写入 ``metadata["media"]``；MCP/第三方动态工具
+        没有声明，走默认（inline/scan）——其结果形态不可预知，宁可按通用口径提取。
+        """
+        spec = self._specs.get(self.resolve(name))
+        value = (spec.metadata or {}).get("media") if spec is not None else None
+        return normalize_media_declaration(value)
+
     def retryable(self, name: str) -> bool:
         spec = self._specs.get(name)
         return bool(spec and spec.retryable)

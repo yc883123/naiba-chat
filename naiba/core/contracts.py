@@ -20,7 +20,7 @@ RUN_CONTEXT_KEYS: tuple[str, ...] = (
     "depth", "allowed_tools", "skill_policy", "job_registry", "executor",
     "cancel_event", "vision_budget", "interaction_mode", "routing_message",
     "mcp_active", "trace_messages", "plan_exit_content", "plan_step_title",
-    "model_has_vision", "tool_defs", "workspace_dir",
+    "model_has_vision", "tool_defs", "workspace_dir", "media_intent",
 )
 
 # 运行期保持 dict 形态（零行为变化）；"带默认值/校验"经由工厂与校验函数落地，
@@ -49,6 +49,7 @@ def default_run_context() -> dict[str, Any]:
         "model_has_vision": False,
         "tool_defs": None,
         "workspace_dir": "",
+        "media_intent": False,
     }
 
 
@@ -132,6 +133,7 @@ class RunContext(TypedDict, total=False):
     model_has_vision: bool           # 会话大脑模型是否支持图片（vision_analyze 执行分流）
     tool_defs: dict[str, Any] | None # 会话化 def 覆盖（如 vision_analyze 按模型能力换形态）
     workspace_dir: str               # 本轮会话工作区（解析后的绝对路径；产物类工具落盘默认位置）
+    media_intent: bool               # 用户本轮是否明确要求看图（枚举类工具的 intent_gated 门禁）
 
 
 class EventType(str, Enum):
@@ -201,6 +203,10 @@ class EventPayload(TypedDict, total=False):
     arguments: dict[str, Any]
     confirm_id: str
     success: bool
+    # 媒体（宿主在工具产出时提取的托管记录：kind/name/source/thumb_path；
+    # media_truncated 为分桶截断的自述信息，前端据此渲染提示块）
+    media: list[dict[str, Any]]
+    media_truncated: dict[str, Any]
     tools: list[dict[str, Any]]
     skills: list[dict[str, Any]]
     choices: list[str]
@@ -248,7 +254,7 @@ EVENT_PAYLOAD_KEYS: dict[str, frozenset[str] | None] = {
     "reasoning_end": frozenset(),
     "reasoning": frozenset({"content"}),
     "tool_start": frozenset({"tool", "arguments", "reason"}),
-    "tool_result": frozenset({"tool", "success", "result", "arguments", "reason"}),
+    "tool_result": frozenset({"tool", "success", "result", "arguments", "reason", "media", "media_truncated"}),
     "tool_confirm": frozenset({"tool_name", "tool_desc", "arguments", "confirm_id"}),
     "choice": frozenset({"choices", "choice_groups"}),
     "cancelled": frozenset({"message", "aborted_message"}),

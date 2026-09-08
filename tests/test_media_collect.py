@@ -1,0 +1,312 @@
+# -*- coding: utf-8 -*-
+"""媒体采集器与消息级媒体汇总的守门（P2：生产点提取 + 分桶预截断 + 事件内嵌）。
+
+冻结以下不变量：
+1. **只对成功结果提取**——失败/待确认（NEED_CONFIRM）结果里的路径不是产物
+   （错误信息常含路径），旧实现会渲染成指向不存在文件的破图卡片；
+2. **声明驱动**——policy never / extract none 一律不提取；intent_gated 仅在
+   run_context["media_intent"] 为真时放行；
+3. **先截断再落盘**——候选按类型分桶（图 20 / 视频 8 / 音频 8）预截断后才复制/下载，
+   否则列一次目录会把几百张图拷进 data 目录并生成几百张缩略图卡住；
+   超限部分返回可自述的 truncated 信息（不静默）；
+4. **记录可内嵌**——返回 {kind,name,source,thumb_path} 小型记录，随 tool_result 事件
+   与 metadata.tool_runs 下发；model_visible_run 不得包含它（模型看不到宿主缓存路径）；
+5. data_dir 每次调用实时解析（不闭包捕获装配期配置，教训 9/17）。
+"""
+from __future__ import annotations
+
+import json
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from naiba.core.attachments import union_run_media  # noqa: E402
+from naiba.core.contracts import EVENT_PAYLOAD_KEYS, RUN_CONTEXT_KEYS  # noqa: E402
+from naiba.core.messages import MESSAGE_METADATA_KEYS, MetadataKeys  # noqa: E402
+from naiba.core.media_types import MEDIA_BUCKET_LIMITS  # noqa: E402
+from naiba.core.tool_results import display_tool_run, model_visible_run  # noqa: E402
+from naiba.storage.media_collect import MediaCollector  # noqa: E402
+
+# 1x1 PNG（真实图片，用于缩略图断言）
+PNG_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4"
+    "890000000a49444154789c6360000002000154a24f5b0000000049454e44ae426082"
+)
+
+INLINE = {"policy": "inline", "extract": "scan"}
+STRUCTURED = {"policy": "inline", "extract": "structured"}
+
+
+class _ConfigStub:
+    """最小 ConfigView 桩：data_dir 可变（验证"每次调用实时解析"）。"""
+
+    def __init__(self, data_dir: Path) -> None:
+        self.data = {"imaging": {}}
+        self._data_dir = data_dir
+
+    def resolve_data_dir(self) -> Path:
+        return self._data_dir
+
+    def rebind(self, data_dir: Path) -> None:
+        self._data_dir = data_dir
+
+
+def _run(result: str = "", success: bool = True, tool: str = "write_file") -> dict:
+    return {"tool": tool, "arguments": {}, "result": result, "success": success, "reason": ""}
+
+
+class _TempCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.data_dir = self.root / "data"
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.src = self.root / "src"
+        self.src.mkdir(parents=True, exist_ok=True)
+        self.config = _ConfigStub(self.data_dir)
+        self.collector = MediaCollector(self.config)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _make_png(self, name: str, payload: bytes = PNG_BYTES) -> Path:
+        path = self.src / name
+        path.write_bytes(payload)
+        return path
+
+
+class CollectGateTests(_TempCase):
+    """提取门禁：成功、声明、意图。"""
+
+    def test_failed_run_produces_no_media(self) -> None:
+        target = self._make_png("a.png")
+        result = f"FileNotFoundError: [Errno 2] No such file: '{target}'"
+        self.assertEqual(self.collector.collect(_run(result, success=False), INLINE)["media"], [])
+
+    def test_need_confirm_result_produces_no_media(self) -> None:
+        result = f"NEED_CONFIRM:cid:读取工作区外路径：{self._make_png('b.png')}"
+        self.assertEqual(self.collector.collect(_run(result), INLINE)["media"], [])
+
+    def test_policy_never_and_extract_none(self) -> None:
+        result = str(self._make_png("c.png"))
+        self.assertEqual(self.collector.collect(_run(result), {"policy": "never", "extract": "scan"})["media"], [])
+        self.assertEqual(self.collector.collect(_run(result), {"policy": "inline", "extract": "none"})["media"], [])
+
+    def test_intent_gated_requires_intent(self) -> None:
+        result = str(self._make_png("d.png"))
+        declaration = {"policy": "intent_gated", "extract": "scan"}
+        self.assertEqual(self.collector.collect(_run(result, tool="list_directory"), declaration)["media"], [])
+        gated = self.collector.collect(_run(result, tool="list_directory"), declaration, intent=True)
+        self.assertEqual(len(gated["media"]), 1)
+
+    def test_structured_rejects_non_json(self) -> None:
+        result = f"已写入 {self._make_png('e.png')}（3 字符）"
+        self.assertEqual(self.collector.collect(_run(result), STRUCTURED)["media"], [])
+
+    def test_structured_reads_media_records(self) -> None:
+        target = self._make_png("f.png")
+        result = json.dumps({"note": "看图", "images": [{"name": "f.png", "path": str(target)}]})
+        collected = self.collector.collect(_run(result, tool="vision_analyze"), STRUCTURED)
+        self.assertEqual(len(collected["media"]), 1)
+        record = collected["media"][0]
+        self.assertEqual(record["kind"], "image")
+        self.assertEqual(record["name"], "f.png")
+        self.assertTrue(Path(record["source"]).is_file())
+        self.assertTrue(Path(record["thumb_path"]).is_file(), "缓存后应生成缩略图")
+
+    def test_scan_reads_prose_path(self) -> None:
+        target = self._make_png("g.png")
+        collected = self.collector.collect(_run(f"已写入 {target}（12 字符）"), INLINE)
+        self.assertEqual([Path(r["name"]).name for r in collected["media"]], ["g.png"])
+
+
+class CollectTruncationTests(_TempCase):
+    """分桶预截断：先截断再落盘（宿主成本可控），超限可自述。"""
+
+    def _many(self, kind: str, count: int) -> str:
+        suffix = {"image": ".png", "video": ".mp4", "audio": ".mp3"}[kind]
+        paths = []
+        for index in range(count):
+            path = self.src / f"{kind}_{index:03d}{suffix}"
+            # 内容必须互不相同：内容级去重会合并同字节文件。
+            path.write_bytes((PNG_BYTES if kind == "image" else b"x" * 16) + bytes([index]))
+            paths.append(str(path))
+        return json.dumps(paths)
+
+    def test_images_truncated_before_caching(self) -> None:
+        collected = self.collector.collect(_run(self._many("image", 25)), INLINE)
+        limit = MEDIA_BUCKET_LIMITS["image"]
+        self.assertEqual(len(collected["media"]), limit)
+        generated = self.data_dir / "generated"
+        written = [p for p in generated.glob("*.png")]
+        self.assertEqual(len(written), limit, f"落盘文件数应等于分桶上限（实际 {len(written)}）")
+        self.assertEqual(
+            collected["truncated"],
+            {"total": 25, "shown": limit, "kinds": {"image": {"total": 25, "shown": limit}}},
+        )
+
+    def test_video_and_audio_buckets(self) -> None:
+        collected = self.collector.collect(_run(self._many("video", 10)), INLINE)
+        self.assertEqual(len(collected["media"]), MEDIA_BUCKET_LIMITS["video"])
+        collected = self.collector.collect(_run(self._many("audio", 10)), INLINE)
+        self.assertEqual(len(collected["media"]), MEDIA_BUCKET_LIMITS["audio"])
+
+    def test_no_truncation_reports_none(self) -> None:
+        collected = self.collector.collect(_run(self._many("image", 3)), INLINE)
+        self.assertEqual(len(collected["media"]), 3)
+        self.assertIsNone(collected["truncated"])
+
+    def test_content_duplicates_collapse(self) -> None:
+        first = self._make_png("same_1.png")
+        second = self._make_png("same_2.png")
+        collected = self.collector.collect(_run(json.dumps([str(first), str(second)])), INLINE)
+        self.assertEqual(len(collected["media"]), 1, "同字节文件应只保留一份")
+
+    def test_data_dir_resolved_per_call(self) -> None:
+        target = self._make_png("h.png")
+        first = self.collector.collect(_run(str(target)), INLINE)["media"][0]
+        self.assertTrue(Path(first["source"]).is_relative_to(self.data_dir / "generated"))
+        other = self.root / "data2"
+        other.mkdir(parents=True, exist_ok=True)
+        self.config.rebind(other)
+        second = self.collector.collect(_run(str(target)), INLINE)["media"][0]
+        self.assertTrue(
+            Path(second["source"]).is_relative_to(other / "generated"),
+            "data_dir 必须每次调用实时解析（不得闭包捕获装配期值）",
+        )
+
+
+class UnionRunMediaTests(_TempCase):
+    """消息级汇总：顺序、去重、分桶截断、旧数据兼容。"""
+
+    def test_union_preserves_order_and_dedupes(self) -> None:
+        runs = [
+            {"media": [{"kind": "image", "name": "a.png", "source": "C:\\a.png", "thumb_path": ""}]},
+            {"media": [
+                {"kind": "image", "name": "b.png", "source": "C:\\b.png", "thumb_path": "C:\\b_thumb.webp"},
+                {"kind": "image", "name": "a.png", "source": "C:\\a2.png", "thumb_path": "C:\\a2_thumb.webp"},
+            ]},
+            {"media": [{"kind": "video", "name": "v.mp4", "source": "C:\\v.mp4", "thumb_path": ""}]},
+        ]
+        media, truncated = union_run_media(runs)
+        self.assertIsNone(truncated)
+        self.assertEqual([row["name"] for row in media], ["a.png", "b.png", "v.mp4"])
+        # 同名优先保留带缩略图的版本（避免"同图双份、其中一份破图"）
+        self.assertEqual(media[0]["source"], "C:\\a2.png")
+
+    def test_union_truncates_per_kind(self) -> None:
+        runs = [{
+            "media": [
+                {"kind": "image", "name": f"i{index}.png", "source": f"C:\\i{index}.png", "thumb_path": ""}
+                for index in range(30)
+            ]
+        }]
+        media, truncated = union_run_media(runs)
+        self.assertEqual(len(media), MEDIA_BUCKET_LIMITS["image"])
+        self.assertEqual(truncated["total"], 30)
+        self.assertEqual(truncated["shown"], MEDIA_BUCKET_LIMITS["image"])
+
+    def test_legacy_runs_without_media(self) -> None:
+        self.assertEqual(union_run_media([{"tool": "read_file", "result": "文本"}]), ([], None))
+        self.assertEqual(union_run_media([]), ([], None))
+
+
+class AgentCollectorWiringTests(unittest.TestCase):
+    """Agent 生产点接线：声明门禁、异常不中断工具结果。"""
+
+    class _Registry:
+        def __init__(self, declaration: dict) -> None:
+            self.declaration = declaration
+            self.calls: list[str] = []
+
+        def media_declaration(self, name: str) -> dict:
+            self.calls.append(name)
+            return self.declaration
+
+    class _Collector:
+        def __init__(self, payload: dict | None = None, boom: bool = False) -> None:
+            self.payload = payload or {"media": [], "truncated": None}
+            self.boom = boom
+            self.calls: list[tuple[str, dict, bool]] = []
+
+        def collect(self, run, declaration, *, intent=False):
+            self.calls.append((str(run.get("tool")), dict(declaration), bool(intent)))
+            if self.boom:
+                raise RuntimeError("采集失败（模拟）")
+            return self.payload
+
+    def _agent(self, collector):
+        from naiba.skills.agent import SkillAgent
+
+        return SkillAgent(catalog=None, executor=None, model_complete=None, media_collector=collector)
+
+    def test_media_written_into_run_at_production_point(self) -> None:
+        payload = {"media": [{"kind": "image", "name": "a.png", "source": "C:\\a.png", "thumb_path": ""}],
+                   "truncated": {"total": 25, "shown": 20, "kinds": {}}}
+        collector = self._Collector(payload)
+        agent = self._agent(collector)
+        run = _run("已写入 C:\\a.png（3 字符）")
+        agent._collect_media(run, self._Registry(INLINE), {"media_intent": True})
+        self.assertEqual(len(run["media"]), 1)
+        self.assertEqual(run["media_truncated"]["shown"], 20)
+        self.assertEqual(collector.calls[0][2], True, "intent 应取自 run_context.media_intent")
+
+    def test_never_declaration_skips_collector(self) -> None:
+        collector = self._Collector()
+        agent = self._agent(collector)
+        run = _run("C:\\a.png")
+        agent._collect_media(run, self._Registry({"policy": "never", "extract": "none"}), {})
+        self.assertEqual(collector.calls, [])
+        self.assertNotIn("media", run)
+
+    def test_collector_failure_keeps_tool_result(self) -> None:
+        agent = self._agent(self._Collector(boom=True))
+        run = _run("已写入 C:\\a.png（3 字符）")
+        agent._collect_media(run, self._Registry(INLINE), {})
+        self.assertNotIn("media", run, "采集异常不得污染/丢弃工具结果")
+        self.assertEqual(run["result"], "已写入 C:\\a.png（3 字符）")
+
+    def test_missing_collector_is_noop(self) -> None:
+        agent = self._agent(None)
+        run = _run("C:\\a.png")
+        agent._collect_media(run, self._Registry(INLINE), {})
+        self.assertNotIn("media", run)
+
+
+class MediaContractTests(unittest.TestCase):
+    """契约登记：事件负载键 / metadata 键 / run_context 键 / 展示与模型可见的分离。"""
+
+    def test_event_payload_keys_registered(self) -> None:
+        keys = EVENT_PAYLOAD_KEYS["tool_result"]
+        self.assertIsNotNone(keys)
+        self.assertIn("media", keys)
+        self.assertIn("media_truncated", keys)
+
+    def test_metadata_key_registered(self) -> None:
+        self.assertEqual(MetadataKeys.ATTACHMENTS_TRUNCATED, "attachments_truncated")
+        self.assertIn("attachments_truncated", MESSAGE_METADATA_KEYS)
+
+    def test_run_context_media_intent_registered(self) -> None:
+        self.assertIn("media_intent", RUN_CONTEXT_KEYS)
+
+    def test_display_run_carries_media_but_model_run_does_not(self) -> None:
+        run = _run(
+            json.dumps({"path": "C:\\a.png"}),
+            tool="vision_image_ops",
+        )
+        run["media"] = [{"kind": "image", "name": "a.png", "source": "C:\\a.png", "thumb_path": ""}]
+        run["media_truncated"] = {"total": 21, "shown": 20, "kinds": {}}
+        display = display_tool_run(run)
+        self.assertIn("media", display)
+        self.assertIn("media_truncated", display)
+        visible = model_visible_run(run)
+        self.assertNotIn("media", visible)
+        self.assertNotIn("media_truncated", visible)
+
+
+if __name__ == "__main__":
+    unittest.main()

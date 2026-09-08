@@ -9,6 +9,7 @@ from __future__ import annotations
 # 全部 metadata 键的权威清单（新增键同步更新本表与 MetadataKeys）。
 MESSAGE_METADATA_KEYS: tuple[str, ...] = (
     "attachments",
+    "attachments_truncated",
     "reasoning",
     "tool_runs",
     "trace",
@@ -30,6 +31,9 @@ class MetadataKeys:
     """消息 metadata JSON 键（写入方 async_tasks / 重放方 core.history 共用契约）。"""
 
     ATTACHMENTS = "attachments"
+    # 消息级媒体分桶截断的自述信息（{"total","shown","kinds"}）：超出上限时不静默，
+    # 前端在媒体网格下方渲染"共 N 张，仅显示前 M 张"。
+    ATTACHMENTS_TRUNCATED = "attachments_truncated"
     REASONING = "reasoning"
     TOOL_RUNS = "tool_runs"
     TRACE = "trace"

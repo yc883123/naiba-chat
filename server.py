@@ -58,7 +58,7 @@ from naiba.storage.store import ChatStorage
 from naiba.updater import UpdateManager
 from naiba.core.attachments import (
     MEDIA_PRODUCT_EXTS, _IMAGE_MEDIA_TERM_RE, _IMAGE_VIEW_ACTION_RE,
-    _image_intent, _is_media_product_path, extract_attachments,
+    _image_intent, _is_media_product_path, union_run_media,
 )
 from naiba.core.file_changes import FILE_MODIFY_TOOLS, file_changes_from_runs
 from naiba.core.conv_files import (

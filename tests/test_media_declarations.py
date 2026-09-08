@@ -136,6 +136,25 @@ class MediaDeclarationTests(unittest.TestCase):
             with self.subTest(tool=row["name"]):
                 self.assertNotIn("metadata", row, "metadata（含 media 声明）不得进入模型可见 schema")
 
+    def test_enumeration_gate_is_declared_not_hardcoded(self) -> None:
+        """枚举类工具的媒体门禁由声明承担（不再有 ENUMERATION_TOOLS 硬编码集合）。"""
+        gated = {
+            name
+            for name, declaration in registry_mod.MEDIA_DECLARATIONS.items()
+            if declaration["policy"] == "intent_gated"
+        }
+        self.assertEqual(gated, {"list_directory", "search_files", "grep"})
+        self.assertTrue(gated <= set(self.registry.names()), "门禁集合里有未声明的工具名")
+
+    def test_registry_exposes_media_declaration_with_alias_normalization(self) -> None:
+        # 别名（grep→search_files）必须归一到同一份声明。
+        self.assertEqual(
+            self.registry.media_declaration("grep"),
+            self.registry.media_declaration("search_files"),
+        )
+        self.assertEqual(self.registry.media_declaration("write_file")["policy"], "inline")
+        self.assertEqual(self.registry.media_declaration("web_search")["extract"], "none")
+
 
 class FrontendMediaListTests(unittest.TestCase):
     """前端不再各写扩展名名单：判定统一经 mediaKind() 读 /api/bootstrap.media_exts。"""
