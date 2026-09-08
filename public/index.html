@@ -141,7 +141,6 @@
                 <path d="M15.7 15.7c4.52-4.52 6.54-9.84 4.5-11.87-2.03-2.04-7.35-.02-11.87 4.5S1.8 18.17 3.83 20.2c2.03 2.04 7.35.02 11.87-4.5Z"></path>
               </svg>
             </button>
-            <span class="reasoning-label" id="reasoningLabel">自动</span>
             <div class="reasoning-menu" id="reasoningMenu" role="menu" hidden>
               <button type="button" data-reasoning-effort="auto" role="menuitemradio">跟随 API（自动）</button>
               <button type="button" data-reasoning-effort="off" role="menuitemradio">关闭</button>
@@ -192,7 +191,10 @@
               </div>
             </div>
           </div>
-          <span id="runtimeStatus">就绪</span>
+          <div class="composer-meta-right">
+            <span class="reasoning-label" id="reasoningLabel" title="当前思考强度（点击输入框右侧的按钮切换）">思考 自动</span>
+            <span id="runtimeStatus">就绪</span>
+          </div>
         </div>
       </section>
     </main>

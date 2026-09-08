@@ -235,8 +235,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .web-search-button { font-size: 17px; opacity: .55; }
 .web-search-button.active { opacity: 1; background: var(--accent-solid); color: #fff; box-shadow: 0 0 0 2px rgba(124,92,255,.25); }
 .deep-reasoning-button { color: var(--muted); opacity: .7; }
-.reasoning-wrap { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; flex: none; }
-.reasoning-label { font-size: 10px; line-height: 1; color: var(--muted); white-space: nowrap; }
+.reasoning-wrap { position: relative; display: inline-flex; align-items: center; flex: none; }
+/* 当前思考强度：与「就绪」同一行（在输入框外），不再挤在按钮下方 */
+.reasoning-label { color: var(--muted); }
 /* 强度列表：fixed + JS 定位（挂到 body），避免被 .composer-wrap 的 overflow 裁剪 */
 .reasoning-menu { position: fixed; z-index: 45; min-width: 118px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-2); }
 .reasoning-menu[hidden] { display: none; }
@@ -699,6 +700,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .send-button.is-stop:hover { background: var(--brand-700); }
 .composer-meta { min-height: 22px; display: flex; align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; gap: 12px; white-space: nowrap; }
 .composer-meta-left { min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+/* 右侧信息组（思考强度 + 就绪）：整组靠右，两者之间留固定间距 */
+.composer-meta-right { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
+.composer-meta-right #runtimeStatus { margin-left: 0; justify-self: auto; }
 .composer-meta-more { position: relative; flex: none; display: inline-flex; align-items: center; gap: 7px; }
 .composer-meta-more-button { min-height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--muted); font-size: 11px; cursor: pointer; }
 .composer-meta-more-button:hover { border-color: var(--line-strong); background: var(--surface-2); color: var(--text); }

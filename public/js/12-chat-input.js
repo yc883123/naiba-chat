@@ -380,7 +380,7 @@ export function updateDeepReasoningButton() {
   btn.setAttribute('aria-pressed', String(active));
   btn.title = auto ? '思考强度：跟随 API（自动）' : `思考强度：${label}`;
   const labelEl = $('#reasoningLabel');
-  if (labelEl) labelEl.textContent = label;
+  if (labelEl) labelEl.textContent = `思考 ${label}`;
   // 菜单高亮当前等级（点开就能看到"现在用的是哪一档"）
   document.querySelectorAll('#reasoningMenu [data-reasoning-effort]').forEach((item) => {
     const isCurrent = item.dataset.reasoningEffort === effort;
