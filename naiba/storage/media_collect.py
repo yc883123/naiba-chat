@@ -52,6 +52,8 @@ _TEXT_PATH_RE = re.compile(r"(?:[A-Za-z]:\\[^\r\n\"']+|https?://[^\s\"']+)")
 # 旧实现在这里判失败 → 写出的图片既无"修改文件"chip、也无媒体卡，产物彻底不可见）。
 # 截断点取首个散文终止符；**不含** `:`（盘符/URL 用）与空格（路径可含空格）。
 _PROSE_TERMINATORS = "（(，,。；;！!？?、）)】]}\"'“”‘’<>"
+# CJK 字符在 URL 里必然被百分号编码，出现即说明 URL 结束（"见 https://x/a.png，谢谢"）。
+_CJK_RE = re.compile(r"[\u3000-\u303f\u4e00-\u9fff\uff00-\uffef]")
 
 EMPTY_RESULT: dict[str, Any] = {"media": [], "truncated": None}
 
@@ -195,15 +197,29 @@ def _candidates_from_result(result: str, extract: str, *, tool: str = "") -> lis
 
 
 def _text_media_sources(text: str) -> list[str]:
-    """纯文本里可识别的媒体路径/URL（按出现顺序，已去掉黏在路径后的散文后缀）。"""
+    """纯文本里可识别的媒体路径/URL（按出现顺序，已去掉黏在路径后的散文后缀）。
+
+    两类来源的边界处理**必须分开**（实测教训）：
+    - URL（http/https）：只去掉**尾部**标点，**绝不按内部标点截断**——ComfyUI 产物 URL 形如
+      `http://127.0.0.1:8188/view?filename=a.png&subfolder=&type=output`，按 `?` 截断会得到
+      `.../view` 从而判定"不是媒体"（Job 完成后图片不显示的真实根因）；
+    - Windows 路径：在散文终止符处截断（`已写入 C:\\a.png（12 字符）` 的中文后缀会黏住路径），
+      终止符不含 `:`（盘符）与空格（路径可含空格）。
+    """
     sources: list[str] = []
     for raw in _TEXT_PATH_RE.findall(str(text or "")):
-        cut = len(raw)
-        for marker in _PROSE_TERMINATORS:
-            position = raw.find(marker)
-            if 0 <= position < cut:
-                cut = position
-        candidate = raw[:cut].rstrip(" .,;:、，。；：")
+        if raw.lower().startswith(("http://", "https://")):
+            cjk = _CJK_RE.search(raw)
+            if cjk:
+                raw = raw[: cjk.start()]
+            candidate = raw.rstrip(" .,;:!?)]}>）】」，。；、！？")
+        else:
+            cut = len(raw)
+            for marker in _PROSE_TERMINATORS:
+                position = raw.find(marker)
+                if 0 <= position < cut:
+                    cut = position
+            candidate = raw[:cut].rstrip(" .,;:、，。；：")
         if media_kind_of(candidate):
             sources.append(candidate)
     return sources

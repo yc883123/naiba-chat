@@ -29,7 +29,7 @@ from naiba.core.contracts import EVENT_PAYLOAD_KEYS, RUN_CONTEXT_KEYS  # noqa: E
 from naiba.core.messages import MESSAGE_METADATA_KEYS, MetadataKeys  # noqa: E402
 from naiba.core.media_types import MEDIA_BUCKET_LIMITS  # noqa: E402
 from naiba.core.tool_results import display_tool_run, model_visible_run  # noqa: E402
-from naiba.storage.media_collect import MediaCollector  # noqa: E402
+from naiba.storage.media_collect import MediaCollector, _text_media_sources  # noqa: E402
 
 # 1x1 PNG（真实图片，用于缩略图断言）
 PNG_BYTES = bytes.fromhex(
@@ -178,6 +178,56 @@ class CollectTruncationTests(_TempCase):
             Path(second["source"]).is_relative_to(other / "generated"),
             "data_dir 必须每次调用实时解析（不得闭包捕获装配期值）",
         )
+
+
+class TextSourceBoundaryTests(unittest.TestCase):
+    """纯文本来源的边界处理：URL 与 Windows 路径必须分开（真实事故回归）。
+
+    事故：`job_wait` 返回「Job 已完成。{…"files":["http://127.0.0.1:8188/view?filename=a.png…"]}」，
+    按"散文终止符"（含 `?`）截断会得到 `…/view` → 判定不是媒体 → **Job 完成后图片不显示**。
+    """
+
+    JOB_WAIT_RESULT = (
+        "Job 已完成。{\"prompt_ids\": [\"8e34a71d\"], \"completed\": [{\"index\": 0, "
+        "\"prompt_id\": \"8e34a71d\", \"files\": "
+        "[\"http://127.0.0.1:8188/view?filename=lumine_cute_00001_.png&subfolder=&type=output\"]}], "
+        "\"errors\": []}"
+    )
+
+    def test_comfyui_view_url_query_string_survives(self) -> None:
+        sources = _text_media_sources(self.JOB_WAIT_RESULT)
+        self.assertEqual(
+            sources,
+            ["http://127.0.0.1:8188/view?filename=lumine_cute_00001_.png&subfolder=&type=output"],
+        )
+
+    def test_url_trailing_punctuation_stripped(self) -> None:
+        self.assertEqual(
+            _text_media_sources("生成完成（见 http://127.0.0.1:8188/view?filename=a.png）"),
+            ["http://127.0.0.1:8188/view?filename=a.png"],
+        )
+        self.assertEqual(
+            _text_media_sources("见 https://example.com/a.png，谢谢"),
+            ["https://example.com/a.png"],
+        )
+
+    def test_windows_path_prose_suffix_trimmed(self) -> None:
+        sources = _text_media_sources("已写入 C:\\work\\a.png（12 字符）")
+        self.assertEqual(sources, ["C:\\work\\a.png"])
+
+    def test_url_without_media_ext_ignored(self) -> None:
+        self.assertEqual(_text_media_sources("见 http://127.0.0.1:8188/view?filename=a.txt"), [])
+
+    def test_collect_scan_keeps_comfyui_url_record(self) -> None:
+        """端到端（不触网）：ComfyUI 不可达时保留原 URL 记录，而不是丢掉整张图。"""
+        collector = MediaCollector(_ConfigStub(Path(tempfile.mkdtemp())))
+        collected = collector.collect(
+            {"tool": "job_wait", "result": self.JOB_WAIT_RESULT, "success": True},
+            {"policy": "inline", "extract": "scan"},
+        )
+        self.assertEqual(len(collected["media"]), 1)
+        self.assertEqual(collected["media"][0]["kind"], "image")
+        self.assertEqual(collected["media"][0]["name"], "lumine_cute_00001_.png")
 
 
 class UnionRunMediaTests(_TempCase):
