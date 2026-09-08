@@ -46,6 +46,9 @@ class ToolContext:
     mcp_registry: Any
     mcp_register: Callable[[dict[str, Any]], dict[str, Any]] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # 宿主数据目录的动态 getter（None=无托管根）：读取策略把其下的 uploads/generated
+    # 视为可信根（用户上传附件/宿主托管产物免确认）。动态获取防 rebind 漂移。
+    data_dir_getter: Callable[[], Path] | None = None
 
 
 # ---- 路径解析（自 ToolExecutor 原样抽取；workspace 参数采用当前运行工作区，缺省回退 ctx。防止装配期配置漂移） ----
@@ -63,8 +66,22 @@ def _resolve_tool_path(
     return path.resolve()
 
 
-def _read_roots(workspace: Path, active_skills: list[dict[str, Any]]) -> list[Path]:
+def _read_roots(
+    workspace: Path,
+    active_skills: list[dict[str, Any]],
+    data_dir: Path | None = None,
+) -> list[Path]:
+    """读取类工具的可信根：会话工作区 + active Skill 根 + 宿主托管缓存目录
+    （uploads/generated——用户上传附件与宿主产物是"用户放进来的"，不属越界）。"""
     roots = [workspace]
+    if data_dir is not None:
+        for rel in ("uploads", "generated"):
+            try:
+                root = (data_dir / rel).resolve()
+            except OSError:
+                continue
+            if root not in roots:
+                roots.append(root)
     for skill in active_skills:
         value = str(skill.get("root") or "").strip()
         if not value:
@@ -657,11 +674,13 @@ def _make_read_policy(ctx: ToolContext) -> Any:
         run_context: dict[str, Any] | None,
         workspace: Path | None = None,
     ) -> str:
-        # 只读检查非破坏性：工作区内免确认（任意模式），越界必确认（不因 auto 放行）。
+        # 只读检查非破坏性：工作区内/宿主托管缓存（用户上传附件与产物）免确认（任意模式），
+        # 其余越界必确认（不因 auto 放行）。
         # 工作区必须是"当前运行（会话级）工作区"（引擎传入），不得用装配期配置。
         ws = workspace if workspace is not None else ctx.workspace
+        data_dir = ctx.data_dir_getter() if ctx.data_dir_getter is not None else None
         path = _resolve_read_path(ctx, arguments.get("path"), active_skills, tool != "read_file", ws)
-        if not any(path_within(path, root) for root in _read_roots(ws, active_skills)):
+        if not any(path_within(path, root) for root in _read_roots(ws, active_skills, data_dir)):
             return "读取工作区外路径：" + str(path)
         return ""
     return policy

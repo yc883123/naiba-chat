@@ -542,5 +542,65 @@ class VisionEntryUnificationTests(unittest.TestCase):
         self.assertIn("工作区外", reason)
         self.assertIn(str(assembly_ws / "other.txt"), reason, "确认理由应显示越界路径（装配区现不属于运行工作区）")
 
+    def test_policy_treats_managed_uploads_as_trusted(self) -> None:
+        """回归：用户上传附件（宿主 data/uploads、generated）读取免确认（含 confirm 模式）。
+
+        上传的 PDF/图片/文档落在宿主数据目录而非会话工作区——它们是"用户放进来的"，
+        读取不应触发越界确认（否则 auto 模式读已上传 PDF 会打断：用户实测反馈）。
+        """
+        import tempfile as _tf
+
+        from naiba.mcp import MCPRegistry
+        from naiba.tools.executor import ToolExecutor
+        from naiba.tools.providers import core as core_provider
+
+        base = Path(_tf.mkdtemp(prefix="naiba-managed-policy-"))
+        run_ws = base / "ws"
+        data_dir = base / "data"
+        run_ws.mkdir()
+        uploads = data_dir / "uploads" / "2026-09-08"
+        uploads.mkdir(parents=True, exist_ok=True)
+        generated = data_dir / "generated"
+        generated.mkdir(parents=True, exist_ok=True)
+        uploaded_pdf = uploads / "naiba_chat_x.pdf"
+        uploaded_pdf.write_bytes(b"%PDF-1.4\n%%EOF")
+        generated_png = generated / "gen.png"
+        generated_png.write_bytes(b"fake")
+        outside = base / "outside.txt"
+        outside.write_text("out", encoding="utf-8")
+
+        ctx = core_provider.ToolContext(
+            workspace=run_ws,
+            python_executable=sys.executable,
+            command_timeout=60,
+            mcp_registry=None,
+            data_dir_getter=lambda: data_dir,
+        )
+        registry = registry_mod.ToolRegistry()
+        registry.register(
+            registry_mod.ToolSpec(
+                name="read_file",
+                description="dummy",
+                parameters={"type": "object", "properties": {}},
+                side_effect=False,
+                policy=core_provider._make_core_policy(ctx, "read_file"),
+            )
+        )
+        for mode in ("confirm", "auto"):
+            executor = ToolExecutor(run_ws, sys.executable, 60, MCPRegistry([]), permission_mode=mode)
+            executor.set_def_resolver(registry.get)
+            self.assertEqual(
+                executor._confirmation_reason("read_file", {"path": str(uploaded_pdf)}, []),
+                "",
+                f"{mode} 模式：用户上传附件不应触发越界确认",
+            )
+            self.assertEqual(
+                executor._confirmation_reason("read_file", {"path": str(generated_png)}, []),
+                "",
+                f"{mode} 模式：宿主托管产物不应触发越界确认",
+            )
+            reason = executor._confirmation_reason("read_file", {"path": str(outside)}, [])
+            self.assertIn("工作区外", reason, f"{mode} 模式：真正的工作区外路径仍须确认")
+
 if __name__ == "__main__":
     unittest.main()

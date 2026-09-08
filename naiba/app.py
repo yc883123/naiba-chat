@@ -176,6 +176,8 @@ class NaibaChatApp:
             command_timeout=int(self.config.data.get("command_timeout", 120)),
             mcp_registry=self.mcp,
             mcp_register=self.register_mcp_server,
+            # 宿主数据目录（动态）：uploads/generated 作为读取可信根（用户上传附件免确认）。
+            data_dir_getter=lambda: self._paths.data_dir,
         )
         self.core_tools = CoreToolProvider(core_tool_context)
         self.tool_registry.register_provider(self.core_tools)
