@@ -115,6 +115,19 @@ export const $$ = (selector) => [...document.querySelectorAll(selector)];
 
 export const emptyStateElement = $('#emptyState');
 
+// 侧栏底部唯一的状态指示灯（#serverDot）：绿=服务已建立，红=连不上服务端。
+// 只在网络层失败（服务端没开/端口不通）时亮红；HTTP 4xx/5xx 说明服务在线，仍是绿。
+export function setServerStatus(ok) {
+  const dot = $('#serverDot');
+  if (!dot) return;
+  const connected = Boolean(ok);
+  dot.classList.toggle('connected', connected);
+  dot.classList.toggle('error', !connected);
+  const label = connected ? '服务已连接' : '无法连接服务端';
+  dot.title = label;
+  dot.setAttribute('aria-label', label);
+}
+
 export async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
   if (state.token) headers.Authorization = `Bearer ${state.token}`;
@@ -122,7 +135,14 @@ export async function api(path, options = {}) {
     headers['Content-Type'] = 'application/json';
     options.body = JSON.stringify(options.body);
   }
-  const response = await fetch(path, { ...options, headers });
+  let response;
+  try {
+    response = await fetch(path, { ...options, headers });
+  } catch (error) {
+    setServerStatus(false);
+    throw error;
+  }
+  setServerStatus(true);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error || `HTTP ${response.status}`);

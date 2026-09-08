@@ -157,10 +157,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .file-change-chip[data-file-op="edit"] .file-change-op { background: var(--accent-solid); }
 .brand-row { min-height: 72px; padding: 15px 16px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--sidebar-line); }
 .brand-row strong { display: block; font-size: 16px; }
-.server-state { display: flex; gap: 7px; align-items: center; color: var(--sidebar-muted); margin-top: 5px; font-size: 12px; }
-.server-state i, .mcp-button i { width: 7px; height: 7px; border-radius: 50%; background: var(--sidebar-muted); }
-.server-state i.connected, .mcp-button.connected i { background: var(--success); }
-.server-state i.error, .mcp-button.error i { background: var(--danger); }
+.mcp-button i { width: 7px; height: 7px; border-radius: 50%; background: var(--sidebar-muted); }
+.mcp-button.connected i { background: var(--success); }
+.mcp-button.error i { background: var(--danger); }
 .mode-tabs { display: flex; gap: 4px; margin: 8px 14px 4px; }
 .mode-tab { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; height: 36px; border: 1px solid var(--sidebar-line); background: transparent; color: var(--sidebar-muted); border-radius: var(--r-md); font-size: 13px; cursor: pointer; transition: var(--t-fast); }
 .mode-tab:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }
@@ -178,13 +177,17 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .conversation-group-items { padding-left: 4px; }
 .conversation-item { display: flex; align-items: center; gap: 4px; min-height: 34px; padding-left: 8px; border-radius: var(--r-md); color: var(--sidebar-text); cursor: pointer; }
 .conversation-item:hover, .conversation-item.active { background: var(--sidebar-hover); color: white; }
-.sidebar-footer { min-height: 67px; border-top: 1px solid var(--sidebar-line); padding: 9px 10px; display: flex; gap: 8px; align-items: center; }
+.sidebar-footer { min-height: 56px; border-top: 1px solid var(--sidebar-line); padding: 10px 12px; display: flex; gap: 8px; align-items: center; }
 .address-button { min-width: 0; flex: 1; background: none; border: 0; color: white; display: flex; gap: 9px; align-items: center; text-align: left; padding: 4px 5px; }
 .address-button span:last-child { min-width: 0; }
 .address-button small { display: block; color: var(--sidebar-muted); font-size: 11px; }
 .address-button b { display: block; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 500; }
-.address-button:disabled { cursor: default; opacity: .72; }
+/* 地址按钮禁用（未开手机访问）时不要把状态点一起调暗——它是唯一的服务状态指示灯。 */
+.address-button:disabled { cursor: default; opacity: 1; }
+.address-button:disabled span:last-child { opacity: .6; }
+/* 侧栏底部唯一的状态点：绿=服务已建立，红=连不上服务端（由 api() 统一切换）。 */
 .status-mark { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex: none; }
+.status-mark.error { background: var(--danger); }
 
 .workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px 6px; }
 .workspace-title { color: var(--sidebar-muted); font-size: 11px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; }
@@ -216,7 +219,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .workspace-showmore:hover { background: var(--sidebar-hover); color: var(--sidebar-text); }
 .workspace-empty { color: var(--sidebar-muted); font-size: 12px; padding: 16px; text-align: center; }
 .conversation-time { color: var(--sidebar-muted); font-size: 10px; flex: none; }
-#serverStateFooter { display: flex; gap: 7px; align-items: center; padding: 0 4px 8px; font-size: 12px; color: var(--sidebar-muted); }
 .composer-workspace { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); padding: 2px 4px 2px 6px; }
 .composer-workspace-icon svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; color: var(--accent); }
 #composerWorkspaceSelect { border: 0; outline: 0; background: var(--surface); color: var(--accent); font-size: 11px; font-weight: 600; padding: 2px 18px 2px 4px; border-radius: var(--r-xs); max-width: 150px; }

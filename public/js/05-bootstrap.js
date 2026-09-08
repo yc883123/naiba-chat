@@ -2,7 +2,7 @@
 // 05-bootstrap.js —— 拆分自 public/app.js 第 1502-1605 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, $$, api, state, toast } from "./01-core.js";
+import { $, $$, api, setServerStatus, state, toast } from "./01-core.js";
 import { loadTasks, startTaskSync } from "./06-tasks-plans.js";
 import { populateModels, renderAgents, renderUpdateStatus } from "./07-models-agents.js";
 import { loadConversationPromptPresets, loadConversations, restoreSidebarWidth, setSidebarScrollToActive, startConversationSync } from "./08-conversations.js";
@@ -70,8 +70,7 @@ export async function initialize() {
     ].filter(Boolean).join('和');
     toast(`已从旧目录恢复${restored || '数据'}`);
   }
-  $('#serverDot').className = 'connected';
-  $('#serverLabel').textContent = '服务已连接';
+  setServerStatus(true);
   state.workspaces = Array.isArray(state.bootstrap?.workspaces) ? state.bootstrap.workspaces : [];
   renderNetworkAccess();
   populateModels();

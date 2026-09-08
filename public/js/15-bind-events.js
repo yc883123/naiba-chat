@@ -163,7 +163,9 @@ export function bindEvents() {
     closeConversationMenu();
     if (!id) return;
     if (button.dataset.conversationAction === 'rename') openRenameConversation(id);
-    else if (button.dataset.conversationAction === 'delete') deleteConversation(id);
+    else if (button.dataset.conversationAction === 'delete') {
+      deleteConversation(id).catch((error) => toast(`删除失败：${error.message}`));
+    }
   });
   $('#renameConversationForm')?.addEventListener('submit', saveRenameConversation);
   $('#newWorkspaceForm')?.addEventListener('submit', saveNewWorkspace);
