@@ -109,14 +109,51 @@ def _resolve_read_path(
 
 # ---- 实现函数（自 ToolExecutor._tool_* 原样抽取） ----
 
+# 二进制嗅探长度与判定：NUL 强判定；不可打印控制字符（非 \t\n\r）比例 >5% 辅助
+# （GBK/UTF-8 中文文本无 NUL、无控制字符，不会被误伤；PDF/ZIP/图片几乎必含 NUL）。
+_BINARY_SNIFF_BYTES = 8192
+
+
+def _looks_binary(head: bytes) -> bool:
+    if not head:
+        return False
+    if b"\x00" in head:
+        return True
+    ctrl = sum(1 for byte in head if byte < 0x20 and byte not in (0x09, 0x0A, 0x0D))
+    return ctrl / len(head) > 0.05
+
+
 def _tool_read_file(ctx: ToolContext, args: dict[str, Any], active_skills: list[dict[str, Any]] | None = None) -> str:
     """按行读取文本文件：行数不设默认上限，字符预算 30000 截断并返回可续读提示。
 
     预算：max_chars（默认/硬上限 30000 字符）唯一强制上限——内容不超预算时无论多少行
     都全量返回；模型显式传入 max_lines 时保留行数限制（兼容旧调用）。单行超过字符预算
     时按字符截断该行。截断时尾部标记实际返回的行区间与续读起点（start_line），模型无需猜测。
+
+    二进制防护：UTF-8 replace 直读会把 PDF/ZIP/图片的二进制灌成乱码进模型上下文——
+    先嗅探（NUL + 控制字符比例），命中则明确报错并按文件类型给出工具引导。
     """
     path = _resolve_read_path(ctx, args.get("path"), active_skills)
+    try:
+        with path.open("rb") as handle:
+            head = handle.read(_BINARY_SNIFF_BYTES)
+    except OSError:
+        raise
+    if _looks_binary(head):
+        suffix = path.suffix.lower()
+        if suffix == ".pdf":
+            return (
+                "该文件是 PDF 二进制文档，无法按文本读取。"
+                "提取文本层请调用 read_pdf；若是扫描版（无文本层），"
+                "请先用 pdf_render_pages 渲染页图，再对页图路径调用 vision_analyze 识别内容。"
+            )
+        if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+            return "该文件是图片，无法按文本读取；需要看图请调用 vision_analyze 并传入图片路径。"
+        return (
+            "该文件为二进制格式，无法按文本读取。"
+            "如确需读取内容，可用 pwsh 提取（如 txt/无文本层文件的解码），"
+            "或让用户转换为文本/图片后再处理。"
+        )
     try:
         # max_chars 对模型隐藏（schema 不含该参数）：执行层仍兼容旧调用，但硬上限
         # 30000 字符，防止任何入口把单次读取撑到超出预算（浪费上下文与 token）。
