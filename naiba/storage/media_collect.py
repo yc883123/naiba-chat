@@ -24,9 +24,9 @@ import hashlib
 import json
 import logging
 import re
-import shutil
 import urllib.error
 import urllib.parse
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -146,14 +146,7 @@ class MediaCollector:
                 try:
                     generated_dir = (data_dir / "generated").resolve()
                     generated_dir.mkdir(parents=True, exist_ok=True)
-                    digest = hashlib.sha256(source.encode("utf-8", errors="replace")).hexdigest()[:16]
-                    destination = generated_dir / f"{digest}_{name}"
-                    if not destination.is_file() or destination.stat().st_size <= 0:
-                        if is_local_comfy:
-                            with net_io.open(source, timeout=120) as response, destination.open("wb") as handle:
-                                shutil.copyfileobj(response, handle, length=1024 * 1024)
-                        else:
-                            shutil.copy2(local_path.resolve(), destination)
+                    destination = _cache_by_content(source, local_path, is_local_comfy, generated_dir, name)
                     source = str(destination)
                     if not thumb_path:
                         thumb_path = _ensure_webp_thumb(destination, imaging)
@@ -166,6 +159,48 @@ class MediaCollector:
                         "媒体缓存失败，保留原来源：source=%s error=%s", source, exc
                     )
         return {"kind": kind, "name": name, "source": source, "thumb_path": thumb_path}
+
+
+def _cache_by_content(
+    source: str,
+    local_path: Path,
+    is_local_comfy: bool,
+    generated_dir: Path,
+    name: str,
+) -> Path:
+    """把产物按**内容哈希**收进 generated 缓存，返回落盘路径。
+
+    缓存键必须是**内容**而不是来源：ComfyUI 每次生成都复用同一个文件名
+    （`lumine_cute_00002_.png` 会被覆盖），若按 URL 命中旧缓存就会显示上一次的图
+    （用户实测："Job 刚跑完，显示的却是旧图"）。这里流式读取来源、边算 sha256 边写
+    临时文件，再原子改名为 `<内容哈希16>_<name>`；同内容已存在时复用（去重），
+    内容变化则自然落到新文件——顺带让 `/api/file` 的浏览器缓存不会命中旧内容。
+
+    失败（网络/磁盘/权限）由调用方兜底（保留原来源并记日志）。
+    """
+    temp = generated_dir / f".{uuid.uuid4().hex}.part"
+    digest = hashlib.sha256()
+    try:
+        reader = net_io.open(source, timeout=120) if is_local_comfy else local_path.open("rb")
+        with reader as stream, temp.open("wb") as writer:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                writer.write(chunk)
+    except Exception:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    destination = generated_dir / f"{digest.hexdigest()[:16]}_{name}"
+    if destination.is_file() and destination.stat().st_size > 0:
+        temp.unlink(missing_ok=True)
+    else:
+        temp.replace(destination)
+    return destination
 
 
 def _candidates_from_result(result: str, extract: str, *, tool: str = "") -> list[dict[str, str]]:

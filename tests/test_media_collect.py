@@ -230,6 +230,54 @@ class TextSourceBoundaryTests(unittest.TestCase):
         self.assertEqual(collected["media"][0]["name"], "lumine_cute_00001_.png")
 
 
+class ContentAddressedCacheTests(_TempCase):
+    """缓存键必须是**内容**而不是来源（真实事故：ComfyUI 复用文件名 → 显示旧图）。"""
+
+    @staticmethod
+    def _png_bytes(color: tuple[int, int, int]) -> bytes:
+        import io
+
+        from PIL import Image
+
+        buf = io.BytesIO()
+        Image.new("RGB", (16, 16), color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def test_same_source_changed_content_is_not_stale(self) -> None:
+        target = self.src / "lumine_cute_00002_.png"
+        target.write_bytes(self._png_bytes((200, 30, 30)))
+        first = self.collector.collect(_run(str(target)), INLINE)["media"][0]
+        # ComfyUI 每次生成都复用同一文件名：路径/URL 不变，内容变了
+        target.write_bytes(self._png_bytes((30, 30, 200)))
+        second = self.collector.collect(_run(str(target)), INLINE)["media"][0]
+        self.assertNotEqual(
+            first["source"], second["source"],
+            "同名同路径但内容变了，不能复用旧缓存（否则显示上一次的图）",
+        )
+        self.assertEqual(Path(second["source"]).read_bytes(), self._png_bytes((30, 30, 200)))
+        self.assertTrue(Path(second["thumb_path"]).is_file())
+
+    def test_repeated_reference_reuses_same_cache_entry(self) -> None:
+        target = self.src / "same.png"
+        target.write_bytes(self._png_bytes((10, 200, 10)))
+        first = self.collector.collect(_run(str(target)), INLINE)["media"][0]
+        second = self.collector.collect(_run(str(target)), INLINE)["media"][0]
+        self.assertEqual(first["source"], second["source"], "同一来源且内容未变时应复用缓存")
+
+    def test_same_content_different_name_shares_content_hash(self) -> None:
+        """内容相同的不同文件名共用同一内容哈希前缀（内容寻址，与来源名无关）。"""
+        payload = self._png_bytes((10, 200, 10))
+        a = self.src / "a.png"
+        b = self.src / "b.png"
+        a.write_bytes(payload)
+        b.write_bytes(payload)
+        first = self.collector.collect(_run(str(a)), INLINE)["media"][0]
+        second = self.collector.collect(_run(str(b)), INLINE)["media"][0]
+        prefix = lambda record: Path(record["source"]).name.split("_", 1)[0]  # noqa: E731
+        self.assertEqual(prefix(first), prefix(second))
+        self.assertTrue(Path(first["source"]).is_file() and Path(second["source"]).is_file())
+
+
 class UnionRunMediaTests(_TempCase):
     """消息级汇总：顺序、去重、分桶截断、旧数据兼容。"""
 
