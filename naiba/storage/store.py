@@ -1143,6 +1143,29 @@ class ChatStorage:
             "created_at": now,
         }
 
+    def update_message_metadata(
+        self, conversation_id: str, message_id: str, metadata: dict[str, Any]
+    ) -> bool:
+        """就地更新一条消息的 metadata（异步 Job 产物写回用），并推进会话 updated_at。
+
+        只改 metadata 与 conversations.updated_at：content/role/created_at 一律不动，
+        因此消息顺序契约 `(created_at, rowid)` 不受影响；updated_at 变化会让前端既有
+        轮询（syncCurrentConversation 的 snapshot）检测到并重渲染该会话。
+        返回是否命中该消息（消息已被删除时 False，调用方记录后放弃）。
+        """
+        now = int(time.time() * 1000)
+        with self._connect() as db:
+            cursor = db.execute(
+                "UPDATE messages SET metadata = ? WHERE id = ? AND conversation_id = ?",
+                (json.dumps(metadata or {}, ensure_ascii=False), message_id, conversation_id),
+            )
+            if cursor.rowcount:
+                db.execute(
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                    (now, conversation_id),
+                )
+        return cursor.rowcount > 0
+
     def delete_conversation(self, conversation_id: str) -> bool:
         with self._connect() as db:
             cursor = db.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))

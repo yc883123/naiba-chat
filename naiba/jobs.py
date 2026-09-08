@@ -144,9 +144,31 @@ class JobRegistry:
             job_id, status=status, error=error, result=result or {}, detail=detail, finished=True
         )
         self._emit(job_id, {"type": "job_finished", "status": status, "error": error, "result": result or {}})
+        # 异步产物写回：Job 在工具返回之后才产出的媒体挂回发起它的助手消息
+        # （comfyui_batch wait=false / run_in_background 的主路径；写回失败不影响终态）。
+        self._write_back_media(job_id)
         condition = self._condition(job_id)
         with condition:
             condition.notify_all()
+
+    def _write_back_media(self, job_id: str) -> None:
+        """终态后把 Job 产物挂回发起它的助手消息（见 storage/job_media.py）。"""
+        writer = getattr(self.app, "job_media_writer", None)
+        if writer is None:
+            return
+        job = self.app.storage.get_background_task(job_id)
+        if not job:
+            return
+        try:
+            written = writer.write_back(job)
+        except Exception:  # noqa: BLE001 - 写回失败必须记录且不得影响 Job 终态
+            traceback.print_exc()
+            return
+        if written:
+            print(
+                f"[job-media] 产物已写回消息：job={job_id} "
+                f"message={written['message_id']} added={written['added']}"
+            )
 
     # ---- 统一接口 ----
     def start(self, spec: JobSpec, owner: str | None = None) -> str:

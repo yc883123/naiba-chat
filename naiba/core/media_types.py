@@ -167,6 +167,25 @@ MEDIA_POLICIES: tuple[str, ...] = ("inline", "intent_gated", "never")
 MEDIA_EXTRACTORS: tuple[str, ...] = ("none", "scan", "structured")
 DEFAULT_MEDIA_DECLARATION: dict[str, str] = {"policy": "inline", "extract": "scan"}
 
+# 异步 Job 的媒体采集声明（按 Job kind）：Job 在工具返回**之后**才产出媒体，
+# 由 storage/job_media.py 在终态时写回发起它的那条助手消息。
+# - comfyui：result.completed_shots[].files 是产物 URL（结构化）；
+# - shell：stdout 里可能打印产物路径（文本扫描）；
+# - check/http_poll：只出状态，不产媒体；
+# - subagent：子 Agent 的结论已随 subagent 工具结果同步返回，写回会重复展示。
+JOB_MEDIA_DECLARATIONS: dict[str, dict[str, str]] = {
+    "comfyui": {"policy": "inline", "extract": "structured"},
+    "shell": {"policy": "inline", "extract": "scan"},
+    "check": {"policy": "never", "extract": "none"},
+    "http_poll": {"policy": "never", "extract": "none"},
+    "subagent": {"policy": "never", "extract": "none"},
+}
+
+
+def job_media_declaration(kind: str) -> dict[str, str]:
+    """取 Job kind 的媒体采集声明（未知 kind 按不采集处理，宁可不显示也不误报）。"""
+    return normalize_media_declaration(JOB_MEDIA_DECLARATIONS.get(str(kind or ""), {"policy": "never", "extract": "none"}))
+
 
 def normalize_media_declaration(value: Any) -> dict[str, str]:
     """归一化媒体声明；缺省/非法值回落到默认（未声明的 MCP/第三方工具走默认）。

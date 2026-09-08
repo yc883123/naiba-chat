@@ -48,6 +48,7 @@ from naiba.storage.media import (
     is_uploads_path, remove_uploaded_file, store_uploaded_file,
 )
 from naiba.storage.media_collect import MediaCollector
+from naiba.storage.job_media import JobMediaWriter
 from naiba.storage.store import ChatStorage
 from naiba.subagent import run_subagent_agent
 from naiba.tools.executor import ToolExecutor
@@ -92,6 +93,8 @@ class NaibaChatApp:
         self.storage = ChatStorage(self._paths.data_dir / "chat.db")
         # 媒体采集器（工具产出点按声明提取 + 托管缓存）：data_dir/imaging 每次调用实时解析。
         self.media_collector = MediaCollector(self.config, self._paths)
+        # 异步 Job 产物写回（终态时挂回发起它的助手消息；用同一采集器）。
+        self.job_media_writer = JobMediaWriter(self.storage, self.config, self._paths, self.media_collector)
         # 统一事件总线：run/job 共用单点「写事件 + 唤醒」，装配根出口（阶段 2）。
         from naiba.events import EventBus
 
