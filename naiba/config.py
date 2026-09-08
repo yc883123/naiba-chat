@@ -127,72 +127,22 @@ def default_config() -> dict[str, Any]:
     }
 
 
-# 内置 Agent（PLAN4 §Agent 与权限）：默认“全开启”，用户可自定义其 tool_scope。
-# tool_scope 定义该 Agent 允许使用的工具集合；运行流中再与对话权限（allowed_tools）取交集。
-# 内置 Agent 使用当前对话选择的模型。
-# 全部可选工具：内置 Agent 的 tool_scope 默认“全开启”，用户可再按需裁剪。
-_BUILT_IN_SCOPE_ALL = (
-    "read_file", "list_directory", "search_files",
-    "write_file", "edit_file", "pwsh", "run_skill_script",
-    "http_request", "web_search", "register_mcp",
-    "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
-    "todo_write", "recall_history",
-    "comfyui_prepare_workflow", "comfyui_batch",
-    "install_skill", "unpack_skill_archive", "inspect_installed_skill",
-    "vision_analyze", "vision_image_ops",
-    "read_pdf", "pdf_render_pages", "pdf_zoom_region",
-)
+# 内置 Agent 机制保留（built_in 标记 + 不可删守卫 + 前端「内置」徽标），但**当前清单为空**：
+# 原先的四个预设（dsh-standard / dsh-code / dsh-minimal / dsh-cordis）已按用户要求下线。
+# 需要重新引入内置 Agent 时，在 `built_in_agents()` 里补回定义即可（tool_scope 留空数组 =
+# 不限制，运行时会放行全部工具并在新增工具时自动纳入，不需要再维护一份工具名清单）。
 
 
 def built_in_agents() -> list[dict[str, Any]]:
-    """返回内置 Agent 定义清单（含 tool_scope）。每次调用返回新副本，防止被外部篡改。"""
-    return [
-        {
-            "id": "dsh-standard",
-            "name": "dsh-standard（全能）",
-            "system_prompt": (
-                "你是 naiba-chat 的全能内置 Agent，拥有完整工具、Skill、联网搜索与子任务能力。MCP 仅在用户显式配置外部服务并授权工具时可用，不属于默认能力。"
-                "对任何领域的多步任务执行通用闭环：盘点能力与输入，补齐可恢复缺口，执行并收集后台结果，"
-                "验证产物，失败时依据证据修正后重试；涉及文件改动先说明范围。"
-            ),
-            "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
-            "built_in": True,
-        },
-        {
-            "id": "dsh-code",
-            "name": "dsh-code（编程）",
-            "system_prompt": (
-                "你是专注编程的内置 Agent，适合多步编码、测试与批量修改。"
-                "优先用读取/编辑/搜索/命令工具完成任务；复杂任务可拆给子 Agent。"
-            ),
-            "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
-            "built_in": True,
-        },
-        {
-            "id": "dsh-minimal",
-            "name": "dsh-minimal（极简编码）",
-            "system_prompt": (
-                "你是编码 Agent。默认拥有全部工具与扩展能力（联网搜索、视觉、子 Agent、MCP 入口；MCP 仅在用户显式配置并授权后可用）。"
-                "按需选择恰当工具完成任务，不必局限于某几类。"
-            ),
-            "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
-            "built_in": True,
-        },
-        {
-            "id": "dsh-cordis",
-            "name": "dsh-cordis（创作工坊）",
-            "system_prompt": (
-                "你是创作工坊 Agent，用于生成与维护自定义 Agent、Skill、提示词与工作流。"
-                "擅长阅读/编写技能目录与脚本，必要时用子 Agent 拆分复杂创作任务。"
-            ),
-            "skill_ids": [],
-            "tool_scope": list(_BUILT_IN_SCOPE_ALL),
-            "built_in": True,
-        },
-    ]
+    """返回内置 Agent 定义清单（当前为空，机制保留）。
+
+    每次调用返回新副本，防止被外部篡改。清单为空时：
+    - `public_agents()` 只返回用户自定义 Agent；
+    - `upsert_agent()` 不再给任何 id 打 built_in 标记；
+    - `delete_agent()` 的内置守卫不再命中，所有 Agent 都可删除。
+    用户配置里遗留的旧内置副本由 `_migrate_agent_builtin_flags()` 去掉 built_in 标记。
+    """
+    return []
 
 
 def built_in_agent_ids() -> set[str]:
@@ -643,6 +593,7 @@ class ConfigStore:
         self.data.pop("max_agent_steps", None)
         self._migrate_default_agent_skills()
         self._migrate_legacy_tool_names()
+        self._migrate_agent_builtin_flags()
         tools = self.data.get("agent_tools")
         # run_command 已并入 pwsh：历史默认集里保存的是 run_command（而非 pwsh）。
         # 先统一映射死工具名，避免升级后通用 Agent 静默丢失命令执行能力。
@@ -705,6 +656,24 @@ class ConfigStore:
                     for item in scope
                     if str(item) != "call_mcp"
                 ]
+
+    def _migrate_agent_builtin_flags(self) -> None:
+        """清掉已下线内置 Agent 遗留的 built_in 标记。
+
+        内置清单现在为空，但用户配置里可能还留着曾经编辑过的旧内置副本
+        （例如 dsh-standard，带 built_in=True）。不清掉的话前端会继续显示「内置」并隐藏
+        删除按钮，而后端已经允许删除——两边口径不一致，用户会觉得「删不掉」。
+        只摘标记，不动名称/提示词/工具集，用户内容不丢。
+        """
+        agents = self.data.get("agents")
+        if not isinstance(agents, list):
+            return
+        built_in = built_in_agent_ids()
+        for agent in agents:
+            if not isinstance(agent, dict):
+                continue
+            if agent.get("built_in") and str(agent.get("id") or "") not in built_in:
+                agent.pop("built_in", None)
 
     def _migrate_conversation_prompt_presets(self) -> None:
         """Normalize prompt presets from config files created by older builds."""
