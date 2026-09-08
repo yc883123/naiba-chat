@@ -28,6 +28,16 @@ def _small_png(width: int = 8, height: int = 8, color=(255, 0, 0)) -> bytes:
     return buf.getvalue()
 
 
+def _small_gif(width: int = 8, height: int = 8, frames: int = 3) -> bytes:
+    """多帧 GIF（验证"原图动画保留 + 首帧缩略图"）。"""
+    from PIL import Image
+
+    images = [Image.new("P", (width, height), color) for color in (1, 2, 3)[:frames]]
+    buf = io.BytesIO()
+    images[0].save(buf, format="GIF", save_all=True, append_images=images[1:], duration=120, loop=0)
+    return buf.getvalue()
+
+
 def _small_pdf(text: bytes = b"PDF-BODY") -> bytes:
     import zlib
 
@@ -92,6 +102,29 @@ class StoreUploadedFileTests(unittest.TestCase):
         )
         self.assertTrue(again["deduped"])
         self.assertEqual(Path(again["thumb_path"]).resolve(), Path(result["thumb_path"]).resolve())
+
+    def test_gif_keeps_animation_and_gets_first_frame_thumb(self) -> None:
+        """GIF：原图字节（含动画）原样保留，但必须产出首帧 WebP 缩略图。
+
+        否则前端按 `<主图 stem>_thumb.webp` 推导必然 404（破图）。
+        """
+        gif = _small_gif()
+        result = store_uploaded_file(gif, "动画.gif", self.data_dir)
+        main = Path(result["path"])
+        self.assertEqual(main.read_bytes(), gif, "GIF 主图必须原样保留（动画不被压掉）")
+        self.assertTrue(result["thumb_path"], "GIF 必须产出首帧缩略图")
+        thumb = Path(result["thumb_path"])
+        self.assertTrue(thumb.is_file())
+        self.assertEqual(thumb.name, f"{main.stem}_thumb.webp")
+        from PIL import Image
+
+        with Image.open(thumb) as img:
+            self.assertEqual(img.format, "WEBP")
+            self.assertLessEqual(img.width * img.height, 500000)
+        # 去重命中时同样要复用同一份缩略图（不能因后缀判定返回空）
+        again = store_uploaded_file(gif, "动画2.gif", self.data_dir)
+        self.assertTrue(again["deduped"])
+        self.assertEqual(Path(again["thumb_path"]).resolve(), thumb.resolve())
 
     def test_auto_clean_with_reference_guard(self) -> None:
         """B1：自动清理带引用保护——被引用的最旧组永久保留，只删未引用组。"""

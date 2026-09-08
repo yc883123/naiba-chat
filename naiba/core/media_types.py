@@ -32,7 +32,8 @@ _KIND_BY_EXT: dict[str, str] = {
     ext: kind for kind, exts in MEDIA_EXTS_BY_KIND.items() for ext in exts
 }
 
-# 上传压缩与缩略图支持的图片格式：GIF 保持原图与动画（无缩略图，前端按类型回退主图）。
+# 上传**压缩**支持的图片格式：GIF 保持原图与动画（不压缩），但仍生成首帧缩略图
+# （可出缩略图的格式集见 storage/media.THUMB_SOURCE_SUFFIXES）。
 IMAGE_PROCESS_EXTS: frozenset[str] = frozenset(MEDIA_EXTS_BY_KIND["image"]) - {".gif"}
 
 # 单条消息的媒体分桶上限（宿主缓存与前端展示共用口径）：

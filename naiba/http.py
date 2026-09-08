@@ -29,6 +29,7 @@ from naiba.config import tool_catalog_entries, tool_group_entries, tool_preset_e
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.conv_files import _conv_file_allow, _conv_file_open, _conv_file_save
 from naiba.core.exceptions import ActiveRunError
+from naiba.core.http_range import content_range_header, parse_byte_range
 from naiba.core.media_types import MIME_BY_EXT
 from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
@@ -905,47 +906,85 @@ class RequestHandler(BaseHTTPRequestHandler):
             except Exception as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_GATEWAY)
                 return
-        else:
-            path = Path(source).expanduser().resolve()
-            # Attachments created before a data-directory migration contain an
-            # absolute path from the old install. Resolve those records by
-            # filename inside the current uploads directory.
-            current_data_root = self.app.paths.data_dir.resolve()
-            current_uploads = (current_data_root / "uploads").resolve()
-            if not path.is_file() and path.name:
-                migrated_path = current_uploads / path.name
-                if not migrated_path.is_file() and current_uploads.is_dir():
-                    # 分日目录（uploads/YYYY-MM-DD/）下的同命中值递归兜底。
-                    for candidate in current_uploads.rglob(path.name):
-                        if candidate.is_file():
-                            migrated_path = candidate
-                            break
-                if migrated_path.is_file():
-                    path = migrated_path
-            allowed_roots = [
-                self.app.config.resolve_workspace_dir(),
-                current_data_root,
-            ]
-            if not any(path_within(path, root) for root in allowed_roots):
-                self._json({"error": "文件不在允许访问的目录中"}, HTTPStatus.FORBIDDEN)
-                return
-            if not path.is_file():
-                self._json({"error": "文件不存在"}, HTTPStatus.NOT_FOUND)
-                return
-            data = path.read_bytes()
-            content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-            if content_type == "application/octet-stream":
-                content_type = _MEDIA_MIME_FALLBACK.get(path.suffix.lower(), content_type)
-        self.send_response(HTTPStatus.OK)
+            self.send_response(HTTPStatus.OK)
+            self.send_header(
+                "Content-Type",
+                f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type,
+            )
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "private, max-age=3600")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+            return
+        path = Path(source).expanduser().resolve()
+        # Attachments created before a data-directory migration contain an
+        # absolute path from the old install. Resolve those records by
+        # filename inside the current uploads directory.
+        current_data_root = self.app.paths.data_dir.resolve()
+        current_uploads = (current_data_root / "uploads").resolve()
+        if not path.is_file() and path.name:
+            migrated_path = current_uploads / path.name
+            if not migrated_path.is_file() and current_uploads.is_dir():
+                # 分日目录（uploads/YYYY-MM-DD/）下的同命中值递归兜底。
+                for candidate in current_uploads.rglob(path.name):
+                    if candidate.is_file():
+                        migrated_path = candidate
+                        break
+            if migrated_path.is_file():
+                path = migrated_path
+        allowed_roots = [
+            self.app.config.resolve_workspace_dir(),
+            current_data_root,
+        ]
+        if not any(path_within(path, root) for root in allowed_roots):
+            self._json({"error": "文件不在允许访问的目录中"}, HTTPStatus.FORBIDDEN)
+            return
+        if not path.is_file():
+            self._json({"error": "文件不存在"}, HTTPStatus.NOT_FOUND)
+            return
+        size = path.stat().st_size
+        # 单区间 Range：视频/音频可 seek（浏览器拖动进度条、preload=metadata 只拉所需区间）。
+        # 不解析成功（无头/非法/多区间）→ 整包 200；语法合法但越界 → 416 + bytes */size。
+        try:
+            byte_range = parse_byte_range(self.headers.get("Range"), size)
+        except ValueError:
+            self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        start, end = (0, size - 1) if byte_range is None else byte_range
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        if content_type == "application/octet-stream":
+            content_type = _MEDIA_MIME_FALLBACK.get(path.suffix.lower(), content_type)
+        self.send_response(HTTPStatus.OK if byte_range is None else HTTPStatus.PARTIAL_CONTENT)
         self.send_header(
             "Content-Type",
             f"{content_type}; charset=utf-8" if content_type.startswith("text/") else content_type,
         )
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(max(0, end - start + 1)))
+        self.send_header("Accept-Ranges", "bytes")
+        if byte_range is not None:
+            self.send_header("Content-Range", content_range_header(start, end, size))
         self.send_header("Cache-Control", "private, max-age=3600")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
-        self.wfile.write(data)
+        # 分块发送：几百 MB 的视频不再整包进内存。
+        remaining = max(0, end - start + 1)
+        try:
+            with path.open("rb") as handle:
+                handle.seek(start)
+                while remaining > 0:
+                    chunk = handle.read(min(262144, remaining))
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    remaining -= len(chunk)
+        except OSError as exc:
+            # 响应头已发出，只能记录（客户端会看到截断的响应）。
+            print(f"[api/file] 读取文件失败：{path} error={exc}")
 
     def _parse_character_card(self, body: dict[str, Any]) -> None:
         self._json(*self.app._parse_character_card(body))

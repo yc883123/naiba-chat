@@ -4,7 +4,7 @@
 
 import { $, api, draggedFileCache, emptyStateElement, escapeHtml, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
-import { activityMarkup, attachmentThumbUrl, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, mediaTruncatedNotice, reasoningMarkup, remainingAttachments, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, usageMarkup } from "./03-media.js";
+import { activityMarkup, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, mediaTruncatedNotice, reasoningMarkup, remainingAttachments, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, uploadedFileMarkup, usageMarkup } from "./03-media.js";
 import { openConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
@@ -176,21 +176,6 @@ export async function branchMessage(row) {
   } catch (error) {
     toast(`分支失败：${error.message}`);
   }
-}
-
-export function uploadedFileMarkup(files = []) {
-  if (!files.length) return '';
-  const html = files.map((file) => {
-    const source = file.source || file.path || '';
-    const isImage = mediaKind(source, file.name) === 'image';
-    if (isImage) {
-      const thumbUrl = attachmentThumbUrl(file);
-      const largeUrl = fileUrl(source);
-      return `<figure class="attachment attachment-image"><img class="thumbnail" src="${escapeHtml(thumbUrl)}" alt="${escapeHtml(file.name || 'image')}" loading="lazy" draggable="true" data-large-url="${escapeHtml(largeUrl)}"><figcaption>${escapeHtml(file.name || '')}</figcaption></figure>`;
-    }
-    return `<span class="file-chip">${escapeHtml(file.name)}</span>`;
-  }).join('');
-  return `<div class="media-grid">${html}</div>`;
 }
 
 export let stickToBottom = true;

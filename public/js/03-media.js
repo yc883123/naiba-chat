@@ -547,6 +547,28 @@ document.addEventListener('click', (event) => {
   if (ta) ta.focus();
 });
 
+// 用户气泡/编辑框里的附件渲染（与助手侧同口径的媒体判定）：图片带缩略图+灯箱，
+// 视频/音频就地播放，其它类型仍是文件名 chip。放在本模块便于渲染守门真执行校验。
+export function uploadedFileMarkup(files = []) {
+  if (!files.length) return '';
+  const html = files.map((file) => {
+    const source = file.source || file.path || '';
+    const kind = mediaKind(source, file.name);
+    const url = escapeHtml(fileUrl(source));
+    const name = escapeHtml(file.name || '');
+    if (kind === 'image') {
+      const thumbUrl = attachmentThumbUrl(file);
+      return `<figure class="attachment attachment-image"><img class="thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${url}"><figcaption title="${name}">${name}</figcaption></figure>`;
+    }
+    if (kind === 'video') return `<figure class="attachment attachment-media"><video src="${url}" controls playsinline preload="metadata"></video><figcaption title="${name}">${name}</figcaption></figure>`;
+    if (kind === 'audio') return `<figure class="attachment attachment-media"><audio src="${url}" controls preload="metadata"></audio><figcaption title="${name}">${name}</figcaption></figure>`;
+    // 非媒体（pdf/doc/zip…）：文件名 chip 直接可点开（浏览器能预览的预览、否则下载），
+    // 与助手侧 mediaMarkup 的 chip 同口径——不再只是"看得见、点不动"的死文本。
+    return `<a class="file-chip" href="${url}" target="_blank" rel="noreferrer">${name}</a>`;
+  }).join('');
+  return `<div class="media-grid">${html}</div>`;
+}
+
 export function mediaMarkup(attachments = []) {
   if (!attachments.length) return '';
   const items = attachments.map((attachment) => {
@@ -555,14 +577,16 @@ export function mediaMarkup(attachments = []) {
     const url = fileUrl(source);
     const safeUrl = escapeHtml(url);
     const name = escapeHtml(attachment.name || '生成文件');
+    // 每种媒体都带文件名标签（figcaption）：气泡里的图/视频/音频不再是无名之物，
+    // 也便于与"修改文件"或工具块里的路径对应。
     if (kind === 'image') {
       const thumbUrl = attachmentThumbUrl(attachment);
       const reusePath = attachment.source || attachment.path || '';
       const reuseThumb = attachment.thumb_path || '';
-      return `<span class="media-item"><img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${safeUrl}"><button class="thumb-reuse" type="button" title="发送到输入框（复用此图）" aria-label="发送到输入框" data-reuse-source="${escapeHtml(reusePath)}" data-reuse-name="${name}" data-reuse-thumb="${escapeHtml(reuseThumb)}">↩</button></span>`;
+      return `<figure class="media-item"><img class="media-image thumbnail" src="${escapeHtml(thumbUrl)}" alt="${name}" loading="lazy" draggable="true" data-large-url="${safeUrl}"><button class="thumb-reuse" type="button" title="发送到输入框（复用此图）" aria-label="发送到输入框" data-reuse-source="${escapeHtml(reusePath)}" data-reuse-name="${name}" data-reuse-thumb="${escapeHtml(reuseThumb)}">↩</button><figcaption title="${name}">${name}</figcaption></figure>`;
     }
-    if (kind === 'video') return `<video src="${safeUrl}" controls playsinline preload="metadata"></video>`;
-    if (kind === 'audio') return `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
+    if (kind === 'video') return `<figure class="media-item"><video src="${safeUrl}" controls playsinline preload="metadata"></video><figcaption title="${name}">${name}</figcaption></figure>`;
+    if (kind === 'audio') return `<figure class="media-item"><audio src="${safeUrl}" controls preload="metadata"></audio><figcaption title="${name}">${name}</figcaption></figure>`;
     return `<a class="file-chip" href="${safeUrl}" target="_blank" rel="noreferrer">${name}</a>`;
   }).join('');
   return `<div class="media-grid">${items}</div>`;

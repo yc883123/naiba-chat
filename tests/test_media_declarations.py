@@ -37,7 +37,9 @@ class MediaTypeSingleSourceTests(unittest.TestCase):
         self.assertEqual(
             set(storage_media_mod.IMAGE_SUFFIXES), set(media_mod.IMAGE_PROCESS_EXTS)
         )
-        self.assertNotIn(".gif", storage_media_mod.IMAGE_SUFFIXES, "GIF 保持原图、不生成缩略图")
+        # GIF 不参与压缩（保动画），但必须能生成首帧缩略图（否则前端推导 404 破图）。
+        self.assertNotIn(".gif", storage_media_mod.IMAGE_SUFFIXES)
+        self.assertIn(".gif", storage_media_mod.THUMB_SOURCE_SUFFIXES)
 
     def test_mime_fallback_covers_every_media_ext(self) -> None:
         from naiba import http as http_mod

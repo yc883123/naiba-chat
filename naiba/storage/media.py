@@ -29,8 +29,11 @@ from naiba.core.paths import path_within
 
 
 # 上传压缩/缩略图支持的图片格式：唯一定义在 core/media_types.py
-# （GIF 保持原图与动画、不生成缩略图；前端按类型回退主图）。
+# （GIF 保持原图与动画、不压缩；但同样生成首帧静态缩略图，见 THUMB_SOURCE_SUFFIXES）。
 IMAGE_SUFFIXES = set(IMAGE_PROCESS_EXTS)
+# 可生成缩略图的来源格式：静止图（含压缩）+ GIF（取首帧）。
+# GIF 若不出缩略图，前端按"<主图 stem>_thumb.webp"推导必然 404（破图）。
+THUMB_SOURCE_SUFFIXES = set(IMAGE_PROCESS_EXTS) | {".gif"}
 
 
 # 上传上限：与 app._upload 时代一致的 80MB（multipart 流式也在此拦截）。
@@ -74,7 +77,8 @@ def store_uploaded_file(
             "name": existing.name,
             "path": str(existing),
             "size": existing.stat().st_size,
-            "thumb_path": _thumb_path_for(existing) if existing.suffix.lower() in IMAGE_SUFFIXES else "",
+            # 缩略图按"主图 stem + _thumb.webp"推导；不存在时返回空串（前端回退主图）。
+            "thumb_path": _thumb_path_for(existing),
             "deduped": True,
         }
     target_dir = upload_target_dir(data_dir)
@@ -233,12 +237,12 @@ def _ensure_webp_thumb(main_path: Path, imaging: dict[str, Any] | None = None) -
 
     Best-effort: returns the thumb path on success, else ``""`` so the caller can
     fall back (e.g. to the main image). Used by generated-media caching so every
-    ComfyUI image has a served thumbnail in the history.
+    ComfyUI image has a served thumbnail in the history. GIF 取首帧（原图动画不动）。
     """
     try:
         from PIL import Image, ImageOps
 
-        if main_path.suffix.lower() not in IMAGE_SUFFIXES:
+        if main_path.suffix.lower() not in THUMB_SOURCE_SUFFIXES:
             return ""
         if not main_path.is_file():
             return ""
@@ -247,20 +251,29 @@ def _ensure_webp_thumb(main_path: Path, imaging: dict[str, Any] | None = None) -
             return str(thumb_path)
         img = Image.open(main_path)
         img.load()
-        if (img.format or "").upper() == "GIF":
-            return ""
         img = ImageOps.exif_transpose(img)
         imaging = dict(imaging or {})
         thumb_px = max(1, int(imaging.get("thumbnail_max_pixels", 500000) or 500000))
+        thumb_bytes = _encode_webp_thumb(img, thumb_px)
+        if not thumb_bytes:
+            return ""
+        thumb_path.parent.mkdir(parents=True, exist_ok=True)
+        thumb_path.write_bytes(thumb_bytes)
+        return str(thumb_path)
+    except Exception:  # noqa: BLE001 - thumbnail is best-effort
+        return ""
+
+
+def _encode_webp_thumb(img: Any, thumb_px: int) -> bytes:
+    """把 PIL 图像缩到 thumb_px 并编码为 WebP 字节；失败返回空字节（best-effort）。"""
+    try:
         thumb_img = _fit_image_pixels(img, thumb_px)
         buf = io.BytesIO()
         out = thumb_img.convert("RGBA") if thumb_img.mode in ("P", "RGBA") else thumb_img
         out.save(buf, format="WEBP", quality=82)
-        thumb_path.parent.mkdir(parents=True, exist_ok=True)
-        thumb_path.write_bytes(buf.getvalue())
-        return str(thumb_path)
+        return buf.getvalue()
     except Exception:  # noqa: BLE001 - thumbnail is best-effort
-        return ""
+        return b""
 
 
 def _process_uploaded_image(
@@ -268,12 +281,14 @@ def _process_uploaded_image(
 ) -> tuple[bytes, str | None, bytes]:
     """Optionally compress an image and always emit a WebP thumbnail.
 
-    Returns ``(main_bytes, thumb_filename, thumb_bytes)``. Non-images and GIFs
-    are passed through untouched with no thumbnail. Compression keeps the source
-    format and preserves alpha; thumbnails are always WebP.
+    Returns ``(main_bytes, thumb_filename, thumb_bytes)``. Non-image formats are
+    passed through untouched with no thumbnail. GIF keeps its original bytes
+    (animation preserved) but still gets a **first-frame** WebP thumbnail —
+    otherwise the frontend's ``<stem>_thumb.webp`` fallback 404s (broken image).
+    Compression keeps the source format and preserves alpha; thumbnails are always WebP.
     """
     suffix = Path(filename).suffix.lower()
-    if suffix not in IMAGE_SUFFIXES:
+    if suffix not in THUMB_SOURCE_SUFFIXES:
         return data, None, b""
     from PIL import Image, ImageOps
 
@@ -281,15 +296,19 @@ def _process_uploaded_image(
         img = Image.open(io.BytesIO(data))
         img.load()
         fmt = (img.format or "").upper()
-        if fmt == "GIF":
-            return data, None, b""
-        img = ImageOps.exif_transpose(img)
     except Exception:  # noqa: BLE001 - malformed image -> keep original bytes
         return data, None, b""
 
+    thumb_px = max(1, int(imaging.get("thumbnail_max_pixels", 500000) or 500000))
+    if fmt == "GIF":
+        thumb_bytes = _encode_webp_thumb(img, thumb_px)
+        if not thumb_bytes:
+            return data, None, b""
+        return data, Path(filename).stem + "_thumb.webp", thumb_bytes
+
+    img = ImageOps.exif_transpose(img)
     original = bool(imaging.get("image_upload_original", False))
     max_px = max(1, int(imaging.get("image_max_pixels", 2000000) or 2000000))
-    thumb_px = max(1, int(imaging.get("thumbnail_max_pixels", 500000) or 500000))
 
     main_bytes = data
     if not original and img.width * img.height > max_px:
@@ -305,15 +324,10 @@ def _process_uploaded_image(
         except Exception:  # noqa: BLE001 - fall back to original bytes
             main_bytes = data
 
-    thumb_img = _fit_image_pixels(img, thumb_px)
-    try:
-        thumb_buf = io.BytesIO()
-        out = thumb_img.convert("RGBA") if thumb_img.mode in ("P", "RGBA") else thumb_img
-        out.save(thumb_buf, format="WEBP", quality=82)
-        thumb_name = Path(filename).stem + "_thumb.webp"
-        return main_bytes, thumb_name, thumb_buf.getvalue()
-    except Exception:  # noqa: BLE001
+    thumb_bytes = _encode_webp_thumb(img, thumb_px)
+    if not thumb_bytes:
         return main_bytes, None, b""
+    return main_bytes, Path(filename).stem + "_thumb.webp", thumb_bytes
 
 
 IMAGE_CACHE_CLEAN_LIMIT = 128 * 1024 * 1024  # 128 MB
