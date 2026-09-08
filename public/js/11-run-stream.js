@@ -272,7 +272,6 @@ export function createRunRow(run) {
   const row = messageElement({ role: 'assistant', content: '' }, true);
   row.dataset.runId = String(run.id || '');
   row.dataset.runKind = String(run.kind || 'chat');
-  row.dataset.lightweightMode = String(state.lightweightMode);
   $('#messages').append(row);
   state.runRow = row;
   scrollToBottom();

@@ -667,8 +667,6 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .composer-meta-more-button { min-height: 22px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); color: var(--muted); font-size: 11px; cursor: pointer; }
 .composer-meta-more-button:hover { border-color: var(--line-strong); background: var(--surface-2); color: var(--text); }
 .composer-meta-more-button[aria-expanded="true"] { color: var(--accent); }
-.composer-meta-panel { position: absolute; left: 0; bottom: 30px; z-index: 40; min-width: 200px; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-3); }
-.composer-meta-panel[hidden] { display: none; }
 /* 快捷消息面板：固定定位（避免被 .composer-wrap 的 overflow 裁剪），位置由 JS 对齐按钮 */
 .quick-msg-panel {
   position: fixed; z-index: 40;
@@ -699,15 +697,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .quick-msg-item { padding: 10px 8px; }
   .quick-msg-action { width: 30px; height: 30px; }
 }
-.composer-meta-panel .lightweight-feature-inline { flex-direction: column; align-items: flex-start; gap: 8px; }
-.lightweight-feature-inline { display: inline-flex; align-items: center; gap: 8px; margin: 0; padding: 0; border: 0; white-space: nowrap; flex: none; }
-.lightweight-feature-label { color: var(--text); font-size: 12px; font-weight: 600; }
-.lightweight-feature-inline label { display: inline-flex; align-items: center; gap: 5px; color: var(--text); font-size: 12px; cursor: pointer; }
-.lightweight-feature-inline input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
-.rich-text-toggle-inline { display: inline-flex; align-items: center; gap: 5px; min-height: 22px; color: var(--muted); font-size: 11px; cursor: pointer; white-space: nowrap; }
-.rich-text-toggle-inline input { width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
 #runtimeStatus { justify-self: end; margin-left: auto; }
-.lightweight-feature-inline + #runtimeStatus { margin-left: auto; }
 .mode-select { display: inline-flex; align-items: center; gap: 3px; padding: 2px 3px 2px 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
 .mode-select > span { color: var(--muted); white-space: nowrap; }
 .mode-select select { min-height: 20px; border: 0; outline: 0; border-radius: 4px; background: var(--surface); color: var(--accent); font-size: 11px; font-weight: 600; padding: 1px 20px 1px 7px; }

@@ -91,9 +91,6 @@ export const state = {
   webSearchEnabled: false,
   deepReasoningEnabled: false,
   reasoningEffort: 'auto',
-  lightweightMode: false,
-  lightweightDisabledFeatures: [],
-  richTextEnabled: false,
   contextUsage: null,
   providerModelCapabilities: {},
   workspaces: [],
@@ -102,6 +99,8 @@ export const state = {
   expandedGroups: new Set(),
   customPrompts: [],
   editingStarterPrompt: -1,
+  // 编辑弹窗的目标列表：'starter'（开始页自定义指令）/ 'quick'（会话内快捷消息）
+  editingPromptTarget: 'starter',
   conversationPromptPresets: [],
   editingConversationPromptPresetId: '',
   // A fresh update check should immediately surface a newer release in the

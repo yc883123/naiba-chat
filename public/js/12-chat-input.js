@@ -5,7 +5,7 @@
 import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 import { updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
-import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, renderMessages, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
+import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation } from "./08-conversations.js";
@@ -50,8 +50,6 @@ export function renderStarterPrompts() {
   grid.querySelectorAll('.custom-starter').forEach((el) => el.remove());
   state.customPrompts.forEach((p, i) => {
     if (!p || !p.text) return;
-    // 增删改一律按后端给的原始序号 index（后端会跳过非法条目，数组下标不等于 index）。
-    const entryIndex = Number.isFinite(Number(p.index)) ? Number(p.index) : i;
     const wrap = document.createElement('div');
     wrap.className = 'custom-starter';
     const main = document.createElement('button');
@@ -64,13 +62,13 @@ export function renderStarterPrompts() {
     edit.className = 'starter-edit';
     edit.title = '编辑此指令';
     edit.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg>';
-    edit.addEventListener('click', (e) => { e.stopPropagation(); openStarterPromptDialog(entryIndex); });
+    edit.addEventListener('click', (e) => { e.stopPropagation(); openStarterPromptDialog(i, 'starter'); });
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'starter-del';
     del.title = '删除此指令';
     del.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
-    del.addEventListener('click', (e) => { e.stopPropagation(); removeStarterPrompt(entryIndex); });
+    del.addEventListener('click', (e) => { e.stopPropagation(); removeStarterPrompt(i); });
     wrap.appendChild(main);
     wrap.appendChild(edit);
     wrap.appendChild(del);
@@ -78,12 +76,23 @@ export function renderStarterPrompts() {
   });
 }
 
-export function openStarterPromptDialog(index = -1) {
+export function openStarterPromptDialog(index = -1, target = 'starter') {
+  const quick = target === 'quick';
+  state.editingPromptTarget = quick ? 'quick' : 'starter';
   state.editingStarterPrompt = index;
-  // 按原始序号查找（数组下标可能与 index 不等，见 renderStarterPrompts）。
+  const list = quick ? quickPanelState.items : state.customPrompts;
+  // 按原始序号查找（快捷消息列表按权重排序后，数组下标不等于 index）。
   const p = (index >= 0
-    ? state.customPrompts.find((item) => Number(item?.index) === Number(index))
+    ? list.find((item) => Number(item?.index ?? list.indexOf(item)) === Number(index))
     : null) || {};
+  const heading = $('#starterPromptHeading');
+  const hint = $('#starterPromptHint');
+  if (heading) heading.textContent = index >= 0
+    ? (quick ? '编辑快捷消息' : '编辑自定义指令')
+    : (quick ? '添加快捷消息' : '添加自定义指令');
+  if (hint) hint.textContent = quick
+    ? '保存后可在会话输入区「快捷消息」面板中点击插入'
+    : '保存后可在「开始新对话」页快速复用';
   $('#starterPromptTitle').value = p.title || '';
   $('#starterPromptText').value = p.text || '';
   $('#starterPromptDialog').showModal();
@@ -93,17 +102,26 @@ export function openStarterPromptDialog(index = -1) {
 export async function saveStarterPrompt() {
   const title = $('#starterPromptTitle').value;
   const text = $('#starterPromptText').value;
-  if (!text.trim()) { toast('指令内容不能为空'); return; }
+  if (!text.trim()) { toast('内容不能为空'); return; }
   const editing = state.editingStarterPrompt;
+  const quick = state.editingPromptTarget === 'quick';
+  const base = quick ? '/api/quick-messages' : '/api/starter-prompts';
   try {
-    const url = editing >= 0 ? `/api/starter-prompts/${editing}` : '/api/starter-prompts';
+    const url = editing >= 0 ? `${base}/${editing}` : base;
     const r = await api(url, { method: 'POST', body: { title, text } });
-    state.customPrompts = r.prompts || [];
-    state.editingStarterPrompt = -1;
-    renderStarterPrompts();
-    await refreshQuickMessagesIfOpen();
+    if (quick) {
+      quickPanelState.items = r.messages || [];
+      state.editingStarterPrompt = -1;
+      renderQuickMessages();
+    } else {
+      state.customPrompts = r.prompts || [];
+      state.editingStarterPrompt = -1;
+      renderStarterPrompts();
+    }
     $('#starterPromptDialog').close();
-    toast(editing >= 0 ? '已更新自定义指令' : '已保存自定义指令');
+    toast(quick
+      ? (editing >= 0 ? '已更新快捷消息' : '已添加快捷消息')
+      : (editing >= 0 ? '已更新自定义指令' : '已保存自定义指令'));
   } catch (error) {
     toast(`保存失败：${error.message}`);
   }
@@ -114,15 +132,14 @@ export async function removeStarterPrompt(index) {
     const r = await api(`/api/starter-prompts/${index}`, { method: 'DELETE' });
     state.customPrompts = r.prompts || [];
     renderStarterPrompts();
-    await refreshQuickMessagesIfOpen();
     toast('已删除自定义指令');
   } catch (error) {
     toast(`删除失败：${error.message}`);
   }
 }
 
-// ---- 快捷消息面板（复用「自定义指令」数据；按使用次数 + 新鲜度排序）----
-// 排序由后端 GET /api/starter-prompts?sort=usage 给出：min(次数,50)×2 + 新鲜度加分，
+// ---- 快捷消息面板（独立列表：不复用「开始新对话」页的自定义指令）----
+// 排序由后端 GET /api/quick-messages?sort=usage 给出：min(次数,50)×2 + 新鲜度加分，
 // 并列取新增时间倒序——新条目有曝光窗口，高频条目稳定靠前。
 export const quickPanelState = { open: false, items: [], loading: false };
 
@@ -145,7 +162,7 @@ function renderQuickMessages() {
     const preview = String(item.text || '').replace(/\s+/g, ' ').slice(0, 80);
     return `<div class="quick-msg-item" role="menuitem" tabindex="-1" data-quick-index="${item.index}" title="点击插入到输入框">
       <div class="quick-msg-main">
-        <b>${escapeHtml(item.title || '自定义指令')}</b>
+        <b>${escapeHtml(item.title || '快捷消息')}</b>
         <small>${escapeHtml(preview)}</small>
       </div>
       <button type="button" class="quick-msg-action" data-quick-edit="${item.index}" title="编辑" aria-label="编辑">${QUICK_EDIT_SVG}</button>
@@ -158,8 +175,8 @@ async function loadQuickMessages() {
   quickPanelState.loading = true;
   renderQuickMessages();
   try {
-    const result = await api('/api/starter-prompts?sort=usage');
-    quickPanelState.items = Array.isArray(result.prompts) ? result.prompts : [];
+    const result = await api('/api/quick-messages?sort=usage');
+    quickPanelState.items = Array.isArray(result.messages) ? result.messages : [];
   } catch (error) {
     quickPanelState.items = [];
     toast(`读取快捷消息失败：${error.message}`);
@@ -168,10 +185,15 @@ async function loadQuickMessages() {
   }
 }
 
-async function refreshQuickMessagesIfOpen() {
-  if (!quickPanelState.open) return;
-  await loadQuickMessages();
-  renderQuickMessages();
+export async function removeQuickMessage(index) {
+  try {
+    const result = await api(`/api/quick-messages/${index}`, { method: 'DELETE' });
+    quickPanelState.items = result.messages || [];
+    renderQuickMessages();
+    toast('已删除快捷消息');
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
 }
 
 export function closeQuickMessagePanel() {
@@ -223,7 +245,7 @@ export function insertQuickMessage(index) {
   insertTextAtCursor(entry.text);
   closeQuickMessagePanel();
   $('#messageInput')?.focus();
-  api(`/api/starter-prompts/${entry.index}/use`, { method: 'POST', body: {} }).catch((error) => {
+  api(`/api/quick-messages/${entry.index}/use`, { method: 'POST', body: {} }).catch((error) => {
     console.debug('[naiba] 记录快捷消息使用失败:', error.message);
   });
 }
@@ -232,18 +254,18 @@ export function handleQuickMessagePanelClick(event) {
   const editButton = event.target.closest('[data-quick-edit]');
   if (editButton) {
     event.stopPropagation();
-    openStarterPromptDialog(Number(editButton.dataset.quickEdit));
+    openStarterPromptDialog(Number(editButton.dataset.quickEdit), 'quick');
     return;
   }
   const deleteButton = event.target.closest('[data-quick-delete]');
   if (deleteButton) {
     event.stopPropagation();
-    removeStarterPrompt(Number(deleteButton.dataset.quickDelete));
+    removeQuickMessage(Number(deleteButton.dataset.quickDelete));
     return;
   }
   if (event.target.closest('#quickMessageAdd')) {
     event.stopPropagation();
-    openStarterPromptDialog(-1);
+    openStarterPromptDialog(-1, 'quick');
     return;
   }
   const item = event.target.closest('[data-quick-index]');
@@ -330,75 +352,8 @@ export async function toggleDeepReasoning() {
   }
 }
 
-export function applyConversationLightweight(conversation) {
-  // 轻量模式只能由下方“工具 / Skill”选项开启：勾选即关闭对应能力。
-  // 若会话从未开启过轻量模式（lightweight_mode=0），忽略旧版本残留的关闭项，
-  // 保证默认回到普通模式（什么都不勾选 = 普通对话）。
-  const enabled = Boolean(Number(conversation?.lightweight_mode || 0));
-  const stored = Array.isArray(conversation?.lightweight_disabled_features)
-    ? conversation.lightweight_disabled_features.filter((item) => item === 'tools' || item === 'skills' || item === 'rich_text')
-    : [];
-  state.lightweightDisabledFeatures = enabled ? stored : [];
-  state.lightweightMode = state.lightweightDisabledFeatures.length > 0;
-  state.richTextEnabled = !state.lightweightDisabledFeatures.includes('rich_text');
-  updateLightweightModeControl();
-}
-
-export function updateLightweightModeControl() {
-  const toolsToggle = $('#lightweightToolsToggle');
-  const skillsToggle = $('#lightweightSkillsToggle');
-  const richTextToggle = $('#richTextToggle');
-  const attach = $('#attachButton');
-  const disabled = new Set(state.lightweightDisabledFeatures || []);
-  for (const [input, key] of [[toolsToggle, 'tools'], [skillsToggle, 'skills']]) {
-    if (!input) continue;
-    input.checked = disabled.has(key);
-    input.disabled = Boolean(state.chatRunId || state.abortController);
-  }
-  if (richTextToggle) { richTextToggle.checked = state.richTextEnabled; richTextToggle.disabled = Boolean(state.chatRunId || state.abortController); }
-  if (attach) attach.disabled = false;
-  updateDeepReasoningButton();
-}
-export async function toggleRichText(checked) {
-  if (state.chatRunId || state.abortController) return; if (!state.conversationId) await createConversation();
-  const previous = [...state.lightweightDisabledFeatures], previousEnabled = state.richTextEnabled; const next = new Set(previous);
-  if (checked) next.delete('rich_text'); else next.add('rich_text'); state.richTextEnabled = !!checked; state.lightweightDisabledFeatures = [...next]; state.lightweightMode = next.size > 0; updateLightweightModeControl();
-  try { const updated = await api(`/api/conversations/${state.conversationId}/settings`, { method:'POST', body:{lightweight_mode:state.lightweightMode, lightweight_disabled_features:state.lightweightDisabledFeatures} }); state.lightweightDisabledFeatures = updated.lightweight_disabled_features || state.lightweightDisabledFeatures; state.richTextEnabled = !state.lightweightDisabledFeatures.includes('rich_text'); state.lightweightMode = state.lightweightDisabledFeatures.length > 0; const current = state.conversations.find((item) => item.id === state.conversationId); if (Array.isArray(current?.messages)) renderMessages(current.messages); }
-  catch (error) { state.lightweightDisabledFeatures = previous; state.richTextEnabled = previousEnabled; state.lightweightMode = previous.length > 0; updateLightweightModeControl(); toast(`富文本设置保存失败：${error.message}`); }
-}
-
 export function markdownFilePreview(text) {
   return markdown(text, false);
-}
-
-export async function toggleLightweightFeature(feature, checked) {
-  if (!['tools', 'skills'].includes(feature) || state.chatRunId || state.abortController) return;
-  if (!state.conversationId) await createConversation();
-  const previous = [...state.lightweightDisabledFeatures];
-  const previousMode = state.lightweightMode;
-  const next = new Set(previous);
-  // 直接使用用户本次勾选意图；不要在 await 之后重新读取 DOM（新会话创建会重置勾选框）。
-  if (checked) next.add(feature); else next.delete(feature);
-  state.lightweightDisabledFeatures = [...next];
-  state.lightweightMode = state.lightweightDisabledFeatures.length > 0;
-  updateLightweightModeControl();
-  try {
-    const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
-      method: 'POST', body: {
-        lightweight_mode: state.lightweightMode,
-        lightweight_disabled_features: state.lightweightDisabledFeatures,
-      },
-    });
-    state.lightweightDisabledFeatures = updated.lightweight_disabled_features || state.lightweightDisabledFeatures;
-    state.lightweightMode = state.lightweightDisabledFeatures.length > 0;
-    const index = state.conversations.findIndex((item) => item.id === state.conversationId);
-    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-  } catch (error) {
-    state.lightweightDisabledFeatures = previous;
-    state.lightweightMode = previousMode;
-    updateLightweightModeControl();
-    toast(`轻量对话选项保存失败：${error.message}`);
-  }
 }
 
 export async function handlePasteImage(event) {
@@ -484,7 +439,6 @@ function handleRunStartedEvent(event, { row, conversationId }) {
   state.chatRunId = String(event.run_id || '');
   state.runConversationId = conversationId;
   row.dataset.runId = state.chatRunId;
-  row.dataset.lightweightMode = String(Boolean(event.lightweight_mode));
 }
 
 function handleStatusEvent(event, { setActivity }) {
@@ -529,13 +483,7 @@ function handleDeltaEvent(event, { row, answer, setActivity }) {
   clearElapsedStatus();
   setActivity('');
   const content = String(event.content || '');
-  if (row.dataset.lightweightMode === 'true') {
-    const current = answer.dataset.raw || '';
-    const next = current + content;
-    answer.dataset.raw = next;
-    answer.textContent = next;
-    scrollToBottom();
-  } else if (row.dataset.sawTool === 'true') {
+  if (row.dataset.sawTool === 'true') {
     // 已出现工具：中途正文插入事件流（与思考/工具块按时间交错），不再全部堆到底部。
     const seg = getStreamingProseSegment(row, answer);
     if (seg) scheduleStreamingMarkdown(seg, (seg.dataset.raw || '') + content);
@@ -1002,7 +950,7 @@ export function setBusy(busy) {
   // 发送按钮的 disabled/title/aria-label 由 updateSendButtonState 单点维护
   // （经 updateContextComposerLock 调用），此处只负责图标与停止态样式。
   updateContextComposerLock(busy);
-  updateLightweightModeControl();
+  updateDeepReasoningButton();
   updateUnloadModelButton();
   if (!busy && $('#runtimeStatus').textContent !== '执行失败') $('#runtimeStatus').textContent = '就绪';
 }

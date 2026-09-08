@@ -2,7 +2,7 @@
 // 02-markdown.js —— 拆分自 public/app.js 第 398-711 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, escapeHtml, normalizeLanguage, restoreSafeHtml, state } from "./01-core.js";
+import { $, escapeHtml, normalizeLanguage, restoreSafeHtml } from "./01-core.js";
 export function highlightCode(rawCode, language) {
   const code = String(rawCode ?? '');
   const lang = normalizeLanguage(language);
@@ -235,7 +235,8 @@ export function markdown(text, allowRichText = true) {
     .replace(/```([^\n]*)\n([\s\S]*?)```/g, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@\n`)
     .replace(/```([^\n]*)\n([\s\S]*)$/, (_, language, code) => `\n@@CODE_${addCodeBlock(language, code)}@@`);
   safe = escapeHtml(safe);
-  if (allowRichText && state.richTextEnabled) safe = restoreSafeHtml(safe);
+  // 富文本恒开（原「富文本」开关已移除）：仅白名单标签按安全规则还原，其余保持纯文本。
+  if (allowRichText) safe = restoreSafeHtml(safe);
   const blocks = [];
   let paragraph = [];
   let listType = '';

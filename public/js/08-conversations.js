@@ -8,7 +8,7 @@ import { activeTaskStatuses, loadTasks, renderPermissionModeSwitch, taskStatusLa
 import { applyConversationAgent, applyConversationModel } from "./07-models-agents.js";
 import { readAsDataUrl } from "./10-upload.js";
 import { detachRunSubscription, resumeConversationRun } from "./11-run-stream.js";
-import { applyConversationLightweight, closeQuickMessagePanel, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
+import { closeQuickMessagePanel, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
 import { prefillPresetSkillsInComposer } from "./13-skill-refs.js";
 import { clearFileRefCache, hideFilePopup } from "./16-file-refs.js";
 import { closeFilePanel, closeSidebar } from "./14-file-panel.js";
@@ -404,7 +404,6 @@ export async function createConversation(workspaceGroup = '', workspaceDir = '',
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
-  applyConversationLightweight(conversation);
   renderMessages([]);
   renderPermissionModeSwitch();
   closeSidebar();
@@ -460,7 +459,6 @@ export async function openConversation(id) {
   state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
   state.reasoningEffort = conversation.reasoning_effort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   updateDeepReasoningButton();
-  applyConversationLightweight(conversation);
   await resumeConversationRun(id);
   closeSidebar();
 }
@@ -490,7 +488,6 @@ export async function syncCurrentConversation() {
     state.webSearchEnabled = Boolean(Number(conversation.web_search_enabled || 0));
     state.deepReasoningEnabled = Boolean(Number(conversation.deep_reasoning_enabled || 0));
     updateDeepReasoningButton();
-    applyConversationLightweight(conversation);
   } catch (error) {
     console.debug('[naiba] 对话同步失败:', error.message);
   } finally {
@@ -708,7 +705,6 @@ export async function saveConversationSettings(event) {
     $('#conversationSettingsDialog').close();
     renderSidebar();
     if (id === state.conversationId) {
-      applyConversationLightweight(updated);
     }
     toast('对话设置已保存');
   } catch (error) {

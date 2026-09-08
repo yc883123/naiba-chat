@@ -11,7 +11,7 @@ import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAge
 import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
 import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
-import { cancelCurrentRun, closeQuickMessagePanel, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, quickPanelState, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleLightweightFeature, toggleQuickMessagePanel, toggleRichText, updateDeepReasoningButton } from "./12-chat-input.js";
+import { cancelCurrentRun, closeQuickMessagePanel, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, quickPanelState, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel, updateDeepReasoningButton } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
 import { activateFileTab, activeFileTab, applyFilePanelOpenClass, cancelFileEdit, closeFilePanel, closeSidebar, filePanelState, filePanelUsable, openFilePanel, openSidebar, removeFileTab, reopenFilePanel, restoreLeftSidebarCollapse, saveFileTab, setLeftSidebarCollapsed, sidebarDesktop, startFileEdit, updateFileTabsButton } from "./14-file-panel.js";
 import { handleFilePopupClick, handleFilePopupKey, positionFilePopup, updateFilePopup } from "./16-file-refs.js";
@@ -242,25 +242,6 @@ export function bindEvents() {
     $('#messageInput').focus();
   });
   $('#attachButton').addEventListener('click', () => $('#fileInput').click());
-  $('#lightweightToolsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('tools', event.target.checked));
-  $('#lightweightSkillsToggle')?.addEventListener('change', (event) => toggleLightweightFeature('skills', event.target.checked));
-  $('#richTextToggle')?.addEventListener('change', (event) => toggleRichText(event.target.checked));
-  // composer-meta「轻量」折叠面板开合
-  $('#composerMetaMoreButton')?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    const panel = $('#composerMetaPanel');
-    if (!panel) return;
-    panel.hidden = !panel.hidden;
-    $('#composerMetaMoreButton').setAttribute('aria-expanded', String(!panel.hidden));
-  });
-  document.addEventListener('click', (event) => {
-    const panel = $('#composerMetaPanel');
-    if (!panel || panel.hidden) return;
-    if (panel.contains(event.target)) return;
-    if (event.target.closest?.('#composerMetaMoreButton')) return;
-    panel.hidden = true;
-    $('#composerMetaMoreButton')?.setAttribute('aria-expanded', 'false');
-  });
   // composer-meta「快捷消息」面板：按钮开合 + 点击委托（插入/编辑/删除/新建）+ 点外部关闭
   $('#quickMessageButton')?.addEventListener('click', (event) => {
     event.stopPropagation();

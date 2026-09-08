@@ -183,17 +183,6 @@
               <button type="button" data-permission-mode="full" role="radio" title="工具无需逐次确认">完全</button>
             </div>
             <div class="composer-meta-more">
-              <button type="button" class="composer-meta-more-button" id="composerMetaMoreButton" aria-haspopup="menu" aria-expanded="false" title="轻量选项">轻量</button>
-              <div class="composer-meta-panel" id="composerMetaPanel" hidden>
-                <div class="lightweight-feature-inline" aria-label="轻量选项">
-                  <span class="lightweight-feature-label">轻量选项</span>
-                  <label title="勾选后关闭本对话的工具调用（不勾选即普通模式）"><input id="lightweightToolsToggle" type="checkbox"> 工具</label>
-                  <label title="勾选后关闭本对话的 Skill 能力（不勾选即普通模式）"><input id="lightweightSkillsToggle" type="checkbox"> Skill</label>
-                </div>
-              </div>
-              <label class="rich-text-toggle-inline" title="开启后渲染安全白名单内的 HTML 富文本"><input id="richTextToggle" type="checkbox"> 富文本</label>
-            </div>
-            <div class="composer-meta-more">
               <button type="button" class="composer-meta-more-button" id="quickMessageButton" aria-haspopup="menu" aria-expanded="false" title="快捷消息：点击插入常用提示词">快捷消息</button>
               <div class="quick-msg-panel" id="quickMessagePanel" hidden>
                 <div class="quick-msg-head">
@@ -272,12 +261,12 @@
 
   <dialog id="starterPromptDialog" class="panel-dialog">
     <div class="dialog-toolbar">
-      <div><h2>添加自定义指令</h2><p>保存后可在「开始新对话」页快速复用</p></div>
+      <div><h2 id="starterPromptHeading">添加自定义指令</h2><p id="starterPromptHint">保存后可在「开始新对话」页快速复用</p></div>
       <button class="icon-button" data-close="starterPromptDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
     <div class="starter-prompt-body">
-      <label class="field-wide">指令标题<input id="starterPromptTitle" type="text" maxlength="40" placeholder="例如：整理工作流"></label>
-      <label class="field-wide">指令内容<textarea id="starterPromptText" rows="6" placeholder="输入发送给 AI 的完整指令"></textarea></label>
+      <label class="field-wide">标题<input id="starterPromptTitle" type="text" maxlength="40" placeholder="例如：整理工作流"></label>
+      <label class="field-wide">内容<textarea id="starterPromptText" rows="6" placeholder="输入发送给 AI 的完整指令"></textarea></label>
       <div class="form-actions">
         <button class="control-button" type="button" data-close="starterPromptDialog">取消</button>
         <button class="primary-button" id="saveStarterPrompt" type="button">保存</button>

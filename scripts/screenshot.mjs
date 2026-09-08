@@ -114,7 +114,7 @@ async function clean() {
   await ev(`(() => {
     document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch(_){} });
     ['#imageLightbox','#imageContextMenu','#skillPopup','#reasoningMenu','#contextUsagePopover',
-     '#topbarOverflowMenu','#composerMetaPanel'].forEach(sel => {
+     '#topbarOverflowMenu','#quickMessagePanel'].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.hidden = true;
     });
   })()`);
@@ -297,10 +297,10 @@ await sleep(400);
 await shot('19b-topbar-overflow.png');
 await clean();
 
-// 底部「轻量」面板（工具 / Skill 双勾选）
-await ev(`(() => { const m = document.querySelector('#composerMetaPanel'); if (m) m.hidden = false; })()`);
-await sleep(400);
-await shot('19c-lightweight-panel.png');
+// 底部「快捷消息」面板（常用提示词列表）
+await ev(`(() => { const b = document.querySelector('#quickMessageButton'); if (b) b.click(); })()`);
+await sleep(600);
+await shot('19c-quick-messages-panel.png');
 await clean();
 
 // 对话设置（侧栏会话行 ⚙）
