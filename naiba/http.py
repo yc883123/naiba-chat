@@ -15,6 +15,7 @@ import secrets
 import socket
 import sqlite3
 import sys
+import tempfile
 import time
 import urllib.parse
 from http import HTTPStatus
@@ -31,7 +32,10 @@ from naiba.core.exceptions import ActiveRunError
 from naiba.core.network import network_access_status
 from naiba.core.paths import path_within
 from naiba.paths import PathContext, default_path_context, static_asset_version
-from naiba.storage.media import _clean_uploads_cache
+from naiba.storage.media import _clean_uploads_cache, UPLOAD_MAX_BYTES
+
+# multipart 上传的传输层兜底上限（文件 80MB + 表单/边界开销）。
+_UPLOAD_BODY_LIMIT = 100 * 1024 * 1024
 
 
 # 部分系统 mimetypes 未注册 webp/avif 等，导致 <img> 接到 application/octet-stream
@@ -322,6 +326,10 @@ class RequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        # 上传接口改 multipart 流式（不再走 JSON base64）：跳过 JSON 读取分流。
+        if path == "/api/uploads" and self.headers.get("Content-Type", "").lower().startswith("multipart/form-data"):
+            self._upload_request()
+            return
         body = self._read_json(max_size=130 * 1024 * 1024)
         if body is None:
             return
@@ -535,7 +543,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             self._json({"preset": item} if item else {"error": "快捷提示词不存在"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
         elif path == "/api/uploads":
-            self._upload(body)
+            self._json({"error": "上传接口已升级为 multipart 流式"}, HTTPStatus.BAD_REQUEST)
+        elif path == "/api/uploads/delete":
+            self._json(*self.app._delete_upload(body))
         elif path == "/api/install/dir":
             self._install_dir(body)
         elif path == "/api/install/dir/remove":
@@ -867,6 +877,12 @@ class RequestHandler(BaseHTTPRequestHandler):
             current_uploads = (current_data_root / "uploads").resolve()
             if not path.is_file() and path.name:
                 migrated_path = current_uploads / path.name
+                if not migrated_path.is_file() and current_uploads.is_dir():
+                    # 分日目录（uploads/YYYY-MM-DD/）下的同命中值递归兜底。
+                    for candidate in current_uploads.rglob(path.name):
+                        if candidate.is_file():
+                            migrated_path = candidate
+                            break
                 if migrated_path.is_file():
                     path = migrated_path
             allowed_roots = [
@@ -897,8 +913,156 @@ class RequestHandler(BaseHTTPRequestHandler):
     def _parse_character_card(self, body: dict[str, Any]) -> None:
         self._json(*self.app._parse_character_card(body))
 
-    def _upload(self, body: dict[str, Any]) -> None:
-        self._json(*self.app._upload(body))
+    def _upload_request(self) -> None:
+        """multipart/form-data 流式上传：解析到临时 spool 后交给 app 落盘。
+
+        设计：python_multipart 流式回调（不整包进内存），文件 part 字节直接写
+        spool（uploads 根下的 .part），完成后 _upload_spooled 做去重/落盘/图片处理。
+        客户端中断（abort）时解析不完整 → spool 清理，不留垃圾。
+        """
+        from python_multipart import MultipartParser
+        from python_multipart.multipart import parse_options_header
+
+        content_type = str(self.headers.get("Content-Type", ""))
+        try:
+            length = int(self.headers.get("Content-Length", "0") or 0)
+        except ValueError:
+            length = 0
+        if length > _UPLOAD_BODY_LIMIT:
+            self._json({"error": "请求内容过大"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return
+        if not length:
+            self._json({"error": "缺少 Content-Length"}, HTTPStatus.BAD_REQUEST)
+            return
+        _, params = parse_options_header(content_type)
+        # 注意：parse_options_header 的返回键为 bytes（b'boundary'），兼容双形态。
+        boundary = params.get("boundary") or params.get(b"boundary") or b""
+        if not boundary:
+            self._json({"error": "缺少 multipart boundary"}, HTTPStatus.BAD_REQUEST)
+            return
+        uploads_root = (self.app.paths.data_dir / "uploads").resolve()
+        try:
+            uploads_root.mkdir(parents=True, exist_ok=True)
+            spool = tempfile.NamedTemporaryFile(
+                mode="wb", delete=False, dir=uploads_root, suffix=".part"
+            )
+        except OSError as exc:
+            self._json({"error": f"无法创建上传临时目录：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        state: dict[str, Any] = {
+            "filename": "",
+            "headers": {},
+            "header_field": b"",
+            "header_value": b"",
+            "spool": spool,
+            "written": 0,
+            "too_large": False,
+            "complete": False,
+        }
+
+        def on_part_begin() -> None:
+            state["filename"] = ""
+            state["headers"] = {}
+
+        def on_header_field(data: bytes, start: int, end: int) -> None:
+            state["header_field"] += data[start:end]
+
+        def on_header_value(data: bytes, start: int, end: int) -> None:
+            state["header_value"] += data[start:end]
+
+        def on_header_end() -> None:
+            field = state["header_field"].decode("latin-1").strip().lower()
+            value = state["header_value"].decode("latin-1").strip()
+            state["headers"][field] = value
+            state["header_field"] = b""
+            state["header_value"] = b""
+
+        def _decode_multipart_filename(raw: Any) -> str:
+            """multipart header 的 filename 按 latin-1 字节流解析；中文（UTF-8 字节）
+            会被解码成乱码——还原原始字节后按 UTF-8 解码，失败回退原值。"""
+            value = raw.decode("latin-1") if isinstance(raw, bytes) else str(raw or "")
+            try:
+                return value.encode("latin-1").decode("utf-8")
+            except (UnicodeDecodeError, UnicodeEncodeError):
+                return value
+
+        def on_headers_finished() -> None:
+            disposition = state["headers"].get("content-disposition", "")
+            _, disp_params = parse_options_header(disposition)
+            # 键为 bytes（b'filename'），兼容双形态。
+            raw_filename = disp_params.get("filename") or disp_params.get(b"filename")
+            filename = _decode_multipart_filename(raw_filename) if raw_filename else ""
+            if filename and filename.strip():
+                state["filename"] = Path(filename.strip()).name
+                state["headers"].clear()
+
+        def on_part_data(data: bytes, start: int, end: int) -> None:
+            if state["filename"] and not state["too_large"]:
+                written = end - start
+                if state["written"] + written > UPLOAD_MAX_BYTES:
+                    state["too_large"] = True
+                    return
+                try:
+                    state["spool"].write(data[start:end])
+                    state["written"] += written
+                except OSError:
+                    state["too_large"] = True
+
+        def on_part_end() -> None:
+            state["spool"].flush()
+
+        def on_end() -> None:
+            state["complete"] = True
+
+        callbacks = {
+            "on_part_begin": on_part_begin,
+            "on_header_field": on_header_field,
+            "on_header_value": on_header_value,
+            "on_header_end": on_header_end,
+            "on_headers_finished": on_headers_finished,
+            "on_part_data": on_part_data,
+            "on_part_end": on_part_end,
+            "on_end": on_end,
+        }
+        try:
+            parser = MultipartParser(boundary, callbacks)
+            remaining = length
+            while remaining > 0 and not state["too_large"]:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                parser.write(chunk)
+            if not state["too_large"]:
+                parser.finalize()
+            else:
+                # 超限即停：不再消费请求体，关闭连接避免残留污染。
+                self.close_connection = True
+        except Exception as exc:  # noqa: BLE001 - 解析失败/客户端中断统一走错误收尾
+            state["spool"].close()
+            Path(state["spool"].name).unlink(missing_ok=True)
+            try:
+                self._json({"error": f"上传解析失败：{exc}"}, HTTPStatus.BAD_REQUEST)
+            except OSError:
+                pass
+            return
+
+        spool_path = state["spool"].name
+        state["spool"].close()
+        if state["too_large"] or state["written"] > UPLOAD_MAX_BYTES:
+            Path(spool_path).unlink(missing_ok=True)
+            self._json({"error": "单个文件不能超过 80 MB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
+            return
+        if not state["complete"] or not state["filename"] or state["written"] == 0:
+            # 客户端中断（abort）或空表单：清理 spool，不返回错误（连接可能已断）。
+            Path(spool_path).unlink(missing_ok=True)
+            self._json({"error": "上传中断或未收到文件内容"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            self._json(*self.app._upload_spooled(spool_path, state["filename"]))
+        except OSError as exc:
+            self._json({"error": f"上传保存失败：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _install_dir(self, body: dict[str, Any]) -> None:
         self._json(*self.app._install_dir(body))

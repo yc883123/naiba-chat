@@ -451,6 +451,27 @@ class ChatStorage:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
 
+    def upload_path_referenced(self, target: Path) -> bool:
+        """目标上传文件是否已被引用（messages.metadata / background_tasks.snapshot）。
+
+        删除保护：上传文件被任何消息附件或 run 快照引用后不可删除，
+        避免移除 chip 的 DELETE 误删"已发送/已引用"的文件（防御双端竞态）。
+        """
+        # metadata/snapshot 以 json.dumps(ensure_ascii=False) 存储：路径值形如
+        # "path": "C:\\...\\x.pdf"。用 JSON 转义后的片段做 LIKE 子串匹配。
+        escaped = json.dumps(str(target), ensure_ascii=False)[1:-1]
+        like = "%" + escaped.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM messages WHERE metadata LIKE ? ESCAPE '\\' LIMIT 1", (like,)
+            ).fetchone()
+            if row:
+                return True
+            row = db.execute(
+                "SELECT 1 FROM background_tasks WHERE snapshot LIKE ? ESCAPE '\\' LIMIT 1", (like,)
+            ).fetchone()
+            return bool(row)
+
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.db_path, timeout=30)

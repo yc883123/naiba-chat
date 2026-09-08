@@ -428,8 +428,9 @@ export async function sendChatMessage(textOverride = '') {
     ? (inputText ? `${inputText}\n${buttonText}` : buttonText)
     : inputText;
   if (!text || state.taskSubmitting || state.cancelRequested) return;
-  if (state.pendingFiles.some((file) => file.uploading)) {
-    toast('请等待文件上传完成');
+  const uploadingFile = state.pendingFiles.find((file) => file.uploading);
+  if (uploadingFile) {
+    toast(`请等待「${uploadingFile.name}」上传完成${uploadingFile.progress > 0 ? `（${uploadingFile.progress}%）` : ''}`);
     return;
   }
   if (!state.conversationId) await createConversation();

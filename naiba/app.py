@@ -8,8 +8,6 @@
 from __future__ import annotations
 
 import base64
-import re
-import secrets
 import shutil
 import sqlite3
 import sys
@@ -43,7 +41,10 @@ from naiba.run.manager import ConversationRunManager
 from naiba.search import WebSearchRuntime
 from naiba.skills.catalog import SkillCatalog
 from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
-from naiba.storage.media import _process_uploaded_image, _uploads_total_bytes
+from naiba.storage.media import (
+    _process_uploaded_image, _uploads_total_bytes, auto_clean_uploads,
+    is_uploads_path, remove_uploaded_file, store_uploaded_file,
+)
 from naiba.storage.store import ChatStorage
 from naiba.subagent import run_subagent_agent
 from naiba.tools.executor import ToolExecutor
@@ -1083,36 +1084,45 @@ class NaibaChatApp:
             return self._reply({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
 
     def _upload(self, body: dict[str, Any]) -> None:
-        name = Path(str(body.get("name") or "upload.bin")).name
-        encoded = str(body.get("data") or "")
-        if "," in encoded and encoded.startswith("data:"):
-            encoded = encoded.split(",", 1)[1]
+        # 兼容回退：旧 JSON(base64) 格式不再接受，统一走 multipart 流式
+        # （http.py _upload_request → _upload_spooled）。
+        return self._reply({"error": "上传接口已升级为 multipart 流式，请刷新页面后重试"}, HTTPStatus.BAD_REQUEST)
+
+    def _upload_spooled(self, spool_path: str, original_name: str) -> tuple[dict[str, Any], int]:
+        """multipart 流式上传的落库入口：http.py 完成协议解析后调用。
+
+        spool_path 为传输层临时文件（.part），本方法负责读入 → 内容级去重 →
+        分日目录落盘 → 图片压缩/缩略图 → 清理 spool。
+        """
+        spool = Path(spool_path)
         try:
-            data = base64.b64decode(encoded, validate=True)
-        except ValueError:
-            return self._reply({"error": "文件内容不是有效 Base64"}, HTTPStatus.BAD_REQUEST)
-            return
+            data = spool.read_bytes()
+        except OSError as exc:
+            spool.unlink(missing_ok=True)
+            return {"error": f"上传临时文件读取失败：{exc}"}, HTTPStatus.BAD_REQUEST
+        finally:
+            spool.unlink(missing_ok=True)
         if len(data) > 80 * 1024 * 1024:
-            return self._reply({"error": "单个文件不能超过 80 MB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE)
-            return
-        safe_name = re.sub(r"[^A-Za-z0-9._\-\u4e00-\u9fff]", "_", name)
-        target_dir = (self.paths.data_dir / "uploads").resolve()
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / f"naiba_chat_{int(time.time())}_{secrets.token_hex(3)}_{safe_name}"
+            return {"error": "单个文件不能超过 80 MB"}, HTTPStatus.REQUEST_ENTITY_TOO_LARGE
         imaging = dict(self.config.data.get("imaging") or {}) if getattr(self, "config", None) else {}
-        main_bytes, thumb_name, thumb_bytes = _process_uploaded_image(data, target.name, imaging)
-        target.write_bytes(main_bytes)
-        thumb_path = ""
-        if thumb_name and thumb_bytes:
-            thumb_file = target_dir / thumb_name
-            thumb_file.write_bytes(thumb_bytes)
-            thumb_path = str(thumb_file)
-        return self._reply({
-            "name": target.name,
-            "path": str(target),
-            "size": len(main_bytes),
-            "thumb_path": thumb_path,
-        })
+        result = store_uploaded_file(data, original_name, self._paths.data_dir, imaging)
+        # 上传后超限自动清理（宽松阈值，避免频繁误清近期引用）。
+        auto_clean_uploads(self._paths.data_dir)
+        return result, HTTPStatus.OK
+
+    def _delete_upload(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        """删除未被引用的上传文件（前端移除 chip 时调用；有引用则拒绝）。"""
+        raw_path = str(body.get("path") or "")
+        data_dir = self._paths.data_dir
+        if not is_uploads_path(data_dir, raw_path):
+            return {"error": "只允许删除宿主 uploads 缓存目录内的文件"}, HTTPStatus.FORBIDDEN
+        if self.storage.upload_path_referenced(Path(raw_path).expanduser().resolve()):
+            return {"error": "该文件已被消息引用，不可删除"}, HTTPStatus.CONFLICT
+        try:
+            removed = remove_uploaded_file(data_dir, raw_path)
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
+        return {"ok": True, "removed": bool(removed)}, HTTPStatus.OK
 
 
     def _finish_install(self, dest_raw: str, dest: Path, extra: dict[str, Any] | None = None) -> None:

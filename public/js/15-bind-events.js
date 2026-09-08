@@ -358,7 +358,13 @@ export function bindEvents() {
   $('#pendingFiles').addEventListener('click', (event) => {
     const button = event.target.closest('[data-remove-file]');
     if (!button) return;
-    state.pendingFiles.splice(Number(button.dataset.removeFile), 1);
+    const index = Number(button.dataset.removeFile);
+    const [chip] = state.pendingFiles.splice(index, 1);
+    // 上传中 → 中止 XHR；已完成但未发送 → 删除宿主缓存文件（未被引用时）。
+    if (chip?.cancel) chip.cancel();
+    if (chip?.path && !chip.uploading) {
+      api('/api/uploads/delete', { method: 'POST', body: { path: chip.path } }).catch(() => { /* 有引用/删除失败时保留文件，由清理机制回收 */ });
+    }
     renderPendingFiles();
   });
 
