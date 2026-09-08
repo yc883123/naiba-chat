@@ -218,8 +218,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/workspaces":
             self._json({"workspaces": self.app.config.data.get("workspaces", [])})
         elif path == "/api/starter-prompts":
+            self._json({"prompts": self.app.config.get_starter_prompts()})
+        elif path == "/api/quick-messages":
             query = urllib.parse.parse_qs(parsed.query)
-            self._json({"prompts": self.app.config.get_starter_prompts(query.get("sort", [""])[0])})
+            self._json({"messages": self.app.config.get_quick_messages(query.get("sort", [""])[0])})
         elif path == "/api/conversation-prompt-presets":
             self._json({"presets": self.app.config.get_conversation_prompt_presets()})
         elif path.startswith("/api/conversations/") and path.endswith("/file/open"):
@@ -579,16 +581,42 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             self._json({"prompts": prompts}, HTTPStatus.CREATED)
-        elif path.startswith("/api/starter-prompts/") and path.endswith("/use"):
+        elif path == "/api/quick-messages":
+            title = str(body.get("title") or "").strip()
+            text = str(body.get("text") or "").strip()
+            try:
+                messages = self.app.config.add_quick_message(title, text)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"messages": messages}, HTTPStatus.CREATED)
+        elif path.startswith("/api/quick-messages/") and path.endswith("/use"):
             index = path.split("/")[-2]
             try:
                 idx = int(index)
                 if idx < 0:
                     raise ValueError
             except ValueError:
-                self._json({"error": "无效的指令序号"}, HTTPStatus.BAD_REQUEST)
+                self._json({"error": "无效的快捷消息序号"}, HTTPStatus.BAD_REQUEST)
                 return
-            self._json({"prompts": self.app.config.record_starter_prompt_use(idx)})
+            self._json({"messages": self.app.config.record_quick_message_use(idx)})
+        elif path.startswith("/api/quick-messages/"):
+            index = path.rsplit("/", 1)[-1]
+            try:
+                idx = int(index)
+                if idx < 0:
+                    raise ValueError
+            except ValueError:
+                self._json({"error": "无效的快捷消息序号"}, HTTPStatus.BAD_REQUEST)
+                return
+            title = str(body.get("title") or "").strip()
+            text = str(body.get("text") or "").strip()
+            try:
+                messages = self.app.config.update_quick_message(idx, title, text)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"messages": messages})
         elif path.startswith("/api/starter-prompts/"):
             index = path.rsplit("/", 1)[-1]
             try:
@@ -768,6 +796,16 @@ class RequestHandler(BaseHTTPRequestHandler):
         path = parsed.path
         if path == "/api/tasks/clear":
             self._json({"deleted": self.app.storage.clear_terminal_background_tasks()})
+        elif path.startswith("/api/quick-messages/"):
+            index = path.rsplit("/", 1)[-1]
+            try:
+                idx = int(index)
+                if idx < 0:
+                    raise ValueError
+            except ValueError:
+                self._json({"error": "无效的快捷消息序号"}, HTTPStatus.BAD_REQUEST)
+                return
+            self._json({"messages": self.app.config.remove_quick_message(idx)})
         elif path.startswith("/api/starter-prompts/"):
             index = path.rsplit("/", 1)[-1]
             try:

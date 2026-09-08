@@ -429,13 +429,16 @@ def _infer_kind_for_request_format(request_format: str) -> str:
     return "local" if request_format in LOCAL_REQUEST_FORMATS else "online"
 
 
-# 快捷消息（自定义指令）排序权重：点击数为主、新鲜度加分防"新条目永远沉底"。
-STARTER_PROMPT_USE_CAP = 50
-STARTER_PROMPT_RECENCY_BONUS = ((7, 6), (30, 3), (90, 1))
+# 快捷消息排序权重：点击数为主、新鲜度加分防"新条目永远沉底"。
+QUICK_MESSAGE_USE_CAP = 50
+QUICK_MESSAGE_RECENCY_BONUS = ((7, 6), (30, 3), (90, 1))
 
 
-def _normalize_starter_prompts(items: Any) -> list[dict[str, Any]]:
-    """规整自定义指令条目：补齐 index/count/added_at/used_at（旧配置缺字段按 0 处理）。"""
+def _quick_message_entries(items: Any) -> list[dict[str, Any]]:
+    """规整快捷消息条目：补齐 index/count/added_at/used_at（旧数据缺字段按 0 处理）。
+
+    ``index`` 恒为原始插入序号（增删改按它定位）；文本为空的条目跳过（占位不影响定位）。
+    """
     result: list[dict[str, Any]] = []
     for position, item in enumerate(items if isinstance(items, list) else []):
         if not isinstance(item, dict):
@@ -446,7 +449,7 @@ def _normalize_starter_prompts(items: Any) -> list[dict[str, Any]]:
         result.append(
             {
                 "index": position,
-                "title": str(item.get("title") or "自定义指令"),
+                "title": str(item.get("title") or "快捷消息"),
                 "text": text,
                 "count": max(0, int(item.get("count") or 0)),
                 "added_at": max(0, int(item.get("added_at") or 0)),
@@ -456,14 +459,14 @@ def _normalize_starter_prompts(items: Any) -> list[dict[str, Any]]:
     return result
 
 
-def starter_prompt_score(entry: dict[str, Any], now_ms: int) -> float:
+def quick_message_score(entry: dict[str, Any], now_ms: int) -> float:
     """快捷消息权重：min(点击次数, 50)×2 + 新鲜度加分（7 天 +6 / 30 天 +3 / 90 天 +1）。"""
     count = max(0, int(entry.get("count") or 0))
-    score = min(count, STARTER_PROMPT_USE_CAP) * 2
+    score = min(count, QUICK_MESSAGE_USE_CAP) * 2
     added_at = max(0, int(entry.get("added_at") or 0))
     if added_at:
         age_days = max(0.0, (now_ms - added_at) / 86400000.0)
-        for days, bonus in STARTER_PROMPT_RECENCY_BONUS:
+        for days, bonus in QUICK_MESSAGE_RECENCY_BONUS:
             if age_days <= days:
                 score += bonus
                 break
@@ -707,22 +710,17 @@ class ConfigStore:
             self.save()
             return list(self.data["skills_dirs"])
 
-    def get_starter_prompts(self, sort: str = "") -> list[dict[str, Any]]:
-        """自定义指令（常用提示词）列表。
+    def get_starter_prompts(self) -> list[dict[str, str]]:
+        """开始新对话页的「自定义指令」（插入顺序）。
 
-        每条附带 ``index``（原始插入序号，增删改按它定位）与 ``score``（快捷消息排序权重）；
-        ``sort="usage"`` 时按 score 降序、并列取新增时间倒序（快捷消息面板用），
-        默认保持插入顺序（开始新对话页卡片用，行为不变）。
+        与「快捷消息」是两份互不干扰的列表：本列表只服务开始页卡片，
+        快捷消息面板走 `quick_messages`（带使用统计与权重排序）。
         """
         with self.lock:
             items = self.data.get("starter_prompts", [])
-            normalized = _normalize_starter_prompts(items)
-        if str(sort or "").strip().lower() == "usage":
-            now_ms = int(time.time() * 1000)
-            normalized.sort(key=lambda item: (
-                -starter_prompt_score(item, now_ms), -int(item.get("added_at") or 0), int(item["index"]),
-            ))
-        return normalized
+            if isinstance(items, list):
+                return [dict(item) for item in items if isinstance(item, dict)]
+            return []
 
     @staticmethod
     def _preset_timestamp() -> str:
@@ -800,7 +798,7 @@ class ConfigStore:
             self.save()
             return True
 
-    def add_starter_prompt(self, title: str, text: str) -> list[dict[str, Any]]:
+    def add_starter_prompt(self, title: str, text: str) -> list[dict[str, str]]:
         title = " ".join(str(title or "").strip().split())[:40] or "自定义指令"
         text = str(text or "").strip()
         if not text:
@@ -810,17 +808,11 @@ class ConfigStore:
             if not isinstance(prompts, list):
                 prompts = []
                 self.data["starter_prompts"] = prompts
-            prompts.append({
-                "title": title,
-                "text": text,
-                "count": 0,
-                "added_at": int(time.time() * 1000),
-                "used_at": 0,
-            })
+            prompts.append({"title": title, "text": text})
             self.save()
         return self.get_starter_prompts()
 
-    def remove_starter_prompt(self, index: int) -> list[dict[str, Any]]:
+    def remove_starter_prompt(self, index: int) -> list[dict[str, str]]:
         with self.lock:
             prompts = self.data.setdefault("starter_prompts", [])
             if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
@@ -828,7 +820,7 @@ class ConfigStore:
                 self.save()
         return self.get_starter_prompts()
 
-    def update_starter_prompt(self, index: int, title: str, text: str) -> list[dict[str, Any]]:
+    def update_starter_prompt(self, index: int, title: str, text: str) -> list[dict[str, str]]:
         title = " ".join(str(title or "").strip().split())[:40] or "自定义指令"
         text = str(text or "").strip()
         if not text:
@@ -836,9 +828,62 @@ class ConfigStore:
         with self.lock:
             prompts = self.data.setdefault("starter_prompts", [])
             if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
-                current = prompts[int(index)] if isinstance(prompts[int(index)], dict) else {}
+                prompts[int(index)] = {"title": title, "text": text}
+                self.save()
+        return self.get_starter_prompts()
+
+    # ---- 快捷消息（会话内面板专用列表，与开始页「自定义指令」互不干扰）----
+    def get_quick_messages(self, sort: str = "") -> list[dict[str, Any]]:
+        """快捷消息列表；``sort="usage"`` 按权重降序（并列取新增时间倒序），默认插入顺序。"""
+        with self.lock:
+            items = self.data.get("quick_messages", [])
+            normalized = _quick_message_entries(items)
+        if str(sort or "").strip().lower() == "usage":
+            now_ms = int(time.time() * 1000)
+            normalized.sort(key=lambda item: (
+                -quick_message_score(item, now_ms), -int(item.get("added_at") or 0), int(item["index"]),
+            ))
+        return normalized
+
+    def add_quick_message(self, title: str, text: str) -> list[dict[str, Any]]:
+        title = " ".join(str(title or "").strip().split())[:40] or "快捷消息"
+        text = str(text or "").strip()
+        if not text:
+            raise ValueError("快捷消息内容不能为空")
+        with self.lock:
+            items = self.data.setdefault("quick_messages", [])
+            if not isinstance(items, list):
+                items = []
+                self.data["quick_messages"] = items
+            items.append({
+                "title": title,
+                "text": text,
+                "count": 0,
+                "added_at": int(time.time() * 1000),
+                "used_at": 0,
+            })
+            self.save()
+        return self.get_quick_messages()
+
+    def remove_quick_message(self, index: int) -> list[dict[str, Any]]:
+        with self.lock:
+            items = self.data.setdefault("quick_messages", [])
+            if isinstance(items, list) and 0 <= int(index) < len(items):
+                items.pop(int(index))
+                self.save()
+        return self.get_quick_messages()
+
+    def update_quick_message(self, index: int, title: str, text: str) -> list[dict[str, Any]]:
+        title = " ".join(str(title or "").strip().split())[:40] or "快捷消息"
+        text = str(text or "").strip()
+        if not text:
+            raise ValueError("快捷消息内容不能为空")
+        with self.lock:
+            items = self.data.setdefault("quick_messages", [])
+            if isinstance(items, list) and 0 <= int(index) < len(items):
+                current = items[int(index)] if isinstance(items[int(index)], dict) else {}
                 # 编辑只改标题与内容：使用次数/新增时间/最近使用时间原样保留。
-                prompts[int(index)] = {
+                items[int(index)] = {
                     "title": title,
                     "text": text,
                     "count": max(0, int(current.get("count") or 0)),
@@ -846,19 +891,19 @@ class ConfigStore:
                     "used_at": max(0, int(current.get("used_at") or 0)),
                 }
                 self.save()
-        return self.get_starter_prompts()
+        return self.get_quick_messages()
 
-    def record_starter_prompt_use(self, index: int) -> list[dict[str, Any]]:
+    def record_quick_message_use(self, index: int) -> list[dict[str, Any]]:
         """记录一次快捷消息使用（点击插入）：累加次数并刷新最近使用时间。"""
         with self.lock:
-            prompts = self.data.setdefault("starter_prompts", [])
-            if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
-                entry = prompts[int(index)]
+            items = self.data.setdefault("quick_messages", [])
+            if isinstance(items, list) and 0 <= int(index) < len(items):
+                entry = items[int(index)]
                 if isinstance(entry, dict):
                     entry["count"] = max(0, int(entry.get("count") or 0)) + 1
                     entry["used_at"] = int(time.time() * 1000)
                     self.save()
-        return self.get_starter_prompts()
+        return self.get_quick_messages()
 
     def _resolve_dir(self, raw: str) -> Path:
         path = Path(raw).expanduser()
