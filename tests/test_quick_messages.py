@@ -35,17 +35,19 @@ class QuickMessageStatsTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_add_sets_stats_and_index(self):
-        messages = self.config.add_quick_message("整理工作流", "把下面的工作流整理成步骤")
+        messages = self.config.add_quick_message("把下面的工作流整理成步骤")
         self.assertEqual(len(messages), 1)
         entry = messages[0]
         self.assertEqual(entry["index"], 0)
+        self.assertEqual(entry["text"], "把下面的工作流整理成步骤")
+        self.assertNotIn("title", entry, "快捷消息只有正文，不设标题")
         self.assertEqual(entry["count"], 0)
         self.assertEqual(entry["used_at"], 0)
         self.assertGreater(entry["added_at"], 0)
 
     def test_record_use_increments_count_and_used_at(self):
-        self.config.add_quick_message("A", "内容 A")
-        self.config.add_quick_message("B", "内容 B")
+        self.config.add_quick_message("内容 A")
+        self.config.add_quick_message("内容 B")
         self.config.record_quick_message_use(1)
         messages = self.config.get_quick_messages()
         self.assertEqual(messages[1]["count"], 1)
@@ -55,31 +57,30 @@ class QuickMessageStatsTests(unittest.TestCase):
         self.assertEqual(self.config.get_quick_messages()[1]["count"], 2)
 
     def test_record_use_out_of_range_is_noop(self):
-        self.config.add_quick_message("A", "内容 A")
+        self.config.add_quick_message("内容 A")
         self.config.record_quick_message_use(9)
         self.assertEqual(self.config.get_quick_messages()[0]["count"], 0)
 
     def test_update_keeps_stats(self):
-        self.config.add_quick_message("A", "内容 A")
+        self.config.add_quick_message("内容 A")
         self.config.record_quick_message_use(0)
         before = self.config.get_quick_messages()[0]
-        self.config.update_quick_message(0, "A2", "内容 A2")
+        self.config.update_quick_message(0, "内容 A2")
         after = self.config.get_quick_messages()[0]
-        self.assertEqual(after["title"], "A2")
         self.assertEqual(after["text"], "内容 A2")
         self.assertEqual(after["count"], before["count"], "编辑不得清空使用次数")
         self.assertEqual(after["added_at"], before["added_at"], "编辑不得改写新增时间")
 
     def test_remove_keeps_index_dense(self):
-        self.config.add_quick_message("A", "内容 A")
-        self.config.add_quick_message("B", "内容 B")
-        self.config.add_quick_message("C", "内容 C")
+        self.config.add_quick_message("内容 A")
+        self.config.add_quick_message("内容 B")
+        self.config.add_quick_message("内容 C")
         messages = self.config.remove_quick_message(1)
-        self.assertEqual([item["title"] for item in messages], ["A", "C"])
+        self.assertEqual([item["text"] for item in messages], ["内容 A", "内容 C"])
         self.assertEqual([item["index"] for item in messages], [0, 1], "删除后 index 重新变密")
 
     def test_legacy_entries_without_stats_are_normalized(self):
-        self.config.data["quick_messages"] = [{"title": "旧", "text": "旧内容"}]
+        self.config.data["quick_messages"] = [{"text": "旧内容"}]
         self.config.save()
         entry = self.config.get_quick_messages()[0]
         self.assertEqual(entry["count"], 0)
@@ -87,9 +88,18 @@ class QuickMessageStatsTests(unittest.TestCase):
         self.assertEqual(entry["used_at"], 0)
         self.assertEqual(entry["index"], 0)
 
+    def test_legacy_title_field_is_dropped(self):
+        # 旧数据（曾带 title）读取时只保留正文与统计，标题字段不再返回。
+        self.config.data["quick_messages"] = [{"title": "旧标题", "text": "旧正文", "count": 2}]
+        self.config.save()
+        entry = self.config.get_quick_messages()[0]
+        self.assertEqual(entry["text"], "旧正文")
+        self.assertEqual(entry["count"], 2)
+        self.assertNotIn("title", entry)
+
     def test_blank_text_rejected(self):
         with self.assertRaises(ValueError):
-            self.config.add_quick_message("标题", "   ")
+            self.config.add_quick_message("   ")
 
 
 class QuickMessageScoreTests(unittest.TestCase):
@@ -125,9 +135,9 @@ class QuickMessageSortTests(unittest.TestCase):
         self.config = ConfigStore(Path(self.tmp.name) / "config.json")
         now = int(time.time() * 1000)
         self.config.data["quick_messages"] = [
-            {"title": "高频", "text": "a", "count": 5, "added_at": now - 200 * DAY_MS, "used_at": now},
-            {"title": "新条目", "text": "b", "count": 0, "added_at": now - DAY_MS, "used_at": 0},
-            {"title": "中频", "text": "c", "count": 2, "added_at": now - 100 * DAY_MS, "used_at": now},
+            {"text": "高频", "count": 5, "added_at": now - 200 * DAY_MS, "used_at": now},
+            {"text": "新条目", "count": 0, "added_at": now - DAY_MS, "used_at": 0},
+            {"text": "中频", "count": 2, "added_at": now - 100 * DAY_MS, "used_at": now},
         ]
         self.config.save()
 
@@ -135,25 +145,25 @@ class QuickMessageSortTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_default_order_is_insertion_order(self):
-        titles = [item["title"] for item in self.config.get_quick_messages()]
-        self.assertEqual(titles, ["高频", "新条目", "中频"])
+        texts = [item["text"] for item in self.config.get_quick_messages()]
+        self.assertEqual(texts, ["高频", "新条目", "中频"])
 
     def test_usage_sort_ranks_by_weighted_score(self):
         # 权重：高频 5 次×2=10 > 新条目 0 次+7 天加分 6 > 中频 2 次×2=4（100 天无加分）。
         # 新条目靠新鲜度加分越过"很久以前点过两次"的条目，是刻意设计（防新条目永远沉底）。
         messages = self.config.get_quick_messages("usage")
-        self.assertEqual([item["title"] for item in messages], ["高频", "新条目", "中频"])
+        self.assertEqual([item["text"] for item in messages], ["高频", "新条目", "中频"])
         self.assertEqual([item["index"] for item in messages], [0, 1, 2], "index 仍是原始插入序号")
 
     def test_usage_sort_tie_breaks_by_newest_added(self):
         now = int(time.time() * 1000)
         self.config.data["quick_messages"] = [
-            {"title": "旧", "text": "a", "count": 1, "added_at": now - 100 * DAY_MS},
-            {"title": "新", "text": "b", "count": 1, "added_at": now - 100 * DAY_MS + 1000},
+            {"text": "旧", "count": 1, "added_at": now - 100 * DAY_MS},
+            {"text": "新", "count": 1, "added_at": now - 100 * DAY_MS + 1000},
         ]
         self.config.save()
         self.assertEqual(
-            [item["title"] for item in self.config.get_quick_messages("usage")], ["新", "旧"]
+            [item["text"] for item in self.config.get_quick_messages("usage")], ["新", "旧"]
         )
 
 
@@ -169,11 +179,11 @@ class PromptListsIndependenceTests(unittest.TestCase):
 
     def test_adding_quick_message_does_not_touch_starter_prompts(self):
         self.config.add_starter_prompt("开始页指令", "开始页内容")
-        self.config.add_quick_message("快捷消息", "快捷内容")
+        self.config.add_quick_message("快捷内容")
         starters = self.config.get_starter_prompts()
         quick = self.config.get_quick_messages()
         self.assertEqual([item["title"] for item in starters], ["开始页指令"])
-        self.assertEqual([item["title"] for item in quick], ["快捷消息"])
+        self.assertEqual([item["text"] for item in quick], ["快捷内容"])
 
     def test_starter_prompt_shape_stays_simple(self):
         self.config.add_starter_prompt("开始页指令", "开始页内容")
@@ -182,7 +192,7 @@ class PromptListsIndependenceTests(unittest.TestCase):
 
     def test_removing_quick_message_keeps_starter_prompts(self):
         self.config.add_starter_prompt("开始页指令", "开始页内容")
-        self.config.add_quick_message("快捷消息", "快捷内容")
+        self.config.add_quick_message("快捷内容")
         self.config.remove_quick_message(0)
         self.assertEqual(len(self.config.get_starter_prompts()), 1)
         self.assertEqual(self.config.get_quick_messages(), [])

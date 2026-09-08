@@ -87,16 +87,21 @@ export function openStarterPromptDialog(index = -1, target = 'starter') {
     : null) || {};
   const heading = $('#starterPromptHeading');
   const hint = $('#starterPromptHint');
+  const titleField = $('#starterPromptTitleField');
+  const textLabel = $('#starterPromptTextLabel');
   if (heading) heading.textContent = index >= 0
     ? (quick ? '编辑快捷消息' : '编辑自定义指令')
     : (quick ? '添加快捷消息' : '添加自定义指令');
   if (hint) hint.textContent = quick
     ? '保存后可在会话输入区「快捷消息」面板中点击插入'
     : '保存后可在「开始新对话」页快速复用';
-  $('#starterPromptTitle').value = p.title || '';
+  // 快捷消息只有正文，不设标题。
+  if (titleField) titleField.hidden = quick;
+  if (textLabel) textLabel.textContent = quick ? '正文' : '指令内容';
+  $('#starterPromptTitle').value = quick ? '' : (p.title || '');
   $('#starterPromptText').value = p.text || '';
   $('#starterPromptDialog').showModal();
-  $('#starterPromptTitle').focus();
+  (quick ? $('#starterPromptText') : $('#starterPromptTitle')).focus();
 }
 
 export async function saveStarterPrompt() {
@@ -108,7 +113,8 @@ export async function saveStarterPrompt() {
   const base = quick ? '/api/quick-messages' : '/api/starter-prompts';
   try {
     const url = editing >= 0 ? `${base}/${editing}` : base;
-    const r = await api(url, { method: 'POST', body: { title, text } });
+    const body = quick ? { text } : { title, text };
+    const r = await api(url, { method: 'POST', body });
     if (quick) {
       quickPanelState.items = r.messages || [];
       state.editingStarterPrompt = -1;
@@ -159,11 +165,14 @@ function renderQuickMessages() {
     return;
   }
   list.innerHTML = quickPanelState.items.map((item) => {
-    const preview = String(item.text || '').replace(/\s+/g, ' ').slice(0, 80);
+    // 快捷消息只有正文：首行作标题行、其余行折叠成一行预览（都截断）。
+    const lines = String(item.text || '').split('\n').map((line) => line.trim()).filter(Boolean);
+    const headline = (lines[0] || '').slice(0, 60);
+    const preview = lines.slice(1).join(' ').slice(0, 80);
     return `<div class="quick-msg-item" role="menuitem" tabindex="-1" data-quick-index="${item.index}" title="点击插入到输入框">
       <div class="quick-msg-main">
-        <b>${escapeHtml(item.title || '快捷消息')}</b>
-        <small>${escapeHtml(preview)}</small>
+        <b>${escapeHtml(headline)}</b>
+        ${preview ? `<small>${escapeHtml(preview)}</small>` : ''}
       </div>
       <button type="button" class="quick-msg-action" data-quick-edit="${item.index}" title="编辑" aria-label="编辑">${QUICK_EDIT_SVG}</button>
       <button type="button" class="quick-msg-action" data-quick-delete="${item.index}" title="删除" aria-label="删除">${QUICK_DELETE_SVG}</button>

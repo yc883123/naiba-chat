@@ -265,8 +265,8 @@
       <button class="icon-button" data-close="starterPromptDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
     </div>
     <div class="starter-prompt-body">
-      <label class="field-wide">标题<input id="starterPromptTitle" type="text" maxlength="40" placeholder="例如：整理工作流"></label>
-      <label class="field-wide">内容<textarea id="starterPromptText" rows="6" placeholder="输入发送给 AI 的完整指令"></textarea></label>
+      <label class="field-wide" id="starterPromptTitleField">标题<input id="starterPromptTitle" type="text" maxlength="40" placeholder="例如：整理工作流"></label>
+      <label class="field-wide"><span id="starterPromptTextLabel">指令内容</span><textarea id="starterPromptText" rows="6" placeholder="输入发送给 AI 的完整指令"></textarea></label>
       <div class="form-actions">
         <button class="control-button" type="button" data-close="starterPromptDialog">取消</button>
         <button class="primary-button" id="saveStarterPrompt" type="button">保存</button>

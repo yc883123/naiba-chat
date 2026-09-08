@@ -435,9 +435,9 @@ QUICK_MESSAGE_RECENCY_BONUS = ((7, 6), (30, 3), (90, 1))
 
 
 def _quick_message_entries(items: Any) -> list[dict[str, Any]]:
-    """规整快捷消息条目：补齐 index/count/added_at/used_at（旧数据缺字段按 0 处理）。
+    """规整快捷消息条目：只有正文 + 使用统计（``index`` 恒为原始插入序号）。
 
-    ``index`` 恒为原始插入序号（增删改按它定位）；文本为空的条目跳过（占位不影响定位）。
+    正文为空的条目跳过（占位不影响 index 定位）；旧数据里的 ``title`` 字段忽略。
     """
     result: list[dict[str, Any]] = []
     for position, item in enumerate(items if isinstance(items, list) else []):
@@ -449,7 +449,6 @@ def _quick_message_entries(items: Any) -> list[dict[str, Any]]:
         result.append(
             {
                 "index": position,
-                "title": str(item.get("title") or "快捷消息"),
                 "text": text,
                 "count": max(0, int(item.get("count") or 0)),
                 "added_at": max(0, int(item.get("added_at") or 0)),
@@ -845,8 +844,7 @@ class ConfigStore:
             ))
         return normalized
 
-    def add_quick_message(self, title: str, text: str) -> list[dict[str, Any]]:
-        title = " ".join(str(title or "").strip().split())[:40] or "快捷消息"
+    def add_quick_message(self, text: str) -> list[dict[str, Any]]:
         text = str(text or "").strip()
         if not text:
             raise ValueError("快捷消息内容不能为空")
@@ -856,7 +854,6 @@ class ConfigStore:
                 items = []
                 self.data["quick_messages"] = items
             items.append({
-                "title": title,
                 "text": text,
                 "count": 0,
                 "added_at": int(time.time() * 1000),
@@ -873,8 +870,7 @@ class ConfigStore:
                 self.save()
         return self.get_quick_messages()
 
-    def update_quick_message(self, index: int, title: str, text: str) -> list[dict[str, Any]]:
-        title = " ".join(str(title or "").strip().split())[:40] or "快捷消息"
+    def update_quick_message(self, index: int, text: str) -> list[dict[str, Any]]:
         text = str(text or "").strip()
         if not text:
             raise ValueError("快捷消息内容不能为空")
@@ -882,9 +878,8 @@ class ConfigStore:
             items = self.data.setdefault("quick_messages", [])
             if isinstance(items, list) and 0 <= int(index) < len(items):
                 current = items[int(index)] if isinstance(items[int(index)], dict) else {}
-                # 编辑只改标题与内容：使用次数/新增时间/最近使用时间原样保留。
+                # 编辑只改正文：使用次数/新增时间/最近使用时间原样保留。
                 items[int(index)] = {
-                    "title": title,
                     "text": text,
                     "count": max(0, int(current.get("count") or 0)),
                     "added_at": max(0, int(current.get("added_at") or 0)),

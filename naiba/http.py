@@ -582,10 +582,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             self._json({"prompts": prompts}, HTTPStatus.CREATED)
         elif path == "/api/quick-messages":
-            title = str(body.get("title") or "").strip()
             text = str(body.get("text") or "").strip()
             try:
-                messages = self.app.config.add_quick_message(title, text)
+                messages = self.app.config.add_quick_message(text)
             except ValueError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
@@ -609,10 +608,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._json({"error": "无效的快捷消息序号"}, HTTPStatus.BAD_REQUEST)
                 return
-            title = str(body.get("title") or "").strip()
             text = str(body.get("text") or "").strip()
             try:
-                messages = self.app.config.update_quick_message(idx, title, text)
+                messages = self.app.config.update_quick_message(idx, text)
             except ValueError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
