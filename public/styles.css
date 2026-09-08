@@ -98,7 +98,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .sidebar-virtual-window { position: absolute; top: 0; left: 0; right: 0; }
 
 /* ---- 折叠态 / 文件面板打开态 ---- */
-.app-shell.sidebar-collapsed { --sidebar-col: 0px; --chat-max: min(1400px, calc(100% - 240px)); }
+/* 侧栏收起时**不放大对话列宽**：此前 --chat-max 改成 min(1400px, calc(100% - 240px))，
+   收起侧栏后整列从 880px 跳到 ~1300px，助手区块左移、用户气泡右移（用户实测"整体不在
+   中间还错开了"）。对话列宽恒定 880px，收起只是把它在更宽的区域里重新居中。 */
+.app-shell.sidebar-collapsed { --sidebar-col: 0px; }
 .app-shell.sidebar-collapsed .sidebar { overflow: hidden; visibility: hidden; pointer-events: none; }
 .app-shell.sidebar-collapsed .sidebar-resizer { display: none; }
 
