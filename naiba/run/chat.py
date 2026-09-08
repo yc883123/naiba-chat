@@ -163,11 +163,6 @@ class ConversationRunMixin:
             # Plan mode is disabled. Legacy conversations always enter the normal chat path.
             mode = "craft"
             plan_id = ""
-            lightweight_mode = bool(conversation.get("lightweight_mode", 0))
-            disabled_features = {
-                str(item) for item in (conversation.get("lightweight_disabled_features") or [])
-                if str(item) in {"tools", "skills"}
-            } if lightweight_mode else set()
             web_search_enabled = bool(conversation.get("web_search_enabled", 0))
             model_key = str(body.get("model_key") or conversation.get("model_key") or "")
             if not model_key and conversation.get("provider_id"):
@@ -190,50 +185,44 @@ class ConversationRunMixin:
                     self.app.storage.set_conversation_chat_supports_images(conversation_id, chat_supports_images)
             except Exception:
                 chat_supports_images = False
-            if "tools" in disabled_features:
-                allowed_tools = []
-            else:
-                # 会话启动时固化启用工具集（Agent 工具集/旧会话全选），之后不可改，
-                # 作为本轮 allowed_tools 的硬限制，替代 base+system 并集。
-                enabled_tool_ids = self._bake_session_tool_ids(conversation, agent)
-                allowed_tools = self._resolve_allowed_tools(
-                    mode, agent, web_search_enabled, model_key, enabled_tool_ids
+            # 会话启动时固化启用工具集（Agent 工具集/旧会话全选），之后不可改，
+            # 作为本轮 allowed_tools 的硬限制，替代 base+system 并集。
+            enabled_tool_ids = self._bake_session_tool_ids(conversation, agent)
+            allowed_tools = self._resolve_allowed_tools(
+                mode, agent, web_search_enabled, model_key, enabled_tool_ids
+            )
+            catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
+            catalog = catalog_getter() if callable(catalog_getter) else []
+            available_ids = {
+                str(item.get("id") or "")
+                for item in (catalog.values() if isinstance(catalog, dict) else catalog)
+                if isinstance(item, dict)
+            }
+            # 本轮 /ref 引用（前端已解析成具体 skill id，并把 /ref 文本从消息里剥掉）。
+            body_policy = body.get("skill_policy")
+            ref_policy = body_policy if isinstance(body_policy, dict) else {}
+            referenced_ids = [
+                str(item) for item in (ref_policy.get("referenced_ids") or []) if str(item).strip()
+            ]
+            # 会话级冻结集：首轮（会话还没有消息）把本轮引用定为冻结集并持久化；
+            # 后续轮沿用已持久化的冻结集，本轮新引用走“尾部追加”。与冻结集重合的引用去重、
+            # 只在引用时生效（预设 skill 也走这一条：删掉预填即不引用）。
+            stored_policy = conversation.get("skill_policy")
+            stored_policy = stored_policy if isinstance(stored_policy, dict) else {}
+            stored_ids = [str(item) for item in (stored_policy.get("skill_ids") or []) if str(item).strip()]
+            if not stored_policy and not (conversation.get("messages") or []):
+                frozen_ids = sorted({str(item) for item in referenced_ids})
+                self.app.storage.set_conversation_skill_policy(
+                    conversation_id, {"mode": "exclusive", "skill_ids": frozen_ids}
                 )
-            if "skills" in disabled_features:
-                skill_policy = {"mode": "exclusive", "skill_ids": [], "referenced_ids": []}
             else:
-                catalog_getter = getattr(getattr(self.app, "catalog", None), "scan", None)
-                catalog = catalog_getter() if callable(catalog_getter) else []
-                available_ids = {
-                    str(item.get("id") or "")
-                    for item in (catalog.values() if isinstance(catalog, dict) else catalog)
-                    if isinstance(item, dict)
-                }
-                # 本轮 /ref 引用（前端已解析成具体 skill id，并把 /ref 文本从消息里剥掉）。
-                body_policy = body.get("skill_policy")
-                ref_policy = body_policy if isinstance(body_policy, dict) else {}
-                referenced_ids = [
-                    str(item) for item in (ref_policy.get("referenced_ids") or []) if str(item).strip()
-                ]
-                # 会话级冻结集：首轮（会话还没有消息）把本轮引用定为冻结集并持久化；
-                # 后续轮沿用已持久化的冻结集，本轮新引用走“尾部追加”。与冻结集重合的引用去重、
-                # 只在引用时生效（预设 skill 也走这一条：删掉预填即不引用）。
-                stored_policy = conversation.get("skill_policy")
-                stored_policy = stored_policy if isinstance(stored_policy, dict) else {}
-                stored_ids = [str(item) for item in (stored_policy.get("skill_ids") or []) if str(item).strip()]
-                if not stored_policy and not (conversation.get("messages") or []):
-                    frozen_ids = sorted({str(item) for item in referenced_ids})
-                    self.app.storage.set_conversation_skill_policy(
-                        conversation_id, {"mode": "exclusive", "skill_ids": frozen_ids}
-                    )
-                else:
-                    frozen_ids = stored_ids
-                if catalog:
-                    frozen_ids = [sid for sid in frozen_ids if sid in available_ids]
-                skill_policy = normalize_skill_policy(
-                    {"mode": "exclusive", "skill_ids": frozen_ids, "referenced_ids": referenced_ids},
-                    catalog=catalog,
-                )
+                frozen_ids = stored_ids
+            if catalog:
+                frozen_ids = [sid for sid in frozen_ids if sid in available_ids]
+            skill_policy = normalize_skill_policy(
+                {"mode": "exclusive", "skill_ids": frozen_ids, "referenced_ids": referenced_ids},
+                catalog=catalog,
+            )
             snapshot = {
                 "agent": agent,
                 "conversation_system_prompt": str(conversation.get("system_prompt") or ""),
@@ -256,8 +245,6 @@ class ConversationRunMixin:
                 "web_search_enabled": web_search_enabled,
                 "deep_reasoning_enabled": bool(conversation.get("deep_reasoning_enabled", 0)),
                 "reasoning_effort": str(conversation.get("reasoning_effort") or ("medium" if conversation.get("deep_reasoning_enabled") else "auto")),
-                "lightweight_mode": lightweight_mode,
-                "lightweight_disabled_features": sorted(disabled_features),
                 "allowed_tools": allowed_tools,
                 "permission_mode": str(conversation.get("permission_mode") or "confirm"),
                 # 首轮标记（与 skill 冻结集同判据）：_run_chat 拼好最终 prompt 后写回
@@ -434,11 +421,6 @@ class ConversationRunMixin:
             # 先解析当前模型 profile（含 supports_images 能力），再交给视觉路由判断。
             # 顺序错误会导致 prepare_history 因 profile 未定义而整体被跳过（视觉失效）。
             profile = dict(self.app.config.profile(model_key))
-            lightweight_mode = bool(snapshot.get("lightweight_mode", False))
-            disabled_features = {
-                str(item) for item in (snapshot.get("lightweight_disabled_features") or [])
-            } if lightweight_mode else set()
-            lightweight_direct = {"tools", "skills"}.issubset(disabled_features)
             conversation_effort = str(snapshot.get("reasoning_effort") or "").strip().lower()
             if conversation_effort in {"off", "low", "medium", "high"}:
                 # 会话显式指定了思维强度，覆盖 provider 设置。
@@ -500,11 +482,6 @@ class ConversationRunMixin:
             # 让模型 HTTP 调用可被取消信号中断，避免取消后运行线程卡在 API 请求上。
             options["cancel_event"] = cancel_event
             allowed_tools = [str(item) for item in snapshot.get("allowed_tools") or []]
-            if "skills" in disabled_features:
-                allowed_tools = [
-                    tool for tool in allowed_tools
-                    if tool not in {"install_skill", "run_skill_script"}
-                ]
             # 视觉工具对文本/多模态模型暴露同一工具集（vision_analyze 单入口），
             # 模型能力差异由会话化 def 换形态（run_context.tool_defs）处理。
             # 视觉工具是会话固化的（用户预设），不再按“本轮是否含图”动态裁剪 allowed_tools；
@@ -515,22 +492,21 @@ class ConversationRunMixin:
                 spec for spec in available_schemas
                 if isinstance(spec, dict) and str(spec.get("name") or "") in allowed_tools
             ]
-            if not lightweight_direct:
-                event({
-                    "type": "tools_available",
-                    "tools": [
-                        {
-                            "name": str(spec.get("name") or ""),
-                            "description": str(spec.get("description") or ""),
-                        }
-                        for spec in tool_schemas
-                        if spec.get("name")
-                    ],
-                })
+            event({
+                "type": "tools_available",
+                "tools": [
+                    {
+                        "name": str(spec.get("name") or ""),
+                        "description": str(spec.get("description") or ""),
+                    }
+                    for spec in tool_schemas
+                    if spec.get("name")
+                ],
+            })
             agent = snapshot.get("agent") or {}
             prompt = "\n\n".join(
                 item for item in (
-                    "" if lightweight_direct else str(agent.get("system_prompt") or "").strip(),
+                    str(agent.get("system_prompt") or "").strip(),
                     str(snapshot.get("conversation_system_prompt") or "").strip(),
                 ) if item
             )
@@ -579,44 +555,22 @@ class ConversationRunMixin:
                 # 落盘的默认位置——契约键，缺失会退到程序默认工作区（实测踩坑）。
                 "workspace_dir": str(snapshot.get("workspace_dir") or ""),
             }
-            if lightweight_direct:
-                direct_messages = list(history)
-                if prompt:
-                    direct_messages.insert(0, {"role": "system", "content": prompt})
-                direct_t0 = time.perf_counter()
-                response = self.app.models.complete(profile, direct_messages, options, event)
-                direct_request_ms = round((time.perf_counter() - direct_t0) * 1000, 1)
-                if cancel_event.is_set():
-                    raise TaskCancelled("任务已取消")
-                runs, reasonings = [], []
-                direct_reasoning = str(getattr(self.app.models, "last_reasoning", "") or "")
-                if direct_reasoning:
-                    reasonings.append(direct_reasoning)
-                usage = dict(getattr(self.app.models, "last_usage", {}) or {})
-                if usage:
-                    live = SkillAgent._summarize_usage([{**usage, "request_ms": direct_request_ms}])
-                    event({"type": "usage", "usage": live})
-                # direct 路径无 SkillAgent trace 写入：补写消息快照（首轮上下文落盘用）
-                if isinstance(run_context, dict):
-                    run_context["trace_messages"] = list(direct_messages)
-                chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
-            else:
-                worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
-                response, runs, reasonings, usage = worker.run(
-                    effective,
-                    history,
-                    profile,
-                    options,
-                    snapshot.get("skill_policy") or {"mode": "auto", "skill_ids": []},
-                    [],
-                    prompt,
-                    allowed_tools,
-                    event,
-                    cancel_event,
-                    tool_registry=self.app.tool_registry,
-                    run_context=run_context,
-                )
-                chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
+            worker = SkillAgent(self.app.catalog, executor, self.app.models.complete)
+            response, runs, reasonings, usage = worker.run(
+                effective,
+                history,
+                profile,
+                options,
+                snapshot.get("skill_policy") or {"mode": "auto", "skill_ids": []},
+                [],
+                prompt,
+                allowed_tools,
+                event,
+                cancel_event,
+                tool_registry=self.app.tool_registry,
+                run_context=run_context,
+            )
+            chat_diagnostics = dict(getattr(self.app.models, "last_diagnostics", {}) or {})
             # web_search 引用收集改为收尾一次性计算（原始 runs；log_tool_run 死管线已删除）。
             search_sources = _search_sources(runs)
             display_runs = [display_tool_run(run) for run in runs]

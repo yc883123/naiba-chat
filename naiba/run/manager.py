@@ -112,7 +112,6 @@ class ConversationRunManager(ConversationRunMixin):
         self.emit(run_id, {
             "type": "run_started",
             "run_id": run_id,
-            "lightweight_mode": bool(snapshot.get("lightweight_mode", False)),
         })
         thread = threading.Thread(
             target=target,

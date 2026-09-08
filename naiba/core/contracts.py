@@ -192,7 +192,6 @@ class EventPayload(TypedDict, total=False):
     used: int
     budget: int
     reason: str
-    lightweight_mode: bool
     followup_run_id: str
     partial_message: dict[str, Any]
     # 工具流
@@ -238,7 +237,7 @@ class EventPayload(TypedDict, total=False):
 MESSAGE_ORDER_KEYS: tuple[str, ...] = ("created_at", "rowid")
 EVENT_PAYLOAD_KEYS: dict[str, frozenset[str] | None] = {
     # ---- 对话流（前端 handleChatEvent 可处置）----
-    "run_started": frozenset({"run_id", "lightweight_mode"}),
+    "run_started": frozenset({"run_id"}),
     "status": frozenset({"message"}),
     "skills": frozenset({"skills"}),
     "skill_warning": frozenset({"message"}),

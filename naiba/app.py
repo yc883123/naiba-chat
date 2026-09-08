@@ -671,15 +671,6 @@ class NaibaChatApp:
                     self.config.ensure_workspace_writable(resolved_workspace)
                 except (OSError, ValueError):
                     pass
-        lightweight_mode = body.get("lightweight_mode")
-        if lightweight_mode is not None and not isinstance(lightweight_mode, bool):
-            return {"error": "lightweight_mode 必须是布尔值"}, HTTPStatus.BAD_REQUEST
-        lightweight_disabled_features = body.get("lightweight_disabled_features")
-        if lightweight_disabled_features is not None and (
-            not isinstance(lightweight_disabled_features, list)
-            or not all(isinstance(item, str) for item in lightweight_disabled_features)
-        ):
-            return {"error": "lightweight_disabled_features 必须是字符串数组"}, HTTPStatus.BAD_REQUEST
         updated = self.storage.update_conversation_settings(
             conversation_id,
             title=title, system_prompt=system_prompt, stream_enabled=stream_enabled,
@@ -687,8 +678,7 @@ class NaibaChatApp:
             model_key=model_key, permission_mode=permission_mode,
             web_search_enabled=web_search_enabled, deep_reasoning_enabled=deep_reasoning_enabled,
             reasoning_effort=reasoning_effort, workspace_dir=workspace_dir,
-            workspace_group=workspace_group, lightweight_mode=lightweight_mode,
-            lightweight_disabled_features=lightweight_disabled_features,
+            workspace_group=workspace_group,
         )
         return updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND
 

@@ -815,7 +815,6 @@ class ChatStorage:
         permission_mode: str = "auto",
         web_search_enabled: bool = False,
         deep_reasoning_enabled: bool = False,
-        lightweight_mode: bool = False,
         workspace_dir: str = "",
         workspace_group: str = "",
         reasoning_effort: str = "auto",
@@ -830,8 +829,8 @@ class ChatStorage:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
@@ -839,8 +838,6 @@ class ChatStorage:
                     permission_mode,
                     1 if web_search_enabled else 0,
                     1 if deep_reasoning_enabled else 0,
-                    1 if lightweight_mode else 0,
-                    json.dumps([]),
                     0,
                     "",
                     1,
@@ -1000,8 +997,6 @@ class ChatStorage:
         permission_mode: str | None = None,
         web_search_enabled: bool | None = None,
         deep_reasoning_enabled: bool | None = None,
-        lightweight_mode: bool | None = None,
-        lightweight_disabled_features: list[str] | None = None,
         workspace_dir: str | None = None,
         workspace_group: str | None = None,
         reasoning_effort: str | None = None,
@@ -1059,13 +1054,6 @@ class ChatStorage:
                 raise ValueError("reasoning_effort 必须是 off / low / medium / high / auto")
             values["reasoning_effort"] = effort
             values["deep_reasoning_enabled"] = 0 if effort == "off" else 1
-        if lightweight_mode is not None:
-            values["lightweight_mode"] = 1 if bool(lightweight_mode) else 0
-        if lightweight_disabled_features is not None:
-            allowed = {"tools", "skills", "rich_text"}
-            values["lightweight_disabled_features"] = json.dumps(
-                [item for item in lightweight_disabled_features if item in allowed], ensure_ascii=False
-            )
         if workspace_dir is not None:
             values["workspace_dir"] = str(workspace_dir or "").strip()
         if workspace_group is not None:
@@ -1746,16 +1734,10 @@ class ChatStorage:
     def _conversation_dict(row: sqlite3.Row) -> dict[str, Any]:
         result = dict(row)
         result["interaction_mode"] = "craft"
-        try:
-            features = json.loads(
-                result.get("lightweight_disabled_features") or "[]"
-            )
-            result["lightweight_disabled_features"] = [
-                item for item in features
-                if item in {"tools", "skills", "rich_text"}
-            ]
-        except (json.JSONDecodeError, TypeError):
-            result["lightweight_disabled_features"] = []
+        # 轻量模式已退役（2026-09：工具/Skill 一律按 Agent 固化集，富文本恒开）：
+        # 历史列仍留在表里，但不再对外暴露，避免旧值被前端误用。
+        result.pop("lightweight_mode", None)
+        result.pop("lightweight_disabled_features", None)
         try:
             parsed = json.loads(result.get("enabled_tool_ids") or "[]")
             if not isinstance(parsed, list):
