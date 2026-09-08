@@ -252,6 +252,28 @@ class ConversationPromptRetiredTests(unittest.TestCase):
         self.assertIn("sidebarScrollForActive(rows, offsets, st, tree.clientHeight || 0)", source)
         self.assertNotIn("if (idx >= 0) st = offsets[idx];", source, "又退回「强制置顶」的旧写法")
 
+    def test_collapse_button_shares_workspace_header_row(self) -> None:
+        """收起按钮与搜索/排序/新建工作区同一行（独立空行很难看）。"""
+        index = (ROOT / "public/index.html").read_text(encoding="utf-8")
+        self.assertNotIn('class="sidebar-top"', index, "独立的 .sidebar-top 空行又回来了")
+        actions = index[index.index('class="workspace-header-actions"'):]
+        actions = actions[: actions.index("</div>")]
+        self.assertIn('id="collapseSidebar"', actions, "收起按钮不在「工作区」操作行内")
+
+    def test_conversation_item_click_area_covers_whole_row(self) -> None:
+        """整条都可点（含上下边缘）：判定区必须覆盖整个条目元素。"""
+        source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "if (event.target.closest('.conversation-open')) openConversation",
+            source,
+            "又退回「只有中间文字能点」的旧写法",
+        )
+        self.assertIn("openConversation(item.dataset.conversationId);", source)
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        item_rule = css[css.index(".conversation-item {"):]
+        item_rule = item_rule[: item_rule.index("}")]
+        self.assertIn("cursor: pointer", item_rule, "条目缺少手型光标")
+
     def test_sidebar_scroll_clamp_uses_real_scroll_height(self) -> None:
         """虚拟窗口的滚动上限必须取浏览器真实 scrollHeight（含容器 padding）。
 
