@@ -4,7 +4,7 @@
 
 import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
 import { applyConversationAgent, populateModels, renderAgents, updateUnloadModelButton } from "./07-models-agents.js";
-import { currentAgentFixedSkillIds } from "./08-conversations.js";
+import { currentAgentFixedSkillIds, renderAgentPromptPresetSelect } from "./08-conversations.js";
 import { skillList } from "./13-skill-refs.js";
 import { switchSettingsTab } from "./15-bind-events.js";
 export function renderSkills(filter = '') {
@@ -836,6 +836,10 @@ export function showAgentForm(agent = null) {
   // 「存为模板」控件随下方勾选实时显隐（自定义组合时出现）。
   renderAgentSkillPicker();
   renderAgentToolPicker();
+  // 快捷提示词下拉每次打开表单重建并复位（套用结果只进文本框，保存才落库）。
+  const presetSelect = $('#agentPromptPresetSelect');
+  if (presetSelect) presetSelect.value = '';
+  renderAgentPromptPresetSelect();
   $('#agentError').textContent = '';
   $('#addAgent').hidden = true;
   $('#agentForm').hidden = false;

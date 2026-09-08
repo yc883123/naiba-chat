@@ -52,7 +52,7 @@ export const state = {
   elapsedBase: '',
   elapsedSince: 0,
   taskSubmitting: false,
-  conversationSettingsId: '',
+  renameConversationId: '',
   providerEditing: false,
   providerIsNew: false,
   providerKindTab: 'online',

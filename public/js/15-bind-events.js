@@ -8,7 +8,7 @@ import { branchMessage, isNearBottom, setStickToBottom, startEditMessage } from 
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadCurrentModel, unloadProviderModel } from "./07-models-agents.js";
-import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
+import { applyAgentPromptPreset, clearTerminalTasks, closeConversationMenu, closeConversationPromptPresetForm, conversationMenuTargetId, createConversation, createWorkspace, deleteConversation, importAgentCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openRenameConversation, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveRenameConversation, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
 import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
 import { cancelCurrentRun, closeQuickMessagePanel, closeReasoningMenu, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, positionReasoningMenu, quickPanelState, reloadPage, restoreStarterPresets, saveStarterPrompt, sendMessage, setReasoningEffort, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel } from "./12-chat-input.js";
@@ -100,10 +100,6 @@ export function bindEvents() {
     }
   });
   $('#newChatButton').addEventListener('click', () => createConversation('', '', true));
-  $('#openCurrentConversationSettings')?.addEventListener('click', () => {
-    if (state.conversationId) openConversationSettings(state.conversationId);
-    else toast('请先打开或新建一个对话');
-  });
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#unloadModel').addEventListener('click', unloadCurrentModel);
   $('#agentSelect').addEventListener('change', saveAgentSelection);
@@ -112,7 +108,6 @@ export function bindEvents() {
   // 显式刷新按钮：适配 EXE 内嵌 pywebview 无法使用 F5 的场景，EXE 与浏览器通用。
   $('#reloadPage')?.addEventListener('click', () => reloadPage());
   $('#clearTerminalTasks').addEventListener('click', clearTerminalTasks);
-  $('#clearConversationMessages').addEventListener('click', clearConversationMessages);
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
   });
@@ -140,11 +135,19 @@ export function bindEvents() {
   });
   document.addEventListener('click', (event) => {
     const wrap = $('#topbarOverflowMenu');
-    if (!wrap || wrap.hidden) return;
-    if (wrap.contains(event.target)) return;
-    if (event.target.closest?.('#topbarMoreButton')) return;
-    wrap.hidden = true;
-    $('#topbarMoreButton')?.setAttribute('aria-expanded', 'false');
+    if (wrap && !wrap.hidden) {
+      if (!wrap.contains(event.target) && !event.target.closest?.('#topbarMoreButton')) {
+        wrap.hidden = true;
+        $('#topbarMoreButton')?.setAttribute('aria-expanded', 'false');
+      }
+    }
+    // 会话「⋯」菜单：点击菜单与触发按钮之外的位置即关闭。
+    const conversationMenu = $('#conversationItemMenu');
+    if (conversationMenu && !conversationMenu.hidden
+      && !conversationMenu.contains(event.target)
+      && !event.target.closest?.('[data-action="open-conversation-menu"]')) {
+      closeConversationMenu();
+    }
   });
   $('#saveMcpServer')?.addEventListener('click', saveMcpServer);
   $('#openSettings').addEventListener('click', () => {
@@ -153,12 +156,30 @@ export function bindEvents() {
     refreshImageCacheSize();
   });
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
-  $('#conversationSettingsForm').addEventListener('submit', saveConversationSettings);
-  $('#conversationPromptPresetSelect')?.addEventListener('change', (event) => applyConversationPromptPreset(event.target.value));
-  $('#importCharacterCardBtn')?.addEventListener('click', () => $('#characterCardFileInput')?.click());
-  $('#characterCardFileInput')?.addEventListener('change', (event) => {
+  // 会话条目「⋯」菜单：菜单项点击 → 重命名/删除；点击外部、Esc、侧栏滚动均关闭。
+  $('#conversationItemMenu')?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-conversation-action]');
+    if (!button) return;
+    const id = conversationMenuTargetId();
+    closeConversationMenu();
+    if (!id) return;
+    if (button.dataset.conversationAction === 'rename') openRenameConversation(id);
+    else if (button.dataset.conversationAction === 'delete') deleteConversation(id);
+  });
+  $('#renameConversationForm')?.addEventListener('submit', saveRenameConversation);
+  // Esc 关闭 ⋯ 菜单：菜单本身不一定持有焦点（点击 ⋯ 后焦点在按钮上），
+  // 因此挂在 document 上而不是菜单元素上。
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    const menu = $('#conversationItemMenu');
+    if (menu && !menu.hidden) closeConversationMenu();
+  });
+  // Agent 编辑表单：快捷提示词套用 + 角色卡追加导入。
+  $('#agentPromptPresetSelect')?.addEventListener('change', (event) => applyAgentPromptPreset(event.target.value));
+  $('#importAgentCharacterCard')?.addEventListener('click', () => $('#agentCharacterCardFileInput')?.click());
+  $('#agentCharacterCardFileInput')?.addEventListener('change', (event) => {
     const file = event.target.files?.[0];
-    if (file) importCharacterCard(file);
+    if (file) importAgentCharacterCard(file);
     event.target.value = '';
   });
   $('#addConversationPromptPreset')?.addEventListener('click', () => openConversationPromptPresetForm());
@@ -430,6 +451,7 @@ export function bindEvents() {
   $('#sidebarWorkspaceTree').addEventListener('click', onSidebarTreeClick);
   // 侧栏虚拟化：滚动时按窗口重绘可视行
   $('#sidebarWorkspaceTree').addEventListener('scroll', () => {
+    closeConversationMenu();
     if (sidebarScrollRaf) return;
     setSidebarScrollRaf(requestAnimationFrame(() => {
       setSidebarScrollRaf(0);
@@ -437,6 +459,22 @@ export function bindEvents() {
       if (tree && sidebarRowCache.length) renderSidebarWindow(tree.scrollTop);
     }));
   }, { passive: true });
+  // 滚轮步进接管：虚拟列表每次滚动都重写 innerHTML（配合 CSS overflow-anchor:none），
+  // 原生"每格 100px"在这类容器上手感发滞；鼠标滚轮格按 1.5 倍（≈150px）接管，
+  // 触控板的小步进仍交给浏览器原生，避免过度加速。
+  $('#sidebarWorkspaceTree').addEventListener('wheel', (event) => {
+    const tree = event.currentTarget;
+    if (!tree || event.ctrlKey) return;
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? tree.clientHeight : 1;
+    const delta = event.deltaY * unit;
+    if (Math.abs(delta) < 40) return;
+    const maxScroll = tree.scrollHeight - tree.clientHeight;
+    if (maxScroll <= 0) return;
+    const next = Math.max(0, Math.min(tree.scrollTop + delta * 1.5, maxScroll));
+    if (next === tree.scrollTop) return;
+    event.preventDefault();
+    tree.scrollTop = next;
+  }, { passive: false });
   // 右侧文件面板：标签页 / 正文操作 / 关闭 / Esc / 窗口宽度
   $('#fileTabs').addEventListener('click', (event) => {
     const closeBtn = event.target.closest('[data-file-tab-close]');

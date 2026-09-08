@@ -64,6 +64,8 @@ export function setSidebarScrollRaf(value) { sidebarScrollRaf = value; }
 export let sidebarShowAll = new Set(); // 已“展开全部会话”的工作区名集合（默认全部折叠到 5 条）
 export const SIDE_BUFFER = 240; // 视口上下预渲染缓冲（px）
 export const SIDE_CONV_LIMIT = 5; // 每个展开工作区默认显示的最新会话数
+// 「已收藏」是跨工作区的特殊分组（放在侧栏最下方，与工作区分组互不干扰）。
+export const SIDE_FAVORITES_GROUP = '__favorites__';
 
 export function sidebarMetricsNow() {
   if (sidebarMetrics) return sidebarMetrics;
@@ -114,7 +116,7 @@ export function sidebarRowHtml(row) {
         <span class="workspace-caret">▸</span>
         <span class="workspace-group-name">${escapeHtml(row.label)}</span>
         <span class="workspace-count">${row.count}</span>
-        ${row.isUngrouped ? '' : `<button class="workspace-delete" data-action="delete-workspace" data-workspace-name="${escapeHtml(row.wsName)}" title="删除工作区" aria-label="删除工作区">×</button>`}
+        ${row.isUngrouped || row.isFavorites ? '' : `<button class="workspace-delete" data-action="delete-workspace" data-workspace-name="${escapeHtml(row.wsName)}" title="删除工作区" aria-label="删除工作区">×</button>`}
       </div>
     </div>`;
   }
@@ -128,11 +130,14 @@ export function sidebarRowHtml(row) {
     return `<button class="workspace-showmore" data-action="show-less" data-workspace-name="${escapeHtml(row.wsName)}">收起</button>`;
   }
   const c = row.c;
-  return `<div class="conversation-item ${c.id === state.conversationId ? 'active' : ''}" data-conversation-id="${c.id}">
-    <button class="conversation-settings" title="对话设置" aria-label="${escapeHtml(c.title)} 的设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg></button>
+  const favorite = Number(c.favorite || 0) === 1;
+  // data-group：虚拟列表里行是扁平的（工作区分组只包住表头），带上所属分组便于
+  // 「已收藏」这类特殊分组的定位/断言（不参与任何业务逻辑）。
+  return `<div class="conversation-item ${c.id === state.conversationId ? 'active' : ''}" data-conversation-id="${c.id}" data-group="${escapeHtml(row.wsName || '')}">
+    <button class="conversation-star ${favorite ? 'is-favorite' : ''}" data-action="toggle-favorite" title="${favorite ? '取消收藏' : '收藏会话'}" aria-label="${escapeHtml(c.title)} ${favorite ? '取消收藏' : '收藏'}" aria-pressed="${favorite}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.8l5.9-.9z"></path></svg></button>
     <button class="conversation-open" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</button>
     <span class="conversation-time">${escapeHtml(formatRelativeTime(c.updated_at))}</span>
-    <button class="delete-conversation" title="删除对话" aria-label="删除对话">删除</button>
+    <button class="conversation-more" data-action="open-conversation-menu" title="更多操作" aria-label="${escapeHtml(c.title)} 的更多操作" aria-haspopup="menu">⋯</button>
   </div>`;
 }
 
@@ -148,7 +153,11 @@ export function renderSidebarWindow(targetScrollTop) {
   // 会话列表展开/收起、点击末尾条目触发跳转时，旧的 scrollTop 可能超出新的
   // 可滚动范围（列表比视口矮或比之前短）。此前用未夹紧的值去算窗口，只渲染出
   // 末尾几行，上半部分全空白——表现为“点击末尾条目后上面的条目不显示”。
-  const maxScroll = Math.max(0, sidebarTotalH - vh);
+  //
+  // 上限必须取浏览器真实 scrollHeight（含 .conversation-list 的上下 padding）：
+  // 此前用 sidebarTotalH - vh 会少算 padding（实测 16px），每次滚动都被回写成
+  // 偏小的值——表现为滚轮"滚不动/越滚越慢"，列表底部 16px 永远到不了。
+  const maxScroll = Math.max(0, tree.scrollHeight - vh);
   const st = Math.max(0, Math.min(Number(targetScrollTop) || 0, maxScroll));
   let start = Math.max(0, sidebarRowAt(sidebarOffsetCache, st - SIDE_BUFFER));
   let end = sidebarRowAt(sidebarOffsetCache, st + vh + SIDE_BUFFER) + 1;
@@ -178,7 +187,8 @@ export function renderSidebar() {
   const activeWs = currentConversationWorkspaceGroup();
   if (!state.expandedGroups.has('__init')) {
     // 启动时只展开“当前会话所处的工作区”，其余工作区折叠；当前会话尚未确定时暂不展开任何组。
-    state.expandedGroups = new Set(['__init']);
+    // 「已收藏」默认展开：它本身就是用户主动挑出来的短列表。
+    state.expandedGroups = new Set(['__init', SIDE_FAVORITES_GROUP]);
     if (state.conversations.some((c) => c.id === state.conversationId)) {
       state.expandedGroups.add(activeWs);
     }
@@ -230,6 +240,21 @@ export function renderSidebar() {
       } else if (list.length > limit && showAll) {
         rows.push({ type: 'showless', wsName });
       }
+    }
+  }
+
+  // 「已收藏」分组固定在侧栏最下方：跨工作区汇总，不受工作区分组的折叠/5 条上限影响，
+  // 也不把会话从原工作区移走（两处都显示，避免用户以为会话丢了）。
+  const favoriteList = sortConv(state.conversations.filter((c) => Number(c.favorite || 0) === 1))
+    .filter((c) => !search || String(c.title || '').toLowerCase().includes(search));
+  if (favoriteList.length) {
+    const isExp = state.expandedGroups.has(SIDE_FAVORITES_GROUP);
+    rows.push({
+      type: 'header', wsName: SIDE_FAVORITES_GROUP, label: '已收藏', dir: '',
+      isUngrouped: false, isFavorites: true, isExp, count: favoriteList.length,
+    });
+    if (isExp) {
+      for (const c of favoriteList) rows.push({ type: 'item', c, wsName: SIDE_FAVORITES_GROUP });
     }
   }
 
@@ -299,14 +324,116 @@ export async function onSidebarTreeClick(event) {
       createConversation(actionEl.dataset.workspaceGroup || '', actionEl.dataset.workspaceDir || '', true);
     } else if (action === 'delete-workspace') {
       deleteWorkspace(actionEl.dataset.workspaceName || '');
+    } else if (action === 'toggle-favorite') {
+      const id = actionEl.closest('.conversation-item')?.dataset.conversationId || '';
+      toggleConversationFavorite(id);
+    } else if (action === 'open-conversation-menu') {
+      const id = actionEl.closest('.conversation-item')?.dataset.conversationId || '';
+      openConversationMenu(actionEl, id);
     }
     return;
   }
   const item = event.target.closest('.conversation-item');
   if (!item) return;
-  if (event.target.closest('.conversation-settings')) openConversationSettings(item.dataset.conversationId);
-  else if (event.target.closest('.delete-conversation')) deleteConversation(item.dataset.conversationId);
-  else if (event.target.closest('.conversation-open')) openConversation(item.dataset.conversationId);
+  if (event.target.closest('.conversation-open')) openConversation(item.dataset.conversationId);
+}
+
+// ---- 会话条目「⋯」菜单 / 收藏 / 重命名 ----
+// 菜单挂在 body 上（fixed 定位）：侧栏是 overflow 滚动容器，内嵌菜单会被裁剪（教训 §九.27）。
+let conversationMenuId = '';
+
+export function closeConversationMenu() {
+  const menu = $('#conversationItemMenu');
+  conversationMenuId = '';
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+}
+
+export function conversationMenuTargetId() {
+  return conversationMenuId;
+}
+
+export function openConversationMenu(anchorEl, id) {
+  const menu = $('#conversationItemMenu');
+  if (!menu || !id) return;
+  if (!menu.hidden && conversationMenuId === id) { closeConversationMenu(); return; }
+  conversationMenuId = id;
+  if (menu.parentElement !== document.body) document.body.appendChild(menu);
+  menu.hidden = false;
+  const rect = anchorEl.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const edge = 8;
+  const left = Math.min(
+    Math.max(edge, rect.right - menuRect.width),
+    Math.max(edge, window.innerWidth - menuRect.width - edge),
+  );
+  let top = rect.bottom + 4;
+  if (top + menuRect.height > window.innerHeight - edge) {
+    top = Math.max(edge, rect.top - menuRect.height - 4);
+  }
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+export async function toggleConversationFavorite(id) {
+  const conversation = state.conversations.find((item) => item.id === id);
+  if (!conversation) return;
+  const next = Number(conversation.favorite || 0) !== 1;
+  closeConversationMenu();
+  // 乐观更新：收藏只是侧栏归类标记，失败时回滚并提示。
+  conversation.favorite = next ? 1 : 0;
+  renderSidebar();
+  try {
+    const updated = await api(`/api/conversations/${id}/settings`, {
+      method: 'POST',
+      body: { favorite: next },
+    });
+    const index = state.conversations.findIndex((item) => item.id === id);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    renderSidebar();
+    toast(next ? '已收藏该会话' : '已取消收藏');
+  } catch (error) {
+    conversation.favorite = next ? 0 : 1;
+    renderSidebar();
+    toast(`收藏失败：${error.message}`);
+  }
+}
+
+export function openRenameConversation(id) {
+  const conversation = state.conversations.find((item) => item.id === id);
+  if (!conversation) return;
+  closeConversationMenu();
+  state.renameConversationId = id;
+  $('#renameConversationHint').textContent = conversation.title || '当前对话';
+  // 与旧「对话设置」一致：自动命名的标题不回填（留空 = 恢复自动命名）。
+  $('#renameConversationInput').value = conversation.title_customized ? (conversation.title || '') : '';
+  $('#renameConversationDialog').showModal();
+  $('#renameConversationInput').focus();
+  $('#renameConversationInput').select();
+}
+
+export async function saveRenameConversation(event) {
+  event.preventDefault();
+  const id = state.renameConversationId;
+  if (!id) return;
+  const button = $('#saveRenameConversation');
+  if (button) button.disabled = true;
+  try {
+    const updated = await api(`/api/conversations/${id}/settings`, {
+      method: 'POST',
+      body: { title: $('#renameConversationInput').value },
+    });
+    const index = state.conversations.findIndex((item) => item.id === id);
+    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+    $('#renameConversationDialog').close();
+    state.renameConversationId = '';
+    renderSidebar();
+    toast('对话已重命名');
+  } catch (error) {
+    toast(`重命名失败：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 export async function pick_workspace_directory(initial = '') {
@@ -562,55 +689,82 @@ export function renderRunTasks() {
   }).join('');
 }
 
-export async function importCharacterCard(file) {
-  if (!file) return;
-  try {
-    const data = await readAsDataUrl(file);
-    const result = await api('/api/character-card/parse', {
-      method: 'POST',
-      body: { name: file.name, data },
-    });
-    const prompt = String(result.system_prompt || '').trim();
-    if (!prompt) {
-      toast('角色卡解析结果为空');
-      return;
-    }
-    if ($('#conversationSystemPrompt').value.trim() && $('#conversationSystemPrompt').value.trim() !== prompt
-      && !confirm('当前系统提示词已有内容，是否覆盖？')) return;
-    $('#conversationSystemPrompt').value = prompt;
-    await loadConversationPromptPresets();
-    const conversation = state.conversations.find((item) => item.id === state.conversationSettingsId);
-    const agentId = String(conversation?.agent_id || '');
-    const agent = (state.bootstrap?.agents || []).find((item) => String(item.id) === agentId);
-    const agentPrompt = String(agent?.system_prompt || '').trim();
-    const cardName = result.meta?.name || '未知角色';
-    if (agentPrompt) {
-      toast(`已导入角色卡「${cardName}」。提示：当前 Agent 自带系统提示词，建议切换到提示词留空的 Agent 再扮演。`);
-    } else {
-      toast(`已导入角色卡「${cardName}」，确认后点保存`);
-    }
-  } catch (error) {
-    toast(`导入失败：${error.message}`);
-  }
+// ---- Agent 设置页：快捷提示词套用 + 角色卡导入 ----
+// 会话级系统提示词已移除：系统提示词只有一个来源（Agent），因此套用/导入入口
+// 全部落在 Agent 编辑表单的「系统提示词（预设与规则）」下方。
+const AGENT_PROMPT_LIMIT = 12000; // 与 naiba/config.py 里 Agent system_prompt 的截断上限一致
+
+// 纯函数（可单测）：把角色卡文本追加到 Agent 系统提示词末尾（不覆盖已有内容）。
+export function mergeAgentPromptText(existing, addition, limit = AGENT_PROMPT_LIMIT) {
+  const base = String(existing || '').trim();
+  const extra = String(addition || '').trim();
+  if (!extra) return { text: base, truncated: false };
+  const merged = base ? `${base}\n\n${extra}` : extra;
+  if (merged.length > limit) return { text: merged.slice(0, limit), truncated: true };
+  return { text: merged, truncated: false };
 }
 
 export async function loadConversationPromptPresets() {
   try {
     const result = await api('/api/conversation-prompt-presets');
     state.conversationPromptPresets = Array.isArray(result.presets) ? result.presets : [];
-    renderConversationPromptPresetSelect();
+    renderAgentPromptPresetSelect();
     renderConversationPromptPresets();
   } catch (error) {
     state.conversationPromptPresets = [];
-    renderConversationPromptPresetSelect();
+    renderAgentPromptPresetSelect();
   }
 }
 
-export function renderConversationPromptPresetSelect() {
-  const select = $('#conversationPromptPresetSelect');
+export function renderAgentPromptPresetSelect() {
+  const select = $('#agentPromptPresetSelect');
   if (!select) return;
-  select.innerHTML = '<option value="">选择快捷系统提示词…</option>'
+  const current = select.value;
+  select.innerHTML = '<option value="">选择快捷提示词…</option>'
     + state.conversationPromptPresets.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join('');
+  select.value = state.conversationPromptPresets.some((item) => item.id === current) ? current : '';
+}
+
+export function applyAgentPromptPreset(id) {
+  const item = state.conversationPromptPresets.find((preset) => preset.id === id);
+  const field = $('#agentSystemPromptEdit');
+  if (!item || !field) return;
+  const next = String(item.system_prompt || '');
+  const current = field.value.trim();
+  if (current && current !== next.trim() && !confirm('当前系统提示词已有内容，是否用这条快捷提示词覆盖？')) {
+    const select = $('#agentPromptPresetSelect');
+    if (select) select.value = '';
+    return;
+  }
+  field.value = next;
+  toast(`已套用快捷提示词「${item.title}」，保存 Agent 后生效`);
+}
+
+export async function importAgentCharacterCard(file) {
+  if (!file) return;
+  try {
+    const result = await api('/api/character-card/parse', {
+      method: 'POST',
+      body: { name: file.name, data: await readAsDataUrl(file) },
+    });
+    const prompt = String(result.system_prompt || '').trim();
+    if (!prompt) {
+      toast('角色卡解析结果为空');
+      return;
+    }
+    const field = $('#agentSystemPromptEdit');
+    if (!field) return;
+    const merged = mergeAgentPromptText(field.value, prompt);
+    field.value = merged.text;
+    const cardName = result.meta?.name || file.name;
+    if (merged.truncated) {
+      toast(`已追加角色卡「${cardName}」，但超出 ${AGENT_PROMPT_LIMIT} 字符上限，已截断`);
+    } else {
+      toast(`已追加角色卡「${cardName}」，保存 Agent 后生效`);
+    }
+  } catch (error) {
+    toast(`导入失败：${error.message}`);
+  }
 }
 
 export function renderConversationPromptPresets() {
@@ -662,74 +816,6 @@ export async function importConversationPromptPresetCard(file) {
   } catch (error) { toast(`导入失败：${error.message}`); }
 }
 
-export async function applyConversationPromptPreset(id) {
-  const item = state.conversationPromptPresets.find((preset) => preset.id === id);
-  const field = $('#conversationSystemPrompt');
-  if (!item || !field) return;
-  const next = String(item.system_prompt || '');
-  if (field.value.trim() && field.value.trim() !== next && !confirm('当前系统提示词已有不同内容，是否覆盖？')) {
-    $('#conversationPromptPresetSelect').value = '';
-    return;
-  }
-  field.value = next;
-}
-
-export function openConversationSettings(id) {
-  const conversation = state.conversations.find((item) => item.id === id);
-  if (!conversation) return;
-  state.conversationSettingsId = id;
-  $('#conversationSettingsTitle').textContent = conversation.title || '当前对话';
-  $('#conversationTitle').value = conversation.title_customized ? (conversation.title || '') : '';
-  $('#conversationSystemPrompt').value = conversation.system_prompt || '';
-  $('#conversationStreamEnabled').checked = Number(conversation.stream_enabled ?? 1) !== 0;
-  $('#conversationSettingsDialog').showModal();
-}
-
-export async function saveConversationSettings(event) {
-  event.preventDefault();
-  const id = state.conversationSettingsId;
-  if (!id) return;
-  const saveButton = $('#saveConversationSettings');
-  saveButton.disabled = true;
-  try {
-    const updated = await api(`/api/conversations/${id}/settings`, {
-      method: 'POST',
-      body: {
-        title: $('#conversationTitle').value,
-        system_prompt: $('#conversationSystemPrompt').value,
-        stream_enabled: $('#conversationStreamEnabled').checked,
-      },
-    });
-    const index = state.conversations.findIndex((item) => item.id === id);
-    if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    $('#conversationSettingsDialog').close();
-    renderSidebar();
-    if (id === state.conversationId) {
-    }
-    toast('对话设置已保存');
-  } catch (error) {
-    toast(`保存失败：${error.message}`);
-  } finally {
-    saveButton.disabled = false;
-  }
-}
-
-export async function clearConversationMessages() {
-  const id = state.conversationSettingsId;
-  if (!id) return;
-  if (!confirm('确定清空这个对话的全部消息和工具记录吗？此操作无法恢复。')) return;
-  if (!confirm('请再次确认：要永久清空当前对话吗？')) return;
-  try {
-    await api(`/api/conversations/${encodeURIComponent(id)}/messages`, { method: 'DELETE' });
-    $('#conversationSettingsDialog').close();
-    if (id === state.conversationId) renderMessages([]);
-    await loadConversations();
-    toast('对话已清空');
-  } catch (error) {
-    toast(`清空失败：${error.message}`);
-  }
-}
-
 export async function clearTerminalTasks() {
   if (!confirm('清理所有已结束、失败、取消或中断的异步任务记录吗？运行中的任务不会受影响。')) return;
   try {
@@ -742,6 +828,7 @@ export async function clearTerminalTasks() {
 }
 
 export async function deleteConversation(id) {
+  closeConversationMenu();
   if (id === state.conversationId && state.chatRunId) {
     toast('请先停止当前回复再删除对话');
     return;
