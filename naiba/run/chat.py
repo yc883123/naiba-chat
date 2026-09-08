@@ -22,6 +22,7 @@ from naiba.skills.policy import normalize_skill_policy
 from naiba.core.exceptions import TaskCancelled
 from naiba.vision.runtime import VisionBudget
 from naiba.core.attachments import _image_intent, compose_user_content, extract_attachments
+from naiba.core.conv_files import _conv_workspace_root, resolve_file_references
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.exceptions import ActiveRunError
 from naiba.core.file_changes import file_changes_from_runs
@@ -264,15 +265,20 @@ class ConversationRunMixin:
                 "is_first_turn": not (conversation.get("messages") or []),
             }
             try:
+                # @ 工作区引用：把用户消息里的 @相对路径 解析为绝对路径后再交给模型/落库
+                # （只替换工作区内真实存在的文件/目录，其余原样保留）。会话标题仍取用户原文。
+                workspace_root = _conv_workspace_root(conversation, self.app.config)
+                model_message = resolve_file_references(message, workspace_root)
                 run, _ = self.app.storage.create_chat_run(
                     conversation_id,
-                    message,
+                    model_message,
                     attachments,
                     agent,
                     snapshot,
                     mode,
                     plan_id,
                     display_message=str(body.get("display_message") or ""),
+                    title_text=message,
                 )
             except RuntimeError as exc:
                 active_error = self._active_error(exc)

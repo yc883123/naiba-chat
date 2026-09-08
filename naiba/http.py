@@ -311,7 +311,12 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/workspace/browse":
             try:
                 query = urllib.parse.parse_qs(parsed.query)
-                self._json(self.app.browse_workspace(query.get("path", [""])[0]))
+                self._json(self.app.browse_workspace(
+                    query.get("path", [""])[0],
+                    query.get("conversation_id", [""])[0],
+                ))
+            except LookupError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.NOT_FOUND)
             except (OSError, ValueError, RuntimeError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/install/dirs":

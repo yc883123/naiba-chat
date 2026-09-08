@@ -3,11 +3,16 @@
 安全边界：面板只允许"本会话改动过 或 位于会话工作区内"的文件；
 保存写回必须同时满足两者；越界路径（../穿越、绝对路径、http 前缀）一律拒绝。
 config 对象只要求 resolve_workspace_dir(raw) 契约（窄接口，见设计文档 §2.1）。
+
+另含两项会话工作区能力（输入框 @ 引用文件/目录）：
+- ``browse_workspace_tree``：会话工作区内的浅层目录浏览（只读、越界拒绝、隐藏项过滤）；
+- ``resolve_file_references``：把用户消息里的 ``@相对路径`` 解析成工作区内绝对路径（模型可见文本）。
 """
 
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +22,15 @@ _CONV_FILE_SNIFF_BYTES = 4096          # 二进制嗅探长度
 _CONV_FILE_READ_CAP = 2 * 1024 * 1024  # 单次读取/预览上限
 _CONV_FILE_SAVE_CAP = 8 * 1024 * 1024  # 单次写回上限
 _CONV_IMAGE_EXTS = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"})
+
+# 工作区浏览：单目录最多返回条目数与恒定隐藏项（VCS/宿主写入探测目录）。
+WORKSPACE_BROWSE_LIMIT = 500
+_ALWAYS_HIDDEN_NAMES = frozenset({".git", ".naiba_write_test"})
+
+# @ 引用 token：@ 必须位于行首或空白之后；支持 @"含 空格 的路径" 引号形态。
+_FILE_REF_RE = re.compile(r'(?<!\S)@(?:"(?P<quoted>[^"\n]+)"|(?P<plain>[^\s]+))')
+# 用户常在引用后直接跟标点（「见 @a.md。」）：解析失败时逐个剥掉尾部标点重试。
+_REF_TRAILING_PUNCT = "。，、；：！？）】》」』”’.,;:!?)]}>"
 
 
 def _conv_touched_files(conversation: dict[str, Any] | None) -> list[str]:
@@ -140,3 +154,144 @@ def _conv_file_save(
             pass
     stat = target.stat()
     return {"path": str(target), "name": target.name, "size": stat.st_size, "mtime": round(stat.st_mtime * 1000)}
+
+
+def _workspace_entries(
+    target: Path, root: Path, *, hide_dotfiles: bool, limit: int
+) -> tuple[list[dict[str, Any]], bool]:
+    """列一层目录（目录优先、名称序）；返回 (entries, truncated)。"""
+    try:
+        children = sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
+    except OSError as exc:
+        raise ValueError(f"无法读取目录：{exc}") from exc
+    entries: list[dict[str, Any]] = []
+    truncated = False
+    for child in children:
+        name = child.name
+        if name in _ALWAYS_HIDDEN_NAMES:
+            continue
+        if hide_dotfiles and name.startswith("."):
+            continue
+        if len(entries) >= limit:
+            truncated = True
+            break
+        try:
+            is_dir = child.is_dir()
+            size = None if is_dir else child.stat().st_size
+        except OSError:
+            continue
+        entries.append(
+            {
+                "name": name,
+                "path": str(child),
+                "rel": child.relative_to(root).as_posix(),
+                "kind": "directory" if is_dir else "file",
+                "size": size,
+            }
+        )
+    return entries, truncated
+
+
+def browse_workspace_tree(
+    root: Path,
+    raw_path: Any = "",
+    *,
+    hide_dotfiles: bool = False,
+    limit: int = WORKSPACE_BROWSE_LIMIT,
+) -> dict[str, Any]:
+    """会话工作区浅层浏览（只读）：当前目录条目 + 面包屑/返回上级所需相对路径。
+
+    ``raw_path`` 支持绝对路径与相对工作区根的相对路径；越界与不存在一律报错。
+    """
+    root = Path(root).resolve()
+    raw = str(raw_path or "").strip()
+    target = Path(raw).expanduser() if raw else root
+    if not target.is_absolute():
+        target = root / raw
+    target = target.resolve()
+    if not path_within(target, root):
+        raise ValueError("浏览路径必须位于会话工作区内")
+    if not target.exists() or not target.is_dir():
+        raise ValueError("目录不存在或已被移动")
+    entries, truncated = _workspace_entries(
+        target, root, hide_dotfiles=hide_dotfiles, limit=limit
+    )
+    at_root = target == root
+    return {
+        "root": str(root),
+        "path": str(target),
+        "rel": "" if at_root else target.relative_to(root).as_posix(),
+        "parent": "" if at_root else str(target.parent),
+        "parent_rel": "" if at_root else (
+            "" if target.parent == root else target.parent.relative_to(root).as_posix()
+        ),
+        "truncated": truncated,
+        "entries": entries,
+    }
+
+
+def _resolve_reference_token(raw: str, root: Path) -> tuple[str, str] | None:
+    """把单个 @ token 解析成工作区内绝对路径。
+
+    返回 ``(被替换的原文片段, 替换文本)``；目录保留尾部路径分隔符以示"这是目录"。
+    解析失败（不存在 / 越界 / 空）返回 None —— token 原样保留，邮箱等误报因此不受影响。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    stripped = text.rstrip(_REF_TRAILING_PUNCT)
+    candidates = [text] if (not stripped or stripped == text) else [text, stripped]
+    for candidate in candidates:
+        base = candidate.rstrip("/\\")
+        if not base:
+            continue
+        path = Path(base).expanduser()
+        if not path.is_absolute():
+            path = root / base
+        try:
+            resolved = path.resolve()
+        except (OSError, ValueError):
+            continue
+        if not path_within(resolved, root):
+            continue
+        try:
+            if resolved.is_dir():
+                return candidate, str(resolved) + os.sep
+            if resolved.is_file():
+                return candidate, str(resolved)
+        except OSError:
+            continue
+    return None
+
+
+def resolve_file_references(text: str, root: Path | None) -> str:
+    """把用户消息里的 @ 工作区引用替换成绝对路径（模型可见文本）。
+
+    只替换"能解析到会话工作区内真实存在的文件/目录"的 token；其余（邮箱、普通 @ 提及、
+    工作区外路径、不存在的路径）原样保留，因此该替换对普通文本无副作用。
+    """
+    value = str(text or "")
+    if not value or root is None:
+        return value
+    root = Path(root).resolve()
+    out: list[str] = []
+    pos = 0
+    for match in _FILE_REF_RE.finditer(value):
+        quoted = match.group("quoted")
+        raw = quoted if quoted is not None else match.group("plain")
+        resolved = _resolve_reference_token(raw, root)
+        if resolved is None:
+            continue
+        consumed, replacement = resolved
+        if quoted is not None:
+            # 连同 @" 与收尾引号一起替换，避免残留引号/@ 前缀。
+            start, end = match.start("quoted") - 2, match.end()
+        else:
+            # 连同 @ 一起替换（整段引用 → 绝对路径）。
+            start = match.start("plain") - 1
+            end = match.start("plain") + len(consumed)
+        out.append(value[pos:start])
+        out.append(replacement)
+        pos = end
+    out.append(value[pos:])
+    return "".join(out)

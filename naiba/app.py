@@ -31,6 +31,7 @@ from naiba.core.migration import (
     _sync_bundled_skills, migrate_legacy_data,
 )
 from naiba.core.network import network_access_status
+from naiba.core.conv_files import _conv_workspace_root, browse_workspace_tree
 from naiba.core.paths import path_within
 from naiba.jobs import JobRegistry
 from naiba.llm.runtime import ModelRuntime
@@ -284,34 +285,22 @@ class NaibaChatApp:
         self.config.ensure_workspace_writable(resolved)
         return {"cancelled": False, "path": selected, "resolved": str(resolved)}
 
-    def browse_workspace(self, raw: str = "") -> dict[str, Any]:
-        """Return a shallow, read-only project tree limited to the workspace root."""
-        root = self.config.resolve_workspace_dir()
+    def browse_workspace(self, raw: str = "", conversation_id: str = "") -> dict[str, Any]:
+        """Return a shallow, read-only project tree limited to a workspace root.
+
+        传入 ``conversation_id`` 时以该会话的工作区为根（输入框 @ 引用文件/目录），
+        并隐藏点号条目；不传时为全局默认工作区（设置页目录树，保持原行为）。
+        """
+        conversation: dict[str, Any] | None = None
+        if str(conversation_id or "").strip():
+            conversation = self.storage.get_conversation(str(conversation_id).strip())
+            if not conversation:
+                raise LookupError("对话不存在")
+        root = _conv_workspace_root(conversation, self.config)
+        if root is None:
+            raise ValueError("工作区不可用")
         self.config.ensure_workspace_writable(root)
-        target = (Path(raw).expanduser() if str(raw or "").strip() else root).resolve()
-        if not path_within(target, root):
-            raise ValueError("浏览路径必须位于当前工作区内")
-        if not target.exists() or not target.is_dir():
-            raise ValueError("工作区目录不存在")
-        entries = []
-        try:
-            children = sorted(target.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
-        except OSError as exc:
-            raise ValueError(f"无法读取工作区目录：{exc}") from exc
-        for child in children[:500]:
-            if child.name in {".git", ".naiba_write_test"}:
-                continue
-            try:
-                is_dir = child.is_dir()
-                entries.append({
-                    "name": child.name,
-                    "path": str(child),
-                    "kind": "directory" if is_dir else "file",
-                    "size": None if is_dir else child.stat().st_size,
-                })
-            except OSError:
-                continue
-        return {"root": str(root), "path": str(target), "parent": str(target.parent) if target != root else "", "entries": entries}
+        return browse_workspace_tree(root, raw, hide_dotfiles=conversation is not None)
 
     def _start_mcp_background(self) -> None:
         """应用启动后在后台连接所有已启用 MCP 服务，并保持到退出。

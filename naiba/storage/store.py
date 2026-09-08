@@ -1242,8 +1242,12 @@ class ChatStorage:
         parent_job_id: str = "",
         owner_session_id: str = "",
         display_message: str = "",
+        title_text: str = "",
     ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Atomically append the user message and create its owning run."""
+        """Atomically append the user message and create its owning run.
+
+        ``title_text`` 仅用于首轮标题（用户原文，可能含 @ 引用）；留空时回退用 ``message``。
+        """
         now = int(time.time() * 1000)
         run_id = uuid.uuid4().hex
         message_id = uuid.uuid4().hex
@@ -1317,8 +1321,9 @@ class ChatStorage:
             ).fetchone()[0]
             if message_count <= 2 and not conversation["title_customized"]:
                 # 纯附件轮次（无文字）没有可用的标题文本：回退到首个附件名，避免所有
-                # 图片/文件首轮都叫"新对话"而无法区分。
-                title = " ".join(message.strip().split())[:36] or _attachment_title(attachments)
+                # 图片/文件首轮都叫"新对话"而无法区分。@ 引用轮次取用户原文（非解析后的路径）。
+                title_source = str(title_text or message)
+                title = " ".join(title_source.strip().split())[:36] or _attachment_title(attachments)
                 db.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
         return self.get_background_task(run_id) or {}, history
 
