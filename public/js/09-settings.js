@@ -1333,7 +1333,8 @@ export async function renderAgentToolPicker() {
     const desc = document.createElement('small');
     desc.className = 'group-desc';
     desc.textContent = group.desc || '';
-    head.append(caret, allCb, title, count, desc);
+    // 一行顺序：箭头 · 全选框 · 分类名 · 小字说明 · 计数（CSS 按此列序排布）
+    head.append(caret, allCb, title, desc, count);
     head.addEventListener('click', () => toggleToolGroup(groupEl));
     head.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' || e.key === ' ') {

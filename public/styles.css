@@ -1338,8 +1338,9 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 
 .agent-tool-scope { padding: 10px; display: grid; gap: 7px; }
 .agent-tool-group { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+/* 一行呈现：折叠箭头 · 全选框 · 分类名 · 小字说明（占满剩余宽度、超出省略）· 计数 */
 .agent-tool-group-head {
-  display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto;
+  display: grid; grid-template-columns: auto auto max-content minmax(0, 1fr) auto;
   align-items: center; gap: 8px; padding: 9px 10px; cursor: pointer; user-select: none;
 }
 .agent-tool-group-head:hover { background: var(--surface-2); }
@@ -1347,15 +1348,15 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .agent-tool-group-head .group-select-all { width: 16px; height: 16px; margin: 0; padding: 0; border: 0; flex: none; accent-color: var(--accent); cursor: pointer; }
 .group-caret { display: inline-block; color: var(--muted); font-size: 10px; transition: transform .15s ease; }
 .agent-tool-group:not(.collapsed) .group-caret { transform: rotate(90deg); }
-.group-title { font-size: 13px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; }
 .group-count { flex: none; font-size: 11px; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 1px 7px; }
-.group-desc { grid-column: 2 / -1; font-size: 11px; font-weight: 400; color: var(--muted); line-height: 1.4; }
+.group-desc { min-width: 0; font-size: 11px; font-weight: 400; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-tool-group .permission-grid { padding: 4px 10px 11px; border-top: 1px solid var(--line); }
 .agent-tool-group.collapsed .permission-grid { display: none; }
 
 @media (max-width: 520px) {
   .tool-preset-select, .tool-template-name { flex-basis: 100%; max-width: none; }
-  .agent-tool-group-head { grid-template-columns: auto auto minmax(0, 1fr) auto; }
+  .agent-tool-group-head { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; gap: 6px; }
 }
 
 /* ══════════ polish-base：滚动条 · 焦点环 · 过渡 ══════════ */
