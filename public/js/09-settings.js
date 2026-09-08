@@ -486,7 +486,9 @@ export async function loadStorageStats() {
   try {
     const stats = await api('/api/storage/stats');
     dbSize.textContent = formatBytes(Number(stats.db_bytes || 0));
-    const tasks = $('#taskCount');
+    // 注意 id 是 storageTaskCount：顶栏任务徽标也叫 taskCount（历史重复 id 会让
+    // $('#taskCount') 命中顶栏那个，打开设置页时把顶栏文字写成「0 条（已结束 0）」）。
+    const tasks = $('#storageTaskCount');
     if (tasks) {
       tasks.textContent = `${Number(stats.task_count || 0)} 条（已结束 ${Number(stats.terminal_task_count || 0)}）`;
     }
