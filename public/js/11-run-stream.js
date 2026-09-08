@@ -427,7 +427,9 @@ export async function sendChatMessage(textOverride = '') {
   const text = buttonText
     ? (inputText ? `${inputText}\n${buttonText}` : buttonText)
     : inputText;
-  if (!text || state.taskSubmitting || state.cancelRequested) return;
+  const attachments = state.pendingFiles.map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
+  // 纯附件轮次（只发文件/图片、不写文字）合法：文字与附件至少有一个才可发送。
+  if ((!text && !attachments.length) || state.taskSubmitting || state.cancelRequested) return;
   const uploadingFile = state.pendingFiles.find((file) => file.uploading);
   if (uploadingFile) {
     toast(`请等待「${uploadingFile.name}」上传完成${uploadingFile.progress > 0 ? `（${uploadingFile.progress}%）` : ''}`);
@@ -444,7 +446,6 @@ export async function sendChatMessage(textOverride = '') {
   const referencedIds = parseSkillReferences(text).map((tok) => tok.skill.id);
   const messageText = stripSkillReferences(text);
   const conversationId = state.conversationId;
-  const attachments = state.pendingFiles.map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
   state.pendingFiles = [];
   renderPendingFiles();
   input.value = '';

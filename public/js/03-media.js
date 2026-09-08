@@ -409,7 +409,6 @@ export function renderContextUsage() {
 export function updateContextComposerLock(busy = false) {
   const atCeiling = Boolean(state.contextAtCeiling);
   const input = $('#messageInput');
-  const sendBtn = $('#sendButton');
   // Always lock the input at the ceiling so the user cannot draft a new turn.
   if (input) {
     input.disabled = atCeiling;
@@ -417,12 +416,41 @@ export function updateContextComposerLock(busy = false) {
       ? '上下文已满，请新建对话后继续'
       : (busy ? '回复进行中…' : '输入消息');
   }
-  // During an in-progress run the send button doubles as the stop control, so
-  // keep it clickable; otherwise lock it at the ceiling too.
-  if (sendBtn) {
-    sendBtn.disabled = atCeiling && !busy;
-    sendBtn.title = atCeiling ? '上下文已满，请新建对话后继续' : '发送';
+  // 发送按钮的可用性由 updateSendButtonState 单点维护（含"运行中即停止键"语义）。
+  updateSendButtonState();
+}
+
+// 发送按钮可用性（唯一写入点）：文字或附件至少有一个才可发送——纯附件轮次（只发文件/
+// 图片、不写字）合法；上传未完成 / 上下文已满 / 无内容时 disabled（灰暗样式由
+// styles.css 的 .send-button:disabled 承担）；回复进行中按钮变身"停止"，始终可点。
+export function updateSendButtonState() {
+  const sendBtn = $('#sendButton');
+  if (!sendBtn) return;
+  const busy = Boolean(state.chatBusy);
+  const cancelRequested = Boolean(state.cancelRequested);
+  let disabled = false;
+  let title = '发送';
+  if (busy) {
+    disabled = cancelRequested;
+    title = cancelRequested ? '正在停止' : '停止当前任务';
+  } else if (state.contextAtCeiling) {
+    disabled = true;
+    title = '上下文已满，请新建对话后继续';
+  } else {
+    const uploading = state.pendingFiles.find((file) => file.uploading);
+    const hasText = Boolean(String($('#messageInput')?.value || '').trim());
+    const hasAttachment = state.pendingFiles.some((file) => file.path);
+    if (uploading) {
+      disabled = true;
+      title = `请等待「${uploading.name}」上传完成`;
+    } else if (!hasText && !hasAttachment) {
+      disabled = true;
+      title = '输入消息或添加文件后发送';
+    }
   }
+  sendBtn.disabled = disabled;
+  sendBtn.title = title;
+  sendBtn.setAttribute('aria-label', title);
 }
 
 // Legacy provider context_size: migrated to context_window and kept only for

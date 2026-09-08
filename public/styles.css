@@ -609,6 +609,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .attach-button { color: var(--muted); }
 .send-button { border: 0; border-radius: var(--r-md); background: var(--accent-solid); color: white; transition: var(--t-fast); }
 .send-button:hover { background: var(--brand-700); }
+/* 不可发送态（无文字且无附件 / 上传中 / 上下文已满）：灰底灰字，可发送时才回到 accent 实心。 */
+.send-button:disabled { background: var(--surface-2); color: var(--muted); }
+.send-button:disabled:hover { background: var(--surface-2); }
 .send-button.is-stop { background: var(--red); }
 .send-button.is-stop:hover { background: var(--brand-700); }
 .composer-meta { min-height: 22px; display: flex; align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; gap: 12px; white-space: nowrap; }

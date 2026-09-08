@@ -3,7 +3,7 @@
 // ============================================================
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast } from "./01-core.js";
-import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, hideImageContextMenu, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, toggleContextUsagePopover } from "./03-media.js";
+import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, hideImageContextMenu, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
 import { branchMessage, isNearBottom, setStickToBottom, startEditMessage } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
@@ -179,7 +179,7 @@ export function bindEvents() {
     if (state.chatRunId || state.abortController) cancelCurrentRun();
     else sendMessage();
   });
-  $('#messageInput').addEventListener('input', () => { resizeTextarea(); renderInputMirror(); updateSkillPopup(); });
+  $('#messageInput').addEventListener('input', () => { resizeTextarea(); renderInputMirror(); updateSkillPopup(); updateSendButtonState(); });
   $('#messageInput').addEventListener('select', updateSkillPopup);
   $('#messageInput').addEventListener('click', updateSkillPopup);
   $('#messageInput').addEventListener('focus', updateSkillPopup);
@@ -1020,5 +1020,7 @@ export function switchSettingsTab(name) {
 
 bindEvents();
 initialize();
+// 首屏输入框为空：发送按钮从加载起就是灰暗的不可发送态。
+updateSendButtonState();
 restoreLeftSidebarCollapse();
 updateFileTabsButton();

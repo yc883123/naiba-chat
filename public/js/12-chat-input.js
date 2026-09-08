@@ -855,19 +855,18 @@ export function setBusy(busy) {
   const mc = $('#messages');
   if (mc) mc.classList.toggle('conversation-running', busy);
   const sendBtn = $('#sendButton');
-  sendBtn.disabled = Boolean(state.cancelRequested);
   sendBtn.classList.toggle('is-stop', busy);
   sendBtn.innerHTML = state.cancelRequested
     ? '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="3"></circle></svg>'
     : (busy
       ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>'
       : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>');
-  sendBtn.title = state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送');
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
-  sendBtn.setAttribute('aria-label', state.cancelRequested ? '正在停止' : (busy ? '停止当前任务' : '发送'));
   const messageInput = $('#messageInput');
   messageInput.disabled = false;
   messageInput.placeholder = busy ? '回复进行中…' : '输入消息';
+  // 发送按钮的 disabled/title/aria-label 由 updateSendButtonState 单点维护
+  // （经 updateContextComposerLock 调用），此处只负责图标与停止态样式。
   updateContextComposerLock(busy);
   updateLightweightModeControl();
   updateUnloadModelButton();
