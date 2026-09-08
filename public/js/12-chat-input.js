@@ -10,7 +10,7 @@ import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation } from "./08-conversations.js";
 import { uploadFiles } from "./10-upload.js";
-import { SKILL_INSTALL_PRESET, clearElapsedStatus, clearRunReconnectTimers, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
+import { SKILL_INSTALL_PRESET, SKILL_SCRIPT_RULES, clearElapsedStatus, clearRunReconnectTimers, clearVisionProgress, collapseToolReasoningBlock, createStreamingReasoningBlock, detachRunConnection, sendChatMessage, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
 import { insertTextAtCursor, renderInputMirror, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
 export async function startSkillInstall() {
   if (state.chatRunId || state.abortController) {
@@ -327,8 +327,11 @@ export const SKILL_EDIT_PRESET =
   + '2. 调用 inspect_installed_skill{skill: <名称或id>} 拿到该 Skill 的 path（SKILL.md）与 root（所在目录）。\n'
   + '3. 用 read_file 读取 SKILL.md 及其相关脚本/资源，向用户概述当前内容。\n'
   + '4. 按用户要求，用 edit_file/write_file 修改 SKILL.md、描述、脚本等；修改前可先与用户确认改动点，改完说明改了什么。\n'
-  + '5. 提醒用户：改动会持久化到该 Skill 文件；切换/重开会话或重新引用（/技能名）后生效。\n'
-  + '6. 若用户给的 Skill 不存在（inspect_installed_skill 返回未找到），向用户说明可用的 Skill，不要凭空编造。';
+  + '5. 若涉及附带脚本：按下面的脚本规范整理——脚本统一放到该 Skill 目录的 scripts/ 子目录，读写文件显式 UTF-8；'
+  + '发现旧脚本裸用 open()（冻结版下会按 GBK 读写、中文乱码）时，顺手改成 encoding="utf-8" 并告知用户。\n'
+  + '6. 提醒用户：改动会持久化到该 Skill 文件；切换/重开会话或重新引用（/技能名）后生效。\n'
+  + '7. 若用户给的 Skill 不存在（inspect_installed_skill 返回未找到），向用户说明可用的 Skill，不要凭空编造。\n\n'
+  + SKILL_SCRIPT_RULES;
 
 export async function startSkillEdit() {
   if (state.chatRunId || state.abortController) {

@@ -503,6 +503,20 @@ export async function sendChatMessage(textOverride = '') {
   }
 }
 
+// Skill 附带脚本的通用规范（安装 / 编辑两个入口共用同一份文案，避免两处漂移）。
+// 依据：run_skill_script 的 script 是"相对 Skill 根目录"的路径；冻结版 Python 默认编码
+// 跟随系统 locale（简体中文 Windows = GBK），裸 open() 会读写乱码（维护说明 §九.18⑤/⑥）。
+export const SKILL_SCRIPT_RULES =
+  '【Skill 附带脚本规范（务必遵守）】\n'
+  + '1. 脚本一律放在该 Skill 目录的 scripts/ 子目录下（如 <skill 根目录>/scripts/xxx.py），不要散落在根目录或其它子目录；'
+  + '后续调用时 script 参数写相对 Skill 根目录的路径（如 scripts/xxx.py）。\n'
+  + '2. 脚本读写文本/JSON 文件必须显式写 encoding="utf-8"（open(path, encoding="utf-8")、json.dump(..., ensure_ascii=False)）。'
+  + '原因：本应用冻结版下 Python 的默认编码跟随系统 locale（简体中文 Windows 上是 GBK），'
+  + '裸 open() 会把 UTF-8 文件读成乱码、把中文写成 GBK，导致中文路径/内容出错。\n'
+  + '3. 不要在脚本里自行改写 stdout/stderr 编码（宿主已把 run_skill_script 子进程的 stdio 强制为 UTF-8）；'
+  + '但脚本内部若再启动子进程、或写临时文件/日志，同样要显式指定 UTF-8。\n'
+  + '4. 优先只用标准库（冻结版解释器里可用的第三方包以应用自带为准）；脚本应把关键产物路径打印到 stdout，方便用户核对。';
+
 export const SKILL_INSTALL_PRESET =
   '用户希望在本应用内通过你安装一个 Skill。本会话已为你启用 install_skill / unpack_skill_archive（以及读取/编辑/写入文件）工具。'
   + '请按以下流程执行，并【先等待用户给出具体指令】：\n'
@@ -512,9 +526,11 @@ export const SKILL_INSTALL_PRESET =
   + '   - 单个 .md：直接用 read_file 读取；\n'
   + '   - 压缩包：先调 unpack_skill_archive{archive_path}（后端会做强校验并解压到工作区 .skill_incoming），再用 read_file 确认解压出的 SKILL.md。\n'
   + '3. 校验 SKILL.md：确认它能被识别为 Skill——必须包含 YAML frontmatter，且同时有 name 与 description。若不合法（缺 frontmatter、缺 name/description、格式错误），用 edit_file/write_file 帮用户修正后再继续。\n'
-  + '4. 安装：\n'
+  + '4. 附带脚本的 Skill：按下面的脚本规范检查并整理（脚本放在 scripts/ 子目录、显式 UTF-8），必要时用 write_file/edit_file 移动到 scripts/ 并修正编码写法，再继续安装。\n'
+  + '5. 安装：\n'
   + '   - 文件夹/解压后的文件夹 → install_skill{source_path: <该文件夹绝对路径>}；\n'
   + '   - 单个 .md → install_skill{source_path: <该 .md 绝对路径>}。\n'
-  + '5. 安装成功后：清理工作区 .skill_incoming 下的临时解压目录（unpack_skill_archive 留下的那个），并告知用户该 Skill 已安装、如何再次使用（可通过 /技能名 引用）。\n'
-  + '6. 若用户给的来源不是有效的 Skill（无合法 SKILL.md 或不是上述类型），不要强行安装，向用户说明并请其提供正确的来源。';
+  + '6. 安装成功后：清理工作区 .skill_incoming 下的临时解压目录（unpack_skill_archive 留下的那个），并告知用户该 Skill 已安装、如何再次使用（可通过 /技能名 引用）。\n'
+  + '7. 若用户给的来源不是有效的 Skill（无合法 SKILL.md 或不是上述类型），不要强行安装，向用户说明并请其提供正确的来源。\n\n'
+  + SKILL_SCRIPT_RULES;
 
