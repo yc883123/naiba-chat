@@ -889,8 +889,9 @@ export function renderAgentSkillPicker() {
   const list = $('#agentSkillList');
   if (!list) return;
   const skills = state.bootstrap?.skills || [];
+  // 与工具集同款卡片：勾选框 + 名称 + 两行说明（.skill-card，不复用技能页的 .skill-item 列表样式）。
   list.innerHTML = skills.map((skill) => `
-    <label class="skill-item">
+    <label class="skill-card">
       <input type="checkbox" value="${skill.id}" ${state.agentFormSkillIds.includes(skill.id) ? 'checked' : ''}>
       <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
     </label>`).join('') || '<p class="activity">暂无可用 Skill</p>';

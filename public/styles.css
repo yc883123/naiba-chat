@@ -1016,11 +1016,19 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .agent-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .agent-form input[type="text"], .agent-form textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }
 .agent-form input[disabled] { opacity: .6; }
-.agent-skills { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.agent-skills { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; /* 固定 Skill 与工具集两个列表共用同一高度，视觉上等高 */ --agent-list-h: 320px; }
 .agent-skills-head { padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
 .agent-skills-head b { font-size: 13px; }
 .agent-skills-head small { display: block; color: var(--muted); margin-top: 2px; }
-.agent-skills .skill-list { height: auto; max-height: 220px; padding: 0 6px 6px; }
+/* 固定 Skill：卡片网格（与工具集同款外壳），高度与工具集一致、内部滚动 */
+.agent-skills .skill-list { height: var(--agent-list-h); max-height: var(--agent-list-h); padding: 10px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: 7px; }
+.agent-skills .skill-list > .activity { grid-column: 1 / -1; margin: 0; }
+.agent-skills .skill-card { min-height: 68px; border: 1px solid var(--line); border-radius: var(--radius); padding: 11px; display: flex; align-items: flex-start; gap: 10px; background: var(--surface); color: var(--text); }
+.agent-skills .skill-card:hover { background: var(--surface-2); }
+.agent-skills .skill-card input { width: 17px; height: 17px; margin: 2px 0 0; accent-color: var(--accent); flex: none; }
+.agent-skills .skill-card > span { display: grid; gap: 4px; min-width: 0; }
+.agent-skills .skill-card b { font-size: 13px; }
+.agent-skills .skill-card p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .settings-content .subheading { margin-top: 22px; }
 .permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .permission-grid > label { min-height: 68px; border: 1px solid var(--line); border-radius: var(--radius); padding: 11px; display: flex; align-items: flex-start; gap: 10px; color: var(--text); }
@@ -1029,7 +1037,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .permission-grid b { font-size: 13px; }
 .permission-grid small { color: var(--muted); line-height: 1.35; }
 .agent-display { display: inline-block; max-width: min(220px, 20vw); height: 34px; line-height: 34px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 0 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
-#agentToolScope { max-height: 320px; overflow: auto; padding: 4px 2px; }
+#agentToolScope { height: var(--agent-list-h); max-height: var(--agent-list-h); overflow: auto; padding: 4px 2px; }
 .skill-dir-add, .skill-install { display: flex; gap: 9px; margin-bottom: 18px; }
 .skill-dir-add input, .skill-install input[type="file"] { flex: 1; min-width: 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }
 .skill-install input[type="file"] { padding: 8px; }
@@ -1247,6 +1255,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .provider-current { grid-template-columns: minmax(0, 1fr) auto auto; }
   .provider-current .control-button, .provider-current .danger-button { padding: 0 10px; }
   .permission-grid { grid-template-columns: 1fr; }
+  .agent-skills { --agent-list-h: 280px; }
+  .agent-skills .skill-list { grid-template-columns: 1fr; }
   .field-grid { grid-template-columns: 1fr; }
   .rename-conversation-dialog { width: 100vw; max-width: none; }
   .settings-dialog, .panel-dialog, .provider-dialog, .agent-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
