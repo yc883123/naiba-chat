@@ -113,7 +113,7 @@ export function showProviderForm(provider = {}, { isNew = false } = {}) {
   $('#providerDialogTitle').textContent = isNew ? '添加 API 供应商' : (provider.name || 'API 供应商');
   $('#providerDialogSubtitle').textContent = inferredKind === 'local' ? '本地 API' : '在线 API';
   // 卡片点开即可编辑（不再有「只读 → 点编辑」两态）。
-  setProviderEditMode(true, isNew);
+  setProviderEditMode(true);
   syncProviderKindOptions();
   updateProviderFormatGuide();
   updateProviderContextField();
@@ -159,9 +159,8 @@ export function updateProviderContextField() {
   });
 }
 
-export function setProviderEditMode(editing, isNew = false) {
+export function setProviderEditMode(editing) {
   state.providerEditing = editing;
-  state.providerIsNew = isNew;
   [
     '#providerName', '#providerBaseUrl', '#providerApiKey', '#providerFormat',
     '#providerKind', '#providerModel', '#providerModelCustom', '#providerContextWindow',
@@ -353,7 +352,6 @@ export function addProvider() {
 export function cancelProviderEdit() {
   clearTimeout(providerModelCheckTimer);
   state.providerEditing = false;
-  state.providerIsNew = false;
   const dialog = $('#providerDialog');
   if (dialog?.open) dialog.close();
   renderProviders();

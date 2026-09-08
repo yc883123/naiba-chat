@@ -55,7 +55,6 @@ export const state = {
   renameConversationId: '',
   newWorkspaceDir: '',
   providerEditing: false,
-  providerIsNew: false,
   providerKindTab: 'online',
   syncTimer: null,
   syncInFlight: false,
