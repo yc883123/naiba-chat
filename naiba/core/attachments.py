@@ -40,6 +40,10 @@ def _is_media_product_path(raw: str) -> bool:
     return dot > 0 and lower[dot:] in MEDIA_PRODUCT_EXTS
 
 
+# 仅附件、无文字的用户轮次：模型侧显式说明"用户没写指令"，避免模型自行编造用户诉求。
+ATTACHMENT_ONLY_NOTICE = "[用户未输入文字，只发送了以下附件]"
+
+
 def upload_reference_lines(uploads: list[dict[str, Any]]) -> list[str]:
     """用户上传附件的模型侧引用行（_run_chat 与历史重放共用，保证逐字节一致）。
 
@@ -49,6 +53,8 @@ def upload_reference_lines(uploads: list[dict[str, Any]]) -> list[str]:
     """
     lines: list[str] = []
     for item in uploads or []:
+        if not isinstance(item, dict):
+            continue
         path = str(item.get("path") or "").strip()
         if not path:
             continue
@@ -61,6 +67,23 @@ def upload_reference_lines(uploads: list[dict[str, Any]]) -> list[str]:
         else:
             lines.append(f"[用户上传文件：{path}]")
     return lines
+
+
+def compose_user_content(message: str, uploads: list[dict[str, Any]]) -> str:
+    """用户轮次的模型可见文本（_run_chat 与历史重放共用的唯一拼接口径）。
+
+    非空文字：保持历史口径逐字节不变（``文字 + "\\n" + 引用行``），前缀缓存不受影响；
+    纯附件（用户未输入文字）：以固定提示行替代空文字，再接附件引用行，使模型明确
+    "本轮只有附件、没有指令"，而不是自行脑补诉求。
+    """
+    text = str(message or "")
+    lines = upload_reference_lines(uploads)
+    if not lines:
+        return text
+    body = "\n".join(lines)
+    if text.strip():
+        return f"{text}\n{body}"
+    return f"{ATTACHMENT_ONLY_NOTICE}\n{body}"
 
 
 _IMAGE_MEDIA_TERM_RE = re.compile(

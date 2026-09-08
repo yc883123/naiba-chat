@@ -1,0 +1,166 @@
+# -*- coding: utf-8 -*-
+"""护栏：纯附件轮次（只发文件/图片、不写文字）发送规格。
+
+保护对象：输入框无文字也能发送附件；模型可见文本口径（compose_user_content）与历史
+重放逐字节一致；submit_chat 的放行/拒绝边界；纯附件首轮会话标题回退。
+"""
+
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from naiba.config import ConfigStore  # noqa: E402
+from naiba.core.attachments import (  # noqa: E402
+    ATTACHMENT_ONLY_NOTICE,
+    compose_user_content,
+    upload_reference_lines,
+)
+from naiba.run.manager import ConversationRunManager  # noqa: E402
+from naiba.storage.store import ChatStorage  # noqa: E402
+
+
+class ComposeUserContentTests(unittest.TestCase):
+    def test_text_only_passthrough(self):
+        self.assertEqual(compose_user_content("你好", []), "你好")
+
+    def test_text_with_uploads_keeps_legacy_join(self):
+        uploads = [{"path": "C:/tmp/a.png"}, {"path": "C:/tmp/b.pdf"}]
+        legacy = "看看" + "\n" + "\n".join(upload_reference_lines(uploads))
+        self.assertEqual(compose_user_content("看看", uploads), legacy)
+
+    def test_attachment_only_gets_notice_line(self):
+        uploads = [{"path": "C:/tmp/a.png"}]
+        content = compose_user_content("", uploads)
+        self.assertEqual(content, ATTACHMENT_ONLY_NOTICE + "\n[用户上传文件：C:/tmp/a.png]")
+        self.assertFalse(content.startswith("\n"), "空文字不应留下前导换行")
+
+    def test_blank_text_treated_as_attachment_only(self):
+        content = compose_user_content("   \n ", [{"path": "C:/tmp/a.png"}])
+        self.assertTrue(content.startswith(ATTACHMENT_ONLY_NOTICE))
+
+    def test_unusable_attachment_entries_ignored(self):
+        # 非字典/无 path 的条目一律忽略：既不产出引用行，也不抛异常。
+        self.assertEqual(compose_user_content("", [None, "x", {}, {"name": "无路径"}]), "")
+
+
+class _VisionStub:
+    def resolve_brain_supports_images(self, profile, probe_if_unknown=False):
+        return False
+
+
+class _CatalogStub:
+    def scan(self):
+        return {}
+
+
+class _RegistryStub:
+    def schemas(self):
+        return []
+
+    def readonly_mcp_tools(self):
+        return []
+
+
+class _SearchStub:
+    def is_available(self):
+        return False
+
+
+class SubmitChatAttachmentOnlyTests(unittest.TestCase):
+    """submit_chat 边界：文字与可用附件至少有一个（纯附件轮次合法）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self.storage = ChatStorage(root / "chat.db")
+        app = SimpleNamespace(
+            storage=self.storage,
+            config=ConfigStore(root / "config.json"),
+            catalog=_CatalogStub(),
+            vision=_VisionStub(),
+            tool_registry=_RegistryStub(),
+            web_search=_SearchStub(),
+        )
+        self.manager = ConversationRunManager(app)
+        self.conversation = self.storage.create_conversation()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _submit(self, body):
+        # 只验证提交阶段：run 线程不启动（_run_chat 不在本守门范围内）。
+        with mock.patch.object(self.manager, "_start", lambda run, target: None):
+            return self.manager.submit_chat(body)
+
+    def _user_messages(self):
+        conversation = self.storage.get_conversation(self.conversation["id"])
+        return [item for item in conversation["messages"] if item["role"] == "user"]
+
+    def test_attachment_only_is_accepted(self):
+        run = self._submit(
+            {
+                "conversation_id": self.conversation["id"],
+                "message": "",
+                "attachments": [{"name": "照片.png", "path": "C:/tmp/照片.png"}],
+            }
+        )
+        self.assertTrue(run.get("id"), "纯附件轮次应创建 Run")
+        messages = self._user_messages()
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0]["content"], "", "无文字时用户消息内容保持空串")
+        self.assertEqual(messages[0]["metadata"]["attachments"][0]["name"], "照片.png")
+
+    def test_empty_message_and_no_attachments_rejected(self):
+        with self.assertRaises(ValueError):
+            self._submit({"conversation_id": self.conversation["id"], "message": "", "attachments": []})
+
+    def test_attachment_without_path_rejected(self):
+        with self.assertRaises(ValueError):
+            self._submit(
+                {
+                    "conversation_id": self.conversation["id"],
+                    "message": "   ",
+                    "attachments": [{"name": "只有名字"}],
+                }
+            )
+
+    def test_attachments_must_be_list(self):
+        with self.assertRaises(ValueError):
+            self._submit(
+                {"conversation_id": self.conversation["id"], "message": "你好", "attachments": {"path": "x"}}
+            )
+
+    def test_text_only_still_accepted(self):
+        run = self._submit({"conversation_id": self.conversation["id"], "message": "你好"})
+        self.assertTrue(run.get("id"))
+
+    def test_attachment_only_first_turn_title_fallback(self):
+        self._submit(
+            {
+                "conversation_id": self.conversation["id"],
+                "message": "",
+                "attachments": [{"name": "照片.png", "path": "C:/tmp/照片.png"}],
+            }
+        )
+        conversation = self.storage.get_conversation(self.conversation["id"])
+        self.assertEqual(conversation["title"], "照片.png", "无文字首轮用附件名作标题")
+
+    def test_text_turn_title_still_from_text(self):
+        self._submit(
+            {
+                "conversation_id": self.conversation["id"],
+                "message": "帮我看看这张图",
+                "attachments": [{"name": "照片.png", "path": "C:/tmp/照片.png"}],
+            }
+        )
+        conversation = self.storage.get_conversation(self.conversation["id"])
+        self.assertEqual(conversation["title"], "帮我看看这张图")
+
+
+if __name__ == "__main__":
+    unittest.main()

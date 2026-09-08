@@ -21,7 +21,7 @@ from naiba.skills.context import DEFAULT_CONTEXT_WINDOW
 from naiba.skills.policy import normalize_skill_policy
 from naiba.core.exceptions import TaskCancelled
 from naiba.vision.runtime import VisionBudget
-from naiba.core.attachments import _image_intent, extract_attachments, upload_reference_lines
+from naiba.core.attachments import _image_intent, compose_user_content, extract_attachments
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.exceptions import ActiveRunError
 from naiba.core.file_changes import file_changes_from_runs
@@ -128,11 +128,16 @@ class ConversationRunMixin:
     def submit_chat(self, body: dict[str, Any]) -> dict[str, Any]:
         conversation_id = str(body.get("conversation_id") or "")
         message = str(body.get("message") or "").strip()
-        if not conversation_id or not message:
-            raise ValueError("conversation_id 和 message 不能为空")
         attachments = body.get("attachments") or []
         if not isinstance(attachments, list):
             raise ValueError("attachments 必须是数组")
+        if not conversation_id:
+            raise ValueError("conversation_id 不能为空")
+        # 纯附件轮次（只发文件/图片、不写字）合法：文字与可用附件至少有一个。
+        if not message and not any(
+            isinstance(item, dict) and str(item.get("path") or "").strip() for item in attachments
+        ):
+            raise ValueError("message 和 attachments 不能同时为空")
 
         with self._submit_lock:
             conversation = self.app.storage.get_conversation(conversation_id)
@@ -415,8 +420,8 @@ class ConversationRunMixin:
                 raise TaskCancelled("任务已取消")
             message = str(run.get("message") or "")
             uploads = snapshot.get("attachments") or []
-            extra = upload_reference_lines(uploads)
-            effective = message + (("\n" + "\n".join(extra)) if extra else "")
+            # 与历史重放（build_model_history）同一拼接口径：纯附件轮次补固定提示行。
+            effective = compose_user_content(message, uploads)
             model_key = str(snapshot.get("model_key") or "")
             if not model_key and snapshot.get("provider_id"):
                 model_key = f"online:{snapshot['provider_id']}"

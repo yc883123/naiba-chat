@@ -19,6 +19,17 @@ CURRENT_SCHEMA_VERSION = 14
 FIRST_DATA_WRITING_MIGRATION = 14
 
 
+def _attachment_title(attachments: list[dict[str, Any]] | None) -> str:
+    """纯附件轮次的会话标题回退：首个附件名（无名字时取路径文件名）。"""
+    for item in attachments or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip() or Path(str(item.get("path") or "")).name
+        if name:
+            return name[:36]
+    return "新对话"
+
+
 def _migrate_to_v1(db: sqlite3.Connection) -> None:
     """Schema 版本 1 的迁移：补齐历史列并回填 legacy model_key。
 
@@ -1129,7 +1140,9 @@ class ChatStorage:
                 "SELECT title_customized FROM conversations WHERE id = ?", (conversation_id,)
             ).fetchone()[0]
             if role == "user" and message_count <= 2 and not customized:
-                title = " ".join(content.strip().split())[:36] or "新对话"
+                title = " ".join(content.strip().split())[:36] or _attachment_title(
+                    (metadata or {}).get("attachments")
+                )
                 db.execute(
                     "UPDATE conversations SET title = ? WHERE id = ?",
                     (title, conversation_id),
@@ -1303,7 +1316,9 @@ class ChatStorage:
                 (conversation_id,),
             ).fetchone()[0]
             if message_count <= 2 and not conversation["title_customized"]:
-                title = " ".join(message.strip().split())[:36] or "新对话"
+                # 纯附件轮次（无文字）没有可用的标题文本：回退到首个附件名，避免所有
+                # 图片/文件首轮都叫"新对话"而无法区分。
+                title = " ".join(message.strip().split())[:36] or _attachment_title(attachments)
                 db.execute("UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id))
         return self.get_background_task(run_id) or {}, history
 

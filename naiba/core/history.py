@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from naiba.core.attachments import upload_reference_lines
+from naiba.core.attachments import compose_user_content
 from naiba.core.contracts import MetadataKeys
 from naiba.core.diagnostics import _cache_debug_enabled
 from naiba.core.tool_results import model_visible_run, truncate_json_text
@@ -195,9 +195,8 @@ def build_model_history(
         content = str(item.get("content") or "")
         previous_uploads = (item.get("metadata") or {}).get(MetadataKeys.ATTACHMENTS) or []
         if item.get("role") == "user" and previous_uploads:
-            paths = upload_reference_lines(previous_uploads)
-            if paths:
-                content += "\n" + "\n".join(paths)
+            # 与 _run_chat 同一拼接口径（纯附件轮次补固定提示行，见 compose_user_content）。
+            content = compose_user_content(content, previous_uploads)
             image_parts: list[dict[str, Any]] = []
             for upload in previous_uploads:
                 path = str(upload.get("path") or "")

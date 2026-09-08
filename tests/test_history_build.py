@@ -132,5 +132,25 @@ class ModelHistoryBuildTests(unittest.TestCase):
         self.assertIsInstance(history[0]["content"], str)
 
 
+    def test_attachment_only_user_message_replayed_with_notice(self):
+        """纯附件轮次（用户未输入文字）：重放补固定提示行，不留前导换行。"""
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = str(Path(tmp) / "照片.png")
+            history = build_model_history(
+                [
+                    {
+                        "role": "user",
+                        "content": "",
+                        "metadata": {"attachments": [{"path": missing}]},
+                    }
+                ]
+            )
+        self.assertEqual(history[0]["role"], "user")
+        content = history[0]["content"]
+        self.assertIsInstance(content, str)
+        self.assertTrue(content.startswith("[用户未输入文字，只发送了以下附件]"))
+        self.assertIn(f"[用户上传文件：{missing}]", content)
+
+
 if __name__ == "__main__":
     unittest.main()
