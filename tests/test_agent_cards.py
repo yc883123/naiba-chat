@@ -124,6 +124,40 @@ class BuiltInAgentsRetiredTests(unittest.TestCase):
         self.assertNotIn("built_in", store.public_agents()[0])
 
 
+class ToolGroupCatalogTests(unittest.TestCase):
+    """工具集分类目录：视觉分组必须有说明，且紧跟在「命令执行」之后。"""
+
+    def test_vision_group_follows_command_group_and_has_desc(self) -> None:
+        from naiba.config import TOOL_GROUP_INFO
+
+        names = [name for name, _ in TOOL_GROUP_INFO]
+        self.assertIn("视觉", names)
+        self.assertEqual(
+            names.index("视觉"), names.index("命令执行") + 1,
+            "视觉必须排在「命令执行」后面",
+        )
+        self.assertTrue(dict(TOOL_GROUP_INFO)["视觉"].strip(), "视觉分类必须有说明小字")
+        # 旧的「视觉（文本模型）/（视觉模型）」分类名随视觉单入口重构早已退役，别再复活。
+        self.assertNotIn("视觉（文本模型）", names)
+        self.assertNotIn("视觉（视觉模型）", names)
+
+    def test_tool_group_head_renders_title_and_desc_in_one_line(self) -> None:
+        settings = (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
+        body = settings[settings.index("const head = document.createElement('div');"):]
+        body = body[: body.index("groupEl.append(head)")]
+        self.assertIn("head.append(caret, allCb, title, desc, count)", body,
+                      "小字说明必须排在标题之后、计数之前（一行呈现）")
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        head_rule = css[css.index(".agent-tool-group-head {"):]
+        head_rule = head_rule[: head_rule.index("}")]
+        self.assertIn("auto auto max-content minmax(0, 1fr) auto", head_rule)
+        desc_rule = css[css.index(".group-desc {"):]
+        desc_rule = desc_rule[: desc_rule.index("}")]
+        self.assertIn("white-space: nowrap", desc_rule)
+        self.assertIn("text-overflow: ellipsis", desc_rule)
+        self.assertNotIn("grid-column", desc_rule, "小字不能再独占第二行")
+
+
 class AgentCardsMarkupTests(unittest.TestCase):
     def _index(self) -> str:
         return (ROOT / "public/index.html").read_text(encoding="utf-8")
