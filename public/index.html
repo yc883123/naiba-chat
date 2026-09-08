@@ -107,20 +107,15 @@
           </div>
           <h1>开始新对话</h1>
           <div class="starter-grid">
-            <button data-prompt="确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。确认接口可用后，等待用户指令，后续只允许通过 mcp 工具调用 ComfyUI 进行生成任务。将当前工作区目录下的所有工作流 json 文件加上 '_backup' 后缀复制一份，直接覆盖可能已经存在的带 '_backup' 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 '_backup' 后缀的所有工作流。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"></path></svg></span><span class="starter-title">通过 MCP 调用 ComfyUI</span><span class="starter-desc">连接 ComfyUI MCP 服务</span></button>
-            <button data-prompt="先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；若未启动，提示用户启动 ComfyUI。确认接口可用后，等待用户指令，后续通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。将当前工作区目录下的所有工作流 json 文件加上 '_backup' 后缀复制一份，直接覆盖可能已经存在的带 '_backup' 后缀的同名文件。本次只做复制操作，不得读取工作流文件内容。忽略文件夹内带 '_backup' 后缀的所有工作流。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path></svg></span><span class="starter-title">通过 HTTP 调用 ComfyUI</span><span class="starter-desc">启动 ComfyUI 后使用</span></button>
-            <button data-prompt="帮我设置本地 Comfy MCP 连接，按照 https://docs.comfy.org/agent-tools/mcp.md#local-comfy-mcp-connection 的设置指南操作。优先使用本地 Comfyui 的 python 环境。当发现不止一个的时候，优先寻找正在运行的 Comfyui 对应的环境。当发现没有已运行的 Comfyui 但本地存在多个 Comfyui 环境时，停止行动并向用户发出询问。安装完成 mcp 服务后，记得提醒用户在 mcp 相关的 agent 设置页面内手动开启由 mcp 服务所引入的新的 comfy mcp tools。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"></path></svg></span><span class="starter-title">设置本地 Comfy MCP</span><span class="starter-desc">配置连接与工具</span></button>
-            <button data-prompt="列出你当前所有可用工具。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-2.4 2.6-2.6Z"></path></svg></span><span class="starter-title">列出可用工具</span><span class="starter-desc">查看当前能力</span></button>
-            <button data-prompt="列出当前文件夹下的所有文件。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"></path></svg></span><span class="starter-title">列出所有文件</span><span class="starter-desc">浏览当前目录</span></button>
-            <button data-prompt="不进行任何操作，先理解你已接收到的系统指令，然后等待后续命令。"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg></span><span class="starter-title">等待用户指令</span><span class="starter-desc">先理解系统指令</span></button>
-            <button data-install-skill="1"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg></span><span class="starter-title">安装 Skill</span><span class="starter-desc">导入新技能</span></button>
-            <button data-edit-skill="1"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg></span><span class="starter-title">编辑 Skill</span><span class="starter-desc">修改已有技能</span></button>
+            <button class="starter-action" data-install-skill="1"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"></path><path d="M4 19h16"></path></svg></span><span class="starter-title">安装 Skill</span><span class="starter-desc">导入新技能</span></button>
+            <button class="starter-action" data-edit-skill="1"><span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg></span><span class="starter-title">编辑 Skill</span><span class="starter-desc">修改已有技能</span></button>
             <button class="starter-add" id="starterAddBtn" title="添加自定义指令" aria-label="添加自定义指令">
               <span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span>
               <span class="starter-title">自定义指令</span>
               <span class="starter-desc">添加常用提示词</span>
             </button>
           </div>
+          <button class="starter-restore" type="button" id="starterRestoreBtn" hidden>恢复默认预设</button>
         </div>
       </section>
 
@@ -138,19 +133,22 @@
             <div class="input-mirror" id="inputMirror" aria-hidden="true"></div>
             <textarea id="messageInput" rows="1" placeholder="输入消息" aria-label="消息" spellcheck="false"></textarea>
           </div>
-          <button class="icon-button deep-reasoning-button" type="button" id="deepReasoningButton" title="深度思考：关闭" aria-label="深度思考" aria-pressed="false">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <circle cx="12" cy="12" r="1"></circle>
-              <path d="M20.2 20.2c2.04-2.03.02-7.35-4.5-11.87S5.86 1.8 3.83 3.83c-2.04 2.03-.02 7.35 4.5 11.87s9.84 6.53 11.87 4.5Z"></path>
-              <path d="M15.7 15.7c4.52-4.52 6.54-9.84 4.5-11.87-2.03-2.04-7.35-.02-11.87 4.5S1.8 18.17 3.83 20.2c2.03 2.04 7.35.02 11.87-4.5Z"></path>
-            </svg>
-          </button>
-          <div class="reasoning-menu" id="reasoningMenu" role="menu" hidden>
-            <button type="button" data-reasoning-effort="auto" role="menuitem">跟随 API（自动）</button>
-            <button type="button" data-reasoning-effort="off" role="menuitem">关闭</button>
-            <button type="button" data-reasoning-effort="low" role="menuitem">低</button>
-            <button type="button" data-reasoning-effort="medium" role="menuitem">中</button>
-            <button type="button" data-reasoning-effort="high" role="menuitem">高</button>
+          <div class="reasoning-wrap">
+            <button class="icon-button deep-reasoning-button" type="button" id="deepReasoningButton" title="思考强度：跟随 API（自动）" aria-label="思考强度" aria-pressed="false" aria-haspopup="menu" aria-expanded="false">
+              <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <circle cx="12" cy="12" r="1"></circle>
+                <path d="M20.2 20.2c2.04-2.03.02-7.35-4.5-11.87S5.86 1.8 3.83 3.83c-2.04 2.03-.02 7.35 4.5 11.87s9.84 6.53 11.87 4.5Z"></path>
+                <path d="M15.7 15.7c4.52-4.52 6.54-9.84 4.5-11.87-2.03-2.04-7.35-.02-11.87 4.5S1.8 18.17 3.83 20.2c2.03 2.04 7.35.02 11.87-4.5Z"></path>
+              </svg>
+            </button>
+            <span class="reasoning-label" id="reasoningLabel">自动</span>
+            <div class="reasoning-menu" id="reasoningMenu" role="menu" hidden>
+              <button type="button" data-reasoning-effort="auto" role="menuitemradio">跟随 API（自动）</button>
+              <button type="button" data-reasoning-effort="off" role="menuitemradio">关闭</button>
+              <button type="button" data-reasoning-effort="low" role="menuitemradio">低</button>
+              <button type="button" data-reasoning-effort="medium" role="menuitemradio">中</button>
+              <button type="button" data-reasoning-effort="high" role="menuitemradio">高</button>
+            </div>
           </div>
           <div class="context-usage-wrap">
             <button class="context-usage-button" type="button" id="contextUsageButton" title="上下文用量：暂无数据" aria-label="查看上下文和 Token 用量" aria-expanded="false">

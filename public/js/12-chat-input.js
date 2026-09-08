@@ -32,14 +32,46 @@ export async function startSkillInstall() {
   sendMessage(SKILL_INSTALL_PRESET);
 }
 
-// ---- 自定义指令（开始新对话页的“+”按钮）：固化到用户 config，可快速复用 ----
+// ---- 自定义指令（开始新对话页的卡片）：内置预设与用户条目同在 config.starter_prompts，
+// 因此两者都可编辑、可删除；删除内置预设后可用「恢复默认预设」补回。 ----
+// 图标名 → SVG 内容（内置预设的 icon 字段随条目存在用户 config 里）。
+const STARTER_ICONS = {
+  list: '<path d="M4 6h16M4 12h16M4 18h10"></path>',
+  sparkle: '<circle cx="12" cy="12" r="3"></circle><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"></path>',
+  link: '<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"></path><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"></path>',
+  wrench: '<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-2.4 2.6-2.6Z"></path>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"></path>',
+  clock: '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path>',
+  plus: '<path d="M12 5v14M5 12h14"></path>',
+};
+const STARTER_DEFAULT_DESC = '自定义指令';
+
+function starterIconSvg(name) {
+  const inner = STARTER_ICONS[String(name || '')] || STARTER_ICONS.plus;
+  return `<svg viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
+}
+
 export async function loadStarterPrompts() {
   try {
     const r = await api('/api/starter-prompts');
     state.customPrompts = Array.isArray(r.prompts) ? r.prompts : [];
+    state.missingStarterPresets = Number(r.missing_presets || 0);
     renderStarterPrompts();
   } catch (error) {
     state.customPrompts = [];
+    state.missingStarterPresets = 0;
+  }
+}
+
+export async function restoreStarterPresets() {
+  try {
+    const r = await api('/api/starter-prompts/restore', { method: 'POST', body: {} });
+    state.customPrompts = Array.isArray(r.prompts) ? r.prompts : [];
+    state.missingStarterPresets = 0;
+    renderStarterPrompts();
+    toast('已恢复默认预设');
+  } catch (error) {
+    toast(`恢复默认预设失败：${error.message}`);
   }
 }
 
@@ -48,6 +80,8 @@ export function renderStarterPrompts() {
   const addBtn = $('#starterAddBtn');
   if (!grid || !addBtn) return;
   grid.querySelectorAll('.custom-starter').forEach((el) => el.remove());
+  // 卡片插在静态动作按钮（安装/编辑 Skill）之前，保持"预设 → 动作 → 自定义指令"的原顺序。
+  const anchor = grid.querySelector('.starter-action') || addBtn;
   state.customPrompts.forEach((p, i) => {
     if (!p || !p.text) return;
     const wrap = document.createElement('div');
@@ -55,7 +89,7 @@ export function renderStarterPrompts() {
     const main = document.createElement('button');
     main.type = 'button';
     main.title = `点击复用：${p.title || '自定义指令'}`;
-    main.innerHTML = `<span class="starter-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg></span><span class="starter-title">${escapeHtml(p.title || '自定义指令')}</span><span class="starter-desc">自定义指令</span>`;
+    main.innerHTML = `<span class="starter-icon">${starterIconSvg(p.icon)}</span><span class="starter-title">${escapeHtml(p.title || '自定义指令')}</span><span class="starter-desc">${escapeHtml(p.desc || STARTER_DEFAULT_DESC)}</span>`;
     main.addEventListener('click', () => sendMessage(p.text));
     const edit = document.createElement('button');
     edit.type = 'button';
@@ -72,8 +106,10 @@ export function renderStarterPrompts() {
     wrap.appendChild(main);
     wrap.appendChild(edit);
     wrap.appendChild(del);
-    grid.insertBefore(wrap, addBtn);
+    grid.insertBefore(wrap, anchor);
   });
+  const restoreBtn = $('#starterRestoreBtn');
+  if (restoreBtn) restoreBtn.hidden = !(state.missingStarterPresets > 0);
 }
 
 export function openStarterPromptDialog(index = -1, target = 'starter') {
@@ -121,6 +157,7 @@ export async function saveStarterPrompt() {
       renderQuickMessages();
     } else {
       state.customPrompts = r.prompts || [];
+      state.missingStarterPresets = Number(r.missing_presets || 0);
       state.editingStarterPrompt = -1;
       renderStarterPrompts();
     }
@@ -137,6 +174,7 @@ export async function removeStarterPrompt(index) {
   try {
     const r = await api(`/api/starter-prompts/${index}`, { method: 'DELETE' });
     state.customPrompts = r.prompts || [];
+    state.missingStarterPresets = Number(r.missing_presets || 0);
     renderStarterPrompts();
     toast('已删除自定义指令');
   } catch (error) {
@@ -316,6 +354,15 @@ export async function sendMessage(textOverride = '') {
   await sendChatMessage(textOverride);
 }
 
+// 思考强度等级的中文名（按钮下方标签 + 菜单高亮共用同一份，避免两处各写一套）。
+export const REASONING_LABELS = {
+  auto: '自动',
+  off: '关闭',
+  low: '低',
+  medium: '中',
+  high: '高',
+};
+
 export function updateDeepReasoningButton() {
   const btn = $('#deepReasoningButton');
   if (!btn) return;
@@ -324,40 +371,89 @@ export function updateDeepReasoningButton() {
   const effort = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'auto');
   const auto = effort === 'auto';
   const active = auto || effort !== 'off';
+  const label = REASONING_LABELS[effort] || REASONING_LABELS.auto;
   btn.classList.toggle('active', active);
   btn.dataset.reasoningEffort = effort;
   btn.setAttribute('aria-pressed', String(active));
-  btn.title = auto ? '深度思考：跟随 API（自动）' : (effort !== 'off' ? '深度思考：开启' : '深度思考：关闭');
+  btn.title = auto ? '思考强度：跟随 API（自动）' : `思考强度：${label}`;
+  const labelEl = $('#reasoningLabel');
+  if (labelEl) labelEl.textContent = label;
+  // 菜单高亮当前等级（点开就能看到"现在用的是哪一档"）
+  document.querySelectorAll('#reasoningMenu [data-reasoning-effort]').forEach((item) => {
+    const isCurrent = item.dataset.reasoningEffort === effort;
+    item.classList.toggle('is-active', isCurrent);
+    item.setAttribute('aria-checked', String(isCurrent));
+  });
 }
 
-export async function toggleDeepReasoning() {
-  if (!state.conversationId) await createConversation();
+// 点击思考按钮只做一件事：弹开/收起强度列表（不再顺带切换等级——用户实测反馈）。
+export function toggleDeepReasoning() {
   if (state.chatRunId || state.abortController) return;
   const menu = $('#reasoningMenu');
-  if (menu) {
-    menu.hidden = !menu.hidden;
-    if (!menu.hidden) return;
+  if (!menu) return;
+  const open = menu.hidden;
+  // 弹层挂到 body 并 fixed 定位：避免被 .composer-wrap 的 overflow 裁剪（教训 §九.27）。
+  if (open && menu.parentElement !== document.body) document.body.appendChild(menu);
+  menu.hidden = !open;
+  $('#deepReasoningButton')?.setAttribute('aria-expanded', String(open));
+  if (open) {
+    updateDeepReasoningButton();
+    positionReasoningMenu();
   }
-  const levels = ['auto', 'off', 'low', 'medium', 'high'];
-  const previous = state.reasoningEffort || (state.deepReasoningEnabled ? 'medium' : 'auto');
-  const next = levels[(levels.indexOf(previous) + 1) % levels.length];
-  state.reasoningEffort = next;
-  state.deepReasoningEnabled = next !== 'off';
+}
+
+// 强度列表的定位（fixed + 按按钮对齐，夹在视口内；优先向上展开，贴顶则下翻）。
+export function positionReasoningMenu() {
+  const menu = $('#reasoningMenu');
+  const btn = $('#deepReasoningButton');
+  if (!menu || !btn || menu.hidden) return;
+  const rect = btn.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const edge = 12;
+  const left = Math.min(
+    Math.max(edge, rect.right - menuRect.width),
+    Math.max(edge, window.innerWidth - menuRect.width - edge),
+  );
+  let top = rect.top - menuRect.height - 8;
+  if (top < edge) {
+    top = Math.min(rect.bottom + 8, Math.max(edge, window.innerHeight - menuRect.height - edge));
+  }
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+export function closeReasoningMenu() {
+  const menu = $('#reasoningMenu');
+  if (!menu || menu.hidden) return;
+  menu.hidden = true;
+  $('#deepReasoningButton')?.setAttribute('aria-expanded', 'false');
+}
+
+// 选择一档思考强度（菜单项点击）。思考强度是**会话级**设置：没有会话时先建会话再保存。
+export async function setReasoningEffort(effort) {
+  if (!REASONING_LABELS[effort]) return;
+  if (state.chatRunId || state.abortController) return;
+  if (!state.conversationId) await createConversation();
+  if (!state.conversationId) return;
+  const previous = state.reasoningEffort || 'auto';
+  const previousEnabled = Boolean(state.deepReasoningEnabled);
+  state.reasoningEffort = effort;
+  state.deepReasoningEnabled = effort !== 'off';
   updateDeepReasoningButton();
+  closeReasoningMenu();
   try {
     const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
       method: 'POST',
-      body: { deep_reasoning_enabled: state.deepReasoningEnabled, reasoning_effort: next },
+      body: { reasoning_effort: effort, deep_reasoning_enabled: state.deepReasoningEnabled },
     });
     const index = state.conversations.findIndex((item) => item.id === state.conversationId);
     if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
-    if (next === 'auto') toast('思考强度：跟随 API（自动，本对话）');
-    else toast(state.deepReasoningEnabled ? `深度思考已开启（${next}，本对话）` : '深度思考已关闭（本对话）');
+    toast(effort === 'auto' ? '思考强度：跟随 API（自动）' : `思考强度：${REASONING_LABELS[effort]}`);
   } catch (error) {
     state.reasoningEffort = previous;
-    state.deepReasoningEnabled = previous !== 'off';
+    state.deepReasoningEnabled = previousEnabled;
     updateDeepReasoningButton();
-    toast(`深度思考设置保存失败：${error.message}`);
+    toast(`思考设置保存失败：${error.message}`);
   }
 }
 

@@ -207,7 +207,11 @@ class RequestHandler(BaseHTTPRequestHandler):
         elif path == "/api/workspaces":
             self._json({"workspaces": self.app.config.data.get("workspaces", [])})
         elif path == "/api/starter-prompts":
-            self._json({"prompts": self.app.config.get_starter_prompts()})
+            # missing_presets：内置预设缺失数（前端据此决定是否显示「恢复默认预设」）
+            self._json({
+                "prompts": self.app.config.get_starter_prompts(),
+                "missing_presets": self.app.config.count_missing_starter_presets(),
+            })
         elif path == "/api/quick-messages":
             query = urllib.parse.parse_qs(parsed.query)
             self._json({"messages": self.app.config.get_quick_messages(query.get("sort", [""])[0])})
@@ -569,7 +573,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
-            self._json({"prompts": prompts}, HTTPStatus.CREATED)
+            self._json(
+                {"prompts": prompts, "missing_presets": self.app.config.count_missing_starter_presets()},
+                HTTPStatus.CREATED,
+            )
         elif path == "/api/quick-messages":
             text = str(body.get("text") or "").strip()
             try:
@@ -604,6 +611,9 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             self._json({"messages": messages})
+        elif path == "/api/starter-prompts/restore":
+            # 恢复默认预设：把缺失的内置预设补回列表头部（用户删除/改坏后的一键恢复）
+            self._json({"prompts": self.app.config.restore_starter_presets()})
         elif path.startswith("/api/starter-prompts/"):
             index = path.rsplit("/", 1)[-1]
             try:
@@ -623,7 +633,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
-            self._json({"prompts": prompts})
+            self._json({"prompts": prompts, "missing_presets": self.app.config.count_missing_starter_presets()})
         elif path == "/api/migration/backup":
             self._json(self.app.migration_backup())
         elif path == "/api/migration/run":
@@ -802,7 +812,10 @@ class RequestHandler(BaseHTTPRequestHandler):
             except ValueError:
                 self._json({"error": "无效的指令序号"}, HTTPStatus.BAD_REQUEST)
                 return
-            self._json({"prompts": self.app.config.remove_starter_prompt(idx)})
+            self._json({
+                "prompts": self.app.config.remove_starter_prompt(idx),
+                "missing_presets": self.app.config.count_missing_starter_presets(),
+            })
         elif path.startswith("/api/conversation-prompt-presets/"):
             deleted = self.app.config.delete_conversation_prompt_preset(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)

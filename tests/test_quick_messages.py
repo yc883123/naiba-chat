@@ -18,6 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from naiba.config import (  # noqa: E402
+    BUILTIN_STARTER_PRESETS,
     QUICK_MESSAGE_USE_CAP,
     ConfigStore,
     quick_message_score,
@@ -168,7 +169,11 @@ class QuickMessageSortTests(unittest.TestCase):
 
 
 class PromptListsIndependenceTests(unittest.TestCase):
-    """开始页「自定义指令」与快捷消息是两份独立列表（互不污染）。"""
+    """开始页「自定义指令」与快捷消息是两份独立列表（互不污染）。
+
+    注意：开始页列表现在**包含内置预设**（一次性并入 config.starter_prompts，
+    使其可编辑/可删除），因此断言改为"用户新增的条目在列表里"而不是"列表只有它"。
+    """
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -177,25 +182,81 @@ class PromptListsIndependenceTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def _titles(self):
+        return [item["title"] for item in self.config.get_starter_prompts()]
+
     def test_adding_quick_message_does_not_touch_starter_prompts(self):
+        before = self._titles()
         self.config.add_starter_prompt("开始页指令", "开始页内容")
         self.config.add_quick_message("快捷内容")
         starters = self.config.get_starter_prompts()
         quick = self.config.get_quick_messages()
-        self.assertEqual([item["title"] for item in starters], ["开始页指令"])
+        self.assertIn("开始页指令", [item["title"] for item in starters])
         self.assertEqual([item["text"] for item in quick], ["快捷内容"])
+        # 内置预设仍在（新增用户条目不得挤掉它们）
+        self.assertTrue(set(before) <= set(self._titles()))
 
-    def test_starter_prompt_shape_stays_simple(self):
+    def test_user_starter_prompt_shape_stays_simple(self):
         self.config.add_starter_prompt("开始页指令", "开始页内容")
-        entry = self.config.get_starter_prompts()[0]
-        self.assertEqual(set(entry), {"title", "text"}, "开始页条目不再带使用统计字段")
+        entry = next(item for item in self.config.get_starter_prompts() if item["title"] == "开始页指令")
+        self.assertEqual(set(entry), {"title", "text"}, "用户新增的开始页条目不带统计/图标字段")
 
     def test_removing_quick_message_keeps_starter_prompts(self):
         self.config.add_starter_prompt("开始页指令", "开始页内容")
         self.config.add_quick_message("快捷内容")
+        before = len(self.config.get_starter_prompts())
         self.config.remove_quick_message(0)
-        self.assertEqual(len(self.config.get_starter_prompts()), 1)
+        self.assertEqual(len(self.config.get_starter_prompts()), before)
+        self.assertIn("开始页指令", self._titles())
         self.assertEqual(self.config.get_quick_messages(), [])
+
+
+class StarterPresetSeedTests(unittest.TestCase):
+    """内置开始页预设：一次性并入 → 可编辑/可删除 → 可一键恢复。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "config.json"
+        self.config = ConfigStore(self.path)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_builtin_presets_seeded_once_with_desc_and_icon(self):
+        presets = [item for item in self.config.get_starter_prompts() if item.get("icon")]
+        self.assertEqual(len(presets), len(BUILTIN_STARTER_PRESETS))
+        for item in presets:
+            self.assertTrue(item.get("title") and item.get("text") and item.get("desc"))
+        self.assertEqual(self.config.count_missing_starter_presets(), 0)
+
+    def test_seed_does_not_run_twice_and_deleted_preset_stays_deleted(self):
+        first = self.config.get_starter_prompts()
+        index = next(i for i, item in enumerate(first) if item["title"] == "列出可用工具")
+        self.config.remove_starter_prompt(index)
+        self.assertNotIn("列出可用工具", [item["title"] for item in self.config.get_starter_prompts()])
+        # 重新加载配置：不得把用户删掉的预设"复活"
+        reloaded = ConfigStore(self.path)
+        self.assertNotIn("列出可用工具", [item["title"] for item in reloaded.get_starter_prompts()])
+        self.assertEqual(reloaded.count_missing_starter_presets(), 1)
+
+    def test_restore_readds_missing_presets_only(self):
+        self.config.remove_starter_prompt(0)
+        self.assertEqual(self.config.count_missing_starter_presets(), 1)
+        restored = self.config.restore_starter_presets()
+        titles = [item["title"] for item in restored]
+        self.assertIn(BUILTIN_STARTER_PRESETS[0]["title"], titles)
+        self.assertEqual(self.config.count_missing_starter_presets(), 0)
+        # 恢复后不产生重复条目
+        self.assertEqual(len(titles), len(set(titles)))
+
+    def test_update_preserves_desc_and_icon(self):
+        prompts = self.config.get_starter_prompts()
+        index = next(i for i, item in enumerate(prompts) if item.get("icon"))
+        self.config.update_starter_prompt(index, "改名后的预设", "新的指令正文")
+        entry = self.config.get_starter_prompts()[index]
+        self.assertEqual(entry["title"], "改名后的预设")
+        self.assertEqual(entry["text"], "新的指令正文")
+        self.assertTrue(entry.get("desc") and entry.get("icon"), "编辑不得丢掉副标题/图标")
 
 
 if __name__ == "__main__":

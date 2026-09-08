@@ -472,6 +472,74 @@ def quick_message_score(entry: dict[str, Any], now_ms: int) -> float:
     return score
 
 
+# ---- 开始页「自定义指令」的内置预设 ----
+# 这些卡片此前写死在 index.html 里（不可编辑、不可删除）；现在一次性并入
+# `starter_prompts`，与用户自建条目同权（可编辑/可删除），并支持一键恢复默认。
+# 键：title 标题 / text 指令正文 / desc 副标题 / icon 图标名（前端映射为 SVG）。
+BUILTIN_STARTER_PRESETS: tuple[dict[str, str], ...] = (
+    {
+        "title": "通过 MCP 调用 ComfyUI",
+        "desc": "连接 ComfyUI MCP 服务",
+        "icon": "list",
+        "text": (
+            "确认 ComfyUI mcp 服务是否正常；若无法连接 mcp 服务，提示用户连接 ComfyUI。"
+            "确认接口可用后，等待用户指令，后续只允许通过 mcp 工具调用 ComfyUI 进行生成任务。"
+            "将当前工作区目录下的所有工作流 json 文件加上 '_backup' 后缀复制一份，"
+            "直接覆盖可能已经存在的带 '_backup' 后缀的同名文件。本次只做复制操作，"
+            "不得读取工作流文件内容。忽略文件夹内带 '_backup' 后缀的所有工作流。"
+        ),
+    },
+    {
+        "title": "通过 HTTP 调用 ComfyUI",
+        "desc": "启动 ComfyUI 后使用",
+        "icon": "sparkle",
+        "text": (
+            "先探测 ComfyUI 是否已启动（GET http://127.0.0.1:8188/system_stats）；"
+            "若未启动，提示用户启动 ComfyUI。确认接口可用后，等待用户指令，"
+            "后续通过 HTTP API 或 comfy CLI 完成用户要求的生成任务。"
+            "将当前工作区目录下的所有工作流 json 文件加上 '_backup' 后缀复制一份，"
+            "直接覆盖可能已经存在的带 '_backup' 后缀的同名文件。本次只做复制操作，"
+            "不得读取工作流文件内容。忽略文件夹内带 '_backup' 后缀的所有工作流。"
+        ),
+    },
+    {
+        "title": "设置本地 Comfy MCP",
+        "desc": "配置连接与工具",
+        "icon": "link",
+        "text": (
+            "帮我设置本地 Comfy MCP 连接，按照 "
+            "https://docs.comfy.org/agent-tools/mcp.md#local-comfy-mcp-connection 的设置指南操作。"
+            "优先使用本地 Comfyui 的 python 环境。当发现不止一个的时候，优先寻找正在运行的 Comfyui "
+            "对应的环境。当发现没有已运行的 Comfyui 但本地存在多个 Comfyui 环境时，"
+            "停止行动并向用户发出询问。安装完成 mcp 服务后，记得提醒用户在 mcp 相关的 agent "
+            "设置页面内手动开启由 mcp 服务所引入的新的 comfy mcp tools。"
+        ),
+    },
+    {
+        "title": "列出可用工具",
+        "desc": "查看当前能力",
+        "icon": "wrench",
+        "text": "列出你当前所有可用工具。",
+    },
+    {
+        "title": "列出所有文件",
+        "desc": "浏览当前目录",
+        "icon": "folder",
+        "text": "列出当前文件夹下的所有文件。",
+    },
+    {
+        "title": "等待用户指令",
+        "desc": "先理解系统指令",
+        "icon": "clock",
+        "text": "不进行任何操作，先理解你已接收到的系统指令，然后等待后续命令。",
+    },
+)
+
+# 一次性并入的标记：置位后不再自动补回，用户删掉的预设不会被"复活"
+# （需要恢复时走「恢复默认预设」按钮 / `restore_starter_presets`）。
+STARTER_PRESET_SEED_KEY = "starter_presets_seeded"
+
+
 class ConfigStore:
     def __init__(self, path: Path, paths: PathContext | None = None):
         self.path = path
@@ -539,6 +607,7 @@ class ConfigStore:
             }
         self.data = defaults
         self._migrate_conversation_prompt_presets()
+        self._migrate_starter_presets()
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
         self._migrate_default_agent_skills()
@@ -633,6 +702,30 @@ class ConfigStore:
                 "updated_at": str(raw.get("updated_at") or raw.get("created_at") or now),
             })
         self.data["conversation_prompt_presets"] = normalized
+
+    def _migrate_starter_presets(self) -> None:
+        """把内置开始页预设一次性并入 `starter_prompts`（使它们可编辑/可删除）。
+
+        只在标记未置位时执行一次；用户此后删除的预设不会被自动补回
+        （需要时走「恢复默认预设」）。已存在同名条目的不重复插入。
+        """
+        if self.data.get(STARTER_PRESET_SEED_KEY):
+            return
+        prompts = self.data.get("starter_prompts")
+        if not isinstance(prompts, list):
+            prompts = []
+        existing = {
+            str(item.get("title") or "").casefold()
+            for item in prompts
+            if isinstance(item, dict)
+        }
+        seeded = [
+            dict(preset) for preset in BUILTIN_STARTER_PRESETS
+            if str(preset["title"]).casefold() not in existing
+        ]
+        self.data["starter_prompts"] = seeded + [item for item in prompts if isinstance(item, dict)]
+        self.data[STARTER_PRESET_SEED_KEY] = True
+        self.save()
 
     def save(self) -> None:
         with self.lock:
@@ -827,7 +920,50 @@ class ConfigStore:
         with self.lock:
             prompts = self.data.setdefault("starter_prompts", [])
             if isinstance(prompts, list) and 0 <= int(index) < len(prompts):
-                prompts[int(index)] = {"title": title, "text": text}
+                # 保留 desc/icon 等附加字段：内置预设的副标题与图标不应因一次编辑而丢失
+                # （前端按 entry.desc / entry.icon 渲染卡片）。
+                entry = dict(prompts[int(index)]) if isinstance(prompts[int(index)], dict) else {}
+                entry.update({"title": title, "text": text})
+                prompts[int(index)] = entry
+                self.save()
+        return self.get_starter_prompts()
+
+    def count_missing_starter_presets(self) -> int:
+        """当前列表里缺失的内置预设数量（前端据此显示「恢复默认预设」）。"""
+        with self.lock:
+            prompts = self.data.get("starter_prompts")
+            titles = {
+                str(item.get("title") or "").casefold()
+                for item in (prompts if isinstance(prompts, list) else [])
+                if isinstance(item, dict)
+            }
+            return sum(
+                1 for preset in BUILTIN_STARTER_PRESETS
+                if str(preset["title"]).casefold() not in titles
+            )
+
+    def restore_starter_presets(self) -> list[dict[str, str]]:
+        """把缺失的内置开始页预设补回列表头部（用户删掉/改坏后可一键恢复）。
+
+        只补"标题不存在"的条目：已存在同名条目（可能是用户改过的）保持原样，不覆盖。
+        """
+        with self.lock:
+            prompts = self.data.get("starter_prompts")
+            if not isinstance(prompts, list):
+                prompts = []
+            existing = {
+                str(item.get("title") or "").casefold()
+                for item in prompts
+                if isinstance(item, dict)
+            }
+            seeded = [
+                dict(preset) for preset in BUILTIN_STARTER_PRESETS
+                if str(preset["title"]).casefold() not in existing
+            ]
+            if seeded:
+                self.data["starter_prompts"] = seeded + [
+                    item for item in prompts if isinstance(item, dict)
+                ]
                 self.save()
         return self.get_starter_prompts()
 

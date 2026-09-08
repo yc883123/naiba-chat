@@ -11,7 +11,7 @@ import { checkUpdate, installUpdate, populateModels, renderUpdateStatus, saveAge
 import { applyConversationPromptPreset, clearConversationMessages, clearTerminalTasks, closeConversationPromptPresetForm, createConversation, createWorkspace, importCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openConversationSettings, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveConversationSettings, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
 import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, editProvider, hideAgentForm, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openVisionProviderForm, persistSearchProfiles, pickWorkspace, populateVisionSettings, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, showProviderForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
-import { cancelCurrentRun, closeQuickMessagePanel, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, quickPanelState, reloadPage, saveStarterPrompt, sendMessage, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel, updateDeepReasoningButton } from "./12-chat-input.js";
+import { cancelCurrentRun, closeQuickMessagePanel, closeReasoningMenu, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, positionReasoningMenu, quickPanelState, reloadPage, restoreStarterPresets, saveStarterPrompt, sendMessage, setReasoningEffort, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
 import { activateFileTab, activeFileTab, applyFilePanelOpenClass, cancelFileEdit, closeFilePanel, closeSidebar, filePanelState, filePanelUsable, openFilePanel, openSidebar, removeFileTab, reopenFilePanel, restoreLeftSidebarCollapse, saveFileTab, setLeftSidebarCollapsed, sidebarDesktop, startFileEdit, updateFileTabsButton } from "./14-file-panel.js";
 import { handleFilePopupClick, handleFilePopupKey, positionFilePopup, updateFilePopup } from "./16-file-refs.js";
@@ -315,24 +315,15 @@ export function bindEvents() {
   $('#deepReasoningButton').addEventListener('click', toggleDeepReasoning);
   $('#reasoningMenu')?.addEventListener('click', async (event) => {
     const effort = event.target.closest?.('[data-reasoning-effort]')?.dataset.reasoningEffort;
-    if (!effort || !state.conversationId || state.chatRunId || state.abortController) return;
-    const previous = state.reasoningEffort || 'off';
-    state.reasoningEffort = effort;
-    state.deepReasoningEnabled = effort !== 'off';
-    updateDeepReasoningButton();
-    try {
-      await api(`/api/conversations/${state.conversationId}/settings`, {
-        method: 'POST', body: { reasoning_effort: effort, deep_reasoning_enabled: state.deepReasoningEnabled },
-      });
-      $('#reasoningMenu').hidden = true;
-      toast(effort === 'auto' ? '思考强度：跟随 API（自动）' : `思考强度：${effort}`);
-    } catch (error) {
-      state.reasoningEffort = previous;
-      state.deepReasoningEnabled = previous !== 'off';
-      updateDeepReasoningButton();
-      toast(`思考设置保存失败：${error.message}`);
-    }
+    if (effort) await setReasoningEffort(effort);
   });
+  // 点空白处收起强度列表（与快捷消息面板同款交互）
+  document.addEventListener('click', (event) => {
+    if (event.target.closest?.('#reasoningMenu') || event.target.closest?.('#deepReasoningButton')) return;
+    closeReasoningMenu();
+  });
+  window.addEventListener('resize', positionReasoningMenu);
+  window.addEventListener('scroll', positionReasoningMenu, true);
   $('#contextUsageButton').addEventListener('click', toggleContextUsagePopover);
   $('#contextUsagePopover').addEventListener('click', (event) => event.stopPropagation());
   window.addEventListener('resize', positionContextUsagePopover);
@@ -422,6 +413,7 @@ export function bindEvents() {
     else if (button.dataset.prompt != null) sendMessage(button.dataset.prompt);
   }));
   $('#saveStarterPrompt').addEventListener('click', saveStarterPrompt);
+  $('#starterRestoreBtn')?.addEventListener('click', restoreStarterPresets);
   $('#copyAddress').addEventListener('click', async () => {
     if (!state.bootstrap?.lan_enabled || !state.bootstrap?.lan_url) return;
     try {
