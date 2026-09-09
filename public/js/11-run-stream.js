@@ -3,6 +3,7 @@
 // ============================================================
 
 import { $, api, escapeHtml, state, toast } from "./01-core.js";
+import { pendingContextWarning, showContextWarning } from "./03-media.js";
 import { messageElement, scrollToBottom, setStickToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { createConversation, loadConversations, openConversation } from "./08-conversations.js";
@@ -419,7 +420,7 @@ export async function resumeConversationRun(conversationId) {
   }
 }
 
-export async function sendChatMessage(textOverride = '') {
+export async function sendChatMessage(textOverride = '', { skipContextWarning = false } = {}) {
   const input = $('#messageInput');
   const inputText = String(input.value || '').trim();
   const buttonText = String(textOverride || '').trim();
@@ -439,6 +440,18 @@ export async function sendChatMessage(textOverride = '') {
   if (state.chatRunId || state.abortController) {
     toast('回复进行中，请等待完成或先点击停止');
     return;
+  }
+  // 空闲会话的上下文提醒：改成"点发送才提醒"——弹窗确认前不提交、不清空草稿；
+  // 点「继续发送」后带 skipContextWarning 重新进入本函数。
+  if (!skipContextWarning) {
+    const warning = pendingContextWarning();
+    if (warning) {
+      showContextWarning(warning.percent, warning.threshold, {
+        mode: 'send',
+        onContinue: () => { void sendChatMessage(textOverride, { skipContextWarning: true }); },
+      });
+      return;
+    }
   }
   // 用户新发起一轮：恢复跟随，让新答复从底部开始流式显示。
   setStickToBottom(true);

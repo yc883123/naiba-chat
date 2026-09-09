@@ -92,6 +92,8 @@ export const state = {
   deepReasoningEnabled: false,
   reasoningEffort: 'auto',
   contextUsage: null,
+  // 最近一次渲染出的上下文占用百分比（0 = 未知/无上限）：发送前提醒判定用。
+  contextPercent: 0,
   // 实时圆环所属会话：运行中历史重渲染不得覆盖实时值（见 updateContextUsage）。
   contextUsageConversationId: '',
   // 上下文提醒：每个会话只弹一次；换会话或用量回落到阈值以下后重新武装。

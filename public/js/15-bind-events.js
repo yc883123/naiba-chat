@@ -3,7 +3,7 @@
 // ============================================================
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
-import { closeContextUsagePopover, closeImageLightbox, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
+import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarning, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, resetContextWarningResume, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
 import { branchMessage, initTurnRail, isNearBottom, setStickToBottom, startEditMessage } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
@@ -346,6 +346,9 @@ export function bindEvents() {
   window.addEventListener('scroll', positionReasoningMenu, true);
   $('#contextUsageButton').addEventListener('click', toggleContextUsagePopover);
   $('#contextUsagePopover').addEventListener('click', (event) => event.stopPropagation());
+  // 上下文提醒弹窗：「继续发送」走待续动作；任何关闭路径（Esc/✕/知道了）都要清掉待续动作。
+  $('#contextWarningContinue').addEventListener('click', continueAfterContextWarning);
+  $('#contextWarningDialog').addEventListener('close', resetContextWarningResume);
   window.addEventListener('resize', positionContextUsagePopover);
   window.addEventListener('scroll', positionContextUsagePopover, true);
   document.addEventListener('click', closeContextUsagePopover);

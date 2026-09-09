@@ -818,6 +818,7 @@ export function renderContextUsage() {
     summary.textContent = '暂无模型用量数据';
     turn.textContent = '完成一次回复后显示本轮消耗';
     state.contextAtCeiling = false;
+    state.contextPercent = 0;
     maybeWarnContextUsage(0);
     updateContextComposerLock();
     return;
@@ -835,6 +836,7 @@ export function renderContextUsage() {
     : 0;
   const limit = profileLimit || trustedStoredLimit;
   const percent = limit > 0 ? Math.min(100, Math.max(0, context / limit * 100)) : 0;
+  state.contextPercent = percent;
   ring.style.setProperty('--context-percent', percent.toFixed(1));
   ring.classList.toggle('warning', percent >= 70 && percent < 90);
   ring.classList.toggle('danger', percent >= 90);
@@ -862,6 +864,8 @@ export function contextWarningPercent() {
 
 // 达到阈值时弹窗提醒一次：**以会话为单位**只提醒一次——换会话重新武装，用量回落到
 // 阈值以下也重新武装（例如新建对话）。percent<=0（无数据/上限未知）不提醒。
+// **运行中才在这里弹**；空闲会话（例如只是切到旧会话）留给"点击发送"前的
+// pendingContextWarning 判定，避免浏览旧会话就被打扰。
 export function maybeWarnContextUsage(percent) {
   const threshold = contextWarningPercent();
   const conversationId = String(state.conversationId || '');
@@ -870,27 +874,55 @@ export function maybeWarnContextUsage(percent) {
     state.contextWarningArmed = true;
   }
   const value = Number(percent) || 0;
-  if (!(threshold > 0) || !(value > 0)) {
+  if (!(threshold > 0) || !(value > 0) || value < threshold) {
     state.contextWarningArmed = true;
     return;
   }
-  if (value >= threshold) {
-    if (!state.contextWarningArmed) return;
-    state.contextWarningArmed = false;
-    showContextWarning(value, threshold);
-    return;
-  }
-  state.contextWarningArmed = true;
+  if (!state.chatBusy || !state.contextWarningArmed) return;
+  state.contextWarningArmed = false;
+  showContextWarning(value, threshold, { mode: 'running' });
 }
 
-export function showContextWarning(percent, threshold) {
+// 发送前判定（空闲会话）：已达阈值且本会话尚未提醒过 → 返回 {percent, threshold}
+// 并消耗"提醒一次"的标记；调用方负责弹窗（弹窗里可选「继续发送」）。
+export function pendingContextWarning() {
+  const threshold = contextWarningPercent();
+  const percent = Number(state.contextPercent) || 0;
+  const conversationId = String(state.conversationId || '');
+  if (state.contextWarningConversationId !== conversationId) return null;
+  if (state.chatBusy || !state.contextWarningArmed) return null;
+  if (!(threshold > 0) || !(percent > 0) || percent < threshold) return null;
+  state.contextWarningArmed = false;
+  return { percent, threshold };
+}
+
+// 弹窗待续动作（仅"发送前提醒"模式有）：关闭弹窗时必须清掉，避免误触发上一轮发送。
+let contextWarningResume = null;
+
+export function showContextWarning(percent, threshold, options = {}) {
   const detail = $('#contextWarningDetail');
   if (detail) {
     // 建议文案只在弹窗正文里出现一次，这里只报数（避免两处重复建议）。
     detail.textContent = `上下文用量已达 ${Number(percent).toFixed(1)}%（提醒阈值 ${threshold}%）`;
   }
+  const continueButton = $('#contextWarningContinue');
+  contextWarningResume = typeof options.onContinue === 'function' ? options.onContinue : null;
+  if (continueButton) continueButton.hidden = !contextWarningResume;
   const dialog = $('#contextWarningDialog');
   if (dialog && !dialog.open) dialog.showModal();
+}
+
+// 「继续发送」：先取回待续动作再关弹窗（关闭事件会清空它）。
+export function continueAfterContextWarning() {
+  const resume = contextWarningResume;
+  contextWarningResume = null;
+  const dialog = $('#contextWarningDialog');
+  if (dialog && dialog.open) dialog.close();
+  if (typeof resume === 'function') resume();
+}
+
+export function resetContextWarningResume() {
+  contextWarningResume = null;
 }
 
 export function updateContextComposerLock(busy = false) {

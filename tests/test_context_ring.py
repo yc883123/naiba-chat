@@ -113,6 +113,43 @@ class ContextWarningTests(unittest.TestCase):
         self.assertIn("threshold > 0", body, "阈值 0 = 关闭提醒")
         self.assertIn("showContextWarning(", body)
 
+    def test_idle_conversation_does_not_popup_on_render(self) -> None:
+        """空闲会话（只是切到旧会话）不得弹窗——留给点击发送时判定。"""
+        body = _function_body(_read("03-media.js"), "export function maybeWarnContextUsage")
+        self.assertIn(
+            "if (!state.chatBusy || !state.contextWarningArmed) return;",
+            body,
+            "渲染路径必须要求运行中才弹窗",
+        )
+
+    def test_send_path_checks_pending_warning(self) -> None:
+        source = _read("11-run-stream.js")
+        body = _function_body(source, "export async function sendChatMessage")
+        self.assertIn("pendingContextWarning()", body, "发送前必须做阈值判定")
+        self.assertIn("skipContextWarning", body, "「继续发送」要能跳过判定")
+        self.assertIn("showContextWarning(", body)
+        # 判定必须在清空草稿之前，否则被拦下时输入框会被清空
+        self.assertLess(
+            body.index("pendingContextWarning()"),
+            body.index("input.value = ''"),
+            "判定要在清空输入框之前",
+        )
+        pending = _function_body(_read("03-media.js"), "export function pendingContextWarning")
+        self.assertIn("state.chatBusy", pending, "运行中不走发送前判定")
+        self.assertIn("state.contextPercent", pending, "用最近一次渲染出的百分比判定")
+        self.assertIn("contextWarningArmed", pending, "提醒过一次就不再拦")
+
+    def test_continue_button_wiring_and_reset(self) -> None:
+        html = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(html.count('id="contextWarningContinue"'), 1)
+        self.assertIn('id="contextWarningContinue" type="button" hidden', html, "按钮默认隐藏")
+        binds = _read("15-bind-events.js")
+        self.assertIn("contextWarningContinue", binds, "「继续发送」必须有绑定")
+        self.assertIn("continueAfterContextWarning", binds)
+        self.assertIn("resetContextWarningResume", binds, "关闭弹窗要清掉待续动作")
+        media = _read("03-media.js")
+        self.assertIn("let contextWarningResume = null;", media)
+
     def test_dialog_markup_and_settings_field_exist(self) -> None:
         html = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
         self.assertEqual(
