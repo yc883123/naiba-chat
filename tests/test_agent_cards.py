@@ -607,6 +607,7 @@ class AgentCardsMarkupTests(unittest.TestCase):
             "data-agent-add",
             "agent-card-name",
             "agent-card-meta",
+            "agent-card-tools",
             "agent-card-prompt",
             "agent-card-tag",
             "新增 Agent",
@@ -618,6 +619,36 @@ class AgentCardsMarkupTests(unittest.TestCase):
             source.index("agent-card-add"),
             "「新增 Agent」卡片必须排在最后一张",
         )
+
+    def test_card_shows_tool_scope_label(self) -> None:
+        """「固定 Skill」下方显示该 Agent 工具集对应的名称（预设名 / 我的工具集 / 未限制 / 自定义）。"""
+        source = self._settings()
+        self.assertIn("export function toolScopeLabel(", source)
+        label = source[source.index("export function toolScopeLabel("):]
+        label = label[: label.index("\n}")]
+        self.assertIn("未限制（全部工具）", label, "空 tool_scope = 不限制")
+        self.assertIn("自定义 · ", label)
+        self.assertIn("matchToolScope(tools)", label)
+        card = source[source.index("function agentCardMarkup("):]
+        card = card[: card.index("\n}")]
+        self.assertIn("toolScopeLabel(agent.tool_scope)", card, "卡片用 Agent 的 tool_scope 算标签")
+        self.assertLess(card.index("agent-card-meta"), card.index("agent-card-tools"),
+                        "工具集标签排在「固定 Skill」下方")
+        self.assertLess(card.index("agent-card-tools"), card.index("agent-card-prompt"))
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        self.assertIn(".agent-card-tools", css)
+
+    def test_tool_catalog_loaded_once_for_cards(self) -> None:
+        """卡片要显示预设名，必须先有工具目录；两边共用同一个懒加载。"""
+        source = self._settings()
+        self.assertIn("export async function ensureToolCatalog()", source)
+        self.assertIn("let toolCatalogPromise = null;", source)
+        picker = source[source.index("export async function renderAgentToolPicker()"):]
+        picker = picker[: picker.index("\n}")]
+        self.assertIn("await ensureToolCatalog();", picker)
+        manager = source[source.index("export async function renderAgentManager()"):]
+        manager = manager[: manager.index("\n}")]
+        self.assertIn("await ensureToolCatalog();", manager, "渲染卡片前先确保目录已加载")
 
     def test_default_agent_has_no_badge_or_highlight(self) -> None:
         """默认 Agent 在卡片上不做任何标记：角标/强调色会被误读成「当前选中」。"""
@@ -640,7 +671,7 @@ class AgentCardsMarkupTests(unittest.TestCase):
 
     def test_render_does_not_auto_open_form(self) -> None:
         source = self._settings()
-        body = source[source.index("export function renderAgentManager()"):]
+        body = source[source.index("export async function renderAgentManager()"):]
         body = body[: body.index("\n}")]
         self.assertNotIn("showAgentForm(", body)
 

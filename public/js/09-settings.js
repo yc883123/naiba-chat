@@ -860,19 +860,23 @@ function agentCardMarkup(agent) {
   const badges = [
     agent.built_in ? '<span class="agent-card-tag">内置</span>' : '',
   ].join('');
+  const toolSetName = toolScopeLabel(agent.tool_scope);
   return `
     <div class="agent-card" data-agent-card="${id}" role="button" tabindex="0" aria-label="编辑 ${name}">
       ${agent.built_in ? '' : `<button class="agent-card-delete" type="button" data-agent-delete="${id}" title="删除 ${name}" aria-label="删除 ${name}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>`}
       <span class="agent-card-name" title="${name}">${avatar ? `<img class="agent-card-avatar" src="${escapeHtml(avatar)}" alt="">` : ''}${name}</span>
       <span class="agent-card-meta">${skills ? `${skills} 个固定 Skill` : '无固定 Skill'}</span>
+      <span class="agent-card-tools" title="该 Agent 的工具集：${escapeHtml(toolSetName)}">工具集：${escapeHtml(toolSetName)}</span>
       <p class="agent-card-prompt">${preview ? escapeHtml(preview) : '未设置系统提示词'}</p>
       <span class="agent-card-foot">${badges}</span>
     </div>`;
 }
 
-export function renderAgentManager() {
+export async function renderAgentManager() {
   const list = $('#agentCards');
   if (!list) return;
+  // 卡片要显示「工具集：预设名」，先确保工具目录已加载（只拉一次，失败下次再试）。
+  await ensureToolCatalog();
   const agents = state.bootstrap?.agents || [];
   // 「新增 Agent」卡片固定排在最后一张（列表为空时它就是唯一一张卡）。
   list.innerHTML = agents.map((agent) => agentCardMarkup(agent)).join('') + `
@@ -1029,14 +1033,28 @@ const TOOL_SET_ADD_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M
 const TOOL_SET_DEL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
 
 // 当前工具集命中哪张卡片：内置预设优先，其次「我的工具集」；都不匹配返回 null。
-export function matchToolPreset() {
-  const current = new Set(state.agentFormToolScope);
+export function matchToolScope(scope) {
+  const current = new Set(scope || []);
   const same = (tools) => tools.length === current.size && tools.every((t) => current.has(t));
   const preset = (state.toolCatalog?.presets || []).find((item) => same(item.tools || []));
   if (preset) return { kind: 'preset', id: preset.id, name: preset.name, tools: preset.tools || [] };
   const template = loadToolTemplates().find((item) => same(usableTemplateTools(item)));
   if (template) return { kind: 'template', id: template.id, name: template.name, tools: template.tools || [] };
   return null;
+}
+
+export function matchToolPreset() {
+  return matchToolScope(state.agentFormToolScope);
+}
+
+// 某个工具集（Agent 的 tool_scope）对应的名称：预设名 → 我的工具集名 → 未限制 / 自定义。
+// Agent 卡片用它在「固定 Skill」下方显示这一栏，一眼看出这个 Agent 开的是哪套工具。
+export function toolScopeLabel(scope) {
+  const tools = Array.isArray(scope) ? scope.filter(Boolean) : [];
+  if (!tools.length) return '未限制（全部工具）';
+  const matched = matchToolScope(tools);
+  if (matched) return matched.name;
+  return `自定义 · ${tools.length} 个工具`;
 }
 
 function toolSetSummary() {
@@ -1392,16 +1410,27 @@ export function syncAgentToolCheckboxes(list) {
   updateToolPresetUI();
 }
 
+// 工具目录（/api/tool_catalog）只拉一次：Agent 卡片要显示「工具集：预设名」，
+// 工具集面板也要它，两边共用同一个 promise（失败时清掉，下次再试）。
+let toolCatalogPromise = null;
+
+export async function ensureToolCatalog() {
+  if (state.toolCatalog) return state.toolCatalog;
+  if (!toolCatalogPromise) {
+    toolCatalogPromise = api('/api/tool_catalog', { method: 'GET' }).catch(() => {
+      toolCatalogPromise = null;  // 拉取失败允许下次重试（例如服务刚启动）
+      return null;
+    });
+  }
+  const catalog = await toolCatalogPromise;
+  if (catalog) state.toolCatalog = catalog;
+  return state.toolCatalog || null;
+}
+
 export async function renderAgentToolPicker() {
   const list = $('#agentToolScope');
   if (!list) return;
-  if (!state.toolCatalog) {
-    try {
-      state.toolCatalog = await api('/api/tool_catalog', { method: 'GET' });
-    } catch (error) {
-      state.toolCatalog = {};
-    }
-  }
+  await ensureToolCatalog();
   const catalog = state.toolCatalog?.tools || [];
   // 兼容旧配置：挑出当前工具目录里已不存在的名字（老版本移除的工具、临时掉线的
   // MCP 工具等）单独保留。它们不参与勾选、计数与预设匹配，但保存时原样写回，

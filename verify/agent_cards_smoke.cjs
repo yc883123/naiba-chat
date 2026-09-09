@@ -45,6 +45,7 @@ async function cardSnapshot(page) {
         id: card.dataset.agentCard,
         name: card.querySelector('.agent-card-name')?.textContent.trim() || '',
         meta: card.querySelector('.agent-card-meta')?.textContent.trim() || '',
+        tools: card.querySelector('.agent-card-tools')?.textContent.trim() || '',
         prompt: card.querySelector('.agent-card-prompt')?.textContent.trim() || '',
         badges: [...card.querySelectorAll('.agent-card-badge, .agent-card-tag')].map((el) => el.textContent.trim()),
         hasDelete: Boolean(card.querySelector('[data-agent-delete]')),
@@ -195,6 +196,7 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     await page.waitForTimeout(500);
 
     const cards = await cardSnapshot(page);
+    const agentById = new Map((bootstrap.agents || []).map((agent) => [agent.id, agent]));
     check('卡片容器渲染 Agent 卡片 + 新增卡', Boolean(cards) && cards.total >= 1, JSON.stringify(cards));
     check('「新增 Agent」卡片固定在最后一张', cards?.addIsLast === true && cards.addText.includes('新增 Agent'), JSON.stringify(cards));
     check('一行最多三张卡片（grid 三列）', cards?.columns === 3, String(cards?.columns));
@@ -207,6 +209,21 @@ async function waitForCardCount(page, expected, timeout = 15000) {
       JSON.stringify(cards.agents.map((card) => card.cursor)));
     check('卡片上不再有「默认」角标', cards.agents.every((card) => !card.badges.includes('默认')),
       JSON.stringify(cards.agents.map((card) => card.badges)));
+    // 「固定 Skill」下方显示该 Agent 工具集对应的预设名（与后端 tool_scope 逐张核对）。
+    const catalog = await (await fetch(`${BASE}/api/tool_catalog`)).json();
+    const presets = catalog.presets || [];
+    const expectedLabel = (scope) => {
+      const tools = Array.isArray(scope) ? scope.filter(Boolean) : [];
+      if (!tools.length) return '未限制（全部工具）';
+      const hit = presets.find((preset) => (preset.tools || []).length === tools.length
+        && (preset.tools || []).every((name) => tools.includes(name)));
+      return hit ? hit.name : `自定义 · ${tools.length} 个工具`;
+    };
+    check('每张卡片都在 Skill 下方显示工具集标签',
+      cards.agents.every((card) => card.tools.startsWith('工具集：')), JSON.stringify(cards.agents.map((card) => card.tools)));
+    check('工具集标签与后端 tool_scope 对应的预设名逐张一致',
+      cards.agents.every((card) => card.tools === `工具集：${expectedLabel(agentById.get(card.id)?.tool_scope)}`),
+      JSON.stringify(cards.agents.map((card) => [card.id, card.tools, expectedLabel(agentById.get(card.id)?.tool_scope)])));
     check('默认 Agent 不再带高亮类（is-default）',
       cards.agents.every((card) => !card.className.includes('is-default')),
       JSON.stringify(cards.agents.map((card) => card.className)));
@@ -221,7 +238,6 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     check('旧的「编辑」按钮已移除', (await dialogSnapshot(page)).legacyEditButton === false, '');
 
     // 点卡片 → 弹出并加载该 Agent（挑一个带系统提示词的，才能验证提示词也回填）
-    const agentById = new Map((bootstrap.agents || []).map((agent) => [agent.id, agent]));
     const target = cards.agents.find((card) => String(agentById.get(card.id)?.system_prompt || '').trim())
       || cards.agents.find((card) => card.id !== 'dsh-standard')
       || cards.agents[0];
@@ -325,6 +341,9 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     check('新卡片显示名称与提示词摘要',
       Boolean(created) && created.prompt.includes('冒烟测试'),
       JSON.stringify(created));
+    // 新建 Agent 的工具集 = 后端默认选中集（= 标准模式），卡片上必须显示预设名。
+    check('新卡片显示「工具集：标准模式」（预设名映射真的生效）',
+      Boolean(created) && created.tools === '工具集：标准模式', JSON.stringify(created?.tools));
 
     // × 删除（确认后生效）
     await page.click(`[data-agent-delete="${created.id}"]`);
