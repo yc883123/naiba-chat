@@ -136,6 +136,51 @@ async function domSnapshot(page) {
       messages.length === 4 && messages.every((m) => !m.metadata?.session_start),
       JSON.stringify(messages.map((m) => [m.role, Boolean(m.metadata?.session_start)])));
 
+    // ⑥ 模型主动重置（source=tool）：分割线标注来源 + 交接文档 + 「填入种子消息」
+    const SEED_TITLE = process.env.NAIBA_SESSION_SEED_TITLE || '新会话种子冒烟';
+    await page.click(`#sidebarWorkspaceTree .conversation-item:has-text("${SEED_TITLE}") .conversation-open`);
+    await page.waitForSelector('#messages .message-row[data-message-id]', { timeout: 20000 });
+    await page.waitForTimeout(800);
+    const toolDividers = await page.evaluate(() => [...document.querySelectorAll('#messages .message-row.session-divider')]
+      .map((row) => ({
+        label: row.querySelector('.session-divider-label')?.textContent.trim() || '',
+        hint: row.querySelector('.session-divider-hint')?.textContent.trim() || '',
+        hasSeed: Boolean(row.querySelector('[data-fill-reset-seed]')),
+      })));
+    check('模型重置的分割线标出来源与交接文档',
+      toolDividers.length === 2
+      && toolDividers[0].label.includes('模型重置')
+      && toolDividers[0].hint.includes('交接-带任务.md')
+      && toolDividers[1].hint.includes('交接-无任务.md'),
+      JSON.stringify(toolDividers));
+    check('两条分割线都带「填入种子消息」',
+      toolDividers.every((row) => row.hasSeed === true), JSON.stringify(toolDividers));
+
+    // 有后台任务：种子消息含任务清单
+    await page.locator('#messages .message-row.session-divider [data-fill-reset-seed]').first().click();
+    await page.waitForTimeout(400);
+    const seedWithTasks = await page.inputValue('#messageInput');
+    check('种子消息带交接文档路径',
+      seedWithTasks.includes('交接-带任务.md') && seedWithTasks.includes('请先读取该交接文档再继续'),
+      JSON.stringify(seedWithTasks));
+    check('种子消息带后台任务提醒（数量 + 清单）',
+      seedWithTasks.includes('当前仍有 2 个任务在运行')
+      && seedWithTasks.includes('job_1') && seedWithTasks.includes('渲染第 3 批')
+      && seedWithTasks.includes('job_2'), JSON.stringify(seedWithTasks));
+    check('填入后发送按钮可用（未自动发送）',
+      await page.evaluate(() => !document.querySelector('#sendButton')?.disabled),
+      String(await page.evaluate(() => document.querySelector('#sendButton')?.disabled)));
+
+    // 无后台任务：含占位符的整行自动去掉
+    await page.locator('#messages .message-row.session-divider [data-fill-reset-seed]').last().click();
+    await page.waitForTimeout(400);
+    const seedWithoutTasks = await page.inputValue('#messageInput');
+    check('无后台任务时去掉任务提醒整行',
+      seedWithoutTasks.includes('交接-无任务.md')
+      && !seedWithoutTasks.includes('[后台任务]')
+      && !seedWithoutTasks.includes('{task'), JSON.stringify(seedWithoutTasks));
+    await page.fill('#messageInput', '');
+
     check('零页面错误 / console.error', pageErrors.length === 0, JSON.stringify(pageErrors.slice(0, 3)));
   } catch (error) {
     check('冒烟脚本自身异常', false, String(error && error.message ? error.message : error));

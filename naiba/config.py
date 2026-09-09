@@ -52,6 +52,14 @@ def default_config() -> dict[str, Any]:
         # 用户自定义工具集（「我的工具集」）：必须落在 config.json 里，
         # 因为冻结版 pywebview 默认 private_mode=True，localStorage 每次退出都会被清空。
         "tool_sets": [],
+        # 「新会话」种子消息模板（模型调用 reset_context 后填进输入框，由用户决定是否发送）。
+        # 占位符：{handoff_path} / {task_count} / {task_list}；含占位符的行在任务数为 0 时整行去掉。
+        "context_reset_seed_template": (
+            "上一段会话已交接，交接文档：{handoff_path}\n"
+            "请先读取该交接文档再继续。\n"
+            "[后台任务] 当前仍有 {task_count} 个任务在运行：\n"
+            "{task_list}"
+        ),
         "provider_id": "",
         # Deprecated compatibility fields. They are retained for old config
         # files but are never used to build model requests.
@@ -170,6 +178,7 @@ _MCP_GROUP = "联网与外部服务"
 _TOOL_GROUP = {
     "read_file": "读取与检索", "list_directory": "读取与检索", "search_files": "读取与检索",
     "recall_history": "读取与检索",
+    "reset_context": "任务与扩展",
     "read_pdf": "读取与检索", "pdf_render_pages": "读取与检索", "pdf_zoom_region": "读取与检索",
     "write_file": "文件写入与编辑", "edit_file": "文件写入与编辑",
     "pwsh": "命令与脚本执行", "run_skill_script": "命令与脚本执行",
@@ -1407,6 +1416,7 @@ class ConfigStore:
             "agent_tools",
             "command_timeout",
             "context_warning_percent",
+            "context_reset_seed_template",
             "access_token",
             "workspace_dir",
             "data_dir",
@@ -1516,6 +1526,9 @@ class ConfigStore:
                         if percent < 0 or percent > 100:
                             raise ValueError("上下文提醒阈值必须在 0-100 之间")
                         self.data[key] = percent
+                    elif key == "context_reset_seed_template":
+                        # 种子消息模板：留空 = 用内置默认（前端回退），最长 2000 字符。
+                        self.data[key] = str(values[key] or "")[:2000]
                     else:
                         self.data[key] = values[key]
             self.save()

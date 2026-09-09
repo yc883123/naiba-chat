@@ -428,6 +428,10 @@ export function populateRuntimeSettings() {
   if ($('#contextWarningPercent')) {
     $('#contextWarningPercent').value = Number(settings.context_warning_percent ?? 80);
   }
+  // 新会话种子模板：留空 = 前端回退到内置默认（占位符说明见设置项下方小字）。
+  if ($('#contextResetSeedTemplate')) {
+    $('#contextResetSeedTemplate').value = String(settings.context_reset_seed_template || '');
+  }
   if ($('#workspaceDir')) $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
   if ($('#resolvedWorkspaceDir')) $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
   const imaging = settings.imaging || {};
@@ -1832,6 +1836,7 @@ export async function saveRuntimeSettings() {
   const payload = {
     command_timeout: Number($('#commandTimeout')?.value || 120),
     context_warning_percent: warningRaw === '' ? 80 : Number(warningRaw),
+    context_reset_seed_template: String($('#contextResetSeedTemplate')?.value || ''),
     workspace_dir: $('#workspaceDir')?.value.trim() || '',
     imaging: {
       image_upload_original: Boolean($('#imageUploadOriginal')?.checked),

@@ -20,6 +20,48 @@ export function currentAgentAvatarUrl() {
   return file ? `/api/agents/avatar/${encodeURIComponent(file)}` : '';
 }
 
+// 内置默认种子模板（设置页留空时回退用它）；占位符：{handoff_path} / {task_count} / {task_list}
+export const DEFAULT_CONTEXT_RESET_SEED = [
+  '上一段会话已交接，交接文档：{handoff_path}',
+  '请先读取该交接文档再继续。',
+  '[后台任务] 当前仍有 {task_count} 个任务在运行：',
+  '{task_list}',
+].join('\n');
+
+// 按分割线标记渲染「新会话」种子消息：没有后台任务时，含占位符的整行自动去掉。
+export function contextResetSeedText(info = {}) {
+  const template = String(state.bootstrap?.settings?.context_reset_seed_template || '').trim()
+    || DEFAULT_CONTEXT_RESET_SEED;
+  const tasks = Array.isArray(info.tasks) ? info.tasks : [];
+  const taskList = tasks.map((task) => {
+    const kind = String(task.kind || '');
+    const status = String(task.status || '');
+    const suffix = kind || status ? `（${kind}${kind && status ? '，' : ''}${status}）` : '';
+    return `- ${String(task.id || '')}${suffix}${task.title ? `：${task.title}` : ''}`;
+  }).join('\n');
+  return template.split('\n')
+    .filter((line) => !((line.includes('{task_count}') || line.includes('{task_list}')) && !tasks.length))
+    .map((line) => line
+      .replaceAll('{handoff_path}', String(info.handoff_path || ''))
+      .replaceAll('{task_count}', String(tasks.length))
+      .replaceAll('{task_list}', taskList))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// 把种子消息填进输入框——**不自动发送**，由用户确认/编辑后点发送。
+export function fillContextResetSeed(info = {}) {
+  const text = contextResetSeedText(info);
+  const input = $('#messageInput');
+  if (!input || !text) return false;
+  input.value = text;
+  notifyComposerChanged(input);
+  input.focus();
+  input.setSelectionRange(input.value.length, input.value.length);
+  return true;
+}
+
 // 「新会话」分割条：标在**某条消息**的 metadata 上（`session_start`），渲染在该消息正下方。
 // 语义 = 此线以上的消息不再进入模型上下文，线以下的消息仍在上下文里；聊天记录一条不删。
 // 兼容遗留形态：早期版本用独立的 role=session 标记行，这里照旧渲染成同款分隔条。
@@ -30,15 +72,22 @@ export function sessionDividerElement(message) {
   const time = at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '';
   const source = String(info.source || 'manual') === 'tool' ? '模型重置' : '手动';
   const handoff = String(info.handoff_path || '');
+  const seedButton = message.id && (handoff || String(info.source || '') === 'tool')
+    ? `<button type="button" class="session-divider-seed" data-fill-reset-seed="${escapeHtml(message.id)}" title="把「新会话」种子消息填进输入框（可编辑后再发送）">填入种子消息</button>`
+    : '';
   const row = document.createElement('article');
   row.className = 'message-row session-divider';
   row.dataset.messageId = message.id || '';
   row.dataset.sessionDivider = message.id || '';
+  // 注意：这里是 DOM 属性赋值（不是 innerHTML），不能 escapeHtml——转义后的 &quot; 会被
+  // dataset 原样读出，JSON.parse 直接失败（实测：种子消息里路径变空）。
+  row.dataset.resetSeedInfo = JSON.stringify(info);
   row.innerHTML = `
     <div class="session-divider-bar" title="此线以上的消息不再进入模型上下文；下方消息仍保留在上下文中（聊天记录全部保留）">
       <span class="session-divider-line" aria-hidden="true"></span>
       <span class="session-divider-label">新会话${legacyRow ? '开始' : ''} · ${escapeHtml(source)}${time ? ` · ${escapeHtml(time)}` : ''}</span>
       <span class="session-divider-line" aria-hidden="true"></span>
+      ${seedButton}
       ${message.id ? '<button type="button" class="session-divider-cancel" data-cancel-session-start title="撤销这条分割线：此线以上的消息重新进入模型上下文">撤销</button>' : ''}
     </div>
     <div class="session-divider-hint">此线以上不再进入模型上下文${handoff ? ` · 交接文档：${escapeHtml(handoff)}` : ''}</div>`;

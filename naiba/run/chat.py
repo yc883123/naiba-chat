@@ -569,6 +569,15 @@ class ConversationRunMixin:
                 prompt = (prompt + "\n\nPDF 处理策略：解析 PDF 文本层用 read_pdf；扫描版（无文本层）或需要看图时，先调用 "
                            "pdf_render_pages 渲染页图，再将页图路径传给 vision_analyze；整页图细节看不清（小字/表格/图表）时，"
                            "用 pdf_zoom_region 局部放大后再次 vision_analyze。").strip()
+            # 上下文重置指引只在会话固化工具集含 reset_context 时注入（规则写系统提示常驻区，
+            # 工具描述只留一行钩子；工具集首轮固化 → 同一会话内恒定，不破坏前缀缓存）。
+            if "reset_context" in allowed_tools:
+                prompt = (prompt + "\n\n上下文重置：上下文接近上限、或一段任务已交接完成需要换掉历史时，"
+                                   "可以调用 reset_context 把上下文从此处截断。调用前把交接文档写入工作区"
+                                   "（任务目标、已完成、待办、关键文件与路径、仍在运行的后台任务），"
+                                   "并把它的绝对路径传给 handoff_path——文档不存在或为空会被拒绝。"
+                                   "成功后本轮立即结束，不要再调用其它工具，用一句话确认交接即可；"
+                                   "下一条消息由用户确认后开始。").strip()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
             run_context: RunContext = {
                 "run_id": run_id,
@@ -720,6 +729,11 @@ class ConversationRunMixin:
             }
             if attachments_truncated:
                 metadata[MetadataKeys.ATTACHMENTS_TRUNCATED] = attachments_truncated
+            # 模型调用 reset_context 成功 → 在本条 AI 回复上落「新会话」分割线标记：
+            # 下一条消息起 build_model_history 只取分割线之后的内容（本条及其之前都不进上下文）。
+            reset_info = (run_context or {}).get("context_reset") if isinstance(run_context, dict) else None
+            if reset_info:
+                metadata[MetadataKeys.SESSION_START] = dict(reset_info)
             # 消息末尾"修改文件"总结：仅在本轮确实有文件落盘时携带，避免空数组刷屏。
             if changed_files:
                 metadata[MetadataKeys.FILES] = changed_files

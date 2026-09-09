@@ -52,7 +52,7 @@ checks = {
     "§六 检查器 69 文件": "（69 文件 0 候选）" in doc,
     "§六 不再提 verify_split_merge": "verify_split_merge" not in doc,
     "§六 补工具卡片检查": "_check_tool_cards_compact.cjs" in doc,
-    "§六 629 用例": "（629 用例，" in doc,
+    "§六 643 用例": "（643 用例，" in doc,
     "§3.4 分区无重复标题": "不再有灰色标题块与固定高度" in doc,
     "§九.50 toast top layer": "底部提示框（`#toast`）是同一个坑" in doc,
     "§3.4 Agent 分区切换": "弹层内改为分区切换" in doc,

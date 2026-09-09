@@ -4,7 +4,7 @@
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarning, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, resetContextWarningResume, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
-import { branchMessage, cancelSessionStart, initTurnRail, isNearBottom, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
+import { branchMessage, cancelSessionStart, fillContextResetSeed, initTurnRail, isNearBottom, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
@@ -445,6 +445,19 @@ export function bindEvents() {
     const cancelSessionButton = event.target.closest('[data-cancel-session-start]');
     if (cancelSessionButton) {
       cancelSessionStart(cancelSessionButton.closest('.message-row')?.dataset.messageId);
+      return;
+    }
+    const seedButton = event.target.closest('[data-fill-reset-seed]');
+    if (seedButton) {
+      const divider = seedButton.closest('.message-row.session-divider');
+      let info = {};
+      try {
+        info = JSON.parse(divider?.dataset.resetSeedInfo || '{}');
+      } catch (_error) {
+        info = {};
+      }
+      if (fillContextResetSeed(info)) toast('种子消息已填入输入框，可编辑后发送');
+      else toast('种子模板为空：请在「设置 → 运行设置」里填写或恢复默认');
       return;
     }
     const editButton = event.target.closest('[data-edit-message]');

@@ -891,6 +891,25 @@ class SkillAgent:
                     ],
                 })
 
+            # 模型请求了上下文重置（reset_context 已校验交接文档并置位）：本轮到此为止，
+            # 不再带着旧上下文继续干活；收尾路径把标记写到本条 AI 回复上，
+            # 下一条消息起从分割线之后重算上下文。
+            reset_info = (run_context or {}).get("context_reset") if isinstance(run_context, dict) else None
+            if reset_info:
+                content = (
+                    f"已交接，本轮到此结束。下一条消息起我会从交接文档继续："
+                    f"{str((reset_info or {}).get('handoff_path') or '')}"
+                )
+                event({"type": "status", "message": "上下文已重置：本轮结束，下一条消息起从交接文档继续"})
+                if reasoning:
+                    event({"type": "reasoning", "content": reasoning})
+                messages.append(assistant_message(content))
+                run_context["trace_messages"] = messages[trace_start:]
+                if _cache_debug_enabled():
+                    _debug_message_digest(messages[trace_start:], "trace-persist-reset", event)
+                logger.info("[context_reset] 本轮收尾，交接文档=%s", (reset_info or {}).get("handoff_path"))
+                return content, runs, reasonings, self._summarize_usage(usages)
+
     @staticmethod
     def _pending_background_jobs(run_context: RunContext | None) -> list[str]:
         ctx = run_context or {}

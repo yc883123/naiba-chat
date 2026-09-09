@@ -51,6 +51,32 @@ def seed() -> None:
     storage.add_message(conversation["id"], "user", "第二问：继续")
     storage.add_message(conversation["id"], "assistant", "第二答：继续的回复。")
 
+    # 第二个会话：模型主动重置（source=tool）留下的分割线 —— 用来验证种子消息预填。
+    tool_conversation = storage.create_conversation("新会话种子冒烟")
+    storage.add_message(tool_conversation["id"], "user", "新会话种子冒烟：第一问")
+    storage.add_message(tool_conversation["id"], "assistant", "已交接，本轮到此结束。", {
+        "session_start": {
+            "at": 1789000000000,
+            "source": "tool",
+            "handoff_path": r"C:\work\交接-带任务.md",
+            "note": "第一阶段完成",
+            "tasks": [
+                {"id": "job_1", "kind": "job", "status": "running", "title": "渲染第 3 批"},
+                {"id": "job_2", "kind": "run", "status": "queued", "title": "等待中"},
+            ],
+        },
+    })
+    storage.add_message(tool_conversation["id"], "user", "第二问")
+    storage.add_message(tool_conversation["id"], "assistant", "第二答", {
+        "session_start": {
+            "at": 1789000100000,
+            "source": "tool",
+            "handoff_path": r"C:\work\交接-无任务.md",
+            "note": "",
+            "tasks": [],
+        },
+    })
+
 
 def main() -> int:
     config_path = ROOT / "config.json"

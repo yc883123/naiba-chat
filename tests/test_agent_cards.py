@@ -189,6 +189,7 @@ class ToolGroupCatalogTests(unittest.TestCase):
         self.assertEqual(membership["任务与扩展"], [
             "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
             "todo_write", "install_skill", "unpack_skill_archive", "inspect_installed_skill",
+            "reset_context",
         ])
 
     def test_mcp_tools_are_subgrouped_by_server(self) -> None:

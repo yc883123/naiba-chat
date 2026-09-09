@@ -457,6 +457,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .session-divider-label { flex: none; padding: 2px 8px; border: 1px dashed var(--line-strong); border-radius: 999px; white-space: nowrap; }
 .session-divider-cancel { flex: none; border: 0; background: none; color: var(--muted); padding: 2px 5px; font-size: 11.5px; cursor: pointer; }
 .session-divider-cancel:hover { color: var(--accent); }
+.session-divider-seed { flex: none; border: 0; background: none; color: var(--muted); padding: 2px 5px; font-size: 11.5px; cursor: pointer; }
+.session-divider-seed:hover { color: var(--accent); }
 .session-divider-hint { margin: 3px 0 0; color: var(--muted); font-size: 11px; text-align: center; word-break: break-all; }
 .usage-line { margin-top: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 /* 流式期间常驻消息尾端的用量框：首次请求完成时挂载、之后原位更新 */

@@ -11,10 +11,12 @@ from __future__ import annotations
 import dataclasses
 import fnmatch
 import json
+import logging
 import os
 import re
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -24,6 +26,8 @@ from typing import Any, Callable
 from naiba import net as net_io
 from naiba.core.paths import path_within
 from naiba.tools.registry import ToolSpec, build_core_tool_specs, build_harness_alias_specs
+
+logger = logging.getLogger("naiba.tools.core")
 
 POWERSHELL_UTF8_PREFIX = (
     "$utf8 = [System.Text.UTF8Encoding]::new($false); "
@@ -642,6 +646,99 @@ def _tool_register_mcp(ctx: ToolContext, args: dict[str, Any], active_skills: li
     return json.dumps(ctx.mcp_register(args), ensure_ascii=False, indent=2)
 
 
+def _tool_reset_context(
+    ctx: ToolContext,
+    args: dict[str, Any],
+    active_skills: list[dict[str, Any]] | None = None,
+    run_context: dict[str, Any] | None = None,
+) -> str:
+    """模型请求重置上下文：**先校验交接文档，再落标记**。
+
+    校验（任一不满足即拒绝，上下文原样不动）：
+      - handoff_path 非空、绝对路径、文件存在、且大小 > 0；
+      - 同一轮最多成功重置一次（已经置位过就拒绝，防连环重置）。
+    成功后把 ``run_context["context_reset"]`` 置位：循环会立刻收尾，收尾路径再把标记写到
+    本轮 AI 回复的 metadata 上（`session_start`），下一条消息起从分割线之后重算上下文。
+    """
+    raw = str((args or {}).get("handoff_path") or "").strip()
+    if not raw:
+        return json.dumps({"ok": False, "error": "handoff_path 不能为空：请先把交接文档写进工作区"},
+                          ensure_ascii=False)
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        return json.dumps({"ok": False, "error": f"handoff_path 必须是绝对路径：{raw}"},
+                          ensure_ascii=False)
+    path = path.resolve()
+    if not path.is_file():
+        return json.dumps({"ok": False, "error": f"交接文档不存在或不是文件：{path}"},
+                          ensure_ascii=False)
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        logger.warning("reset_context 读取交接文档失败：%s", exc)
+        return json.dumps({"ok": False, "error": f"交接文档不可读：{path}（{exc}）"},
+                          ensure_ascii=False)
+    if size <= 0:
+        return json.dumps({"ok": False, "error": f"交接文档为空：{path}（请先写内容再重置）"},
+                          ensure_ascii=False)
+    if isinstance(run_context, dict) and run_context.get("context_reset"):
+        return json.dumps({"ok": False, "error": "本轮已经请求过重置，无需重复调用"},
+                          ensure_ascii=False)
+
+    tasks: list[dict[str, Any]] = []
+    getter = ctx.extra.get("active_background_tasks") if isinstance(ctx.extra, dict) else None
+    conversation_id = str((run_context or {}).get("conversation_id") or "")
+    if callable(getter) and conversation_id:
+        try:
+            for row in getter(conversation_id) or []:
+                if not isinstance(row, dict):
+                    continue
+                tasks.append({
+                    "id": str(row.get("id") or ""),
+                    "kind": str(row.get("kind") or ""),
+                    "status": str(row.get("status") or ""),
+                    "title": " ".join(str(row.get("message") or "").split())[:60],
+                })
+        except Exception:  # noqa: BLE001 - 后台任务快照失败不能阻断重置
+            logger.exception("reset_context 收集后台任务失败（忽略）")
+
+    info = {
+        "at": int(time.time() * 1000),
+        "source": "tool",
+        "handoff_path": str(path),
+        "note": " ".join(str((args or {}).get("note") or "").split())[:200],
+        "tasks": tasks,
+    }
+    if isinstance(run_context, dict):
+        run_context["context_reset"] = info
+    return json.dumps({
+        "ok": True,
+        "handoff_path": str(path),
+        "handoff_bytes": size,
+        "background_tasks": len(tasks),
+        "message": "上下文将在本轮结束后重置；本轮到此结束，不要再调用任何工具，用一句话确认已交接。",
+    }, ensure_ascii=False, indent=2)
+
+
+def _reset_context_ok(result: str) -> bool:
+    try:
+        return bool(json.loads(result).get("ok"))
+    except (TypeError, ValueError):
+        return False
+
+
+def _make_reset_context_execute(ctx: ToolContext) -> Any:
+    """reset_context 专用执行器：必须拿到 run_context（置位重置请求），成败按结果里的 ok 判定。"""
+    def execute(
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        run_context: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        result = _tool_reset_context(ctx, arguments or {}, active_skills, run_context)
+        return _reset_context_ok(result), result
+    return execute
+
+
 # ---- 权限策略（Phase 5：引擎内建确认逻辑收敛到 def 级 policy） ----
 
 _READ_FAMILY = {"read_file", "list_directory", "search_files"}
@@ -649,6 +746,7 @@ _CORE_CONFIRM_REASONS = {
     "pwsh": "执行 PowerShell 命令",
     "run_skill_script": "运行技能脚本",
     "register_mcp": "注册MCP服务",
+    "reset_context": "重置会话上下文",
 }
 
 
@@ -804,7 +902,9 @@ class CoreToolProvider:
     def tools(self) -> list[ToolSpec]:
         results: list[ToolSpec] = []
         for spec in build_core_tool_specs():
-            if spec.name in _STR_TOOL_FNS:
+            if spec.name == "reset_context":
+                execute = _make_reset_context_execute(self._context)
+            elif spec.name in _STR_TOOL_FNS:
                 execute = _make_str_execute(self._context, _STR_TOOL_FNS[spec.name], spec.name)
             else:
                 continue

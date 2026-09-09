@@ -366,6 +366,11 @@
           <div class="field-grid">
             <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"><small class="hint">仅工具与命令执行有效；不控制在线或本地模型的响应超时。</small></label>
             <label>上下文提醒阈值（%）<input id="contextWarningPercent" type="number" min="0" max="100" step="5"><small class="hint">上下文用量达到该百分比时弹窗提醒一次；0 = 关闭提醒。</small></label>
+            <label class="field-wide">新会话种子消息（模型重置上下文后填入输入框）
+              <textarea id="contextResetSeedTemplate" rows="4" maxlength="2000" spellcheck="false"
+                        placeholder="留空使用内置默认模板"></textarea>
+              <small class="hint">占位符：{handoff_path} 交接文档路径 · {task_count} 后台任务数 · {task_list} 任务清单（无后台任务时含占位符的整行会自动去掉）。填入后仍需你点发送。</small>
+            </label>
             <div class="field-wide proxy-settings">
               <span class="settings-label"><b>网络代理（出站请求）</b></span>
               <div class="proxy-mode-row">

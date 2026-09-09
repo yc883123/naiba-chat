@@ -190,6 +190,8 @@ class NaibaChatApp:
             mcp_register=self.register_mcp_server,
             # 宿主数据目录（动态）：uploads/generated 作为读取可信根（用户上传附件免确认）。
             data_dir_getter=lambda: self._paths.data_dir,
+            # reset_context 需要把「当前还在跑的后台任务」快照进分割线（种子消息里提醒模型）。
+            extra={"active_background_tasks": self._active_background_tasks},
         )
         self.core_tools = CoreToolProvider(core_tool_context)
         self.tool_registry.register_provider(self.core_tools)
@@ -402,6 +404,14 @@ class NaibaChatApp:
             "resolved_workspace_dir": str(self.config.resolve_workspace_dir()),
             "proxy_state": net_io.proxy_state(),
         }
+
+    def _active_background_tasks(self, conversation_id: str) -> list[dict[str, Any]]:
+        """某会话仍在跑的后台任务（reset_context 写分割线时快照，种子消息里提醒模型）。"""
+        try:
+            return self.storage.list_background_tasks(conversation_id, active_only=True) or []
+        except Exception:  # noqa: BLE001 - 快照失败不能阻断重置
+            logger.exception("读取后台任务失败（reset_context 快照忽略）")
+            return []
 
     def list_skill_dirs(self) -> dict[str, Any]:
         configured = self.config.get_skills_dirs()

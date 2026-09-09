@@ -5,7 +5,7 @@
 import { $, $$, api, escapeHtml, notifyComposerChanged, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 import { setContextUsage, toolMediaMarkup, updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
-import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, replaceWithMessage, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
+import { fillContextResetSeed, getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, replaceWithMessage, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation } from "./08-conversations.js";
@@ -822,6 +822,14 @@ function handleDoneEvent(event, { row, answer, collapseReasoning, conversationId
     try {
       const completedRow = replaceWithMessage(row, event.message);
       updateContextUsage(null, event.message);
+      // 模型调用 reset_context 成功：把「新会话」种子消息填进输入框（不自动发送，
+      // 用户可编辑后再点发送；刷新后仍可从分割线上的「填入种子消息」按钮找回）。
+      const resetInfo = event.message.metadata?.session_start;
+      if (resetInfo && String(resetInfo.source || '') === 'tool') {
+        if (fillContextResetSeed(resetInfo)) {
+          toast('模型已交接并重置上下文：种子消息已填入输入框，确认后发送即可继续');
+        }
+      }
       const metadata = event.message.metadata || {};
       if ((Array.isArray(metadata.choice_groups) && metadata.choice_groups.length)
         || (Array.isArray(metadata.choices) && metadata.choices.length)) {

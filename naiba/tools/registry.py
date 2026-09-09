@@ -108,6 +108,7 @@ MEDIA_DECLARATIONS: dict[str, dict[str, str]] = {
     "run_skill_script": {"policy": "inline", "extract": "scan"},
     "http_request": {"policy": "inline", "extract": "scan"},
     "register_mcp": {"policy": "never", "extract": "none"},
+    "reset_context": {"policy": "never", "extract": "none"},
     # Harness 兼容别名（执行层归一，与规范名同口径）
     "read": {"policy": "never", "extract": "none"},
     "write": {"policy": "inline", "extract": "scan"},
@@ -554,6 +555,25 @@ def build_core_tool_specs() -> list[ToolSpec]:
                     "enabled": {"type": "boolean", "default": True},
                 },
                 "required": ["id", "command"],
+            },
+            side_effect=True,
+            retryable=False,
+            timeout=30,
+            permission="confirm",
+        ),
+        ToolSpec(
+            name="reset_context",
+            description=(
+                "把当前会话上下文从此处截断，下一条消息起带干净上下文继续；"
+                "需传入已写好的交接文档绝对路径。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "handoff_path": _string("交接文档的绝对路径（必须已写好且非空）"),
+                    "note": _string("可选：一句话说明交接进度，会显示在分割线上"),
+                },
+                "required": ["handoff_path"],
             },
             side_effect=True,
             retryable=False,
