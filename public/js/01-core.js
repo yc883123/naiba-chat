@@ -163,6 +163,11 @@ export async function api(path, options = {}) {
 
 export function toast(message) {
   const element = $('#toast');
+  // 模态 <dialog> 在浏览器 top layer：body 上的 fixed 浮层（哪怕 z-index 再高）都会被整块盖住，
+  // 表现为"在设置/Agent 弹层里点按钮，底部提示看不见"。与右键菜单同一解法（§九.50）：
+  // 有模态弹层时把 toast 挂进该弹层内部（fixed 定位不受祖先 overflow 裁剪），没有则回到 body。
+  const container = topLayerContainer();
+  if (element.parentElement !== container) container.append(element);
   element.textContent = message;
   if (typeof element.show === 'function' && !element.open) {
     element.show();

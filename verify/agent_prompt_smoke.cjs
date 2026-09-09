@@ -83,6 +83,25 @@ async function presetTitles() {
     check('导入按钮说明「追加不覆盖」',
       wiring.importTitle.includes('追加') && wiring.importTitle.includes('不覆盖'), wiring.importTitle);
 
+    // 0) 空提示词点「存为快捷提示词」→ 底部提示必须显示在模态弹层之上（top layer 遮挡回归）
+    await page.click('#saveAgentPromptPreset');
+    await page.waitForTimeout(400);
+    const toastState = await page.evaluate(() => {
+      const el = document.querySelector('#toast');
+      if (!el) return { exists: false };
+      const rect = el.getBoundingClientRect();
+      const style = getComputedStyle(el);
+      return {
+        exists: true,
+        text: el.textContent.trim(),
+        visible: rect.width > 0 && rect.height > 0 && style.opacity === '1',
+        parentIsTopDialog: el.parentElement?.matches('dialog[open]:modal') === true,
+      };
+    });
+    check('空提示词点另存会弹提示', toastState.text.includes('系统提示词为空'), JSON.stringify(toastState));
+    check('提示框挂在最上层模态弹层内且可见（不再被盖住）',
+      toastState.visible === true && toastState.parentIsTopDialog === true, JSON.stringify(toastState));
+
     // 1) 角色卡导入 = 追加（不覆盖已有内容）
     await page.fill('#agentSystemPromptEdit', '原始规则：保持简短。');
     await page.setInputFiles('#agentCharacterCardFileInput', CARD);

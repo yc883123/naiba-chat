@@ -51,6 +51,15 @@ class TextContextMenuTests(unittest.TestCase):
         self.assertIn(":modal", body, "只认 showModal() 打开的对话框")
         self.assertIn("toast", body, ":modal 不可用时必须排除非模态的 toast")
 
+    def test_toast_is_reparented_into_top_layer_container(self) -> None:
+        """底部提示框（#toast）也必须挂进最上层模态弹层，否则在设置/Agent 弹层里看不见。"""
+        core = self._core()
+        body = core[core.index("export function toast("):]
+        body = body[: body.index("\n}")]
+        self.assertIn("topLayerContainer()", body, "toast 必须挂进最上层模态弹层")
+        self.assertIn("container.append(element)", body)
+        self.assertIn("element.parentElement !== container", body, "无模态时回到 body")
+
     def test_selection_menu_scoped_to_same_dialog(self) -> None:
         bind = self._bind()
         body = bind[bind.index("document.addEventListener('contextmenu'"):]
