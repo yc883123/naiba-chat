@@ -282,8 +282,6 @@ export function bindEvents() {
     toggleQuickMessagePanel();
   });
   $('#quickMessagePanel')?.addEventListener('click', handleQuickMessagePanelClick);
-  // composer-meta「新会话」：在当前末尾落一条上下文边界（不删消息，可撤销）
-  $('#newSessionButton')?.addEventListener('click', () => { void startNewSession(); });
   window.addEventListener('resize', positionQuickMessagePanel);
   window.addEventListener('scroll', positionQuickMessagePanel, true);
   document.addEventListener('click', (event) => {
@@ -437,6 +435,11 @@ export function bindEvents() {
     const branchButton = event.target.closest('[data-branch-message]');
     if (branchButton) {
       branchMessage(branchButton.closest('.message-row'));
+      return;
+    }
+    const sessionStartButton = event.target.closest('[data-session-start-after]');
+    if (sessionStartButton) {
+      startNewSession(sessionStartButton.dataset.sessionStartAfter);
       return;
     }
     const cancelSessionButton = event.target.closest('[data-cancel-session-start]');

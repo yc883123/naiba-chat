@@ -389,19 +389,26 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             self._json(result, HTTPStatus.CREATED)
         elif path.startswith("/api/conversations/") and path.endswith("/session_start"):
-            # 手动「新会话开始」边界：不删任何消息，只让模型上下文从此行之后重算。
+            # 手动「新会话」分割线：标在指定消息上（不新增行、不删消息），
+            # 重放侧遇到该标记即从此条之后重算上下文。
             conversation_id = path.split("/")[-2]
             conversation = self.app.storage.get_conversation(conversation_id, include_messages=False)
             if not conversation:
                 self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
                 return
-            marker = self.app.storage.add_session_start(
+            after_message_id = str(body.get("after_message_id") or "")
+            if not after_message_id:
+                self._json({"error": "after_message_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+                return
+            marker = self.app.storage.set_session_start(
                 conversation_id,
+                after_message_id,
                 source=str(body.get("source") or "manual"),
                 handoff_path=str(body.get("handoff_path") or ""),
                 note=str(body.get("note") or ""),
             )
-            self._json({"message": marker}, HTTPStatus.CREATED)
+            self._json({"message": marker} if marker else {"error": "消息不存在"},
+                       HTTPStatus.CREATED if marker else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/conversations/") and path.endswith("/tools"):
             conversation_id = path.split("/")[-2]
             tools = body.get("tools") or []
@@ -869,8 +876,11 @@ class RequestHandler(BaseHTTPRequestHandler):
                 return
             self._json({"deleted": self.app.storage.clear_conversation_messages(conversation_id)})
         elif path.startswith("/api/session_start/"):
-            # 撤销「新会话开始」标记（旧消息仍在，上下文恢复到此前的完整历史）。
-            deleted = self.app.storage.delete_session_start(path.rsplit("/", 1)[-1])
+            # 撤销分割线：先按遗留标记行删（role=session），否则清掉消息 metadata 上的标记。
+            message_id = path.rsplit("/", 1)[-1]
+            deleted = self.app.storage.delete_session_start(message_id)
+            if not deleted:
+                deleted = self.app.storage.clear_session_start(message_id)
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/conversations/"):
             deleted = self.app.storage.delete_conversation(path.rsplit("/", 1)[-1])

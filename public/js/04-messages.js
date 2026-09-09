@@ -20,26 +20,44 @@ export function currentAgentAvatarUrl() {
   return file ? `/api/agents/avatar/${encodeURIComponent(file)}` : '';
 }
 
-// 「新会话开始」分隔条（role=session 的边界标记行）：模型上下文从这一行之后重算，
-// 旧消息仍留在界面上；点「撤销」即可恢复此前完整上下文。
+// 「新会话」分割条：标在**某条消息**的 metadata 上（`session_start`），渲染在该消息正下方。
+// 语义 = 此线以上的消息不再进入模型上下文，线以下的消息仍在上下文里；聊天记录一条不删。
+// 兼容遗留形态：早期版本用独立的 role=session 标记行，这里照旧渲染成同款分隔条。
 export function sessionDividerElement(message) {
+  const legacyRow = message.role === 'session';
   const info = (message.metadata || {}).session_start || {};
   const at = Number(info.at || message.created_at || 0);
   const time = at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '';
-  const source = String(info.source || 'manual') === 'tool' ? '模型重置' : '手动重置';
+  const source = String(info.source || 'manual') === 'tool' ? '模型重置' : '手动';
   const handoff = String(info.handoff_path || '');
   const row = document.createElement('article');
   row.className = 'message-row session-divider';
   row.dataset.messageId = message.id || '';
+  row.dataset.sessionDivider = message.id || '';
   row.innerHTML = `
-    <div class="session-divider-bar" title="此前的消息不再进入模型上下文；聊天记录仍保留在界面上">
+    <div class="session-divider-bar" title="此线以上的消息不再进入模型上下文；下方消息仍保留在上下文中（聊天记录全部保留）">
       <span class="session-divider-line" aria-hidden="true"></span>
-      <span class="session-divider-label">新会话开始 · ${escapeHtml(source)}${time ? ` · ${escapeHtml(time)}` : ''}</span>
+      <span class="session-divider-label">新会话${legacyRow ? '开始' : ''} · ${escapeHtml(source)}${time ? ` · ${escapeHtml(time)}` : ''}</span>
       <span class="session-divider-line" aria-hidden="true"></span>
-      ${message.id ? '<button type="button" class="session-divider-cancel" data-cancel-session-start title="撤销标记：恢复此前的完整上下文">撤销</button>' : ''}
+      ${message.id ? '<button type="button" class="session-divider-cancel" data-cancel-session-start title="撤销这条分割线：此线以上的消息重新进入模型上下文">撤销</button>' : ''}
     </div>
-    ${handoff ? `<div class="session-divider-handoff">交接文档：${escapeHtml(handoff)}</div>` : ''}`;
+    <div class="session-divider-hint">此线以上不再进入模型上下文${handoff ? ` · 交接文档：${escapeHtml(handoff)}` : ''}</div>`;
   return row;
+}
+
+// 该消息下方是否要跟一条分割线（遗留标记行由 messageElement 直接渲染，不在此列）。
+export function sessionDividerAfter(message) {
+  if (!message || message.role === 'session') return null;
+  return (message.metadata || {}).session_start ? sessionDividerElement(message) : null;
+}
+
+// 就地替换一条消息，并按需在其下方补上分割线（终态事件渲染路径复用）。
+export function replaceWithMessage(target, message, temporary = false) {
+  const element = messageElement(message, temporary);
+  target.replaceWith(element);
+  const divider = sessionDividerAfter(message);
+  if (divider) element.insertAdjacentElement('afterend', divider);
+  return element;
 }
 
 export function messageElement(message, temporary = false) {
@@ -78,6 +96,10 @@ export function messageElement(message, temporary = false) {
     const avatarHtml = avatarUrl
       ? `<img class="message-avatar message-avatar-img" src="${escapeHtml(avatarUrl)}" alt="">`
       : '<div class="message-avatar">AI</div>';
+    // 「新会话」分割线入口：紧挨「复制」右侧（只有已落库的完整回复才有 id，流式临时气泡不给）。
+    const sessionButton = (!temporary && message.id)
+      ? `<button data-session-start-after="${escapeHtml(message.id)}" title="在这条回复之后划一条分割线：此线以上的消息不再进入模型上下文（下方消息仍在上下文中，聊天记录全部保留）">新会话</button>`
+      : '';
     row.innerHTML = `
       ${avatarHtml}
       <div class="message-card">
@@ -92,7 +114,7 @@ export function messageElement(message, temporary = false) {
           ${bottomAttachments.length ? mediaTruncatedNotice(metadata.attachments_truncated) : ''}
           ${temporary ? '' : fileChangesSummaryMarkup(metadata.files)}
           ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance }, message.created_at)}
-          ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button></div>`}
+          ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button>${sessionButton}</div>`}
         </div>
       </div>`;
   }
@@ -218,38 +240,38 @@ export async function branchMessage(row) {
   }
 }
 
-// 手动「新会话开始」：在当前末尾落一条边界标记（不删消息），下一轮起模型只看此后的内容。
-export async function startNewSession() {
+// 在某条 AI 回复之后落一条「新会话」分割线：此线以上的消息不再进入模型上下文。
+export async function startNewSession(afterMessageId) {
   if (state.abortController || state.chatRunId) {
-    toast('请先等待当前回答结束或停止后再开始新会话');
+    toast('请先等待当前回答结束或停止后再划分割线');
     return;
   }
   const conversationId = state.conversationId;
-  if (!conversationId) {
+  if (!conversationId || !afterMessageId) {
     toast('请先打开一个对话');
     return;
   }
-  if (!window.confirm('从当前位置开始新会话？\n\n模型将不再看到此前的消息（聊天记录仍保留在界面上，可随时撤销）。')) return;
+  if (!window.confirm('在这条回复之后划一条分割线？\n\n此线以上的消息不再进入模型上下文；线以下的消息仍保留在上下文中。聊天记录全部保留，可随时撤销。')) return;
   try {
     await api(`/api/conversations/${conversationId}/session_start`, {
       method: 'POST',
-      body: { source: 'manual' },
+      body: { after_message_id: afterMessageId, source: 'manual' },
     });
     await syncCurrentConversation();
-    toast('已标记新会话开始：下一条消息起模型只看到此后的内容');
+    toast('已划出分割线：下一条消息起，此线以上的内容不再进入模型上下文');
   } catch (error) {
-    toast(`开始新会话失败：${error.message}`);
+    toast(`划分割线失败：${error.message}`);
   }
 }
 
-// 撤销边界标记：此前的上下文重新进入模型请求。
+// 撤销分割线：此线以上的消息重新进入模型上下文。
 export async function cancelSessionStart(messageId) {
   if (!messageId) return;
-  if (!window.confirm('撤销「新会话开始」标记？\n\n此前的上下文会重新进入模型请求。')) return;
+  if (!window.confirm('撤销这条分割线？\n\n此线以上的消息会重新进入模型请求。')) return;
   try {
     await api(`/api/session_start/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
     await syncCurrentConversation();
-    toast('已撤销新会话标记');
+    toast('已撤销分割线');
   } catch (error) {
     toast(`撤销失败：${error.message}`);
   }
@@ -416,7 +438,12 @@ export function renderMessages(messages) {
     // 系统提示词与工具集（默认折叠）。
     upsertFirstTurnCard();
     if (visibleMessages.length) {
-      visibleMessages.forEach((message) => container.append(messageElement(message)));
+      visibleMessages.forEach((message) => {
+        container.append(messageElement(message));
+        // 「新会话」分割线紧贴带标记的那条消息下方（允许同一会话存在多条，最新的那条决定上下文起点）。
+        const divider = sessionDividerAfter(message);
+        if (divider) container.append(divider);
+      });
       scrollToBottom();
     }
     const choiceMessage = pendingChoiceMessage(visibleMessages);

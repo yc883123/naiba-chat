@@ -1,6 +1,6 @@
-// 「新会话开始」边界冒烟（由 verify/session_start_smoke.py 编排，源码 server 8798）。
-// 覆盖：入口按钮 → 确认 → 分隔条就地渲染 → 后端落 role=session 标记（旧消息一条不删）
-//       → 撤销 → 分隔条与标记一起消失 → 零页面错误。
+// 「新会话」分割线冒烟（由 verify/session_start_smoke.py 编排，源码 server 8798）。
+// 覆盖：AI 回复末尾「复制」右侧的入口 → 任意位置画线（含中间位置）→ 分割线紧贴该条回复下方
+//       → 允许多条 → 刷新仍在 → 逐条撤销 → 消息一条不删 → 零页面错误。
 const { chromium } = require('playwright');
 
 const BASE = process.env.NAIBA_SMOKE_BASE || 'http://127.0.0.1:8798';
@@ -25,16 +25,24 @@ async function messagesOf(conversationId) {
 }
 
 async function domSnapshot(page) {
-  return page.evaluate(() => ({
-    rows: document.querySelectorAll('#messages .message-row[data-message-id]').length,
-    dividers: document.querySelectorAll('#messages .message-row.session-divider').length,
-    label: document.querySelector('#messages .session-divider-label')?.textContent.trim() || '',
-    hasCancel: Boolean(document.querySelector('#messages [data-cancel-session-start]')),
-    dividerIsLast: (() => {
-      const rows = [...document.querySelectorAll('#messages .message-row[data-message-id]')];
-      return rows.length > 0 && rows[rows.length - 1].classList.contains('session-divider');
-    })(),
-  }));
+  return page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#messages .message-row[data-message-id]')];
+    return {
+      rows: rows.length,
+      dividers: rows.filter((row) => row.classList.contains('session-divider')).length,
+      labels: rows.filter((row) => row.classList.contains('session-divider'))
+        .map((row) => row.querySelector('.session-divider-label')?.textContent.trim() || ''),
+      // 每条分割线的前一个兄弟节点必须是被标记的那条 AI 回复
+      dividerAnchors: rows.filter((row) => row.classList.contains('session-divider'))
+        .map((row) => row.previousElementSibling?.querySelector('.answer-content')?.textContent.trim().slice(0, 12) || ''),
+      buttons: document.querySelectorAll('#messages [data-session-start-after]').length,
+      copyBeforeSession: [...document.querySelectorAll('#messages .message-actions')]
+        .every((bar) => {
+          const buttons = [...bar.querySelectorAll('button')];
+          return buttons.length < 2 || buttons[0].textContent.trim() === '复制';
+        }),
+    };
+  });
 }
 
 (async () => {
@@ -58,52 +66,75 @@ async function domSnapshot(page) {
       return String(item?.dataset.conversationId || '');
     }, TITLE);
     check('拿到会话 ID（用于后端核对）', Boolean(conversationId), conversationId);
-    check('打开播种会话（4 条消息、无分隔条）',
-      (await domSnapshot(page)).rows === 4 && (await domSnapshot(page)).dividers === 0,
-      JSON.stringify(await domSnapshot(page)));
 
-    // ① 点「新会话」→ 分隔条就地出现
-    check('输入区有「新会话」入口', await page.evaluate(() => Boolean(document.querySelector('#newSessionButton'))));
-    await page.click('#newSessionButton');
+    const initial = await domSnapshot(page);
+    check('初始：4 条消息、无分割线、每条 AI 回复都有「新会话」入口',
+      initial.rows === 4 && initial.dividers === 0 && initial.buttons === 2, JSON.stringify(initial));
+    check('「新会话」排在「复制」右侧', initial.copyBeforeSession === true, JSON.stringify(initial));
+
+    // ① 在**第一条** AI 回复后画线（中间位置）
+    await page.click('#messages .message-row:has-text("第一答") [data-session-start-after]');
     await page.waitForTimeout(900);
-    const afterAdd = await domSnapshot(page);
-    check('点按钮后出现分隔条且位于末尾',
-      afterAdd.dividers === 1 && afterAdd.dividerIsLast, JSON.stringify(afterAdd));
-    check('分隔条文案标明来源', afterAdd.label.startsWith('新会话开始 · 手动重置'), afterAdd.label);
-    check('分隔条带「撤销」入口', afterAdd.hasCancel === true, JSON.stringify(afterAdd));
-    check('旧消息一条不删（4 + 分隔条 = 5 行）', afterAdd.rows === 5, JSON.stringify(afterAdd));
+    const one = await domSnapshot(page);
+    check('画线后：1 条分割线、消息仍是 4 条',
+      one.rows === 5 && one.dividers === 1, JSON.stringify(one));
+    check('分割线紧贴被点的那条 AI 回复下方',
+      one.dividerAnchors.length === 1 && one.dividerAnchors[0].startsWith('第一答'),
+      JSON.stringify(one.dividerAnchors));
+    check('分割线文案标明方向', one.labels[0].startsWith('新会话 · 手动'), JSON.stringify(one.labels));
 
-    // ② 后端确实落了 role=session 标记
-    const messages = await messagesOf(conversationId);
-    const marker = messages[messages.length - 1] || {};
-    check('后端落库 role=session 标记', marker.role === 'session', JSON.stringify(marker));
-    check('标记带 session_start 元数据（source=manual）',
-      String(marker.metadata?.session_start?.source || '') === 'manual'
-      && Boolean(marker.metadata?.session_start?.at),
-      JSON.stringify(marker.metadata || {}));
-    check('标记无正文（不占模型内容）', String(marker.content || '') === '', JSON.stringify(marker.content));
-    check('旧消息仍是前 4 条且角色顺序不变',
-      JSON.stringify(messages.slice(0, 4).map((m) => m.role)) === JSON.stringify(['user', 'assistant', 'user', 'assistant']),
+    let messages = await messagesOf(conversationId);
+    check('后端不新增行、不删消息（仍是 4 条）', messages.length === 4,
       JSON.stringify(messages.map((m) => m.role)));
+    check('标记落在第一条 AI 回复的 metadata 上（不是新行）',
+      Boolean(messages[1].metadata?.session_start)
+      && String(messages[1].metadata.session_start.source) === 'manual'
+      && !messages[1].metadata.session_start.handoff_path,
+      JSON.stringify(messages[1].metadata || {}));
+    check('其余消息没有被标记', messages.filter((m) => m.metadata?.session_start).length === 1,
+      JSON.stringify(messages.map((m) => Boolean(m.metadata?.session_start))));
 
-    // ③ 刷新页面：分隔条仍在（持久化，不是内存态）
+    // ② 再在第二条 AI 回复后画线 → 允许两条
+    await page.click('#messages .message-row:has-text("第二答") [data-session-start-after]');
+    await page.waitForTimeout(900);
+    const two = await domSnapshot(page);
+    check('允许多条分割线（2 条，消息 4 条）',
+      two.rows === 6 && two.dividers === 2, JSON.stringify(two));
+    check('两条分割线各自贴着自己的锚点',
+      two.dividerAnchors.length === 2
+      && two.dividerAnchors[0].startsWith('第一答')
+      && two.dividerAnchors[1].startsWith('第二答'), JSON.stringify(two.dividerAnchors));
+    messages = await messagesOf(conversationId);
+    check('后端两条标记并存', messages.filter((m) => m.metadata?.session_start).length === 2,
+      JSON.stringify(messages.map((m) => Boolean(m.metadata?.session_start))));
+
+    // ③ 刷新后仍在
     await page.reload({ waitUntil: 'load', timeout: 20000 });
     await page.waitForSelector('#messages .message-row[data-message-id]', { timeout: 20000 });
     await page.waitForTimeout(800);
-    const afterReload = await domSnapshot(page);
-    check('刷新后分隔条仍在（已持久化）', afterReload.dividers === 1 && afterReload.rows === 5,
-      JSON.stringify(afterReload));
+    const reloaded = await domSnapshot(page);
+    check('刷新后两条分割线仍在（已持久化）',
+      reloaded.dividers === 2 && reloaded.rows === 6, JSON.stringify(reloaded));
 
-    // ④ 撤销 → 分隔条与标记一起消失
+    // ④ 撤销第一条 → 只剩第二条（分割线自身不含锚点正文，按顺序取第一条）
+    await page.locator('#messages .message-row.session-divider [data-cancel-session-start]').first().click();
+    await page.waitForTimeout(900);
+    const afterFirstCancel = await domSnapshot(page);
+    check('撤销第一条后只剩 1 条分割线',
+      afterFirstCancel.dividers === 1 && afterFirstCancel.rows === 5, JSON.stringify(afterFirstCancel));
+    check('剩下的是第二条的线', afterFirstCancel.dividerAnchors[0].startsWith('第二答'),
+      JSON.stringify(afterFirstCancel.dividerAnchors));
+
+    // ⑤ 撤销第二条 → 全部恢复
     await page.click('#messages [data-cancel-session-start]');
     await page.waitForTimeout(900);
-    const afterCancel = await domSnapshot(page);
-    check('撤销后分隔条消失、消息仍是 4 条', afterCancel.dividers === 0 && afterCancel.rows === 4,
-      JSON.stringify(afterCancel));
-    const remaining = await messagesOf(conversationId);
-    check('撤销后后端不再有 session 标记',
-      remaining.length === 4 && remaining.every((m) => m.role !== 'session'),
-      JSON.stringify(remaining.map((m) => m.role)));
+    const cleared = await domSnapshot(page);
+    check('全部撤销后回到 4 条消息、0 条分割线',
+      cleared.rows === 4 && cleared.dividers === 0, JSON.stringify(cleared));
+    messages = await messagesOf(conversationId);
+    check('后端标记全部清除且消息完整',
+      messages.length === 4 && messages.every((m) => !m.metadata?.session_start),
+      JSON.stringify(messages.map((m) => [m.role, Boolean(m.metadata?.session_start)])));
 
     check('零页面错误 / console.error', pageErrors.length === 0, JSON.stringify(pageErrors.slice(0, 3)));
   } catch (error) {

@@ -1203,18 +1203,21 @@ class ChatStorage:
             "created_at": now,
         }
 
-    def add_session_start(
+    def set_session_start(
         self,
         conversation_id: str,
+        message_id: str,
         *,
         source: str = "manual",
         handoff_path: str = "",
         note: str = "",
-    ) -> dict[str, Any]:
-        """落一条「新会话开始」边界标记（role=session，无正文）。
+    ) -> dict[str, Any] | None:
+        """在指定消息上标记「新会话从这条消息之后开始」（metadata 形态，不新增行）。
 
-        语义：模型上下文从这一行之后重算——`build_model_history` 遇到该标记即清空此前历史；
-        聊天记录一条不删（旧消息仍留在界面上，用户随时可回看）。多次标记取最后一个。
+        为什么不用独立标记行：`messages` 的排序键是 `(created_at, rowid)`，想在中间插一行
+        必须构造/回移时间戳（同毫秒相邻时会插错位）。写在**被点击的那条消息**的 metadata 上
+        位置天然精确，重放侧遇到该标记就清空此前历史（该消息本身也不进新上下文）。
+        允许同一会话存在多条标记（最新的那条决定当前上下文起点，见 `build_model_history`）。
         """
         marker = {
             MetadataKeys.SESSION_START: {
@@ -1224,10 +1227,53 @@ class ChatStorage:
                 "note": str(note or "")[:200],
             }
         }
-        return self.add_message(conversation_id, "session", "", marker)
+        now = int(time.time() * 1000)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT metadata FROM messages WHERE id = ? AND conversation_id = ?",
+                (message_id, conversation_id),
+            ).fetchone()
+            if not row:
+                return None
+            metadata = json.loads(row["metadata"] or "{}")
+            if not isinstance(metadata, dict):
+                metadata = {}
+            metadata.update(marker)
+            db.execute(
+                "UPDATE messages SET metadata = ? WHERE id = ?",
+                (json.dumps(metadata, ensure_ascii=False), message_id),
+            )
+            db.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
+        return {"id": message_id, "metadata": metadata, "created_at": now}
+
+    def clear_session_start(self, message_id: str) -> bool:
+        """撤销某条消息上的「新会话」标记（消息本身与其余 metadata 一律保留）。"""
+        now = int(time.time() * 1000)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT conversation_id, metadata FROM messages WHERE id = ?", (message_id,)
+            ).fetchone()
+            if not row:
+                return False
+            metadata = json.loads(row["metadata"] or "{}")
+            if not isinstance(metadata, dict) or MetadataKeys.SESSION_START not in metadata:
+                return False
+            metadata.pop(MetadataKeys.SESSION_START, None)
+            db.execute(
+                "UPDATE messages SET metadata = ? WHERE id = ?",
+                (json.dumps(metadata, ensure_ascii=False), message_id),
+            )
+            db.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, row["conversation_id"]),
+            )
+        return True
 
     def delete_session_start(self, message_id: str) -> bool:
-        """撤销一条边界标记（只允许删 role=session 的行，避免误删对话消息）。"""
+        """删除**遗留形态**的边界标记行（role=session；只允许删该角色，避免误删对话消息）。"""
         now = int(time.time() * 1000)
         with self._connect() as db:
             row = db.execute(

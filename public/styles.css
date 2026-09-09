@@ -445,15 +445,19 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 /* 运行中不显示“分支”按钮；只有模型回复完毕或用户停止后才允许分支 */
 #messages.conversation-running .message-actions [data-branch-message] { display: none; }
 .message-actions [data-branch-message]:hover { color: var(--accent); }
+.message-actions [data-session-start-after]:hover { color: var(--accent); }
+/* 运行中不显示「新会话」入口（与「分支」同口径：位置要落在已完成的回复之后） */
+#messages.conversation-running .message-actions [data-session-start-after] { display: none; }
 
-/* 「新会话开始」分隔条（role=session）：横条划分上下文窗口，旧消息仍在下方/上方可见 */
-.message-row.session-divider { grid-template-columns: minmax(0, 1fr); margin: 6px 0 2px; }
+/* 「新会话」分割线（标在某条消息 metadata 上，渲染在其正下方）：划分模型上下文窗口，
+   线以上的消息不再进入请求，线以下的仍在上下文中；聊天记录全部保留 */
+.message-row.session-divider { grid-template-columns: minmax(0, 1fr); margin: -14px 0 22px; }
 .session-divider-bar { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11.5px; }
 .session-divider-line { flex: 1; height: 1px; background: var(--line-strong); }
 .session-divider-label { flex: none; padding: 2px 8px; border: 1px dashed var(--line-strong); border-radius: 999px; white-space: nowrap; }
 .session-divider-cancel { flex: none; border: 0; background: none; color: var(--muted); padding: 2px 5px; font-size: 11.5px; cursor: pointer; }
 .session-divider-cancel:hover { color: var(--accent); }
-.session-divider-handoff { margin: 4px 0 0; color: var(--muted); font-size: 11px; text-align: center; word-break: break-all; }
+.session-divider-hint { margin: 3px 0 0; color: var(--muted); font-size: 11px; text-align: center; word-break: break-all; }
 .usage-line { margin-top: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 /* 流式期间常驻消息尾端的用量框：首次请求完成时挂载、之后原位更新 */
 .usage-stream { margin-top: 6px; padding: 4px 10px; border-radius: 8px; background: rgba(128, 128, 128, 0.06); }

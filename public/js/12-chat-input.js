@@ -5,7 +5,7 @@
 import { $, $$, api, escapeHtml, notifyComposerChanged, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 import { setContextUsage, toolMediaMarkup, updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
-import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
+import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, replaceWithMessage, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation } from "./08-conversations.js";
@@ -761,8 +761,7 @@ function handleCancelledEvent(event, { row, answer, setActivity, conversationId 
   if (event.aborted_message) {
     // 取消时后端已把累积内容持久化为"已中止"assistant 消息，直接用其渲染，保留已展示的思考与工具。
     try {
-      const cancelledRow = messageElement(event.aborted_message);
-      row.replaceWith(cancelledRow);
+      const cancelledRow = replaceWithMessage(row, event.aborted_message);
       updateContextUsage(null, event.aborted_message);
     } catch (error) {
       console.error('[naiba] cancelled 事件渲染崩溃:', error, 'message=', event.aborted_message);
@@ -821,8 +820,7 @@ function handleDoneEvent(event, { row, answer, collapseReasoning, conversationId
   collapseReasoning();
   if (event.message) {
     try {
-      const completedRow = messageElement(event.message);
-      row.replaceWith(completedRow);
+      const completedRow = replaceWithMessage(row, event.message);
       updateContextUsage(null, event.message);
       const metadata = event.message.metadata || {};
       if ((Array.isArray(metadata.choice_groups) && metadata.choice_groups.length)
@@ -849,8 +847,7 @@ function handleErrorEvent(event, { row, answer, collapseReasoning, conversationI
     // 失败时后端已把累积内容持久化为 partial assistant 消息，直接用其渲染，
     // 保留已展示的思考/正文/工具，避免 HTTP 500 后内容被覆盖丢失。
     try {
-      const partialRow = messageElement(event.partial_message);
-      row.replaceWith(partialRow);
+      const partialRow = replaceWithMessage(row, event.partial_message);
       updateContextUsage(null, event.partial_message);
     } catch (error) {
       console.error('[naiba] error 事件渲染崩溃:', error, 'message=', event.partial_message);
