@@ -61,6 +61,11 @@ export const state = {
   syncPolling: false,
   updatePollTimer: null,
   conversationSnapshot: '',
+  // 懒加载：当前会话的完整消息数组（渲染窗口只取其中一段）+ 窗口起点（消息下标，恒为轮起点）
+  // + 这份数据属于哪个会话（切换会话要重置窗口，同会话刷新要保留窗口与滚动位置）。
+  messages: [],
+  renderStart: 0,
+  messagesConversationId: '',
   // 首轮上下文（系统提示词 + 工具集）折叠卡数据；切换会话时由 openConversation 拉取
   firstTurnInfo: null,
   agentFormSkillIds: [],

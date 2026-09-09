@@ -126,11 +126,14 @@ class TurnRailTests(unittest.TestCase):
         source = self._messages()
         self.assertIn("const TURN_RAIL_MAX = 30;", source, "最多同时显示 30 条")
         self.assertIn("export function initTurnRail()", source)
-        # 一个用户轮次 = 一条 user 行 + 其后助手回复
+        # 一个用户轮次 = 一条 user 消息 + 其后助手回复（懒加载后从 state.messages 收集，不再看 DOM）
         collect = source[source.index("function collectTurns()"):]
         collect = collect[: collect.index("\n}")]
-        self.assertIn("classList.contains('user')", collect)
+        self.assertIn("const messages = state.messages || []", collect,
+                      "懒加载下未渲染的轮次没有 DOM，必须从数据收集")
+        self.assertIn("message.role === 'user'", collect)
         self.assertIn("turns[turns.length - 1].reply", collect)
+        self.assertIn("anchors.set(row.dataset.messageId, row)", collect, "已渲染轮次记下锚点")
         # 高亮 = 视口中心所在轮次
         active = source[source.index("function turnRailActiveIndex("):]
         active = active[: active.index("\n}")]

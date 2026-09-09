@@ -468,43 +468,154 @@ function upsertFirstTurnCard() {
   }
 }
 
+/* ---------- 消息列表懒加载（窗口恒以「轮」为边界） ---------- */
+
+// 打开会话默认渲染最近 N 轮；向上滚动时每次再往前渲染 N 轮。
+// 窗口必须以「轮」为边界：一条 AI 回复上的「新会话」分割线属于该轮，
+// 不能出现"分割线在窗口内、它的锚点消息在窗口外"这种拆散（用户特别提醒过）。
+const LAZY_TURNS_INITIAL = 10;
+const LAZY_TURNS_STEP = 10;
+const LAZY_TOP_TRIGGER = 240;
+// 渲染/程序化滚动会连带触发 scroll 事件：这段时间内不把 scroll 当成"用户滚到顶"，
+// 否则打开会话（内容刚填进去、scrollTop 还在 0 附近）就会立刻多渲染一段。
+let lazySuppressUntil = 0;
+
+// 轮起点 = 每条 user 消息的下标（首条不是 user 时把 0 也算一个起点）。
+function turnStartIndexes(messages) {
+  const starts = [];
+  (messages || []).forEach((message, index) => {
+    if (message?.role === 'user') starts.push(index);
+  });
+  if (!starts.length || starts[0] !== 0) starts.unshift(0);
+  return starts;
+}
+
+function clampTurnStart(messages, wanted) {
+  let result = 0;
+  for (const start of turnStartIndexes(messages)) {
+    if (start <= wanted) result = start;
+    else break;
+  }
+  return result;
+}
+
+function initialRenderStart(messages) {
+  const starts = turnStartIndexes(messages);
+  return starts[Math.max(0, starts.length - LAZY_TURNS_INITIAL)];
+}
+
+// 一段消息的 DOM 片段（消息 + 紧跟其后的「新会话」分割线，保证两者同进同出）。
+function messageRangeFragment(messages, start, end) {
+  const fragment = document.createDocumentFragment();
+  for (let index = start; index < end; index += 1) {
+    const message = messages[index];
+    if (!message) continue;
+    fragment.append(messageElement(message));
+    const divider = sessionDividerAfter(message);
+    if (divider) fragment.append(divider);
+  }
+  return fragment;
+}
+
+// 程序化定位/补偿必须瞬时生效：容器是 scroll-behavior: smooth，直接写 scrollTop 会动画化，
+// 既测不准（scrollTop 读回旧值），还会在动画期间连发 scroll 事件干扰懒加载判定。
+function withInstantScroll(container, mutate) {
+  const previous = container.style.scrollBehavior;
+  container.style.scrollBehavior = 'auto';
+  try {
+    mutate();
+  } finally {
+    container.style.scrollBehavior = previous;
+  }
+}
+
+// 向上扩展渲染窗口（预渲染视界外的一段历史），并保持视口内容不跳动。
+export function extendRenderedWindow() {
+  const container = $('#messages');
+  const messages = state.messages || [];
+  const start = Number(state.renderStart) || 0;
+  if (!container || start <= 0) return false;
+  const starts = turnStartIndexes(messages);
+  let position = starts.indexOf(start);
+  if (position <= 0) position = starts.length;
+  const nextStart = starts[Math.max(0, position - LAZY_TURNS_STEP)];
+  if (nextStart >= start) return false;
+  const beforeHeight = container.scrollHeight;
+  const anchor = container.querySelector('.message-row[data-message-id]');
+  const fragment = messageRangeFragment(messages, nextStart, start);
+  if (anchor) anchor.before(fragment);
+  else container.append(fragment);
+  state.renderStart = nextStart;
+  // 补进来的高度加回 scrollTop：用户正在看的那条消息仍停在原来的位置（瞬时，不动画）。
+  withInstantScroll(container, () => {
+    container.scrollTop += container.scrollHeight - beforeHeight;
+  });
+  scheduleTurnRail();
+  return true;
+}
+
+// 把某条消息所在轮次渲染出来（刻度轨点击未渲染的轮次时用）。
+function ensureMessageRendered(messageIndex) {
+  let guard = 0;
+  while ((Number(state.renderStart) || 0) > messageIndex && guard < 200) {
+    if (!extendRenderedWindow()) break;
+    guard += 1;
+  }
+  return (Number(state.renderStart) || 0) <= messageIndex;
+}
+
 export function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
   closeImageLightbox();
+  const list = Array.isArray(messages) ? messages : [];
+  // 切换会话 → 窗口重置为「最近 N 轮」；同一会话刷新（轮询/保存后）→ 保留当前窗口与滚动位置，
+  // 否则用户正在往上翻历史时一次轮询就会把他拽回底部。
+  const switched = state.messagesConversationId !== String(state.conversationId || '');
+  const keepScroll = !switched && !stickToBottom;
+  const previousScrollTop = container.scrollTop;
+  const wantedStart = switched ? initialRenderStart(list) : clampTurnStart(list, Number(state.renderStart) || 0);
+  state.messages = list;
+  state.messagesConversationId = String(state.conversationId || '');
+  state.renderStart = list.length ? Math.min(wantedStart, list.length - 1) : 0;
+  // 渲染/程序化滚动产生的 scroll 事件不算"用户滚到顶"：这段时间内不触发预渲染。
+  lazySuppressUntil = Date.now() + 400;
   // 诊断日志：定位"消息消失"是数据为空还是渲染崩溃
-  console.log('[naiba] renderMessages 调用, 消息数=', messages.length,
+  console.log('[naiba] renderMessages 调用, 消息数=', list.length,
+    '渲染起点=', state.renderStart,
     'conversationId=', state.conversationId,
-    'roles=', messages.map((m) => m.role).join(','));
+    'roles=', list.map((m) => m.role).join(','));
   try {
     container.replaceChildren();
     // 始终保留 empty 在容器中，仅切换 hidden；否则它会被移出 DOM，
     // 导致后续 sendMessage 中 $('#emptyState') 为 null 而崩溃
-    const visibleMessages = messages;
-    empty.hidden = visibleMessages.length > 0;
+    empty.hidden = list.length > 0;
     container.append(empty);
     // 首轮上下文折叠卡：固定在最顶部（第一条消息上方），展示第一轮发送给模型的
     // 系统提示词与工具集（默认折叠）。
     upsertFirstTurnCard();
-    if (visibleMessages.length) {
-      visibleMessages.forEach((message) => {
-        container.append(messageElement(message));
-        // 「新会话」分割线紧贴带标记的那条消息下方（允许同一会话存在多条，最新的那条决定上下文起点）。
-        const divider = sessionDividerAfter(message);
-        if (divider) container.append(divider);
-      });
-      scrollToBottom();
+    if (list.length) {
+      // 懒加载：只渲染 [renderStart, 末尾) 这一段（窗口恒以「轮」为边界，分割线不会与锚点分离）
+      container.append(messageRangeFragment(list, state.renderStart, list.length));
+      if (keepScroll) {
+        withInstantScroll(container, () => { container.scrollTop = previousScrollTop; });
+      } else {
+        // 先瞬时定位到底部（smooth 会让几百条消息"慢慢滑"），再在下一帧布局稳定后确认；
+        // 用户若已上滑（stickToBottom=false）则不再抢滚动。
+        withInstantScroll(container, () => { container.scrollTop = container.scrollHeight; });
+        requestAnimationFrame(() => scrollToBottom());
+      }
     }
-    const choiceMessage = pendingChoiceMessage(visibleMessages);
+    const choiceMessage = pendingChoiceMessage(list);
     const choices = choiceMessage?.metadata?.choices || [];
     const choiceGroups = choiceMessage?.metadata?.choice_groups || [];
     if ((Array.isArray(choiceGroups) && choiceGroups.length) || (Array.isArray(choices) && choices.length)) {
       showChoiceButtons(choices, choiceGroups);
     }
     else hideChoiceButtons();
-    updateContextUsage(messages);
+    updateContextUsage(list);
   } catch (error) {
-    console.error('[naiba] renderMessages 渲染崩溃:', error, '消息数=', messages.length);
+    console.error('[naiba] renderMessages 渲染崩溃:', error, '消息数=', list.length);
   }
 }
 
@@ -535,30 +646,37 @@ let turnRailWindow = { start: -1, end: -1 };
 let turnRailFrame = 0;
 let turnRailBound = false;
 
-function turnRailText(node, limit) {
-  if (!node) return '';
-  const clone = node.cloneNode(true);
-  clone.querySelectorAll('.message-actions, .run-activity').forEach((el) => el.remove());
-  const text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+// 消息数据的文本预览（懒加载下未渲染的轮次没有 DOM，刻度轨概要只能从数据取）。
+function messagePreviewText(message, limit) {
+  const raw = String((message?.metadata || {}).display_content ?? message?.content ?? '');
+  const text = raw.replace(/\s+/g, ' ').trim();
   return text.length > limit ? `${text.slice(0, limit)}…` : text;
 }
 
 // 一个「用户轮次」= 一条用户消息 + 它之后（下一条用户消息之前）的助手回复。
+// **从 state.messages 收集**（不是从 DOM）：懒加载只渲染窗口内的消息，刻度轨仍要覆盖全部轮次；
+// 已渲染的轮次顺带记下锚点元素，供偏移计算与点击跳转使用。
 function collectTurns() {
-  const rows = [...document.querySelectorAll('#messages .message-row[data-message-id]')]
-    .filter((row) => row.dataset.messageId);
+  const messages = state.messages || [];
+  const anchors = new Map();
+  document.querySelectorAll('#messages .message-row[data-message-id]').forEach((row) => {
+    if (row.dataset.messageId) anchors.set(row.dataset.messageId, row);
+  });
   const turns = [];
-  rows.forEach((row) => {
-    if (row.classList.contains('user')) {
+  messages.forEach((message, messageIndex) => {
+    if (!message) return;
+    if (message.role === 'user') {
       turns.push({
-        anchor: row,
-        user: turnRailText(row.querySelector('.message-body'), TURN_TIP_USER_CHARS),
+        messageId: String(message.id || ''),
+        messageIndex,
+        anchor: anchors.get(String(message.id || '')) || null,
+        user: messagePreviewText(message, TURN_TIP_USER_CHARS),
         reply: '',
       });
       return;
     }
-    if (!turns.length) return;
-    const reply = turnRailText(row.querySelector('.answer-content'), TURN_TIP_REPLY_CHARS);
+    if (!turns.length || message.role !== 'assistant') return;
+    const reply = messagePreviewText(message, TURN_TIP_REPLY_CHARS);
     if (reply) turns[turns.length - 1].reply = reply;  // 一轮多条助手消息时取最后一条有正文的
   });
   return turns;
@@ -566,7 +684,20 @@ function collectTurns() {
 
 function turnRailOffsets(container) {
   const base = container.getBoundingClientRect().top - container.scrollTop;
-  return turnRailTurns.map((turn) => Math.round(turn.anchor.getBoundingClientRect().top - base));
+  const offsets = turnRailTurns.map((turn) => (turn.anchor
+    ? Math.round(turn.anchor.getBoundingClientRect().top - base)
+    : null));
+  // 未渲染的轮次没有锚点：按相邻已渲染轮次向上/向下均摊估算。
+  // 只用于判定"视口中心在哪一轮"，不参与任何布局。
+  const firstKnown = offsets.findIndex((value) => value !== null);
+  if (firstKnown < 0) return offsets.map((_, index) => index * 120);
+  for (let index = firstKnown - 1; index >= 0; index -= 1) {
+    offsets[index] = offsets[index + 1] - 120;
+  }
+  for (let index = firstKnown + 1; index < offsets.length; index += 1) {
+    if (offsets[index] === null) offsets[index] = offsets[index - 1] + 120;
+  }
+  return offsets;
 }
 
 // 视口中心落在哪一轮的垂直范围内，就高亮哪一条。
@@ -619,6 +750,8 @@ function renderTurnRail() {
     tick.type = 'button';
     tick.className = 'turn-tick';
     tick.dataset.turnIndex = String(index);
+    // 懒加载后"第 N 轮"与 DOM 行不再一一对应，带上该轮用户消息 id 便于定位/断言。
+    tick.dataset.turnMessageId = String(turnRailTurns[index]?.messageId || '');
     tick.setAttribute('aria-label', `第 ${index + 1} 轮对话`);
     const line = document.createElement('span');
     line.className = 'turn-tick-line';
@@ -679,9 +812,16 @@ function hideTurnTip() {
 }
 
 function scrollToTurn(index) {
-  const turn = turnRailTurns[index];
+  let turn = turnRailTurns[index];
   const container = $('#messages');
   if (!turn || !container) return;
+  // 懒加载：点到的轮次可能还没渲染 → 先把窗口扩到它，再重新收集锚点。
+  if (!turn.anchor) {
+    if (!ensureMessageRendered(turn.messageIndex)) return;
+    turnRailTurns = collectTurns();
+    turn = turnRailTurns[index];
+    if (!turn?.anchor) return;
+  }
   // 把该轮的用户消息滚到视口垂直中心：这样"视口中心所在轮次"正好是点中的那一条，
   // 跳转后高亮不会跑到隔壁（否则跳转即高亮漂移，用户会以为点错了）。
   const base = container.getBoundingClientRect().top - container.scrollTop;
@@ -696,6 +836,14 @@ export function initTurnRail() {
   if (!rail || !container || turnRailBound) return;
   turnRailBound = true;
   container.addEventListener('scroll', scheduleTurnRail, { passive: true });
+  // 懒加载：滚到接近顶部就往前预渲染一段（窗口按「轮」扩展，分割线不会与锚点分离）。
+  container.addEventListener('scroll', () => {
+    if (Date.now() < lazySuppressUntil) return;      // 渲染/程序化滚动，不算用户操作
+    if (stickToBottom) return;                        // 仍在底部附近：没在翻历史
+    if ((Number(state.renderStart) || 0) > 0 && container.scrollTop <= LAZY_TOP_TRIGGER) {
+      extendRenderedWindow();
+    }
+  }, { passive: true });
   window.addEventListener('resize', scheduleTurnRail);
   window.addEventListener('scroll', hideTurnTip, true);
   rail.addEventListener('click', (event) => {

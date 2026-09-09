@@ -202,8 +202,10 @@ class SessionStartFrontendTests(unittest.TestCase):
         self.assertIn("element.insertAdjacentElement('afterend', divider)", js,
                       "终态渲染路径也要把分割线补在锚点之后")
         render = js[js.index("export function renderMessages(messages)"):]
-        render = render[: render.index("updateContextUsage(messages)")]
-        self.assertIn("sessionDividerAfter(message)", render, "历史渲染路径要逐条补分割线")
+        render = render[: render.index("updateContextUsage(list)")]
+        self.assertIn("messageRangeFragment(list, state.renderStart, list.length)", render,
+                      "历史渲染路径要按窗口逐段渲染（懒加载）")
+        self.assertIn("sessionDividerAfter(message)", js, "分段渲染里分割线紧跟锚点")
         self.assertIn("此线以上不再进入模型上下文", js, "分割线文案说明裁剪方向")
         self.assertNotIn("MAX_SESSION_DIVIDERS", js, "分割线条数不设上限")
 

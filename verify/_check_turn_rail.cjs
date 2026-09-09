@@ -51,17 +51,33 @@ async function instantScroll(page, scrollTop) {
 }
 
 async function expectedActive(page) {
+  // 懒加载后 DOM 里只有渲染窗口内的轮次，返回「视口中心所在轮次」的用户消息 id，
+  // 与刻度上的 data-turn-message-id 比对（而不是相对下标）。
   return page.evaluate(() => {
     const container = document.querySelector('#messages');
     const rows = [...container.querySelectorAll('.message-row.user[data-message-id]')];
     const base = container.getBoundingClientRect().top - container.scrollTop;
     const center = container.scrollTop + container.clientHeight / 2;
-    let active = 0;
-    rows.forEach((row, index) => {
-      if (row.getBoundingClientRect().top - base <= center) active = index;
+    let visible = '';
+    rows.forEach((row) => {
+      if (row.getBoundingClientRect().top - base <= center) visible = row.dataset.messageId;
     });
-    return active;
+    return visible;
   });
+}
+
+// 滚到"最顶上"：懒加载下每次 scrollTop=0 只会往前预渲染一段并保持视口不动，
+// 需要反复滚到底（直到窗口起点为 0、scrollTop 真为 0）。
+async function scrollToVeryTop(page) {
+  for (let round = 0; round < 12; round += 1) {
+    await instantScroll(page, 0);
+    const info = await page.evaluate(() => {
+      const container = document.querySelector('#messages');
+      return { scrollTop: Math.round(container.scrollTop) };
+    });
+    if (info.scrollTop === 0) return true;
+  }
+  return false;
 }
 
 async function railSnapshot(page) {
@@ -83,6 +99,7 @@ async function railSnapshot(page) {
       lastIndex: ticks.length ? Number(ticks[ticks.length - 1].dataset.turnIndex) : -1,
       activeCount: active.length,
       activeIndex: active.length ? Number(active[0].dataset.turnIndex) : -1,
+      activeMessageId: active.length ? String(active[0].dataset.turnMessageId || '') : '',
       activeWidth: lineWidth(active[0]),
       idleWidth: lineWidth(idleTick),
       blockSizes: [...new Set(ticks.map((t) => {
@@ -121,9 +138,10 @@ async function railSnapshot(page) {
     check('只显示视口附近的 30 条（40 轮 → 30 条滑动窗口）',
       rail.tickCount === 30, JSON.stringify({ tickCount: rail.tickCount, first: rail.firstIndex, last: rail.lastIndex }));
     check('同一时刻只有一条高亮', rail.activeCount === 1, JSON.stringify(rail));
+    const topExpectId = await expectedActive(page);
     check('打开会话（已到底）→ 高亮 = 视口中心所在轮次',
-      rail.activeIndex === await expectedActive(page),
-      JSON.stringify({ activeIndex: rail.activeIndex, expect: await expectedActive(page) }));
+      rail.activeMessageId === topExpectId && Boolean(topExpectId),
+      JSON.stringify({ activeIndex: rail.activeIndex, activeMessageId: rail.activeMessageId, expect: topExpectId }));
     check('高亮刻度比普通刻度更宽（加粗凸起）',
       rail.activeWidth > rail.idleWidth, JSON.stringify({ active: rail.activeWidth, idle: rail.idleWidth }));
     check('轨道贴在会话区右缘（距窗口右缘 < 40px）', rail.railRight < 40, String(rail.railRight));
@@ -132,11 +150,11 @@ async function railSnapshot(page) {
       JSON.stringify({ left: rail.paddingLeft, right: rail.paddingRight }));
 
     // 滚到顶：高亮仍按"视口中心所在轮次"（顶部时中心落在中间那几轮之一），窗口前移到 0..29
-    await instantScroll(page, 0);
+    check('滚到最顶上（懒加载会逐段预渲染）', await scrollToVeryTop(page) === true);
     rail = await railSnapshot(page);
     const topExpect = await expectedActive(page);
     check('滚到顶 → 高亮 = 视口中心所在轮次',
-      rail.activeIndex === topExpect, JSON.stringify({ activeIndex: rail.activeIndex, expect: topExpect }));
+      rail.activeMessageId === topExpect, JSON.stringify({ activeIndex: rail.activeIndex, activeMessageId: rail.activeMessageId, expect: topExpect }));
     check('滚到顶 → 窗口前移到 0..29',
       rail.firstIndex === 0 && rail.lastIndex === 29, JSON.stringify({ first: rail.firstIndex, last: rail.lastIndex }));
 
@@ -237,13 +255,19 @@ async function railSnapshot(page) {
       const ticks = [...document.querySelectorAll('#turnRail .turn-tick')];
       const target = ticks[0];
       const rect = target.getBoundingClientRect();
-      return { index: Number(target.dataset.turnIndex), x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      return {
+        index: Number(target.dataset.turnIndex),
+        messageId: String(target.dataset.turnMessageId || ''),
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+      };
     });
     await page.mouse.click(clickTarget.x, clickTarget.y);
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(2000);
     rail = await railSnapshot(page);
     check('点击刻度跳转到该轮（高亮切过去）',
-      rail.activeIndex === clickTarget.index, JSON.stringify({ clicked: clickTarget.index, active: rail.activeIndex }));
+      rail.activeIndex === clickTarget.index && rail.activeMessageId === clickTarget.messageId,
+      JSON.stringify({ clicked: clickTarget.index, active: rail.activeIndex, clickedId: clickTarget.messageId, activeId: rail.activeMessageId }));
 
     // 窄屏：隐藏轨道、消息列恢复居中
     await page.setViewportSize({ width: 640, height: 800 });

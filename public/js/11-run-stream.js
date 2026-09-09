@@ -468,7 +468,11 @@ export async function sendChatMessage(textOverride = '', { skipContextWarning = 
   hideFilePopup();
   closeQuickMessagePanel();
   if ($('#emptyState')) $('#emptyState').hidden = true;
-  $('#messages').append(messageElement({ role: 'user', content: messageText, metadata: { attachments, display_content: text } }));
+  const optimisticUser = { role: 'user', content: messageText, metadata: { attachments, display_content: text } };
+  $('#messages').append(messageElement(optimisticUser));
+  // 懒加载的渲染窗口以 state.messages 为准（刻度轨也从它收集轮次）：
+  // 乐观插入的这轮同步进数组，刻度轨才会立刻多出这一条。
+  state.messages = [...(state.messages || []), optimisticUser];
   const row = createRunRow({ id: '', kind: 'chat' });
   const controller = new AbortController();
   const runGeneration = ++state.runGeneration; // 本段对话流的新一代
