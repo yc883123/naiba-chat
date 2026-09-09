@@ -568,7 +568,7 @@ def build_core_tool_specs() -> list[ToolSpec]:
 # 名字与工具集对模型恒定；vision_image_ops 是 PIL 本地图像计算（不依赖视觉模型）。
 
 VISION_ANALYZE_DESCRIPTION = (
-    "分析本地图片：把图片与你的问题交给视觉模型后端，按提问返回描述、识别文字等结果。"
+    "把磁盘上的图片（单个文件或整个文件夹）交给视觉后端分析，按提问返回描述、识别文字等结果。"
     "单次最多 4 张，超过请分多次调用；paths/image 填图片绝对路径。"
 )
 VISION_ANALYZE_PARAMETERS: dict[str, Any] = {
@@ -583,8 +583,8 @@ VISION_ANALYZE_PARAMETERS: dict[str, Any] = {
     "required": [],
 }
 VISION_ANALYZE_LOAD_DESCRIPTION = (
-    "从文件夹或路径列表读取图片并装入本次对话（供你直接查看）。"
-    "单次最多 4 张，超过会按批注入并标注批次；返回每张图片名称与缓存路径。"
+    "读取磁盘上的图片（单个文件或整个文件夹）并装入本次对话，装入后你即可直接查看。"
+    "单次最多 4 张，超过会分批注入并标注批次；返回每张图片的名称与缓存路径。"
 )
 VISION_ANALYZE_LOAD_PARAMETERS: dict[str, Any] = {
     "type": "object",
