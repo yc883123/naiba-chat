@@ -80,6 +80,8 @@ export const state = {
   // 不再走 localStorage——冻结版 pywebview private_mode 会清空 localStorage。
   toolTemplates: [],
   toolCatalog: null,
+  // 工具目录拉取时间戳（短时效缓存：MCP 按需连接，启动时的目录可能还没有 mcp__* 工具）。
+  toolCatalogAt: 0,
   tasks: [],
   taskTimer: null,
   taskPollInFlight: false,

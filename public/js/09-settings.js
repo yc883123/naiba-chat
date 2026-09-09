@@ -1452,27 +1452,43 @@ export function syncAgentToolCheckboxes(list) {
   updateToolPresetUI();
 }
 
-// 工具目录（/api/tool_catalog）只拉一次：Agent 卡片要显示「工具集：预设名」，
-// 工具集面板也要它，两边共用同一个 promise（失败时清掉，下次再试）。
+// 工具目录（/api/tool_catalog）带**短时效缓存**：MCP 是「按需连接」的——应用刚启动时
+// 服务还没连上，此时拉到的目录里没有 mcp__* 工具；若把它永久缓存，整个页面会话的
+// 工具集面板就再也看不到 MCP 工具（用户实测「MCP 工具消失了」）。
+// 所以：默认缓存 5 秒，打开工具集面板时强制取新（maxAgeMs: 0），MCP 连接状态变化时清缓存。
 let toolCatalogPromise = null;
 
-export async function ensureToolCatalog() {
-  if (state.toolCatalog) return state.toolCatalog;
+export async function ensureToolCatalog({ maxAgeMs = 5000 } = {}) {
+  const cachedAt = Number(state.toolCatalogAt || 0);
+  if (state.toolCatalog && Date.now() - cachedAt < maxAgeMs) return state.toolCatalog;
   if (!toolCatalogPromise) {
-    toolCatalogPromise = api('/api/tool_catalog', { method: 'GET' }).catch(() => {
-      toolCatalogPromise = null;  // 拉取失败允许下次重试（例如服务刚启动）
-      return null;
-    });
+    toolCatalogPromise = api('/api/tool_catalog', { method: 'GET' })
+      .then((data) => {
+        if (data) {
+          state.toolCatalog = data;
+          state.toolCatalogAt = Date.now();
+        }
+        return data;
+      })
+      .catch(() => null)
+      .finally(() => { toolCatalogPromise = null; });
   }
-  const catalog = await toolCatalogPromise;
-  if (catalog) state.toolCatalog = catalog;
+  await toolCatalogPromise;
   return state.toolCatalog || null;
+}
+
+// MCP 连接状态变化 → 工具目录作废（下次渲染/打开面板会重新拉，MCP 工具立即回来）。
+export function invalidateToolCatalog() {
+  state.toolCatalog = null;
+  state.toolCatalogAt = 0;
+  toolCatalogPromise = null;
 }
 
 export async function renderAgentToolPicker() {
   const list = $('#agentToolScope');
   if (!list) return;
-  await ensureToolCatalog();
+  // 打开工具集面板时强制取新：MCP 工具是运行时按需连接的，用启动时的旧目录会「看不见 MCP 工具」。
+  await ensureToolCatalog({ maxAgeMs: 0 });
   const catalog = state.toolCatalog?.tools || [];
   // 兼容旧配置：挑出当前工具目录里已不存在的名字（老版本移除的工具、临时掉线的
   // MCP 工具等）单独保留。它们不参与勾选、计数与预设匹配，但保存时原样写回，
@@ -2037,6 +2053,7 @@ export async function pollMcpStatus() {
     const prev = state.bootstrap.mcp_servers || [];
     const byId = {};
     for (const s of prev) byId[s.id] = s;
+    let connectivityChanged = false;
     for (const s of servers) {
       const cur = byId[s.id];
       if (!cur) {
@@ -2045,12 +2062,15 @@ export async function pollMcpStatus() {
         await loadMcpServers();
         return;
       }
+      if (Boolean(cur.connected) !== Boolean(s.connected)) connectivityChanged = true;
       cur.status = s.status;
       cur.connected = s.connected;
       cur.active_calls = s.active_calls;
       cur.activity = s.activity;
       cur.last_used_at = s.last_used_at;
     }
+    // MCP 刚连上/断开 → 工具目录里 mcp__* 的集合变了，作废缓存，别让工具集面板用旧目录。
+    if (connectivityChanged) invalidateToolCatalog();
     renderMcp();
   } catch (_error) {
     /* 轮询失败不阻断界面 */

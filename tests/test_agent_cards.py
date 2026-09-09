@@ -654,17 +654,26 @@ class AgentCardsMarkupTests(unittest.TestCase):
         css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
         self.assertIn(".agent-card-tools", css)
 
-    def test_tool_catalog_loaded_once_for_cards(self) -> None:
-        """卡片要显示预设名，必须先有工具目录；两边共用同一个懒加载。"""
+    def test_tool_catalog_cache_keeps_mcp_tools_visible(self) -> None:
+        """工具目录只能短时效缓存：MCP 按需连接，启动时的目录可能没有 mcp__* 工具。
+
+        用户实测「MCP 工具消失了」——启动时拉到的目录被永久缓存，面板里再也看不到 MCP 工具。
+        """
         source = self._settings()
-        self.assertIn("export async function ensureToolCatalog()", source)
+        self.assertIn("export async function ensureToolCatalog({ maxAgeMs = 5000 } = {})", source)
         self.assertIn("let toolCatalogPromise = null;", source)
+        self.assertIn("export function invalidateToolCatalog()", source)
         picker = source[source.index("export async function renderAgentToolPicker()"):]
         picker = picker[: picker.index("\n}")]
-        self.assertIn("await ensureToolCatalog();", picker)
+        self.assertIn("await ensureToolCatalog({ maxAgeMs: 0 });", picker, "打开面板必须强制取新")
         manager = source[source.index("export async function renderAgentManager()"):]
         manager = manager[: manager.index("\n}")]
         self.assertIn("await ensureToolCatalog();", manager, "渲染卡片前先确保目录已加载")
+        poll = source[source.index("export async function pollMcpStatus()"):]
+        poll = poll[: poll.index("\n}")]
+        self.assertIn("invalidateToolCatalog()", poll, "MCP 连接状态变化要作废目录缓存")
+        core = (ROOT / "public/js/01-core.js").read_text(encoding="utf-8")
+        self.assertIn("toolCatalogAt: 0,", core, "缓存时间戳登记进全局状态")
 
     def test_default_agent_has_no_badge_or_highlight(self) -> None:
         """默认 Agent 在卡片上不做任何标记：角标/强调色会被误读成「当前选中」。"""

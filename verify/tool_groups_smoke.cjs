@@ -420,6 +420,54 @@ async function scopeSnapshot(page) {
     check('× 删除（确认后）卡片与后端记录同步清掉',
       afterDelete.cards === 0 && leftSets.length === 0, JSON.stringify({ afterDelete, leftSets }));
 
+    // ⑨ MCP 工具「消失」回归（用户实测 bug）：MCP 是按需连接的，应用刚启动时拉到的目录里
+    //    没有 mcp__* 工具；若永久缓存这份目录，整个页面会话的工具集面板就再也看不到 MCP 工具。
+    //    这里让第一次目录响应缺少 MCP 工具，再打开工具集面板——必须强制取新、把工具带回来。
+    await page.unroute('**/api/tool_catalog');
+    const lateMcp = [
+      { name: 'mcp__smoke-mcp__ping', description: '探活' },
+      { name: 'mcp__smoke-mcp__stats', description: '看状态' },
+    ];
+    let servedFirst = false;
+    await page.route('**/api/tool_catalog', async (route) => {
+      const response = await route.fetch();
+      const payload = await response.json();
+      if (!servedFirst) {
+        servedFirst = true;
+        await route.fulfill({ json: payload });   // 第一次 = 启动时那份（还没有 MCP 工具）
+        return;
+      }
+      for (const tool of lateMcp) {
+        payload.tools.push({ ...tool, group: '联网与外部服务', subgroup: 'smoke-mcp', default_selected: false });
+      }
+      const net = (payload.groups || []).find((group) => group.name === '联网与外部服务');
+      net.tools.push(...lateMcp.map((tool) => tool.name));
+      net.subgroups.push({ name: 'smoke-mcp', tools: lateMcp.map((tool) => tool.name) });
+      await route.fulfill({ json: payload });
+    });
+    await page.reload({ waitUntil: 'load', timeout: 20000 });
+    await page.waitForSelector('#messageInput', { timeout: 20000 });
+    await page.waitForTimeout(900);
+    await page.click('#openSettings');
+    await page.waitForSelector('#settingsDialog[open]', { timeout: 10000 });
+    await page.click('.settings-nav button[data-settings-tab="agent"]');
+    await page.waitForTimeout(500);
+    await page.click('#agentCards [data-agent-card] .agent-card-name');
+    await page.waitForSelector('#agentDialog[open]', { timeout: 10000 });
+    await page.waitForTimeout(800);
+    await page.click('[data-agent-tab="tools"]');
+    await page.waitForTimeout(400);
+    await page.click('[data-tool-preset-add]');
+    await page.waitForTimeout(900);
+    const lateMcpSnap = await page.evaluate(() => ({
+      mcpBoxes: [...document.querySelectorAll('#agentToolScope input[type="checkbox"]')]
+        .filter((cb) => cb.value.startsWith('mcp__')).map((cb) => cb.value),
+      hasSubgroup: Boolean(document.querySelector('.agent-tool-group[data-group="联网与外部服务"] .tool-subgroup')),
+    }));
+    check('启动目录缺 MCP 工具时，打开面板会强制取新（MCP 工具回来了）',
+      lateMcpSnap.mcpBoxes.length === 2 && lateMcpSnap.hasSubgroup, JSON.stringify(lateMcpSnap));
+    await page.unroute('**/api/tool_catalog');
+
     // ⑦ 零页面错误
     check('零页面错误 / console.error', pageErrors.length === 0, JSON.stringify(pageErrors.slice(0, 3)));
   } catch (error) {
