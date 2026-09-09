@@ -1349,10 +1349,10 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .tool-stage { display: grid; flex: 1; min-height: 0; }
 .tool-stage > .tool-preset-view, .tool-stage > .tool-editor { grid-area: 1 / 1; min-height: 0; }
 
-/* 卡片态：整块在框里居中，点击后整体向上滑出，编辑态从下方滑入。 */
+/* 卡片态：整块贴顶（空白留在下方，正好是列表滑入的位置），点击后整体向上滑出。 */
 .tool-preset-view {
-  display: grid; gap: 10px; align-content: center;
-  transition: opacity .18s ease, transform .18s ease;
+  display: grid; gap: 10px; align-content: start;
+  transition: opacity .12s ease, transform .12s ease;
 }
 .tool-preset-view[hidden] { display: none; }
 .tool-preset-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-content: start; }
@@ -1360,7 +1360,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   position: relative; display: grid; align-content: start; gap: 4px; min-height: 92px;
   padding: 12px 12px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius);
   background: var(--surface); color: var(--text); text-align: left; cursor: pointer;
-  transition: border-color .15s ease, box-shadow .15s ease, transform .08s ease, background .08s ease;
+  transition: border-color .10s ease, box-shadow .10s ease, transform .05s ease, background .05s ease;
 }
 .tool-preset-card:hover { border-color: var(--accent); }
 .tool-preset-card.is-active { border-color: var(--accent); background: var(--accent-soft); }
@@ -1391,7 +1391,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 
 .tool-editor {
   display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;
-  transition: opacity .18s ease, transform .18s ease;
+  transition: opacity .12s ease, transform .12s ease;
 }
 .tool-editor[hidden] { display: none; }
 .tool-editor-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -1401,9 +1401,9 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   background: var(--bg); color: var(--text); font-size: 12px;
 }
 .tool-set-name::placeholder { color: var(--muted); }
-/* 视图切换：卡片向上滑出、编辑区从下方滑入（返回时反向）；卡片态多 120ms 延迟，让「按下」那一帧看得见。 */
+/* 视图切换：卡片向上滑出、编辑区从下方滑入（返回时反向）；卡片态多 80ms 延迟，让「按下」那一帧看得见。 */
 .tool-preset-view.is-leaving, .tool-preset-view.is-entering { opacity: 0; transform: translateY(-18px); }
-.tool-preset-view.is-leaving { transition-delay: .12s; }
+.tool-preset-view.is-leaving { transition-delay: .08s; }
 .tool-editor.is-leaving, .tool-editor.is-entering { opacity: 0; transform: translateY(18px); }
 
 .tool-unknown-hint {

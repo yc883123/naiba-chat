@@ -1022,7 +1022,7 @@ export function normalizeToolScope(scope) {
 // —— 工具集：卡片态（内置预设 + 我的工具集）↔ 编辑态 ——
 // 两态同框叠放、弹层高度固定：点任意卡片（含「添加」卡）都先按一下再向上滑出，工具列表从下方滑入。
 const TOOL_SET_MAX = 30;
-const TOOL_SWAP_MS = 300;  // = CSS 里 .tool-preset-view.is-leaving 的 120ms 延迟 + 180ms 过渡
+const TOOL_SWAP_MS = 200;  // = CSS 里 .tool-preset-view.is-leaving 的 80ms 延迟 + 120ms 过渡
 const TOOL_SET_ADD_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>';
 const TOOL_SET_DEL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
 

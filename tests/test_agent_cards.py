@@ -545,6 +545,11 @@ class AgentToolSetCardsTests(unittest.TestCase):
                      ".tool-preset-card-add", ".tool-preset-card-del"):
             with self.subTest(rule=rule):
                 self.assertIn(rule, css)
+        # 卡片态贴顶（空白留在下方，正好是列表滑入的位置）。
+        view_rule = css[css.index(".tool-preset-view {"):]
+        view_rule = view_rule[: view_rule.index("}")]
+        self.assertIn("align-content: start", view_rule)
+        self.assertIn("transition: opacity .12s", view_rule, "过渡已按 2/3 缩短")
 
 
 class AgentCardsMarkupTests(unittest.TestCase):
