@@ -212,9 +212,13 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     // 「固定 Skill」下方显示该 Agent 工具集对应的预设名（与后端 tool_scope 逐张核对）。
     const catalog = await (await fetch(`${BASE}/api/tool_catalog`)).json();
     const presets = catalog.presets || [];
+    const knownTools = new Set((catalog.tools || []).map((tool) => tool.name));
     const expectedLabel = (scope) => {
-      const tools = Array.isArray(scope) ? scope.filter(Boolean) : [];
-      if (!tools.length) return '未限制（全部工具）';
+      const raw = Array.isArray(scope) ? scope.filter(Boolean) : [];
+      if (!raw.length) return '未限制（全部工具）';
+      // 与前端 toolScopeLabel 同口径：退役/掉线的工具名不参与匹配与计数。
+      const tools = knownTools.size ? raw.filter((name) => knownTools.has(name)) : raw;
+      if (!tools.length) return `自定义 · ${raw.length} 个工具`;
       const hit = presets.find((preset) => (preset.tools || []).length === tools.length
         && (preset.tools || []).every((name) => tools.includes(name)));
       return hit ? hit.name : `自定义 · ${tools.length} 个工具`;

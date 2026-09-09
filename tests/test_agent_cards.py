@@ -644,6 +644,7 @@ class AgentCardsMarkupTests(unittest.TestCase):
         self.assertIn("未限制（全部工具）", label, "空 tool_scope = 不限制")
         self.assertIn("自定义 · ", label)
         self.assertIn("matchToolScope(tools)", label)
+        self.assertIn("knownToolNames()", label, "退役/掉线工具名不参与匹配与计数")
         card = source[source.index("function agentCardMarkup("):]
         card = card[: card.index("\n}")]
         self.assertIn("toolScopeLabel(agent.tool_scope)", card, "卡片用 Agent 的 tool_scope 算标签")

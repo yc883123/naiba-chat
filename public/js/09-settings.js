@@ -1048,9 +1048,14 @@ export function matchToolPreset() {
 
 // 某个工具集（Agent 的 tool_scope）对应的名称：预设名 → 我的工具集名 → 未限制 / 自定义。
 // Agent 卡片用它在「固定 Skill」下方显示这一栏，一眼看出这个 Agent 开的是哪套工具。
+// 老配置里「当前未注册」的工具（退役工具、掉线的 MCP 工具）不参与匹配与计数：
+// 它们已经不存在了，算进去只会让同一套工具集因为几个幽灵名字匹配不上。
 export function toolScopeLabel(scope) {
-  const tools = Array.isArray(scope) ? scope.filter(Boolean) : [];
-  if (!tools.length) return '未限制（全部工具）';
+  const raw = Array.isArray(scope) ? scope.filter(Boolean) : [];
+  if (!raw.length) return '未限制（全部工具）';
+  const known = knownToolNames();
+  const tools = known.size ? raw.filter((name) => known.has(name)) : raw;
+  if (!tools.length) return `自定义 · ${raw.length} 个工具`;
   const matched = matchToolScope(tools);
   if (matched) return matched.name;
   return `自定义 · ${tools.length} 个工具`;
