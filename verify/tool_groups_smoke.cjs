@@ -350,12 +350,14 @@ async function scopeSnapshot(page) {
       subgroupSelected.checked === subgroupSelected.total && subgroupSelected.total === 2
       && subgroupSelected.count === '2/2', JSON.stringify(subgroupSelected));
 
-    // ⑧ 保存「我的工具集」→ 卡片出现并可套用/删除（localStorage 全局存，冒烟用的无痕 profile 不留痕）
+    // ⑧ 保存「我的工具集」→ 卡片出现并可套用/删除。
+    // 注意：工具集存后端（config.json 的 tool_sets），不是 localStorage——冻结版 pywebview
+    // 默认 private_mode=True 会清空 localStorage，用户保存的工具集曾因此凭空消失。
     const beforeSave = await page.evaluate(() => [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
       .map((cb) => cb.value).sort());
     await page.fill('#agentToolSetName', '冒烟工具集');
     await page.click('#agentToolEditorSave');
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(800);
     const savedCard = await page.evaluate(() => {
       const card = document.querySelector('[data-tool-template-card]');
       return {
@@ -365,11 +367,16 @@ async function scopeSnapshot(page) {
         hasDelete: Boolean(card?.querySelector('[data-tool-template-del]')),
         editorHidden: document.querySelector('#agentToolEditor')?.hidden === true,
         dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
-        stored: JSON.parse(localStorage.getItem('naiba.agentToolTemplates') || '[]').length,
+        legacyStored: localStorage.getItem('naiba.agentToolTemplates') || '',
       };
     });
+    const storedSets = (await (await fetch(`${BASE}/api/tool_sets`)).json()).tool_sets || [];
     check('保存后回到卡片态并出现「我的工具集」卡片',
-      savedCard.hasCard && savedCard.editorHidden && savedCard.stored === 1, JSON.stringify(savedCard));
+      savedCard.hasCard && savedCard.editorHidden && storedSets.length === 1, JSON.stringify({ savedCard, storedSets }));
+    check('工具集落在后端 config.json（不再写 localStorage）',
+      savedCard.legacyStored === '' && storedSets[0]?.name === '冒烟工具集'
+      && JSON.stringify([...storedSets[0].tools].sort()) === JSON.stringify(beforeSave),
+      JSON.stringify({ legacyStored: savedCard.legacyStored, stored: storedSets[0] }));
     check('卡片显示工具集名与个数', savedCard.name === '冒烟工具集' && /^\d+ 个工具$/.test(savedCard.count),
       JSON.stringify(savedCard));
     check('「我的工具集」卡片带 × 删除入口', savedCard.hasDelete === true, '');
@@ -405,13 +412,13 @@ async function scopeSnapshot(page) {
       && backToCards.summary.includes('冒烟工具集'), JSON.stringify(backToCards));
 
     await page.click('[data-tool-template-del]');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(700);
     const afterDelete = await page.evaluate(() => ({
       cards: document.querySelectorAll('[data-tool-template-card]').length,
-      stored: JSON.parse(localStorage.getItem('naiba.agentToolTemplates') || '[]').length,
     }));
-    check('× 删除（确认后）卡片与 localStorage 同步清掉',
-      afterDelete.cards === 0 && afterDelete.stored === 0, JSON.stringify(afterDelete));
+    const leftSets = (await (await fetch(`${BASE}/api/tool_sets`)).json()).tool_sets || [];
+    check('× 删除（确认后）卡片与后端记录同步清掉',
+      afterDelete.cards === 0 && leftSets.length === 0, JSON.stringify({ afterDelete, leftSets }));
 
     // ⑦ 零页面错误
     check('零页面错误 / console.error', pageErrors.length === 0, JSON.stringify(pageErrors.slice(0, 3)));

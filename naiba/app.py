@@ -382,6 +382,7 @@ class NaibaChatApp:
             "mcp_servers": self.mcp.states(),
             "agents": self.config.public_agents(),
             "default_agent_id": self.config.default_agent_id(),
+            "tool_sets": self.config.get_tool_sets(),
             "workspaces": self.config.data.get("workspaces", []),
             "image_cache_bytes": _uploads_total_bytes(self._paths.data_dir),
             # 媒体扩展名与分桶上限的唯一来源（core/media_types.py）：前端不再各写

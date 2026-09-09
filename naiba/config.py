@@ -49,6 +49,9 @@ def default_config() -> dict[str, Any]:
         # Per-user reusable system prompts for conversation settings.  These
         # live in config.json instead of the conversation database by design.
         "conversation_prompt_presets": [],
+        # 用户自定义工具集（「我的工具集」）：必须落在 config.json 里，
+        # 因为冻结版 pywebview 默认 private_mode=True，localStorage 每次退出都会被清空。
+        "tool_sets": [],
         "provider_id": "",
         # Deprecated compatibility fields. They are retained for old config
         # files but are never used to build model requests.
@@ -445,6 +448,23 @@ def _infer_kind_for_request_format(request_format: str) -> str:
 QUICK_MESSAGE_USE_CAP = 50
 QUICK_MESSAGE_RECENCY_BONUS = ((7, 6), (30, 3), (90, 1))
 
+# 「我的工具集」上限（与前端 TOOL_SET_MAX 一致）：超出后保留最新的一批。
+TOOL_SET_MAX = 30
+
+
+def _clean_tool_set_tools(tools: Any) -> list[str]:
+    """规整工具名列表：只收字符串、去空、去重、保持顺序；非列表一律当空集。"""
+    if not isinstance(tools, list):
+        return []
+    result: list[str] = []
+    for raw in tools:
+        if not isinstance(raw, str):
+            continue
+        name = raw.strip()
+        if name and name not in result:
+            result.append(name)
+    return result
+
 
 def _quick_message_entries(items: Any) -> list[dict[str, Any]]:
     """规整快捷消息条目：只有正文 + 使用统计（``index`` 恒为原始插入序号）。
@@ -650,6 +670,7 @@ class ConfigStore:
             }
         self.data = defaults
         self._migrate_conversation_prompt_presets()
+        self._migrate_tool_sets()
         self._sync_starter_presets()
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
@@ -765,6 +786,91 @@ class ConfigStore:
             })
         self.data["conversation_prompt_presets"] = normalized
 
+    def _migrate_tool_sets(self) -> None:
+        """Normalize user tool sets（旧配置/手改 config.json 都收敛成统一结构）。"""
+        raw_items = self.data.get("tool_sets", [])
+        if not isinstance(raw_items, list):
+            raw_items = []
+        normalized: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            tools = _clean_tool_set_tools(raw.get("tools"))
+            if not tools:
+                continue
+            set_id = str(raw.get("id") or "").strip()
+            if not set_id or set_id in seen_ids:
+                set_id = uuid.uuid4().hex
+            seen_ids.add(set_id)
+            normalized.append({
+                "id": set_id,
+                "name": " ".join(str(raw.get("name") or "").split())[:40] or "自定义工具集",
+                "tools": tools,
+                "created_at": str(raw.get("created_at") or now),
+                "updated_at": str(raw.get("updated_at") or raw.get("created_at") or now),
+            })
+            if len(normalized) >= TOOL_SET_MAX:
+                break
+        self.data["tool_sets"] = normalized
+
+    def get_tool_sets(self) -> list[dict[str, Any]]:
+        with self.lock:
+            items = self.data.get("tool_sets", [])
+            if not isinstance(items, list):
+                return []
+            return [dict(item) for item in items if isinstance(item, dict)]
+
+    def upsert_tool_set(self, name: str, tools: Any, set_id: str = "") -> dict[str, Any]:
+        """新增或原地更新一套「我的工具集」；set_id 命中时更新，否则插到最前。"""
+        cleaned = _clean_tool_set_tools(tools)
+        if not cleaned:
+            raise ValueError("工具集不能为空")
+        label = " ".join(str(name or "").split())[:40]
+        target = str(set_id or "").strip()
+        with self.lock:
+            items = self.data.setdefault("tool_sets", [])
+            if not isinstance(items, list):
+                items = []
+                self.data["tool_sets"] = items
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            if target:
+                for item in items:
+                    if isinstance(item, dict) and str(item.get("id") or "") == target:
+                        item["name"] = label or str(item.get("name") or "自定义工具集")
+                        item["tools"] = cleaned
+                        item["updated_at"] = now
+                        self.save()
+                        return dict(item)
+            item = {
+                "id": uuid.uuid4().hex,
+                "name": label or "自定义工具集",
+                "tools": cleaned,
+                "created_at": now,
+                "updated_at": now,
+            }
+            items.insert(0, item)
+            del items[TOOL_SET_MAX:]
+            self.save()
+            return dict(item)
+
+    def delete_tool_set(self, set_id: str) -> bool:
+        target = str(set_id or "").strip()
+        if not target:
+            return False
+        with self.lock:
+            items = self.data.get("tool_sets", [])
+            if not isinstance(items, list):
+                return False
+            filtered = [item for item in items
+                        if not isinstance(item, dict) or str(item.get("id") or "") != target]
+            if len(filtered) == len(items):
+                return False
+            self.data["tool_sets"] = filtered
+            self.save()
+            return True
+
     def _sync_starter_presets(self) -> None:
         """按"已删除 id 清单"补齐缺失的内置预设（每次加载都跑，幂等）。
 
@@ -823,6 +929,7 @@ class ConfigStore:
                 if key not in {
                     "access_token", "providers", "mcp_servers",
                     "temperature", "max_tokens", "context_size", "conversation_prompt_presets",
+                    "tool_sets",
                 }
             }
             result["resolved_workspace_dir"] = str(self.resolve_workspace_dir())

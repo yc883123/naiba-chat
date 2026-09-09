@@ -1025,7 +1025,6 @@ export function normalizeToolScope(scope) {
 
 // —— 工具集：卡片态（内置预设 + 我的工具集）↔ 编辑态 ——
 // 两态同框叠放、弹层高度固定：点任意卡片（含「添加」卡）都先按一下再向上滑出，工具列表从下方滑入。
-const TOOL_SET_MAX = 30;
 const TOOL_SWAP_MS = 130;  // = CSS 里 .tool-preset-view.is-leaving 的 50ms 延迟 + 80ms 过渡
 // 「添加自定义工具集」的起点：不跟随当前选中项，固定以标准模式为底稿。
 const DEFAULT_TOOL_SET_PRESET_ID = 'standard';
@@ -1221,8 +1220,8 @@ export function closeAgentToolEditor() {
   renderAgentToolPresetCards();
 }
 
-// 保存工具集：写入「我的工具集」（编辑中的原地更新），当前勾选已经是表单里的值，无需再套用。
-export function saveAgentToolSet() {
+// 保存工具集：写入后端「我的工具集」（编辑中的原地更新），当前勾选已经是表单里的值，无需再套用。
+export async function saveAgentToolSet() {
   const known = knownToolNames();
   const tools = state.agentFormToolScope.filter((name) => known.has(name));
   if (!tools.length) {
@@ -1234,17 +1233,17 @@ export function saveAgentToolSet() {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
   const name = raw || `自定义组合 ${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const templates = loadToolTemplates();
   const editingId = String(state.agentToolEditingId || '');
-  if (editingId) {
-    const index = templates.findIndex((item) => item.id === editingId);
-    if (index >= 0) templates[index] = { ...templates[index], name, tools };
-  } else {
-    templates.unshift({ id: String(Date.now()), name, tools, created: now.toISOString() });
-    if (templates.length > TOOL_SET_MAX) templates.length = TOOL_SET_MAX;
+  try {
+    await api('/api/tool_sets', {
+      method: 'POST',
+      body: { id: editingId, name, tools },
+    });
+  } catch (error) {
+    toast(`保存工具集失败：${error.message}`);
+    return;
   }
-  state.toolTemplates = templates;
-  persistToolTemplates();
+  await refreshToolTemplates();
   if (nameInput) nameInput.value = '';
   closeAgentToolEditor();
   toast(editingId ? `已更新工具集「${name}」` : `已保存工具集「${name}」`);
@@ -1282,27 +1281,60 @@ export function handleAgentToolPresetCardsKeydown(event) {
   card.click();
 }
 
-// —— 我的工具集：把任意自定义组合存成命名工具集（localStorage 全局保存），
-// 之后在别的 Agent 表单里点一下「我的工具集」卡片即可一键套用。——
+// —— 我的工具集：把任意自定义组合存成命名工具集，之后在别的 Agent 表单里点一下卡片即可套用。
+// 存后端（config.json 的 tool_sets），**不再用 localStorage**：冻结版 pywebview 默认
+// private_mode=True，WebView2 的 localStorage 每次退出都会被清空，用户保存的工具集会凭空消失。
+// 老版本存在 localStorage 的数据由 migrateLegacyToolTemplates() 一次性搬到后端。
 
 export const TOOL_TEMPLATE_STORE = 'naiba.agentToolTemplates';
+let toolTemplatesMigrated = false;
 
 export function loadToolTemplates() {
-  if (state.toolTemplatesLoaded) return state.toolTemplates;
-  try {
-    const raw = JSON.parse(localStorage.getItem(TOOL_TEMPLATE_STORE) || '[]');
-    state.toolTemplates = Array.isArray(raw) ? raw : [];
-  } catch (_error) {
-    state.toolTemplates = [];
-  }
-  state.toolTemplatesLoaded = true;
-  return state.toolTemplates;
+  return Array.isArray(state.toolTemplates) ? state.toolTemplates : [];
 }
 
-export function persistToolTemplates() {
+// 老数据（localStorage 时代）一次性搬到后端：只在后端还没有任何工具集时执行，搬完删掉旧键。
+export async function migrateLegacyToolTemplates() {
+  if (toolTemplatesMigrated) return;
+  toolTemplatesMigrated = true;
+  let legacy = [];
   try {
-    localStorage.setItem(TOOL_TEMPLATE_STORE, JSON.stringify(state.toolTemplates));
-  } catch (_error) { /* localStorage 禁用/写满等异常：忽略，不打断表单操作 */ }
+    const raw = JSON.parse(localStorage.getItem(TOOL_TEMPLATE_STORE) || '[]');
+    legacy = Array.isArray(raw) ? raw : [];
+  } catch (_error) {
+    legacy = [];
+  }
+  if (!legacy.length) return;
+  if (loadToolTemplates().length) {
+    try { localStorage.removeItem(TOOL_TEMPLATE_STORE); } catch (_error) { /* 忽略 */ }
+    return;
+  }
+  for (const item of legacy) {
+    const tools = Array.isArray(item?.tools) ? item.tools : [];
+    if (!tools.length) continue;
+    try {
+      await api('/api/tool_sets', {
+        method: 'POST',
+        body: { name: String(item.name || ''), tools },
+      });
+    } catch (error) {
+      toast(`旧工具集「${item.name || ''}」迁移失败：${error.message}`);
+    }
+  }
+  try { localStorage.removeItem(TOOL_TEMPLATE_STORE); } catch (_error) { /* 忽略 */ }
+  await refreshToolTemplates();
+  renderAgentToolPresetCards();
+}
+
+// 从后端拉一次最新列表（保存/删除后调用，保证多端一致）。
+export async function refreshToolTemplates() {
+  try {
+    const data = await api('/api/tool_sets');
+    state.toolTemplates = Array.isArray(data?.tool_sets) ? data.tool_sets : [];
+  } catch (error) {
+    toast(`工具集列表读取失败：${error.message}`);
+  }
+  return state.toolTemplates;
 }
 
 export function knownToolNames() {
@@ -1315,12 +1347,17 @@ export function usableTemplateTools(template) {
   return (template.tools || []).filter((name) => known.has(name));
 }
 
-export function deleteToolTemplate(templateId) {
+export async function deleteToolTemplate(templateId) {
   const template = loadToolTemplates().find((item) => item.id === templateId);
   if (!template) return;
   if (!confirm(`确定删除工具集「${template.name}」吗？`)) return;
-  state.toolTemplates = loadToolTemplates().filter((item) => item.id !== templateId);
-  persistToolTemplates();
+  try {
+    await api(`/api/tool_sets/${encodeURIComponent(templateId)}`, { method: 'DELETE' });
+  } catch (error) {
+    toast(`删除工具集失败：${error.message}`);
+    return;
+  }
+  await refreshToolTemplates();
   renderAgentToolPresetCards();
   toast('工具集已删除');
 }

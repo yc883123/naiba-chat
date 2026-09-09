@@ -6,7 +6,7 @@ import { $, $$, api, setServerStatus, state, toast } from "./01-core.js";
 import { loadTasks, startTaskSync } from "./06-tasks-plans.js";
 import { populateModels, renderAgents, renderUpdateStatus } from "./07-models-agents.js";
 import { loadConversationPromptPresets, loadConversations, restoreSidebarWidth, setSidebarScrollToActive, startConversationSync } from "./08-conversations.js";
-import { populateRuntimeSettings, populateSearchSettings, populateVisionSettings, renderAgentManager, renderMcp, renderProviders, renderSkills, startMcpPoll } from "./09-settings.js";
+import { migrateLegacyToolTemplates, populateRuntimeSettings, populateSearchSettings, populateVisionSettings, renderAgentManager, renderMcp, renderProviders, renderSkills, startMcpPoll } from "./09-settings.js";
 import { loadStarterPrompts } from "./12-chat-input.js";
 export async function authenticate(token) {
   const response = await fetch('/api/auth', {
@@ -72,10 +72,14 @@ export async function initialize() {
   }
   setServerStatus(true);
   state.workspaces = Array.isArray(state.bootstrap?.workspaces) ? state.bootstrap.workspaces : [];
+  // 「我的工具集」随 bootstrap 带回（后端 config.json 的 tool_sets），卡片渲染不再依赖额外请求。
+  state.toolTemplates = Array.isArray(state.bootstrap?.tool_sets) ? state.bootstrap.tool_sets : [];
   renderNetworkAccess();
   populateModels();
   renderAgents();
   renderAgentManager();
+  // 老版本把工具集存在 localStorage（冻结版每次退出都会清空）：这里做一次性搬迁，不阻塞启动。
+  void migrateLegacyToolTemplates();
   // 恢复模式 Tab 状态
   $$('.mode-tab').forEach(tab => tab.classList.toggle('active', tab.dataset.mode === state.mode));
   populateRuntimeSettings();

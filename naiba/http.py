@@ -222,6 +222,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"messages": self.app.config.get_quick_messages(query.get("sort", [""])[0])})
         elif path == "/api/conversation-prompt-presets":
             self._json({"presets": self.app.config.get_conversation_prompt_presets()})
+        elif path == "/api/tool_sets":
+            self._json({"tool_sets": self.app.config.get_tool_sets()})
         elif path.startswith("/api/conversations/") and path.endswith("/file/open"):
             conversation_id = path.split("/")[-3]
             query = urllib.parse.parse_qs(parsed.query)
@@ -554,6 +556,16 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             self._json({"preset": item} if item else {"error": "快捷提示词不存在"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+        elif path == "/api/tool_sets":
+            try:
+                item = self.app.config.upsert_tool_set(
+                    str(body.get("name") or ""),
+                    body.get("tools") or [],
+                    str(body.get("id") or ""),
+                )
+                self._json({"tool_set": item}, HTTPStatus.OK)
+            except ValueError as exc:
+                self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/uploads":
             self._json({"error": "上传接口已升级为 multipart 流式"}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/uploads/delete":
@@ -832,6 +844,9 @@ class RequestHandler(BaseHTTPRequestHandler):
             })
         elif path.startswith("/api/conversation-prompt-presets/"):
             deleted = self.app.config.delete_conversation_prompt_preset(path.rsplit("/", 1)[-1])
+            self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+        elif path.startswith("/api/tool_sets/"):
+            deleted = self.app.config.delete_tool_set(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/conversations/") and path.endswith("/messages"):
             conversation_id = path.split("/")[-2]

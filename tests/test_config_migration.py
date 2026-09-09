@@ -105,5 +105,84 @@ class ConfigMigrationTests(unittest.TestCase):
         self.assertEqual(store.data["port"], 8765)
 
 
+class ToolSetStorageTests(unittest.TestCase):
+    """「我的工具集」必须落在 config.json（localStorage 在冻结版每次退出都会被清空）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.config_path = self.root / "config.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _store(self, payload=None):
+        if payload is not None:
+            self.config_path.write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+        return ConfigStore(self.config_path)
+
+    def test_fresh_install_has_empty_tool_sets(self):
+        store = self._store()
+        self.assertEqual(store.get_tool_sets(), [])
+
+    def test_add_update_delete_roundtrip(self):
+        store = self._store()
+        item = store.upsert_tool_set("标准加强版", ["read_file", "write_file", "read_file"])
+        self.assertEqual(item["name"], "标准加强版")
+        self.assertEqual(item["tools"], ["read_file", "write_file"], "去重且保持顺序")
+        self.assertTrue(item["id"])
+        # 原地更新（同名不新增）
+        updated = store.upsert_tool_set("标准加强版 v2", ["pwsh"], item["id"])
+        self.assertEqual(updated["id"], item["id"])
+        self.assertEqual(len(store.get_tool_sets()), 1)
+        self.assertEqual(store.get_tool_sets()[0]["name"], "标准加强版 v2")
+        # 落到磁盘：重新加载仍在
+        reloaded = ConfigStore(self.config_path).get_tool_sets()
+        self.assertEqual(len(reloaded), 1)
+        self.assertEqual(reloaded[0]["tools"], ["pwsh"])
+        # 删除
+        self.assertTrue(store.delete_tool_set(item["id"]))
+        self.assertEqual(store.get_tool_sets(), [])
+        self.assertFalse(store.delete_tool_set(item["id"]), "重复删除返回 False")
+
+    def test_empty_tools_rejected(self):
+        store = self._store()
+        for bad in ([], None, "read_file", [{"x": 1}]):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    store.upsert_tool_set("空集合", bad)
+
+    def test_new_set_is_prepended_and_capped(self):
+        store = self._store()
+        for index in range(35):
+            store.upsert_tool_set(f"集合{index}", ["read_file"])
+        items = store.get_tool_sets()
+        self.assertEqual(len(items), 30, "上限 30 条")
+        self.assertEqual(items[0]["name"], "集合34", "最新的排最前")
+        self.assertNotIn("集合0", [item["name"] for item in items])
+
+    def test_legacy_config_is_normalized(self):
+        store = self._store({
+            "tool_sets": [
+                {"name": "旧格式", "tools": ["read_file", "", "read_file"]},
+                {"tools": []},          # 空集合丢弃
+                "not-a-dict",           # 非字典丢弃
+                {"id": "fixed", "name": "有 ID", "tools": ["pwsh"]},
+            ],
+        })
+        items = store.get_tool_sets()
+        self.assertEqual([item["name"] for item in items], ["旧格式", "有 ID"])
+        self.assertEqual(items[0]["tools"], ["read_file"])
+        self.assertEqual(items[1]["id"], "fixed")
+        self.assertTrue(items[0]["id"], "缺 id 的条目补一个")
+
+    def test_settings_payload_excludes_tool_sets(self):
+        store = self._store()
+        store.upsert_tool_set("不暴露", ["read_file"])
+        self.assertNotIn("tool_sets", store.public(), "走 bootstrap / 专用接口，不进 settings")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -76,10 +76,9 @@ export const state = {
   agentFormScopeTouched: false,
   // 工具集搜索框关键词（Agent 表单打开时复位）：非空时工具列表切成平铺搜索结果视图。
   agentToolFilter: '',
-  // 自定义工具模板：把某个自定义组合存成命名模板（localStorage 全局持久化），
-  // 之后在任意 Agent 表单里点一下模板芯片即可一键复刻。
+  // 「我的工具集」：后端 config.json 的 tool_sets（bootstrap 带回、保存/删除后刷新），
+  // 不再走 localStorage——冻结版 pywebview private_mode 会清空 localStorage。
   toolTemplates: [],
-  toolTemplatesLoaded: false,
   toolCatalog: null,
   tasks: [],
   taskTimer: null,

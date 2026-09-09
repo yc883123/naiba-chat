@@ -498,7 +498,7 @@ class AgentToolSetCardsTests(unittest.TestCase):
         js = self._settings()
         self.assertIn("export function openAgentToolEditor(", js)
         self.assertIn("export function closeAgentToolEditor()", js)
-        self.assertIn("export function saveAgentToolSet()", js)
+        self.assertIn("export async function saveAgentToolSet()", js)
         self.assertIn("export function handleAgentToolPresetCardsClick(", js)
         self.assertIn("export function handleAgentToolPresetCardsKeydown(", js)
         # 点卡片必须载入该卡的工具并走依赖闭包（否则卡片显示个数 ≠ 实际放行个数）。
@@ -525,14 +525,29 @@ class AgentToolSetCardsTests(unittest.TestCase):
         self.assertIn("$('#agentToolEditorBack')?.addEventListener('click', closeAgentToolEditor)", bind)
         self.assertIn("$('#agentToolEditorSave')?.addEventListener('click', saveAgentToolSet)", bind)
 
-    def test_saved_sets_reuse_template_store(self):
-        """「我的工具集」沿用 localStorage 模板结构（老数据自动变成卡片）。"""
+    def test_saved_sets_live_in_backend_not_localstorage(self):
+        """「我的工具集」存后端 config.json（localStorage 在冻结版每次退出都会被清空）。"""
         js = self._settings()
-        self.assertIn("export const TOOL_TEMPLATE_STORE = 'naiba.agentToolTemplates';", js)
-        save = js[js.index("export function saveAgentToolSet()"):]
+        save = js[js.index("export async function saveAgentToolSet()"):]
         save = save[: save.index("\n}")]
-        self.assertIn("persistToolTemplates()", save)
-        self.assertIn("tools,", save, "存的是闭包后的工具名列表")
+        self.assertIn("await api('/api/tool_sets'", save)
+        self.assertIn("body: { id: editingId, name, tools }", save, "存的是闭包后的工具名列表")
+        self.assertNotIn("localStorage", save, "保存不再写 localStorage")
+        delete = js[js.index("export async function deleteToolTemplate("):]
+        delete = delete[: delete.index("\n}")]
+        self.assertIn("method: 'DELETE'", delete)
+        self.assertNotIn("localStorage", delete)
+        loader = js[js.index("export function loadToolTemplates()"):]
+        loader = loader[: loader.index("\n}")]
+        self.assertIn("state.toolTemplates", loader)
+        self.assertNotIn("localStorage", loader, "读取只认内存里的后端数据")
+        self.assertNotIn("persistToolTemplates", js, "旧的 localStorage 写入函数已退役")
+        # 老数据一次性搬迁（源码模式/浏览器里存过的），搬完删掉旧键。
+        self.assertIn("export async function migrateLegacyToolTemplates()", js)
+        migrate = js[js.index("export async function migrateLegacyToolTemplates()"):]
+        migrate = migrate[: migrate.index("\n}")]
+        self.assertIn("TOOL_TEMPLATE_STORE", migrate)
+        self.assertIn("removeItem(TOOL_TEMPLATE_STORE)", migrate)
 
     def test_swap_animation_keeps_height_fixed(self):
         js = self._settings()
