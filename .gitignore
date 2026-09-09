@@ -161,6 +161,10 @@ exe-icon-preview.png
 本地模型运行端推荐.md
 本地模型运行端推荐新版.md
 
+# 模型请求失败时落盘的取证文件（写进程 cwd，源码模式即仓库根）
+naiba-model-error-payload.json
+naiba-model-debug.log
+
 # Dev/test scratch artifacts that leaked into the repository before. Keep them out.
 _agent_tool_shots/
 _iso_test/

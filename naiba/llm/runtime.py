@@ -22,6 +22,7 @@ from naiba.core.diagnostics import (
     _debug_complete_marker,
     _debug_payload_dump,
     _debug_wire_digest,
+    _sanitize_payload,
 )
 
 logger = logging.getLogger("naiba.model_runtime")
@@ -40,6 +41,10 @@ ONLINE_MODEL_TIMEOUT_SECONDS = 180
 LOCAL_MODEL_TIMEOUT_SECONDS = 1800
 PROVIDER_TEST_TIMEOUT_SECONDS = 30
 FAST_RETRY_NETWORK_ERRORS = {10053, 10054, 10061}
+# 失败请求体落盘（取证）：思考回传类 400/422 与全部 5xx 都写这个文件（覆盖式，只留最近一次）。
+ERROR_DUMP_FILENAME = "naiba-model-error-payload.json"
+ERROR_DUMP_STRING_LIMIT = 4000
+ERROR_DUMP_MAX_BYTES = 512 * 1024
 # 本地推理后端对应的请求格式；与 server.LOCAL_REQUEST_FORMATS 保持一致。
 LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp", "unsloth"}
 _AGENT_BUFFER_LIMIT = 1024
@@ -144,6 +149,45 @@ def _network_error_code(error: BaseException) -> int | None:
     reason = error.reason if isinstance(error, urllib.error.URLError) else error
     value = getattr(reason, "winerror", None) or getattr(reason, "errno", None)
     return int(value) if isinstance(value, int) else None
+
+
+def _dump_failed_payload(
+    endpoint: str,
+    status_code: int,
+    detail: str,
+    payload: Any,
+    reason: str,
+) -> None:
+    """把失败请求体落盘（超长字符串截断），供复现定位。
+
+    payload 只含请求正文——API Key 在请求头里，不会落盘；超长字段（base64 图片、
+    超大工具结果）由 ``_sanitize_payload`` 压成 ``<str:N>…`` 占位，文件总量再设硬上限。
+    落盘失败只记日志，绝不影响主流程。
+    """
+    try:
+        dump_dir = os.environ.get("NAIBA_ERROR_DUMP_DIR") or os.getcwd()
+        dump_path = Path(dump_dir) / ERROR_DUMP_FILENAME
+        text = json.dumps(
+            {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "endpoint": endpoint,
+                "status": status_code,
+                "reason": reason,
+                "detail": detail,
+                "payload": _sanitize_payload(payload, limit=ERROR_DUMP_STRING_LIMIT),
+            },
+            ensure_ascii=False,
+            indent=1,
+        )
+        if len(text.encode("utf-8")) > ERROR_DUMP_MAX_BYTES:
+            text = text[:ERROR_DUMP_MAX_BYTES] + "\n…<落盘内容超过上限，已截断>"
+        dump_path.write_text(text, encoding="utf-8")
+    except OSError:
+        logger.error(
+            "失败请求体落盘失败：endpoint=%s status=%s", endpoint, status_code, exc_info=True,
+        )
+        return
+    logger.error("失败请求体已落盘：%s（HTTP %s，%s）", dump_path, status_code, reason)
 
 # 所有出站 HTTP/HTTPS 统一走 net_io 入口：外部请求按「运行设置 → 代理」策略路由
 # （关闭代理=强制直连；开启=使用手动代理地址；未填地址时按设置回退系统代理），
@@ -1098,10 +1142,28 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                     if status:
                         status({"type": "status", "message": "思考模式下回传 reasoning 被网关拒绝，已切换为无工具重试"})
                     continue
+                # 5xx 是供应商内部错误（响应体通常没有结构化错误信息，只回一句
+                # "Internal Server Error"），按瞬时故障退避重试：2026-09-09 实测一次
+                # HTTP 500 直接终止整轮，18 秒后重发同样的请求即成功——该 API 无状态、
+                # 重发模型请求是安全的，因此 5xx 与 429/502/503/504 同等对待。
+                server_error = 500 <= exc.code < 600
+                # 失败取证：思考回传类 400/422 与全部 5xx 都把请求体落盘（截断后），
+                # 便于复现定位（payload 不含 API Key；仅含对话内容，写本机文件）。
+                if server_error or (
+                    exc.code in {400, 422}
+                    and ("reasoning" in str(detail).lower() or "must be passed" in str(detail).lower())
+                ):
+                    _dump_failed_payload(
+                        endpoint,
+                        exc.code,
+                        detail,
+                        payload,
+                        "server-error" if server_error else "reasoning-passback",
+                    )
                 if (
                     not is_local
                     and not connection_test
-                    and exc.code in {429, 502, 503, 504}
+                    and (exc.code == 429 or server_error)
                     and attempt + 1 < attempts
                 ):
                     if exc.code == 429:
@@ -1130,32 +1192,6 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                     else:
                         time.sleep(delay)
                     continue
-                # 思考回传类 400（must be passed back / reasoning 相关）把完整请求 payload
-                # 落盘到本地，便于复现定位（payload 不含 API Key；仅含对话内容，写本机文件）。
-                if (
-                    exc.code in {400, 422}
-                    and ("reasoning" in str(detail).lower() or "must be passed" in str(detail).lower())
-                ):
-                    try:
-                        dump_dir = os.environ.get("NAIBA_ERROR_DUMP_DIR") or os.getcwd()
-                        dump_path = Path(dump_dir) / "naiba-model-error-payload.json"
-                        dump_path.write_text(
-                            json.dumps(
-                                {
-                                    "ts": datetime.now().isoformat(timespec="seconds"),
-                                    "endpoint": endpoint,
-                                    "status": exc.code,
-                                    "detail": detail,
-                                    "payload": payload,
-                                },
-                                ensure_ascii=False,
-                                indent=1,
-                            ),
-                            encoding="utf-8",
-                        )
-                        logger.error("思考回传类错误请求 payload 已落盘：%s", dump_path)
-                    except OSError:
-                        pass
                 raise RuntimeError(f"{target_detail}返回 HTTP {exc.code}: {detail}") from exc
             except (urllib.error.URLError, OSError, http.client.HTTPException) as exc:
                 reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
