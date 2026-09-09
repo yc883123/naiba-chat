@@ -67,6 +67,18 @@ class ContextRingRefreshTests(unittest.TestCase):
             "历史渲染与终态路径必须复用同一写入点（否则两套口径会漂移）",
         )
 
+    def test_live_usage_survives_history_rerender_while_busy(self) -> None:
+        """回归：运行中历史重渲染（轮询）曾把实时圆环擦回「暂无数据」。"""
+        body = _function_body(_read("03-media.js"), "export function updateContextUsage")
+        self.assertIn("state.chatBusy", body, "运行中不得用历史值覆盖实时值")
+        self.assertIn(
+            "contextUsageConversationId",
+            body,
+            "只有会话真正切换时才允许覆盖",
+        )
+        setter = _function_body(_read("03-media.js"), "export function setContextUsage")
+        self.assertIn("contextUsageConversationId", setter, "写入点要记录实时值所属会话")
+
     def test_ring_percent_written_only_by_renderer(self) -> None:
         source = _read("03-media.js")
         body = _function_body(source, "export function renderContextUsage")
@@ -113,6 +125,24 @@ class ContextWarningTests(unittest.TestCase):
         self.assertIn(
             'data-settings-panel="runtime"', html, "阈值必须落在运行设置面板里"
         )
+
+    def test_warning_dialog_is_compact_and_centered(self) -> None:
+        html = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
+        css = (ROOT / "public" / "styles.css").read_text(encoding="utf-8")
+        self.assertIn('class="context-warning-dialog"', html, "提醒弹窗要用专用紧凑样式")
+        self.assertIn("建议让模型撰写交接文档，并开始新会话。", html, "正文文案")
+        block = css.split(".context-warning-dialog {", 1)[1].split("}", 1)[0]
+        # dialog 的 UA 居中依赖确定高度：height:auto 会把弹窗顶到上方、auto 外边距失效。
+        self.assertIn("height: fit-content", block, "必须给确定高度才能居中")
+        self.assertIn("margin: auto", block, "必须显式居中")
+        self.assertIn("inset: 0", block)
+        actions = css.split(".context-warning-dialog .form-actions", 1)[1].split("}", 1)[0]
+        self.assertIn("justify-content: center", actions, "「知道了」按钮必须水平居中")
+
+    def test_warning_advice_text_appears_once(self) -> None:
+        body = _function_body(_read("03-media.js"), "export function showContextWarning")
+        self.assertIn("contextWarningDetail", body)
+        self.assertNotIn("建议新建对话后继续", body, "建议文案只在弹窗正文出现，不重复")
 
     def test_runtime_settings_populate_and_save_threshold(self) -> None:
         source = _read("09-settings.js")

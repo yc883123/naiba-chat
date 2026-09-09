@@ -786,13 +786,21 @@ export function updateContextUsage(messages = null, message = null) {
       }
     }
   }
-  setContextUsage(target?.metadata?.usage || null);
+  const usage = target?.metadata?.usage || null;
+  const conversationId = String(state.conversationId || '');
+  // 运行中：历史重渲染（会话/任务轮询）不得把实时圆环擦回「暂无数据」——本轮尚未
+  // 落库，messages 里当然没有 usage；只有会话真正切换时才用新会话的历史值覆盖。
+  if (!usage && state.chatBusy && state.contextUsageConversationId === conversationId) return;
+  setContextUsage(usage, conversationId);
 }
 
 // 上下文圆环/弹层的唯一写入点：流式期间每完成一次模型请求（usage 事件）就刷新，
 // 不必等整轮结束；终态 done/error/取消 与历史渲染统一经 updateContextUsage 复用本入口。
-export function setContextUsage(usage) {
+export function setContextUsage(usage, conversationId = null) {
   state.contextUsage = usage || null;
+  state.contextUsageConversationId = conversationId === null
+    ? String(state.conversationId || '')
+    : String(conversationId || '');
   renderContextUsage();
 }
 
@@ -878,8 +886,8 @@ export function maybeWarnContextUsage(percent) {
 export function showContextWarning(percent, threshold) {
   const detail = $('#contextWarningDetail');
   if (detail) {
-    detail.textContent = `上下文用量已达 ${Number(percent).toFixed(1)}%`
-      + `（提醒阈值 ${threshold}%），建议新建对话后继续。`;
+    // 建议文案只在弹窗正文里出现一次，这里只报数（避免两处重复建议）。
+    detail.textContent = `上下文用量已达 ${Number(percent).toFixed(1)}%（提醒阈值 ${threshold}%）`;
   }
   const dialog = $('#contextWarningDialog');
   if (dialog && !dialog.open) dialog.showModal();

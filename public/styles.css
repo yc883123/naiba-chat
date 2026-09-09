@@ -857,6 +857,22 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .rename-conversation-dialog .field-wide { display: grid; gap: 7px; padding: 18px; }
 .rename-conversation-dialog input { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; background: var(--surface); color: var(--text); }
 .rename-conversation-dialog input:focus { outline: 2px solid rgba(var(--brand-500-rgb), .18); border-color: var(--accent); }
+/* 上下文提醒弹窗：紧凑 + 显式居中。
+   dialog 的 UA 居中（inset:0 + margin:auto）只在高度确定时生效，height:auto 会把弹窗顶到
+   上方；这里用 height: fit-content 让 auto 外边距能真正平分剩余空间。 */
+.context-warning-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
+  width: min(420px, calc(100vw - 30px));
+  height: fit-content;
+  max-height: calc(100dvh - 30px);
+}
+.context-warning-dialog .dialog-toolbar { min-height: 0; padding: 16px 18px 10px; border-bottom: 0; }
+.context-warning-dialog .dialog-toolbar h2 { font-size: 16px; }
+.context-warning-dialog .context-warning-body { margin: 0; padding: 0 18px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.context-warning-dialog .form-actions { justify-content: center; margin: 0; padding: 16px 18px 18px; }
+.context-warning-dialog .primary-button { min-width: 96px; }
 /* 会话条目「⋯」菜单：fixed 挂 body，定位在 openConversationMenu 里按按钮矩形计算 */
 .conversation-menu { position: fixed; z-index: 1400; min-width: 132px; padding: 5px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow-3); }
 .conversation-menu[hidden] { display: none; }
