@@ -810,6 +810,7 @@ export function renderContextUsage() {
     summary.textContent = '暂无模型用量数据';
     turn.textContent = '完成一次回复后显示本轮消耗';
     state.contextAtCeiling = false;
+    maybeWarnContextUsage(0);
     updateContextComposerLock();
     return;
   }
@@ -840,7 +841,48 @@ export function renderContextUsage() {
     state.contextAtCeiling = atCeiling;
     if (atCeiling) toast('上下文已达到上限，请新建对话后继续。');
   }
+  maybeWarnContextUsage(limit > 0 ? percent : 0);
   updateContextComposerLock(Boolean(state.chatBusy));
+}
+
+// 上下文提醒阈值（%）：0 = 关闭。取自「设置 → 运行设置」，随每次 usage 刷新重新读取，
+// 因此改完设置无需重启即可生效。
+export function contextWarningPercent() {
+  const raw = Number(state.bootstrap?.settings?.context_warning_percent ?? 80);
+  return Number.isFinite(raw) ? raw : 80;
+}
+
+// 达到阈值时弹窗提醒一次：**以会话为单位**只提醒一次——换会话重新武装，用量回落到
+// 阈值以下也重新武装（例如新建对话）。percent<=0（无数据/上限未知）不提醒。
+export function maybeWarnContextUsage(percent) {
+  const threshold = contextWarningPercent();
+  const conversationId = String(state.conversationId || '');
+  if (state.contextWarningConversationId !== conversationId) {
+    state.contextWarningConversationId = conversationId;
+    state.contextWarningArmed = true;
+  }
+  const value = Number(percent) || 0;
+  if (!(threshold > 0) || !(value > 0)) {
+    state.contextWarningArmed = true;
+    return;
+  }
+  if (value >= threshold) {
+    if (!state.contextWarningArmed) return;
+    state.contextWarningArmed = false;
+    showContextWarning(value, threshold);
+    return;
+  }
+  state.contextWarningArmed = true;
+}
+
+export function showContextWarning(percent, threshold) {
+  const detail = $('#contextWarningDetail');
+  if (detail) {
+    detail.textContent = `上下文用量已达 ${Number(percent).toFixed(1)}%`
+      + `（提醒阈值 ${threshold}%），建议新建对话后继续。`;
+  }
+  const dialog = $('#contextWarningDialog');
+  if (dialog && !dialog.open) dialog.showModal();
 }
 
 export function updateContextComposerLock(busy = false) {

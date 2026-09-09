@@ -425,6 +425,9 @@ export async function toggleProviderKey() {
 export function populateRuntimeSettings() {
   const settings = state.bootstrap.settings;
   if ($('#commandTimeout')) $('#commandTimeout').value = settings.command_timeout;
+  if ($('#contextWarningPercent')) {
+    $('#contextWarningPercent').value = Number(settings.context_warning_percent ?? 80);
+  }
   if ($('#workspaceDir')) $('#workspaceDir').value = settings.workspace_dir === 'workspace' ? '' : (settings.workspace_dir || '');
   if ($('#resolvedWorkspaceDir')) $('#resolvedWorkspaceDir').textContent = state.bootstrap.resolved_workspace_dir || '-';
   const imaging = settings.imaging || {};
@@ -1474,8 +1477,11 @@ export async function saveRuntimeSettings() {
   } else {
     proxy = { enabled: true, url: '', use_system_fallback: true };
   }
+  // 阈值留空按默认 80 处理（0 才是"关闭提醒"，避免误清空导致静默关闭）。
+  const warningRaw = String($('#contextWarningPercent')?.value ?? '').trim();
   const payload = {
     command_timeout: Number($('#commandTimeout')?.value || 120),
+    context_warning_percent: warningRaw === '' ? 80 : Number(warningRaw),
     workspace_dir: $('#workspaceDir')?.value.trim() || '',
     imaging: {
       image_upload_original: Boolean($('#imageUploadOriginal')?.checked),

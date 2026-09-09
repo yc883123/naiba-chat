@@ -317,6 +317,19 @@
     </form>
   </dialog>
 
+  <dialog id="contextWarningDialog" class="rename-conversation-dialog">
+    <form method="dialog">
+      <div class="dialog-toolbar">
+        <div><h2>上下文用量提醒</h2><p id="contextWarningDetail">上下文用量已达提醒阈值</p></div>
+        <button class="icon-button" type="button" data-close="contextWarningDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+      </div>
+      <p class="field-wide hint">上下文越长，回复越慢、越容易丢细节。建议新建对话，或清理不再需要的历史消息。</p>
+      <div class="form-actions">
+        <button class="primary-button" type="button" data-close="contextWarningDialog">知道了</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="settingsDialog" class="settings-dialog">
     <div class="dialog-toolbar">
       <div><h2>设置</h2><p>模型与运行参数</p></div>
@@ -351,6 +364,7 @@
           <h3>运行设置</h3>
           <div class="field-grid">
             <label>命令超时（秒）<input id="commandTimeout" type="number" min="10" max="900" step="10"><small class="hint">仅工具与命令执行有效；不控制在线或本地模型的响应超时。</small></label>
+            <label>上下文提醒阈值（%）<input id="contextWarningPercent" type="number" min="0" max="100" step="5"><small class="hint">上下文用量达到该百分比时弹窗提醒一次；0 = 关闭提醒。</small></label>
             <div class="field-wide proxy-settings">
               <span class="settings-label"><b>网络代理（出站请求）</b></span>
               <div class="proxy-mode-row">

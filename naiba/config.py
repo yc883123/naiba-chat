@@ -65,6 +65,8 @@ def default_config() -> dict[str, Any]:
             "http_request",
         ],
         "command_timeout": 120,
+        # 上下文用量提醒阈值（%）：圆环达到该百分比时前端弹窗提醒一次；0=关闭提醒。
+        "context_warning_percent": 80,
         # 图片缓存：image_upload_original=True 按原尺寸存；False 则超过 image_max_pixels
         # 时用 Lanczos 压缩。缩略图始终从保存后的主图按 thumbnail_max_pixels 生成 WebP（_thumb.webp）。
         "imaging": {
@@ -1236,6 +1238,7 @@ class ConfigStore:
             "permission_mode",
             "agent_tools",
             "command_timeout",
+            "context_warning_percent",
             "access_token",
             "workspace_dir",
             "data_dir",
@@ -1336,6 +1339,15 @@ class ConfigStore:
                             "url": url,
                             "use_system_fallback": bool(incoming.get("use_system_fallback", True)),
                         }
+                    elif key == "context_warning_percent":
+                        # 0 = 关闭提醒；1-100 = 达到该百分比时前端弹窗提醒一次。
+                        try:
+                            percent = int(values[key] if values[key] not in (None, "") else 0)
+                        except (TypeError, ValueError):
+                            raise ValueError("上下文提醒阈值必须是 0-100 的整数") from None
+                        if percent < 0 or percent > 100:
+                            raise ValueError("上下文提醒阈值必须在 0-100 之间")
+                        self.data[key] = percent
                     else:
                         self.data[key] = values[key]
             self.save()

@@ -92,6 +92,9 @@ export const state = {
   deepReasoningEnabled: false,
   reasoningEffort: 'auto',
   contextUsage: null,
+  // 上下文提醒：每个会话只弹一次；换会话或用量回落到阈值以下后重新武装。
+  contextWarningArmed: true,
+  contextWarningConversationId: '',
   providerModelCapabilities: {},
   workspaces: [],
   workspaceSort: 'updated',
