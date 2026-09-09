@@ -102,7 +102,7 @@ class VisionVariantConsistencyTests(unittest.TestCase):
         base = next(spec for spec in build_vision_tool_specs() if spec.name == "vision_analyze")
         load = vision_analyze_load_variant(base)
         self.assertIn("装入本次对话", load.description, "多模态形态的 schema 是装载语义")
-        self.assertIn("交给视觉后端分析", base.description, "文本形态的 schema 是分析语义")
+        self.assertIn("视觉后端", base.description, "文本形态的 schema 是分析语义")
         self.assertIn("装入本次对话", VISION_ANALYZE_LOAD_GUIDE, "装载文案必须与装载 schema 同口径")
         self.assertNotIn("装入本次对话", VISION_ANALYZE_GUIDE, "分析文案不得写成装载语义")
 

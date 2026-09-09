@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from naiba.skills.agent import _extract_step_image_batches  # noqa: E402
 from naiba.tools.registry import (  # noqa: E402
     VISION_ANALYZE_DESCRIPTION,
+    VISION_ANALYZE_LOAD_DESCRIPTION,
     VISION_ANALYZE_LOAD_PARAMETERS,
     VISION_ANALYZE_PARAMETERS,
 )
@@ -83,6 +84,19 @@ class VisionBatchSchemaTests(unittest.TestCase):
         self.assertEqual(prop.get("default"), 4, "分析形态单批默认 4 张")
         desc = str(VISION_ANALYZE_DESCRIPTION)
         self.assertIn("4 张", desc)
+
+    def test_folder_claim_matches_schema(self) -> None:
+        """描述里承诺「文件夹」就必须真有 folder 参数：装载形态支持目录，分析形态不支持。
+
+        实现侧依据：装载走 `_cache_folder_images`（`p.is_dir()` 展开目录）；
+        分析走 `_resolve_paths`（只认 `is_file()`，目录原样透传后交给视觉后端必然失败）。
+        """
+        load_desc = str(VISION_ANALYZE_LOAD_DESCRIPTION)
+        analyze_desc = str(VISION_ANALYZE_DESCRIPTION)
+        self.assertIn("文件夹", load_desc)
+        self.assertIn("folder", VISION_ANALYZE_LOAD_PARAMETERS["properties"])
+        self.assertNotIn("文件夹", analyze_desc, "分析形态只收图片文件路径，不得承诺目录")
+        self.assertNotIn("folder", VISION_ANALYZE_PARAMETERS["properties"])
 
 
 if __name__ == "__main__":
