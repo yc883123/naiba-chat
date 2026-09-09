@@ -14,6 +14,10 @@ from typing import Any
 
 logger = logging.getLogger("naiba.model_runtime")
 
+# 空 CoT 的工具调用轮必须回传**非空** reasoning_text（DeepSeek Responses + tools + 思考模式，
+# 2026-09-10 实测：空串/不回传都 400，占位文本通过）。常量串保证跨轮字节稳定、利于前缀缓存。
+NO_REASONING_PLACEHOLDER = "(no reasoning content)"
+
 
 class ProtocolMixins:
     @staticmethod
@@ -122,18 +126,21 @@ class ProtocolMixins:
                 # 形态为官方 schema：reasoning item 的 content 为 reasoning_text 内容块列表
                 # （"以明文承载思维链内容"；content 传字符串会被 serde 拒 "expected a sequence"），
                 # 且 output item 带唯一 id（OpenAI 规范 input 侧 reasoning.id required）。
-                # 实测铁证（2026-09-07 19:56 payload 取证）：服务端可能返回"无 CoT 的工具调用轮"
-                # （reasoning_content 为空），若该轮不回传 reasoning item，下一轮请求必然 400——
-                # 因此**带 tool_calls 的 assistant 消息无条件产出 reasoning item**（无文本时空块
-                # 占位 + 合成稳定 id），结构完整性优先于内容。
+                # 2026-09-10 实测矩阵（真实 API，4 轮工具链）：
+                #   带 tool_calls 的轮 → 不回传 reasoning item            → 400
+                #   带 tool_calls 的轮 → 回传 text="" 的 reasoning item   → 400
+                #   带 tool_calls 的轮 → 回传 text=" " 或占位文本          → 200
+                #   无 tool_calls 的轮 → 不传/空文本都不影响                → 200
+                # 结论：**带 tool_calls 的 assistant 消息无条件产出 reasoning item，
+                # 且 text 必须非空**（服务端会返回"无 CoT 的工具调用轮"，此时用常量占位）。
                 reasoning_text = item.get("reasoning_content")
                 if reasoning_text is None:
                     reasoning_text = item.get("reasoning")
                 if isinstance(item.get("tool_calls"), list):
-                    if reasoning_text is not None and str(reasoning_text).strip():
-                        converted.append(ProtocolMixins._reasoning_item(reasoning_text, item))
-                    else:
-                        converted.append(ProtocolMixins._reasoning_item("", item))
+                    text = str(reasoning_text) if reasoning_text is not None else ""
+                    if not text.strip():
+                        text = NO_REASONING_PLACEHOLDER
+                    converted.append(ProtocolMixins._reasoning_item(text, item))
                     # reasoning/assistant/function_call 相邻成组；function_call 与
                     # function_call_output 保持相邻配对（中间不可插入 item）。
                     converted.append({
@@ -800,13 +807,14 @@ class ProtocolMixins:
         """构造回传用 reasoning item：content 为 reasoning_text 内容块列表（明文承载）。
 
         id 优先服务端真实 id（流式 output_item.added / delta item_id 捕获，非流式 output
-        提取）；无 id 时合成确定性 id（rs_h_ + sha1，key 取推理文本或工具调用签名，
-        跨轮 trace 重放字节稳定）。
+        提取）；无 id 时合成确定性 id（rs_h_ + sha1）——key 取推理文本，占位文本除外
+        （占位串对所有空 CoT 轮都一样，用它做 key 会撞 id），改用工具调用签名（含 call_id，
+        逐轮唯一），跨轮 trace 重放字节稳定。
         """
         reasoning_id = str(source_item.get("reasoning_id") or "")
         text = str(reasoning_text or "")
         if not reasoning_id:
-            if text:
+            if text and text != NO_REASONING_PLACEHOLDER:
                 digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
             else:
                 tools_signature = json.dumps(

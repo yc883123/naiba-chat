@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from naiba.llm.protocols import ProtocolMixins as P  # noqa: E402
+from naiba.llm.protocols import NO_REASONING_PLACEHOLDER, ProtocolMixins as P  # noqa: E402
 
 
 class LlmProtocolTests(unittest.TestCase):
@@ -44,8 +44,10 @@ class LlmProtocolTests(unittest.TestCase):
         ])
         self.assertEqual(out[0]["type"], "function_call_output")
         self.assertEqual(out[0]["call_id"], "c1")
-        # 无推理文本的工具轮也产出占位 reasoning item（服务端校验要求，否则 400）
+        # 无推理文本的工具轮也产出**非空占位** reasoning item（空文本服务端 400）
         self.assertEqual(out[1]["type"], "reasoning")
+        self.assertEqual(out[1]["content"][0]["text"], NO_REASONING_PLACEHOLDER)
+        self.assertTrue(NO_REASONING_PLACEHOLDER.strip())
         self.assertEqual(out[2]["role"], "assistant")
         self.assertEqual(out[3]["type"], "function_call")
 
@@ -78,17 +80,28 @@ class LlmProtocolTests(unittest.TestCase):
         self.assertEqual(out2[1]["role"], "assistant")
         self.assertEqual(out2[2]["type"], "function_call")
         self.assertEqual(out2[2]["call_id"], "c1")
-        # 无 reasoning 的工具轮（服务端未返回 CoT）：仍必须产出空文本占位 reasoning item
-        # （实测铁证：缺该项下一轮请求 400 "must be passed back"）
+        # 无 reasoning 的工具轮（服务端未返回 CoT）：仍必须产出 reasoning item，且 text 非空
+        # （2026-09-10 真机矩阵：不回传 400 / text="" 400 / text=" " 或占位文本 200）
         out_empty = P._responses_input([
             {"role": "assistant", "content": "",
              "tool_calls": [{"id": "c9", "name": "pwsh", "arguments": {"command": "ping"}}]},
         ])
         self.assertEqual(out_empty[0]["type"], "reasoning")
-        self.assertEqual(out_empty[0]["content"], [{"type": "reasoning_text", "text": ""}])
+        self.assertEqual(out_empty[0]["content"],
+                         [{"type": "reasoning_text", "text": NO_REASONING_PLACEHOLDER}])
         self.assertTrue(str(out_empty[0]["id"] or "").startswith("rs_h_"))
         self.assertEqual(out_empty[1]["role"], "assistant")
         self.assertEqual(out_empty[2]["type"], "function_call")
+        # 多个空 CoT 轮不能撞 id（占位文本相同 → id 必须由工具调用签名派生）
+        out_two = P._responses_input([
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c9", "name": "pwsh", "arguments": {"command": "ping"}}]},
+            {"role": "assistant", "content": "",
+             "tool_calls": [{"id": "c10", "name": "pwsh", "arguments": {"command": "pong"}}]},
+        ])
+        reasoning_ids = [item["id"] for item in out_two if item.get("type") == "reasoning"]
+        self.assertEqual(len(reasoning_ids), 2)
+        self.assertEqual(len(set(reasoning_ids)), 2, "空 CoT 轮的合成 id 必须逐轮唯一")
         # 无 reasoning 时：不产生 reasoning item（仅 assistant 消息）
         out3 = P._responses_input([{"role": "assistant", "content": "回答"}])
         self.assertEqual(out3[0].get("role"), "assistant")
