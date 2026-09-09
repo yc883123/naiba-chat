@@ -192,14 +192,30 @@ class ConversationPromptRetiredTests(unittest.TestCase):
 
     def test_agent_form_owns_preset_and_card_import(self) -> None:
         index = (ROOT / "public/index.html").read_text(encoding="utf-8")
-        self.assertIn("agentPromptPresetSelect", index)
+        self.assertIn("agentPromptPresetButton", index)
+        self.assertIn("saveAgentPromptPreset", index, "「存为快捷提示词」按钮必须在 Agent 表单里")
         self.assertIn("importAgentCharacterCard", index)
         # 导入按钮必须紧跟「系统提示词（预设与规则）」行之后。
         prompt_row = index.index("系统提示词（预设与规则）")
-        self.assertLess(prompt_row, index.index("agentPromptPresetSelect"))
+        self.assertLess(prompt_row, index.index("agentPromptPresetButton"))
         conversations = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
         self.assertIn("export function mergeAgentPromptText(", conversations)
         self.assertIn("export async function importAgentCharacterCard(", conversations)
+
+    def test_conversation_prompts_settings_page_removed(self) -> None:
+        """快捷提示词设置页整体下线：入口、面板、表单与旧绑定都不许残留。"""
+        index = (ROOT / "public/index.html").read_text(encoding="utf-8")
+        for snippet in ("conversation-prompts", "conversationPromptPresetList",
+                        "conversationPromptPresetForm", "addConversationPromptPreset"):
+            with self.subTest(snippet=snippet):
+                self.assertNotIn(snippet, index, "快捷提示词设置页残留")
+        bind = (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
+        self.assertNotIn("conversation-prompt", bind)
+        conversations = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+        for snippet in ("renderConversationPromptPresets", "openConversationPromptPresetForm",
+                        "saveConversationPromptPreset", "importConversationPromptPresetCard"):
+            with self.subTest(snippet=snippet):
+                self.assertNotIn(snippet, conversations, "已下线的设置页函数还在")
 
     def test_sidebar_item_uses_star_and_more_menu(self) -> None:
         source = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")

@@ -1,4 +1,4 @@
-// Agent 设置页「快捷提示词套用 + 角色卡追加导入」冒烟（源码 server，端口 8790）。
+// Agent 设置页「快捷提示词（套用 / 另存 / × 删除）+ 角色卡追加导入」冒烟（源码 server，端口 8790）。
 // 前置：python verify/make_test_card.py && python server.py --port 8790
 // 运行：$env:NODE_PATH="<node_modules 目录>"; node verify\agent_prompt_smoke.cjs
 const { chromium } = require('playwright');
@@ -15,6 +15,11 @@ function check(label, ok, detail = '') {
 async function apiJson(url, options = {}) {
   const response = await fetch(`${BASE}${url}`, { headers: { 'Content-Type': 'application/json' }, ...options });
   return response.json().catch(() => ({}));
+}
+
+async function presetTitles() {
+  const data = await apiJson('/api/conversation-prompt-presets');
+  return (data.presets || []).map((item) => item.title);
 }
 
 (async () => {
@@ -40,23 +45,26 @@ async function apiJson(url, options = {}) {
     await page.goto(`${BASE}/`, { waitUntil: 'load', timeout: 20000 });
     await page.waitForSelector('#sidebarWorkspaceTree .conversation-item', { timeout: 20000 });
 
-    // 顶栏已无「对话设置」入口，设置页仍在
+    // 设置页导航已无「快捷提示词」入口
     await page.click('#openSettings');
     await page.waitForSelector('#settingsDialog[open]', { timeout: 10000 });
+    const navHasPrompts = await page.evaluate(() => Boolean(document.querySelector('[data-settings-tab="conversation-prompts"]')));
+    check('设置页导航已无「快捷提示词」入口', navHasPrompts === false, String(navHasPrompts));
+
     await page.click('[data-settings-tab="agent"]');
-    // Agent 页已卡片化：点卡片打开设置弹层（旧 #agentList/#addAgent 已移除）。
     await page.waitForSelector('#agentCards .agent-card', { timeout: 10000 });
     await page.click('#agentCards [data-agent-card] .agent-card-name');
     await page.waitForSelector('#agentDialog[open]', { timeout: 10000 });
 
     const wiring = await page.evaluate(() => {
-      const select = document.querySelector('#agentPromptPresetSelect');
       const promptRow = [...document.querySelectorAll('#agentForm label')]
         .find((el) => (el.textContent || '').includes('系统提示词（预设与规则）'));
       const tools = document.querySelector('.agent-prompt-tools');
+      const dialog = document.querySelector('#agentDialog');
       return {
-        hasSelect: Boolean(select),
-        options: select ? [...select.options].map((o) => o.textContent) : [],
+        hasButton: Boolean(document.querySelector('#agentPromptPresetButton')),
+        hasSaveButton: Boolean(document.querySelector('#saveAgentPromptPreset')),
+        hasPanelInDialog: Boolean(dialog && dialog.querySelector('#agentPromptPresetPanel')),
         hasImport: Boolean(document.querySelector('#importAgentCharacterCard')),
         hasFileInput: Boolean(document.querySelector('#agentCharacterCardFileInput')),
         toolsAfterPrompt: Boolean(promptRow && tools
@@ -64,10 +72,11 @@ async function apiJson(url, options = {}) {
         hint: document.querySelector('.agent-prompt-hint')?.textContent || '',
       };
     });
-    check('Agent 表单有快捷提示词下拉', wiring.hasSelect, JSON.stringify(wiring));
-    check('下拉已载入快捷提示词', wiring.options.some((t) => t.includes('收藏冒烟提示词')), JSON.stringify(wiring.options));
+    check('表单有「套用快捷提示词」按钮', wiring.hasButton, JSON.stringify(wiring));
+    check('表单有「存为快捷提示词」按钮', wiring.hasSaveButton, JSON.stringify(wiring));
+    check('面板挂在 Agent 弹层内部（top layer 不被盖住）', wiring.hasPanelInDialog, JSON.stringify(wiring));
     check('导入角色卡按钮 + 文件输入就位', wiring.hasImport && wiring.hasFileInput, JSON.stringify(wiring));
-    check('导入/套用入口位于「系统提示词」行下方', wiring.toolsAfterPrompt, JSON.stringify(wiring));
+    check('快捷提示词/导入入口位于「系统提示词」行下方', wiring.toolsAfterPrompt, JSON.stringify(wiring));
     check('提示文案说明「追加不覆盖」', wiring.hint.includes('追加'), wiring.hint);
 
     // 1) 角色卡导入 = 追加（不覆盖已有内容）
@@ -79,15 +88,68 @@ async function apiJson(url, options = {}) {
     check('导入内容追加到末尾（空行分隔）', afterImport.includes('\n\n') && afterImport.includes('姓名：收藏冒烟角色'), afterImport.slice(0, 200));
     check('角色卡描述被解析', afterImport.includes('沉默寡言的图书馆管理员'), afterImport.slice(0, 200));
 
-    // 2) 快捷提示词套用 = 覆盖（有内容时先确认，dialog 已自动 accept）
-    await page.selectOption('#agentPromptPresetSelect', presetId);
-    await page.waitForTimeout(600);
-    const afterPreset = await page.inputValue('#agentSystemPromptEdit');
-    check('套用快捷提示词覆盖为预设文本', afterPreset === presetText, afterPreset.slice(0, 120));
+    // 2) 面板：打开 → 条目带 × 删除按钮 → 点条目套用（覆盖前确认，dialog 已自动 accept）
+    await page.click('#agentPromptPresetButton');
+    await page.waitForTimeout(500);
+    const panel = await page.evaluate(() => {
+      const el = document.querySelector('#agentPromptPresetPanel');
+      const items = [...(el?.querySelectorAll('.quick-msg-item') || [])];
+      return {
+        open: Boolean(el && !el.hidden),
+        expanded: document.querySelector('#agentPromptPresetButton')?.getAttribute('aria-expanded'),
+        titles: items.map((item) => item.querySelector('b')?.textContent.trim() || ''),
+        deletes: items.filter((item) => item.querySelector('[data-agent-preset-delete]')).length,
+        panelInsideDialog: Boolean(el && el.closest('#agentDialog')),
+      };
+    });
+    check('点按钮展开面板', panel.open === true && panel.expanded === 'true', JSON.stringify(panel));
+    check('面板条目已载入', panel.titles.includes('收藏冒烟提示词'), JSON.stringify(panel.titles));
+    check('每条条目都有 × 删除按钮', panel.deletes === panel.titles.length && panel.deletes > 0, JSON.stringify(panel));
+    check('面板在 Agent 弹层内部', panel.panelInsideDialog === true, '');
 
-    // 3) 取消：不选任何预设时下拉回到占位
-    const selectValue = await page.evaluate(() => document.querySelector('#agentPromptPresetSelect').value);
-    check('套用后下拉保留当前选择', selectValue === presetId, selectValue);
+    await page.click(`[data-agent-preset="${presetId}"] .quick-msg-main`);
+    await page.waitForTimeout(500);
+    const afterPreset = await page.inputValue('#agentSystemPromptEdit');
+    check('点条目套用（覆盖为预设文本）', afterPreset === presetText, afterPreset.slice(0, 120));
+    const closedAfterApply = await page.evaluate(() => document.querySelector('#agentPromptPresetPanel')?.hidden === true);
+    check('套用后面板自动收起', closedAfterApply === true, '');
+
+    // 3) 存为快捷提示词：正文取当前文本框，弹窗只填标题
+    await page.fill('#agentSystemPromptEdit', '你是「另存冒烟」提示词。');
+    await page.click('#saveAgentPromptPreset');
+    await page.waitForTimeout(400);
+    const saveDialog = await page.evaluate(() => ({
+      open: Boolean(document.querySelector('#promptPresetDialog')?.open),
+      title: document.querySelector('#promptPresetTitle')?.value || '',
+      hint: document.querySelector('#promptPresetHint')?.textContent || '',
+    }));
+    check('点「存为快捷提示词」弹出标题对话框', saveDialog.open === true, JSON.stringify(saveDialog));
+    check('标题默认取正文首行、提示显示字符数',
+      saveDialog.title.includes('另存冒烟') && saveDialog.hint.includes('字符'), JSON.stringify(saveDialog));
+    await page.fill('#promptPresetTitle', '另存冒烟提示词');
+    await page.click('#savePromptPreset');
+    await page.waitForTimeout(900);
+    const titlesAfterSave = await presetTitles();
+    check('新快捷提示词已入库', titlesAfterSave.includes('另存冒烟提示词'), JSON.stringify(titlesAfterSave));
+
+    // 4) × 删除：删掉刚存的（确认框已自动 accept）
+    await page.click('#agentPromptPresetButton');
+    await page.waitForTimeout(500);
+    const savedId = await page.evaluate(() => {
+      const items = [...document.querySelectorAll('#agentPromptPresetPanel .quick-msg-item')];
+      const hit = items.find((item) => item.querySelector('b')?.textContent.trim() === '另存冒烟提示词');
+      return hit ? hit.dataset.agentPreset : '';
+    });
+    check('面板里能看到刚存的条目', Boolean(savedId), savedId);
+    if (savedId) {
+      await page.click(`[data-agent-preset-delete="${savedId}"]`);
+      await page.waitForTimeout(900);
+      const titlesAfterDelete = await presetTitles();
+      check('× 删除后条目从库里消失', !titlesAfterDelete.includes('另存冒烟提示词'), JSON.stringify(titlesAfterDelete));
+      const stillInPanel = await page.evaluate(() => [...document.querySelectorAll('#agentPromptPresetPanel .quick-msg-item b')]
+        .map((el) => el.textContent.trim()));
+      check('× 删除后面板列表同步刷新', !stillInPanel.includes('另存冒烟提示词'), JSON.stringify(stillInPanel));
+    }
 
     check('零 pageerror / console.error', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
     check('零 404 资源', notFound.length === 0, notFound.slice(0, 3).join(' | '));

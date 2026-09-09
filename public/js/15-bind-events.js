@@ -8,7 +8,7 @@ import { branchMessage, initTurnRail, isNearBottom, setStickToBottom, startEditM
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
-import { applyAgentPromptPreset, clearTerminalTasks, closeConversationMenu, closeConversationPromptPresetForm, conversationMenuTargetId, createWorkspace, deleteConversation, importAgentCharacterCard, importConversationPromptPresetCard, loadConversationPromptPresets, onComposerWorkspaceChange, onSidebarTreeClick, openConversation, openConversationPromptPresetForm, openRenameConversation, renderConversationPromptPresets, renderSidebar, renderSidebarWindow, saveConversationPromptPreset, saveNewWorkspace, saveRenameConversation, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf } from "./08-conversations.js";
+import { clearTerminalTasks, closeAgentPromptPresetPanel, closeConversationMenu, conversationMenuTargetId, createWorkspace, deleteConversation, handleAgentPromptPresetPanelClick, importAgentCharacterCard, onComposerWorkspaceChange, onSidebarTreeClick, openAgentPromptPresetSaveDialog, openConversation, openRenameConversation, positionAgentPromptPresetPanel, renderSidebar, renderSidebarWindow, saveAgentPromptPreset, saveNewWorkspace, saveRenameConversation, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf, toggleAgentPromptPresetPanel } from "./08-conversations.js";
 import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteProvider, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, hideAgentForm, handleAgentAvatarFile, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openAgentCard, openProviderCard, openVisionProviderForm, persistSearchProfiles, pickAgentAvatar, pickWorkspace, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, renderToolScopeList, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
 import { cancelCurrentRun, closeQuickMessagePanel, closeReasoningMenu, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, positionReasoningMenu, quickPanelState, reloadPage, restoreStarterPresets, saveStarterPrompt, sendMessage, setReasoningEffort, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel } from "./12-chat-input.js";
@@ -166,8 +166,32 @@ export function bindEvents() {
     const menu = $('#conversationItemMenu');
     if (menu && !menu.hidden) closeConversationMenu();
   });
-  // Agent 编辑表单：快捷提示词套用 + 角色卡追加导入。
-  $('#agentPromptPresetSelect')?.addEventListener('change', (event) => applyAgentPromptPreset(event.target.value));
+  // Agent 编辑表单：快捷提示词面板（套用 / × 删除）+ 另存 + 角色卡追加导入。
+  $('#agentPromptPresetButton')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    void toggleAgentPromptPresetPanel();
+  });
+  $('#agentPromptPresetClose')?.addEventListener('click', closeAgentPromptPresetPanel);
+  $('#agentPromptPresetPanel')?.addEventListener('click', handleAgentPromptPresetPanelClick);
+  // 点击面板与按钮之外收起；面板挂在弹层内部，用 composedPath 判断是否点在面板里。
+  document.addEventListener('click', (event) => {
+    const panel = $('#agentPromptPresetPanel');
+    if (!panel || panel.hidden) return;
+    const path = event.composedPath ? event.composedPath() : [];
+    if (path.includes(panel) || path.includes($('#agentPromptPresetButton'))) return;
+    closeAgentPromptPresetPanel();
+  });
+  window.addEventListener('resize', positionAgentPromptPresetPanel);
+  // 弹层里按 Esc：面板开着就先收面板，别把整个 Agent 弹层关掉。
+  $('#agentDialog')?.addEventListener('cancel', (event) => {
+    const panel = $('#agentPromptPresetPanel');
+    if (panel && !panel.hidden) {
+      event.preventDefault();
+      closeAgentPromptPresetPanel();
+    }
+  });
+  $('#saveAgentPromptPreset')?.addEventListener('click', openAgentPromptPresetSaveDialog);
+  $('#promptPresetForm')?.addEventListener('submit', saveAgentPromptPreset);
   $('#importAgentCharacterCard')?.addEventListener('click', () => $('#agentCharacterCardFileInput')?.click());
   $('#agentCharacterCardFileInput')?.addEventListener('change', (event) => {
     const file = event.target.files?.[0];
@@ -181,19 +205,6 @@ export function bindEvents() {
     if (file) handleAgentAvatarFile(file);
     event.target.value = '';
   });
-  $('#addConversationPromptPreset')?.addEventListener('click', () => openConversationPromptPresetForm());
-  $('#cancelConversationPromptPreset')?.addEventListener('click', closeConversationPromptPresetForm);
-  $('#conversationPromptPresetForm')?.addEventListener('submit', saveConversationPromptPreset);
-  $('#conversationPromptPresetSearch')?.addEventListener('input', renderConversationPromptPresets);
-  $('#conversationPromptPresetList')?.addEventListener('click', async (event) => {
-    const edit = event.target.closest('[data-conversation-preset-edit]');
-    if (edit) { openConversationPromptPresetForm(edit.dataset.conversationPresetEdit); return; }
-    const remove = event.target.closest('[data-conversation-preset-delete]');
-    if (!remove || !confirm('确定删除这个快捷提示词吗？')) return;
-    try { await api(`/api/conversation-prompt-presets/${encodeURIComponent(remove.dataset.conversationPresetDelete)}`, { method: 'DELETE' }); await loadConversationPromptPresets(); toast('已删除快捷提示词'); } catch (error) { toast(`删除失败：${error.message}`); }
-  });
-  $('#importPresetCharacterCard')?.addEventListener('click', () => $('#presetCharacterCardFileInput')?.click());
-  $('#presetCharacterCardFileInput')?.addEventListener('change', (event) => { const file = event.target.files?.[0]; if (file) importConversationPromptPresetCard(file); event.target.value = ''; });
   $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -1062,7 +1073,6 @@ export function switchSettingsTab(name) {
   $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
   if (name === 'agent') renderAgentManager();
   if (name === 'skills') loadInstalledSkills(false);
-  if (name === 'conversation-prompts') loadConversationPromptPresets();
   if (name === 'connections') loadMcpServers();
   if (name === 'datamigration') loadDataMigrationHealth();
   if (name === 'updates') api('/api/update').then((status) => {

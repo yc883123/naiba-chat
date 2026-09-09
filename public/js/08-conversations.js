@@ -778,10 +778,11 @@ export function renderRunTasks() {
   }).join('');
 }
 
-// ---- Agent 设置页：快捷提示词套用 + 角色卡导入 ----
-// 会话级系统提示词已移除：系统提示词只有一个来源（Agent），因此套用/导入入口
-// 全部落在 Agent 编辑表单的「系统提示词（预设与规则）」下方。
+// ---- Agent 设置页：快捷提示词（套用 / 另存 / 删除）+ 角色卡导入 ----
+// 会话级系统提示词已移除：系统提示词只有一个来源（Agent），因此快捷提示词的入口
+// 全部落在 Agent 编辑表单的「系统提示词（预设与规则）」下方（设置页的快捷提示词页已下线）。
 const AGENT_PROMPT_LIMIT = 12000; // 与 naiba/config.py 里 Agent system_prompt 的截断上限一致
+const PRESET_DELETE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
 
 // 纯函数（可单测）：把角色卡文本追加到 Agent 系统提示词末尾（不覆盖已有内容）。
 export function mergeAgentPromptText(existing, addition, limit = AGENT_PROMPT_LIMIT) {
@@ -797,21 +798,71 @@ export async function loadConversationPromptPresets() {
   try {
     const result = await api('/api/conversation-prompt-presets');
     state.conversationPromptPresets = Array.isArray(result.presets) ? result.presets : [];
-    renderAgentPromptPresetSelect();
-    renderConversationPromptPresets();
   } catch (error) {
     state.conversationPromptPresets = [];
-    renderAgentPromptPresetSelect();
   }
+  renderAgentPromptPresetList();
 }
 
-export function renderAgentPromptPresetSelect() {
-  const select = $('#agentPromptPresetSelect');
-  if (!select) return;
-  const current = select.value;
-  select.innerHTML = '<option value="">选择快捷提示词…</option>'
-    + state.conversationPromptPresets.map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.title)}</option>`).join('');
-  select.value = state.conversationPromptPresets.some((item) => item.id === current) ? current : '';
+// 面板列表：标题 + 一行预览，右侧 × 直接删除（点条目本体 = 套用）。
+export function renderAgentPromptPresetList() {
+  const list = $('#agentPromptPresetList');
+  if (!list) return;
+  if (!state.conversationPromptPresets.length) {
+    list.innerHTML = '<div class="quick-msg-empty">还没有快捷提示词：在系统提示词下方点「存为快捷提示词」保存一条</div>';
+    return;
+  }
+  list.innerHTML = state.conversationPromptPresets.map((item) => {
+    const text = String(item.system_prompt || '').replace(/\s+/g, ' ').trim();
+    const preview = text.slice(0, 90);
+    return `<div class="quick-msg-item" role="menuitem" tabindex="-1" data-agent-preset="${escapeHtml(item.id)}" title="点击套用到上方系统提示词">
+      <div class="quick-msg-main">
+        <b>${escapeHtml(item.title)}</b>
+        ${preview ? `<small>${escapeHtml(preview)}${text.length > 90 ? '…' : ''}</small>` : ''}
+      </div>
+      <button type="button" class="quick-msg-action" data-agent-preset-delete="${escapeHtml(item.id)}" title="删除这条快捷提示词" aria-label="删除">${PRESET_DELETE_SVG}</button>
+    </div>`;
+  }).join('');
+}
+
+export function closeAgentPromptPresetPanel() {
+  const panel = $('#agentPromptPresetPanel');
+  const button = $('#agentPromptPresetButton');
+  if (panel) panel.hidden = true;
+  button?.setAttribute('aria-expanded', 'false');
+}
+
+// 面板固定定位：与按钮左对齐、优先向下展开，贴边时上翻并夹在视口内。
+// 面板挂在模态 <dialog> 内部（top layer，body 上的 fixed 会被盖住），fixed 不受祖先 overflow 裁剪。
+export function positionAgentPromptPresetPanel() {
+  const panel = $('#agentPromptPresetPanel');
+  const button = $('#agentPromptPresetButton');
+  if (!panel || !button || panel.hidden) return;
+  const rect = button.getBoundingClientRect();
+  const width = panel.offsetWidth;
+  const height = panel.offsetHeight;
+  const margin = 8;
+  let top = rect.bottom + 6;
+  if (top + height > window.innerHeight - margin) top = Math.max(margin, rect.top - height - 6);
+  const left = Math.max(margin, Math.min(rect.left, window.innerWidth - width - margin));
+  panel.style.top = `${Math.max(margin, top)}px`;
+  panel.style.left = `${left}px`;
+}
+
+export async function toggleAgentPromptPresetPanel() {
+  const panel = $('#agentPromptPresetPanel');
+  const button = $('#agentPromptPresetButton');
+  if (!panel) return;
+  if (!panel.hidden) {
+    closeAgentPromptPresetPanel();
+    return;
+  }
+  panel.hidden = false;
+  button?.setAttribute('aria-expanded', 'true');
+  // 每次打开都重新取：可能刚在「存为快捷提示词」里存过新的。
+  await loadConversationPromptPresets();
+  if (panel.hidden) return;
+  positionAgentPromptPresetPanel();
 }
 
 export function applyAgentPromptPreset(id) {
@@ -820,13 +871,36 @@ export function applyAgentPromptPreset(id) {
   if (!item || !field) return;
   const next = String(item.system_prompt || '');
   const current = field.value.trim();
-  if (current && current !== next.trim() && !confirm('当前系统提示词已有内容，是否用这条快捷提示词覆盖？')) {
-    const select = $('#agentPromptPresetSelect');
-    if (select) select.value = '';
+  if (current && current !== next.trim() && !confirm('当前系统提示词已有内容，是否用这条快捷提示词覆盖？')) return;
+  field.value = next;
+  closeAgentPromptPresetPanel();
+  toast(`已套用快捷提示词「${item.title}」，保存 Agent 后生效`);
+}
+
+export async function removeAgentPromptPreset(id) {
+  const item = state.conversationPromptPresets.find((preset) => preset.id === id);
+  if (!item) return;
+  if (!confirm(`确定删除快捷提示词「${item.title}」吗？`)) return;
+  try {
+    await api(`/api/conversation-prompt-presets/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await loadConversationPromptPresets();
+    positionAgentPromptPresetPanel();
+    toast('已删除快捷提示词');
+  } catch (error) {
+    toast(`删除失败：${error.message}`);
+  }
+}
+
+// 面板内事件委托：× 删除优先于条目套用。
+export function handleAgentPromptPresetPanelClick(event) {
+  const remove = event.target.closest('[data-agent-preset-delete]');
+  if (remove) {
+    event.stopPropagation();
+    void removeAgentPromptPreset(remove.dataset.agentPresetDelete);
     return;
   }
-  field.value = next;
-  toast(`已套用快捷提示词「${item.title}」，保存 Agent 后生效`);
+  const entry = event.target.closest('[data-agent-preset]');
+  if (entry) applyAgentPromptPreset(entry.dataset.agentPreset);
 }
 
 export async function importAgentCharacterCard(file) {
@@ -856,53 +930,54 @@ export async function importAgentCharacterCard(file) {
   }
 }
 
-export function renderConversationPromptPresets() {
-  const container = $('#conversationPromptPresetList');
-  if (!container) return;
-  const query = String($('#conversationPromptPresetSearch')?.value || '').trim().toLowerCase();
-  const items = state.conversationPromptPresets.filter((item) => !query || `${item.title} ${item.system_prompt}`.toLowerCase().includes(query));
-  container.innerHTML = items.length ? items.map((item) => {
-    const preview = String(item.system_prompt || '').replace(/\s+/g, ' ').slice(0, 150);
-    return `<article class="conversation-preset-item" data-conversation-preset-id="${escapeHtml(item.id)}"><div><b>${escapeHtml(item.title)}</b><small>${escapeHtml(item.source || '手动创建')}</small><p>${escapeHtml(preview)}${String(item.system_prompt || '').length > 150 ? '…' : ''}</p></div><span><button class="control-button tiny" type="button" data-conversation-preset-edit="${escapeHtml(item.id)}">编辑</button><button class="danger-button tiny" type="button" data-conversation-preset-delete="${escapeHtml(item.id)}">删除</button></span></article>`;
-  }).join('') : '<p class="hint">尚无快捷系统提示词。</p>';
+// 存为快捷提示词：只填标题，正文取当前系统提示词文本框（空则提示，不弹窗）。
+export function openAgentPromptPresetSaveDialog() {
+  const field = $('#agentSystemPromptEdit');
+  const text = String(field?.value || '').trim();
+  if (!text) {
+    toast('系统提示词为空，先写点内容再保存');
+    field?.focus();
+    return;
+  }
+  state.agentPromptPresetDraft = text;
+  // 标题默认取正文首个非空行（可改），省一次输入。
+  const firstLine = text.split('\n').map((line) => line.trim()).find(Boolean) || '';
+  $('#promptPresetTitle').value = firstLine.slice(0, 40);
+  $('#promptPresetHint').textContent = `将保存当前系统提示词（${text.length} 字符）`;
+  $('#promptPresetDialog').showModal();
+  $('#promptPresetTitle').focus();
+  $('#promptPresetTitle').select();
 }
 
-export function openConversationPromptPresetForm(id = '') {
-  const item = state.conversationPromptPresets.find((preset) => preset.id === id) || {};
-  state.editingConversationPromptPresetId = id;
-  $('#conversationPromptPresetId').value = id;
-  $('#conversationPromptPresetTitle').value = item.title || '';
-  $('#conversationPromptPresetText').value = item.system_prompt || '';
-  $('#conversationPromptPresetForm').hidden = false;
-  $('#conversationPromptPresetTitle').focus();
-}
-
-export function closeConversationPromptPresetForm() {
-  state.editingConversationPromptPresetId = '';
-  $('#conversationPromptPresetForm').hidden = true;
-}
-
-export async function saveConversationPromptPreset(event) {
+export async function saveAgentPromptPreset(event) {
   event.preventDefault();
-  const id = state.editingConversationPromptPresetId;
-  const title = $('#conversationPromptPresetTitle').value;
-  const system_prompt = $('#conversationPromptPresetText').value;
+  const text = String(state.agentPromptPresetDraft || '').trim();
+  const title = String($('#promptPresetTitle').value || '').trim();
+  if (!text) {
+    toast('系统提示词为空，已取消');
+    $('#promptPresetDialog').close();
+    return;
+  }
+  if (!title) {
+    toast('请填写标题');
+    $('#promptPresetTitle').focus();
+    return;
+  }
+  const button = $('#savePromptPreset');
+  if (button) button.disabled = true;
   try {
-    await api(id ? `/api/conversation-prompt-presets/${encodeURIComponent(id)}` : '/api/conversation-prompt-presets', { method: 'POST', body: { title, system_prompt } });
-    closeConversationPromptPresetForm();
+    await api('/api/conversation-prompt-presets', {
+      method: 'POST', body: { title, system_prompt: text, source: 'manual' },
+    });
+    state.agentPromptPresetDraft = '';
+    $('#promptPresetDialog').close();
     await loadConversationPromptPresets();
-    toast(id ? '已更新快捷提示词' : '已新增快捷提示词');
-  } catch (error) { toast(`保存失败：${error.message}`); }
-}
-
-export async function importConversationPromptPresetCard(file) {
-  if (!file) return;
-  try {
-    const result = await api('/api/character-card/parse', { method: 'POST', body: { name: file.name, data: await readAsDataUrl(file) } });
-    if (!result.system_prompt) throw new Error('角色卡解析结果为空');
-    await loadConversationPromptPresets();
-    toast(`已收录角色卡「${result.preset?.title || result.meta?.name || file.name}」为快捷提示词`);
-  } catch (error) { toast(`导入失败：${error.message}`); }
+    toast(`已存为快捷提示词「${title}」`);
+  } catch (error) {
+    toast(`保存失败：${error.message}`);
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 export async function clearTerminalTasks() {

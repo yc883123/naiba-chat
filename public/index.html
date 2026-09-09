@@ -345,7 +345,6 @@
         <button data-settings-tab="vision">视觉</button>
         <button data-settings-tab="search">联网搜索</button>
         <button data-settings-tab="skills">Skills 管理</button>
-        <button data-settings-tab="conversation-prompts" title="对话快捷系统提示词">快捷提示词</button>
         <button data-settings-tab="datamigration">数据与迁移</button>
         <button data-settings-tab="updates">软件更新</button>
       </nav>
@@ -490,24 +489,6 @@
           <h3 class="subheading">已隐藏 Skill（<span id="hiddenSkillCount">0</span>）</h3>
           <div class="skill-list" id="hiddenSkillList"><small class="hint">无已隐藏的 Skill</small></div>
           <p class="hint">此前被"删除/隐藏"的 Skill 会出现在这里；点击"取消隐藏"即可在会话中重新使用。重新导入同名 Skill 也会自动取消隐藏。</p>
-        </section>
-        <section data-settings-panel="conversation-prompts" hidden>
-          <div class="section-heading">
-            <div><h3>对话快捷系统提示词</h3><p class="hint">用于快速填充对话设置中的系统提示词；编辑不会修改已保存的对话。</p></div>
-            <div class="conversation-preset-actions">
-              <button class="control-button" id="importPresetCharacterCard" type="button">导入角色卡 PNG</button>
-              <button class="primary-button" id="addConversationPromptPreset" type="button">新增提示词</button>
-              <input id="presetCharacterCardFileInput" type="file" accept="image/png" hidden>
-            </div>
-          </div>
-          <label class="search-field conversation-preset-search"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M21 21l-4.3-4.3"></path></svg><input id="conversationPromptPresetSearch" type="search" placeholder="搜索标题或提示词内容"></label>
-          <div id="conversationPromptPresetList" class="conversation-preset-list"></div>
-          <form id="conversationPromptPresetForm" class="conversation-preset-form" hidden>
-            <input id="conversationPromptPresetId" type="hidden">
-            <label>标题<input id="conversationPromptPresetTitle" type="text" maxlength="80" placeholder="例如：代码审查助手"></label>
-            <label>系统提示词<textarea id="conversationPromptPresetText" rows="8" maxlength="20000" placeholder="角色、规则和输出要求"></textarea></label>
-            <div class="form-actions"><button class="control-button" id="cancelConversationPromptPreset" type="button">取消</button><button class="primary-button" type="submit">保存提示词</button></div>
-          </form>
         </section>
         <section data-settings-panel="datamigration" hidden>
           <h3>数据与迁移</h3>
@@ -656,17 +637,21 @@
           <textarea id="agentSystemPromptEdit" rows="5" placeholder="角色、规则和输出偏好"></textarea>
         </label>
         <div class="agent-prompt-tools">
-          <label class="agent-prompt-preset">套用快捷提示词
-            <select id="agentPromptPresetSelect" title="选择一条快捷提示词填入上方系统提示词（已有内容时会先确认）"><option value="">选择快捷提示词…</option></select>
-          </label>
-          <span class="character-card-import">
-            <button class="control-button" id="importAgentCharacterCard" type="button">导入角色卡 PNG</button>
-            <input id="agentCharacterCardFileInput" type="file" accept="image/png" hidden>
-            <button class="control-button" id="pickAgentAvatar" type="button">自定义头像</button>
-            <input id="agentAvatarFileInput" type="file" accept="image/*" hidden>
-            <img id="agentAvatarPreview" class="agent-avatar-preview" alt="" hidden>
-          </span>
-          <small class="agent-prompt-hint">导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；自定义头像会中心裁切为正方形，用于该 Agent 的会话头像（保存后生效）。快捷提示词在「设置 → 快捷提示词」中管理。</small>
+          <div class="agent-prompt-actions">
+            <button class="control-button" id="agentPromptPresetButton" type="button"
+                    aria-haspopup="menu" aria-expanded="false"
+                    title="套用或删除已保存的快捷提示词">套用快捷提示词</button>
+            <button class="control-button" id="saveAgentPromptPreset" type="button"
+                    title="把上方系统提示词另存为一条快捷提示词（以后可一键套用）">存为快捷提示词</button>
+            <span class="character-card-import">
+              <button class="control-button" id="importAgentCharacterCard" type="button">导入角色卡 PNG</button>
+              <input id="agentCharacterCardFileInput" type="file" accept="image/png" hidden>
+              <button class="control-button" id="pickAgentAvatar" type="button">自定义头像</button>
+              <input id="agentAvatarFileInput" type="file" accept="image/*" hidden>
+              <img id="agentAvatarPreview" class="agent-avatar-preview" alt="" hidden>
+            </span>
+          </div>
+          <small class="agent-prompt-hint">导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；自定义头像会中心裁切为正方形，用于该 Agent 的会话头像（保存后生效）。</small>
         </div>
         <div class="agent-skills">
           <div class="agent-skills-head"><span><b>固定 Skill</b><small>该 Agent 启用时自动加载</small></span></div>
@@ -709,6 +694,31 @@
           <button type="button" class="control-button" id="cancelAgent">取消</button>
           <button type="button" class="primary-button" id="saveAgentForm">保存 Agent</button>
         </div>
+      </div>
+    </form>
+    <!-- 快捷提示词面板：挂在弹层内部（模态 <dialog> 在 top layer，body 上的 fixed 浮层会被盖住），
+         位置由 JS 对齐按钮；列表条目右侧 × 直接删除。 -->
+    <div class="quick-msg-panel agent-preset-panel" id="agentPromptPresetPanel" hidden role="menu">
+      <div class="quick-msg-head"><span>快捷提示词</span><button type="button" id="agentPromptPresetClose">关闭</button></div>
+      <div class="quick-msg-list" id="agentPromptPresetList"></div>
+      <div class="quick-msg-foot">点击条目套用；右侧 × 删除</div>
+    </div>
+  </dialog>
+
+  <!-- 存为快捷提示词：只填标题，正文取当前系统提示词文本框内容 -->
+  <dialog id="promptPresetDialog" class="rename-conversation-dialog">
+    <form id="promptPresetForm" method="dialog">
+      <div class="dialog-toolbar">
+        <div><h2>存为快捷提示词</h2><p id="promptPresetHint">将保存当前系统提示词</p></div>
+        <button class="icon-button" type="button" data-close="promptPresetDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+      </div>
+      <label class="field-wide">
+        标题
+        <input id="promptPresetTitle" type="text" maxlength="80" placeholder="例如：代码审查助手">
+      </label>
+      <div class="form-actions">
+        <button class="control-button" type="button" data-close="promptPresetDialog">取消</button>
+        <button class="primary-button" id="savePromptPreset" type="submit">保存</button>
       </div>
     </form>
   </dialog>

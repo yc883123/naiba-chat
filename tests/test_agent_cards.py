@@ -36,7 +36,8 @@ FORM_FIELD_IDS = (
     "agentFormId",
     "agentName",
     "agentSystemPromptEdit",
-    "agentPromptPresetSelect",
+    "agentPromptPresetButton",
+    "saveAgentPromptPreset",
     "importAgentCharacterCard",
     "agentCharacterCardFileInput",
     "pickAgentAvatar",
@@ -327,6 +328,54 @@ class ToolGroupCatalogTests(unittest.TestCase):
                      ".agent-tool-group.collapsed .agent-tool-group-body { display: none; }"):
             with self.subTest(rule=rule):
                 self.assertIn(rule, css)
+
+
+class AgentPromptPresetUiTests(unittest.TestCase):
+    """快捷提示词从「设置页」搬到 Agent 表单：另存按钮 + 弹窗 + 带 × 的面板。"""
+
+    def _index(self):
+        return (ROOT / "public/index.html").read_text(encoding="utf-8")
+
+    def _js(self):
+        return (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
+
+    def _bind(self):
+        return (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
+
+    def test_save_dialog_takes_only_title(self):
+        index = self._index()
+        self.assertIn('id="promptPresetDialog"', index)
+        self.assertIn('id="promptPresetTitle"', index)
+        self.assertIn('id="savePromptPreset"', index)
+        # 正文取当前系统提示词文本框，弹窗里不再有第二个正文输入框。
+        dialog = index[index.index('id="promptPresetDialog"'):]
+        dialog = dialog[: dialog.index("</dialog>")]
+        self.assertNotIn("textarea", dialog, "弹窗只填标题，正文来自上方系统提示词")
+
+    def test_panel_items_have_delete_button(self):
+        js = self._js()
+        self.assertIn("data-agent-preset-delete=", js, "面板条目右侧要有 × 删除")
+        self.assertIn("export async function removeAgentPromptPreset(", js)
+        self.assertIn("export function handleAgentPromptPresetPanelClick(", js)
+        bind = self._bind()
+        self.assertIn(
+            "$('#agentPromptPresetPanel')?.addEventListener('click', handleAgentPromptPresetPanelClick)", bind)
+        self.assertIn(
+            "$('#saveAgentPromptPreset')?.addEventListener('click', openAgentPromptPresetSaveDialog)", bind)
+        self.assertIn("$('#promptPresetForm')?.addEventListener('submit', saveAgentPromptPreset)", bind)
+
+    def test_panel_lives_inside_dialog_and_is_js_positioned(self):
+        """模态 <dialog> 在 top layer：body 上的 fixed 浮层会被盖住，面板必须挂在弹层内部。"""
+        index = self._index()
+        dialog = index[index.index('<dialog id="agentDialog"'):]
+        dialog = dialog[: dialog.index("</dialog>")]
+        self.assertIn('id="agentPromptPresetPanel"', dialog)
+        js = self._js()
+        self.assertIn("panel.style.top =", js, "面板必须 JS 定位（fixed + 视口夹紧）")
+        bind = self._bind()
+        self.assertIn("positionAgentPromptPresetPanel", bind, "resize 时要重新定位")
+        self.assertIn("$('#agentDialog')?.addEventListener('cancel'", bind,
+                      "Esc 先收面板，不能把整个 Agent 弹层关掉")
 
 
 class AgentCardsMarkupTests(unittest.TestCase):

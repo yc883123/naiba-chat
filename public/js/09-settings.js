@@ -4,7 +4,7 @@
 
 import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
 import { applyConversationAgent, populateModels, renderAgents, updateUnloadModelButton } from "./07-models-agents.js";
-import { currentAgentFixedSkillIds, renderAgentPromptPresetSelect } from "./08-conversations.js";
+import { closeAgentPromptPresetPanel, currentAgentFixedSkillIds, renderAgentPromptPresetList } from "./08-conversations.js";
 import { skillList } from "./13-skill-refs.js";
 import { switchSettingsTab } from "./15-bind-events.js";
 export function renderSkills(filter = '') {
@@ -920,10 +920,9 @@ export function showAgentForm(agent = null) {
   // 「存为模板」控件随下方勾选实时显隐（自定义组合时出现）。
   renderAgentSkillPicker();
   renderAgentToolPicker();
-  // 快捷提示词下拉每次打开表单重建并复位（套用结果只进文本框，保存才落库）。
-  const presetSelect = $('#agentPromptPresetSelect');
-  if (presetSelect) presetSelect.value = '';
-  renderAgentPromptPresetSelect();
+  // 快捷提示词面板每次打开表单收起并重建列表（套用结果只进文本框，保存 Agent 才落库）。
+  closeAgentPromptPresetPanel();
+  renderAgentPromptPresetList();
   $('#agentError').textContent = '';
   // 卡片点开即编辑；ID 由后台分配，只在副标题里显示已有 ID 供核对。
   agentAvatarFile = null;

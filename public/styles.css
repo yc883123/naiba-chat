@@ -881,8 +881,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .conversation-menu button.is-danger { color: var(--danger); }
 .conversation-menu button.is-danger:hover { background: var(--danger-soft); }
 .agent-prompt-tools { display: grid; gap: 8px; margin-top: -4px; }
-.agent-prompt-preset { display: grid; gap: 5px; font-size: 12px; color: var(--muted); }
-.agent-prompt-preset select { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; background: var(--surface); color: var(--text); }
+/* 快捷提示词/角色卡/头像挤在一行，窄屏自动换行（不再让下拉独占一行） */
+.agent-prompt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .agent-prompt-tools .character-card-import { display: flex; align-items: center; gap: 8px; }
 .agent-avatar-preview { width: 32px; height: 32px; flex: none; border-radius: 50%; object-fit: cover; border: 1px solid var(--line-strong); }
 .agent-avatar-preview[hidden] { display: none; }
@@ -926,18 +926,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .settings-nav button.active { background: var(--surface); color: var(--accent); font-weight: 600; }
 .settings-content { overflow: auto; padding: 20px; }
 .settings-content h3 { margin: 0 0 14px; font-size: 15px; }
-.conversation-preset-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.conversation-preset-search { margin: 14px 0; }
-.conversation-preset-list { display: grid; gap: 8px; }
-.conversation-preset-item { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
-.conversation-preset-item > div { min-width: 0; }
-.conversation-preset-item b { display: block; font-size: 13px; }
-.conversation-preset-item small { color: var(--muted); font-size: 11px; }
-.conversation-preset-item p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
-.conversation-preset-item > span { display: flex; gap: 6px; flex: none; }
-.conversation-preset-form { display: grid; gap: 12px; margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
-.conversation-preset-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
-.conversation-preset-form input, .conversation-preset-form textarea { width: 100%; border: 1px solid var(--line); border-radius: var(--radius); padding: 9px 10px; background: var(--surface); color: var(--text); resize: vertical; }
+/* 快捷提示词面板（复用 .quick-msg-* 结构，只是更宽一点容纳标题+预览） */
+.agent-preset-panel { width: 360px; }
 .tiny { min-height: 29px; padding: 0 8px; font-size: 12px; }
 .section-heading { display: flex; justify-content: space-between; align-items: center; }
 .connection-list { display: grid; gap: 8px; margin-bottom: 12px; }
