@@ -1,0 +1,128 @@
+"""会话收尾清理：只保留「维护说明 §六」点名的可复用验证资产，其余一次性脚本/产物/临时目录删除。
+
+用法：
+    .venv\\Scripts\\python.exe verify\\cleanup_verify.py            # dry-run，只打印计划
+    .venv\\Scripts\\python.exe verify\\cleanup_verify.py --apply    # 先打包备份，再删除
+
+配套规则见维护说明 §8.7（用户表示结束会话时先问、再按此清理）。安全边界：
+- 删除前把「所有将被删除的脚本」压进 verify/_archive/verify_scripts_<日期>.zip；
+- 同时写 _archive/deleted_manifest.txt 记录被删文件与体积；
+- 只动 verify，不碰仓库任何已跟踪文件；_archive/ 永不清。
+"""
+from __future__ import annotations
+
+import datetime
+import pathlib
+import shutil
+import sys
+import zipfile
+
+TMP = pathlib.Path("verify")
+ARCHIVE = TMP / "_archive"
+APPLY = "--apply" in sys.argv
+
+# ---- 保留清单：维护说明 §六 点名的验证资产 + 本脚本自身 ----
+KEEP = {
+    # 静态检查器 / 无浏览器校验
+    "scan_undef_all.py", "scan_unused_pkg.py", "esm_cross_assign.py",
+    "esm_unused_imports.py", "esm_graph_check.py", "tdz_check.py",
+    "dup_ids.py", "sitecustomize.py", "media_markup_check.mjs",
+    "skill_prompt_check.mjs", "verify_doc_encoding.py",
+    # 浏览器冒烟
+    "browser_smoke.cjs", "topbar_smoke.cjs", "pending_files_smoke.cjs",
+    "send_button_smoke.cjs", "send_state_smoke.cjs", "file_ref_smoke.cjs",
+    "lightbox_smoke.cjs", "usage_rate_smoke.cjs", "media_inline_smoke.cjs",
+    "p4_display_smoke.cjs", "p5_writeback_smoke.cjs", "p6_comfy_render_smoke.cjs",
+    "provider_cards_smoke.cjs", "agent_cards_smoke.cjs", "agent_avatar_smoke.cjs",
+    "context_menu_smoke.cjs", "_check_turn_rail.cjs", "_check_tool_cards_compact.cjs",
+    "sidebar_favorites_smoke.cjs", "agent_prompt_smoke.cjs", "quick_msg_smoke.cjs",
+    "starter_reasoning_smoke.cjs",
+    # 播种器
+    "seed_usage_message.py", "seed_media_message.py", "seed_favorites.py",
+    "seed_turn_rail_chat.py", "seed_agent_avatar_chat.py",
+    "seed_legacy_builtin_agent.py", "make_test_card.py",
+    # HTTP / 传输校验
+    "p3_data_check.py", "p4_transport_check.py", "p6_comfy_extract_check.py",
+    "p5_writeback_apply.py",
+    # 数据维护 / 独立冒烟
+    "backfill_media.py", "record_golden.py", "upload_smoke.py",
+    "attachment_only_smoke.py",
+    # 上下文圆环/提醒冒烟（§六 已登记）
+    "ring_usage_smoke.py", "ring_usage_smoke.cjs",
+    # 发布清单同步自检（只读）
+    "_release_check.py",
+    # 本脚本自身
+    "cleanup_verify.py",
+}
+
+SCRIPT_EXT = {".py", ".cjs", ".mjs", ".js", ".ps1"}
+
+if not TMP.is_dir():
+    print(f"没有 {TMP}，无需清理")
+    sys.exit(0)
+
+files = [p for p in TMP.iterdir() if p.is_file()]
+dirs = [p for p in TMP.iterdir() if p.is_dir() and p.name != "_archive"]
+del_files = [p for p in files if p.name not in KEEP]
+del_scripts = [p for p in del_files if p.suffix.lower() in SCRIPT_EXT]
+del_other = [p for p in del_files if p.suffix.lower() not in SCRIPT_EXT]
+keep_count = len(files) - len(del_files)
+
+dir_bytes = sum(f.stat().st_size for d in dirs for f in d.rglob("*") if f.is_file())
+total_kb = sum(p.stat().st_size for p in del_files) / 1024
+
+print(f"保留 {keep_count} 个（§六 资产 + 本脚本）")
+print(f"将删脚本 {len(del_scripts)} 个 / 产物 {len(del_other)} 个（合计 {total_kb:.0f} KB）"
+      f" / 临时目录 {len(dirs)} 个（{dir_bytes/1048576:.1f} MB）")
+if del_files:
+    print("  示例：", ", ".join(sorted(p.name for p in del_files)[:10]),
+          "…" if len(del_files) > 10 else "")
+
+if not APPLY:
+    print("\n-- dry-run；确认后加 --apply 执行 --")
+    sys.exit(0)
+
+# ---- 1. 打包备份待删脚本 ----
+ARCHIVE.mkdir(exist_ok=True)
+# 用「日期-时刻」命名：同一天多次清理不会互相覆盖上一次的备份（本轮踩到过）。
+stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+zip_path = ARCHIVE / f"verify_scripts_{stamp}.zip"
+if del_scripts:
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(del_scripts):
+            zf.write(path, arcname=path.name)
+    print(f"已备份 {len(del_scripts)} 个脚本 -> {zip_path}（{zip_path.stat().st_size/1024:.0f} KB）")
+
+manifest = ARCHIVE / f"deleted_manifest_{stamp}.txt"
+lines = [f"# {stamp} 清理 verify 记录", f"保留 {keep_count} 个；备份 {zip_path.name}", ""]
+for path in sorted(del_scripts):
+    lines.append(f"script  {path.stat().st_size:>8}  {path.name}")
+for path in sorted(del_other):
+    lines.append(f"artifact{path.stat().st_size:>8}  {path.name}")
+for d in sorted(dirs):
+    lines.append(f"dir             -  {d.name}/")
+manifest.write_text("\n".join(lines), encoding="utf-8")
+print(f"已写清单 -> {manifest}")
+
+
+def _force_rmtree(target: pathlib.Path) -> None:
+    """先常规删除；失败则清掉只读属性重试（浏览器临时 profile 有只读文件）。"""
+    shutil.rmtree(target, ignore_errors=True)
+    if target.exists():
+        for child in target.rglob("*"):
+            try:
+                child.chmod(0o700)
+            except OSError:
+                pass
+        shutil.rmtree(target, ignore_errors=True)
+    if target.exists():
+        raise RuntimeError(f"目录未能删除：{target}")
+
+
+for path in del_files:
+    path.unlink()
+for d in dirs:
+    _force_rmtree(d)
+
+print(f"已删除 {len(del_files)} 个文件、{len(dirs)} 个目录")
+print("verify 剩余：", ", ".join(sorted(p.name for p in TMP.iterdir())))

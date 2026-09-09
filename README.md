@@ -235,16 +235,16 @@ $env:NAIBA_BUILD_VERSION = "2.0.0-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
-静态检查器、浏览器冒烟与数据播种脚本**随仓库发布**在 `.tmptest/`（完整清单与用法见 `项目维护说明（修改代码前必读）.md` §六）：
+静态检查器、浏览器冒烟与数据播种脚本**随仓库发布**在 `verify/`（完整清单与用法见 `项目维护说明（修改代码前必读）.md` §六）：
 
 ```powershell
-python .tmptest\scan_undef_all.py        # 未定义名扫描（Python 全包）
-python .tmptest\esm_graph_check.py       # 前端 ESM 导入/导出图一致性
-python .tmptest\tdz_check.py             # 前端顶层求值序（TDZ）候选
-node .tmptest\media_markup_check.mjs     # 媒体渲染（无浏览器）
+python verify\scan_undef_all.py        # 未定义名扫描（Python 全包）
+python verify\esm_graph_check.py       # 前端 ESM 导入/导出图一致性
+python verify\tdz_check.py             # 前端顶层求值序（TDZ）候选
+node verify\media_markup_check.mjs     # 媒体渲染（无浏览器）
 $env:NODE_PATH="%USERPROFILE%\node_modules"
-node .tmptest\browser_smoke.cjs          # 浏览器冒烟（需 playwright + Edge）
-python .tmptest\ring_usage_smoke.py      # 上下文圆环/提醒端到端冒烟（自编排）
+node verify\browser_smoke.cjs          # 浏览器冒烟（需 playwright + Edge）
+python verify\ring_usage_smoke.py      # 上下文圆环/提醒端到端冒烟（自编排）
 ```
 
 浏览器冒烟需要本机 `npm install playwright` 并已安装 Edge；脚本一律用相对项目根的路径，换机器无需改代码。

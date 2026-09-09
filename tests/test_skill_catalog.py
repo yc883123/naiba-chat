@@ -16,7 +16,7 @@ from naiba.skills.catalog import SkillCatalog  # noqa: E402
 
 class SkillCatalogScanTests(unittest.TestCase):
     def test_scan_reads_frontmatter_and_display_name(self):
-        # 注意：扫描会跳过路径中任何以 "." 开头的目录段（如沙箱 .tmptest），
+        # 注意：扫描会跳过路径中任何以 "." 开头的目录段（如沙箱 verify），
         # 因此临时目录必须建在非点开头的位置（workspace 根下）。
         import tempfile
 

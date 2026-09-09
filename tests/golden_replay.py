@@ -5,8 +5,8 @@
 供「包内细分」等后续结构性改动逐字节比对——回放器断言本次运行输出与基线完全一致。
 
 运行方式：
-  录制（一次性；脚本在 .tmptest 下，不入库）：
-    .venv\\Scripts\\python.exe .tmptest\\record_golden.py
+  录制（一次性；脚本在 verify 下，不入库）：
+    .venv\\Scripts\\python.exe verify\\record_golden.py
   回放（每次重构验证）：
     .venv\\Scripts\\python.exe -m unittest tests.golden_replay
     或：.venv\\Scripts\\python.exe tests\\golden_replay.py
@@ -461,7 +461,7 @@ def build(name: str) -> dict:
 class GoldenReplayTests(unittest.TestCase):
     def _replay(self, name: str):
         baseline_path = GOLDEN_DIR / f"{name}.json"
-        self.assertTrue(baseline_path.exists(), f"缺少基线文件 {baseline_path}（先运行 .tmptest/record_golden.py 录制）")
+        self.assertTrue(baseline_path.exists(), f"缺少基线文件 {baseline_path}（先运行 verify/record_golden.py 录制）")
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
         current = build(name)
         self.assertEqual(baseline["record"], current["record"], f"基线 {name} 行为漂移")
