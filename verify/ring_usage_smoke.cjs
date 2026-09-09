@@ -31,6 +31,21 @@ const dialogOpen = (page) => page.evaluate(
   () => Boolean(document.querySelector('#contextWarningDialog')?.open));
 const percent = (page) => page.evaluate(
   () => document.querySelector('#contextUsageRing')?.style.getPropertyValue('--context-percent') || '');
+// 「思考 自动」右侧的实时百分比标签（文本 + 配色类 + 相对思考标签的位置）。
+const inlinePercent = (page) => page.evaluate(() => {
+  const label = document.querySelector('#contextPercentLabel');
+  const reasoning = document.querySelector('#reasoningLabel');
+  if (!label) return null;
+  const rect = label.getBoundingClientRect();
+  const reasonRect = reasoning ? reasoning.getBoundingClientRect() : { right: 0 };
+  return {
+    text: label.textContent.trim(),
+    className: label.className,
+    title: label.title,
+    rightOfReasoning: rect.left >= reasonRect.right - 1,
+    visible: rect.width > 0 && rect.height > 0,
+  };
+});
 const signal = (step) => { if (STEP) fs.writeFileSync(STEP, String(step)); };
 
 (async () => {
@@ -52,6 +67,15 @@ const signal = (step) => { if (STEP) fs.writeFileSync(STEP, String(step)); };
     const status1 = await text(page, '#runtimeStatus');
     check('圆环按 usage 事件刷新（未等整轮结束）', summary1.includes('8,200'), summary1);
     check('圆环渲染百分比', summary1.includes('8.2%'), summary1);
+    const inline1 = await inlinePercent(page);
+    check('「思考 自动」右侧显示实时百分比', Boolean(inline1) && inline1.text === '上下文 8.2%',
+      JSON.stringify(inline1));
+    check('百分比排在「思考 自动」右侧且可见',
+      Boolean(inline1) && inline1.rightOfReasoning && inline1.visible, JSON.stringify(inline1));
+    check('未达 70% 不显示告警配色',
+      Boolean(inline1) && !inline1.className.includes('warning') && !inline1.className.includes('danger'),
+      JSON.stringify(inline1));
+    check('悬停提示带完整用量', Boolean(inline1) && inline1.title.includes('8,200'), JSON.stringify(inline1));
     check('断言时该轮仍在进行中', status1 !== '就绪', `runtimeStatus=${status1}`);
     check('未达阈值不弹窗', !(await dialogOpen(page)));
 
@@ -60,6 +84,11 @@ const signal = (step) => { if (STEP) fs.writeFileSync(STEP, String(step)); };
     await waitFor(page, async () => (await text(page, '#contextUsageSummary')).includes('85,000'), 30000);
     const percent2 = await percent(page);
     check('第二次请求再次刷新圆环', (await text(page, '#contextUsageSummary')).includes('85.0%'));
+    const inline2 = await inlinePercent(page);
+    check('百分比随第二次请求实时刷新', Boolean(inline2) && inline2.text === '上下文 85.0%',
+      JSON.stringify(inline2));
+    check('达 70% 转为告警配色', Boolean(inline2) && inline2.className.includes('warning'),
+      JSON.stringify(inline2));
     const opened = await waitFor(page, async () => (await dialogOpen(page)), 15000);
     check('达到阈值弹出提醒', Boolean(opened));
     const detail = await text(page, '#contextWarningDetail');
@@ -112,6 +141,9 @@ const signal = (step) => { if (STEP) fs.writeFileSync(STEP, String(step)); };
     check('再涨 5% 以上重新弹窗', Boolean(reopened));
     check('百分比继续变大', parseFloat(await percent(page)) > parseFloat(percent2 || '0'),
       `${percent2} -> ${await percent(page)}`);
+    const inline4 = await inlinePercent(page);
+    check('达 90% 转为危险配色', Boolean(inline4) && inline4.className.includes('danger'),
+      JSON.stringify(inline4));
     await page.click('#contextWarningDialog [data-close="contextWarningDialog"]');
     await waitFor(page, async () => !(await dialogOpen(page)), 8000);
 

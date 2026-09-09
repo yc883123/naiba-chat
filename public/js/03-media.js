@@ -804,6 +804,20 @@ export function setContextUsage(usage, conversationId = null) {
   renderContextUsage();
 }
 
+// 圆环与输入框下方「思考 自动」右侧的实时百分比共用同一套配色阈值。
+const CONTEXT_TONE_WARNING = 70;
+const CONTEXT_TONE_DANGER = 90;
+
+// 「思考 自动」右侧的上下文百分比：与圆环同源，只由 renderContextUsage 写入。
+function renderContextPercentLabel({ text = '上下文 --', title = '上下文用量：暂无数据', percent = 0 } = {}) {
+  const label = $('#contextPercentLabel');
+  if (!label) return;
+  label.textContent = text;
+  label.title = title;
+  label.classList.toggle('warning', percent >= CONTEXT_TONE_WARNING && percent < CONTEXT_TONE_DANGER);
+  label.classList.toggle('danger', percent >= CONTEXT_TONE_DANGER);
+}
+
 export function renderContextUsage() {
   const button = $('#contextUsageButton');
   const ring = $('#contextUsageRing');
@@ -819,6 +833,7 @@ export function renderContextUsage() {
     turn.textContent = '完成一次回复后显示本轮消耗';
     state.contextAtCeiling = false;
     state.contextPercent = 0;
+    renderContextPercentLabel();
     maybeWarnContextUsage(0);
     updateContextComposerLock();
     return;
@@ -838,14 +853,19 @@ export function renderContextUsage() {
   const percent = limit > 0 ? Math.min(100, Math.max(0, context / limit * 100)) : 0;
   state.contextPercent = percent;
   ring.style.setProperty('--context-percent', percent.toFixed(1));
-  ring.classList.toggle('warning', percent >= 70 && percent < 90);
-  ring.classList.toggle('danger', percent >= 90);
+  ring.classList.toggle('warning', percent >= CONTEXT_TONE_WARNING && percent < CONTEXT_TONE_DANGER);
+  ring.classList.toggle('danger', percent >= CONTEXT_TONE_DANGER);
   const contextText = limit
     ? `${context.toLocaleString()} / ${limit.toLocaleString()}（${percent.toFixed(1)}%）`
     : context ? `${context.toLocaleString()} / 上限未知` : '上下文上限未知';
   button.title = `上下文用量：${contextText}`;
   summary.textContent = `上下文 ${contextText}`;
   turn.textContent = `最近一轮：输入 ${input.toLocaleString()} · 输出 ${output.toLocaleString()} · 总计 ${total.toLocaleString()} tokens`;
+  renderContextPercentLabel({
+    text: limit ? `上下文 ${percent.toFixed(1)}%` : '上下文 --',
+    title: `上下文用量：${contextText}`,
+    percent: limit ? percent : 0,
+  });
   const atCeiling = limit > 0 && percent >= 100;
   if (atCeiling !== state.contextAtCeiling) {
     state.contextAtCeiling = atCeiling;

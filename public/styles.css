@@ -243,6 +243,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .reasoning-wrap { position: relative; display: inline-flex; align-items: center; flex: none; }
 /* 当前思考强度：与「就绪」同一行（在输入框外），不再挤在按钮下方 */
 .reasoning-label { color: var(--muted); }
+/* 「思考 自动」右侧的实时上下文百分比（与圆环同源同配色阈值）。 */
+.context-percent-label { color: var(--muted); font-variant-numeric: tabular-nums; }
+.context-percent-label.warning { color: var(--warning); }
+.context-percent-label.danger { color: var(--danger); }
 /* 强度列表：fixed + JS 定位（挂到 body），避免被 .composer-wrap 的 overflow 裁剪 */
 .reasoning-menu { position: fixed; z-index: 45; min-width: 118px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-2); }
 .reasoning-menu[hidden] { display: none; }

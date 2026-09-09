@@ -92,6 +92,31 @@ class ContextRingRefreshTests(unittest.TestCase):
                 "圆环百分比只能由 renderContextUsage 写入",
             )
 
+    def test_inline_percent_label_sits_right_of_reasoning(self) -> None:
+        """「思考 自动」右侧的实时百分比：与圆环同源、同配色阈值。"""
+        html = (ROOT / "public" / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(html.count('id="contextPercentLabel"'), 1, "百分比标签必须存在且 id 唯一")
+        right = html[html.index('class="composer-meta-right"'):]
+        right = right[: right.index("</div>")]
+        self.assertLess(right.index('id="reasoningLabel"'), right.index('id="contextPercentLabel"'),
+                        "百分比要排在「思考 自动」右侧")
+        self.assertLess(right.index('id="contextPercentLabel"'), right.index('id="runtimeStatus"'),
+                        "百分比排在运行状态之前")
+        media = _read("03-media.js")
+        body = _function_body(media, "export function renderContextUsage")
+        self.assertEqual(body.count("renderContextPercentLabel("), 2,
+                         "有数据/无数据两条路径都要刷新百分比")
+        helper = _function_body(media, "function renderContextPercentLabel")
+        self.assertIn("contextPercentLabel", helper)
+        self.assertIn("percent.toFixed(1)", body, "百分比与圆环用同一份数值")
+        self.assertIn("CONTEXT_TONE_WARNING", helper, "配色阈值与圆环共用常量")
+        self.assertIn("CONTEXT_TONE_DANGER", helper)
+        css = (ROOT / "public" / "styles.css").read_text(encoding="utf-8")
+        for rule in (".context-percent-label {", ".context-percent-label.warning {",
+                     ".context-percent-label.danger {"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, css)
+
 
 class ContextWarningTests(unittest.TestCase):
     """达阈值弹窗提醒（阈值可配、每会话只提醒一次）。"""
