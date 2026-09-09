@@ -80,7 +80,7 @@ async function skillSnapshot(page) {
   await page.waitForTimeout(250);
   return page.evaluate(() => {
     const skills = document.querySelector('#agentSkillList');
-    const skillsBox = skills.closest('.agent-skills').getBoundingClientRect();
+    const skillsBox = skills.closest('.agent-tab-panel').getBoundingClientRect();
     const cards = [...skills.querySelectorAll('.skill-card')];
     const cardStyle = cards.length ? getComputedStyle(cards[0]) : null;
     return {
@@ -100,7 +100,7 @@ async function toolSnapshot(page) {
   await page.waitForTimeout(250);
   return page.evaluate(() => {
     const scope = document.querySelector('#agentToolScope');
-    const scopeBox = scope.closest('.agent-skills').getBoundingClientRect();
+    const scopeBox = scope.closest('.agent-tab-panel').getBoundingClientRect();
     const groups = [...scope.querySelectorAll('.agent-tool-group')];
     const groupInfo = groups.map((group) => {
       const head = group.querySelector('.agent-tool-group-head');
@@ -239,9 +239,10 @@ async function waitForCardCount(page, expected, timeout = 15000) {
       lists.skillCards > 0 && lists.listH > 0 && lists.boxH >= lists.listH,
       JSON.stringify(lists));
     const tools = await toolSnapshot(page);
-    check('固定 Skill 版块与工具集版块共用同一高度变量',
-      lists.listH > 0 && lists.listH === tools.scopeH,
-      JSON.stringify({ skillListH: lists.listH, scopeH: tools.scopeH }));
+    check('固定 Skill 与工具集列表都占满各自分区（分区同高）',
+      lists.listH > 200 && tools.scopeH > 200 && lists.boxH === tools.scopeBoxH,
+      JSON.stringify({ skillListH: lists.listH, skillPanelH: lists.boxH,
+        scopeH: tools.scopeH, toolPanelH: tools.scopeBoxH }));
     check('工具集分类可见（未被行高裁掉）',
       tools.groups > 0 && tools.scopeH > 0 && tools.scopeBoxH >= tools.scopeH && tools.firstGroupVisible > 0,
       JSON.stringify(tools));

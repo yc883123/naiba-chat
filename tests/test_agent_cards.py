@@ -611,30 +611,45 @@ class AgentCardsMarkupTests(unittest.TestCase):
         avatar_rule = avatar_rule[: avatar_rule.index("}")]
         self.assertIn("object-fit: cover", avatar_rule, "头像必须中心裁切填充，不能拉伸变形")
 
-    def test_skill_picker_uses_cards_and_matches_tool_height(self) -> None:
-        """固定 Skill 与工具集同款卡片，且两个列表共用同一高度（用户要求：拉高到一样高）。"""
+    def test_skill_picker_uses_cards_and_fills_panel(self) -> None:
+        """固定 Skill 用卡片网格；列表占满分区高度、内部滚动（不再有灰色标题块与固定高度）。"""
         source = self._settings()
         body = source[source.index("export function renderAgentSkillPicker()"):]
         body = body[: body.index("\n}")]
         self.assertIn('class="skill-card"', body)
         self.assertNotIn('class="skill-item"', body, "技能页的列表样式不该再被 Agent 弹层复用")
         css = self._css()
-        skills_rule = css[css.index(".agent-skills {"):]
-        skills_rule = skills_rule[: skills_rule.index("}")]
-        self.assertIn("--agent-list-h:", skills_rule, "两个列表必须共用同一个高度变量")
-        skill_list = css[css.index(".agent-skills .skill-list {"):]
+        skill_list = css[css.index(".agent-tab-panel .skill-list {"):]
         skill_list = skill_list[: skill_list.index("}")]
-        self.assertIn("height: var(--agent-list-h)", skill_list)
+        self.assertIn("flex: 1", skill_list, "列表占满分区剩余高度")
+        self.assertIn("overflow: auto", skill_list)
         self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", skill_list)
-        card = css[css.index(".agent-skills .skill-card {"):]
+        card = css[css.index(".agent-tab-panel .skill-card {"):]
         card = card[: card.index("}")]
         self.assertIn("display: flex", card)
         self.assertIn("border: 1px solid var(--line)", card)
         tool_scope = css[css.index("#agentToolScope {"):]
         tool_scope = tool_scope[: tool_scope.index("}")]
-        self.assertIn("height: var(--agent-list-h)", tool_scope, "工具集必须用同一高度变量，否则两边不等高")
+        self.assertIn("flex: 1", tool_scope, "工具列表同样占满分区高度")
         self.assertIn("grid-auto-rows: max-content", tool_scope,
-                      "固定高度 + 默认 align-content:stretch 会把分组行均摊压扁（实测 19.6px vs 分组头 59px）")
+                      "默认 align-content:stretch 会把分组行均摊压扁（实测 19.6px vs 分组头 59px）")
+
+    def test_no_duplicated_panel_title_block(self) -> None:
+        """分区按钮已有标题，面板里不再重复灰色标题块，只留一行小字说明。"""
+        index = self._index()
+        self.assertNotIn('class="agent-skills"', index, "灰色标题块已移除")
+        self.assertNotIn('class="agent-skills-head"', index)
+        skills = index[index.index('data-agent-panel="skills"'):]
+        skills = skills[: skills.index('data-agent-panel="tools"')]
+        self.assertIn('class="agent-tab-hint"', skills, "只保留一行小字说明")
+        self.assertNotIn("<b>固定 Skill</b>", skills, "面板里不再重复标题")
+        tools = index[index.index('data-agent-panel="tools"'):]
+        self.assertIn('class="agent-tab-hint"', tools)
+        self.assertNotIn("<b>工具集</b>", tools, "面板里不再重复标题")
+        # 计数、预设状态与「展开全部」搬进预设/搜索行，功能不丢。
+        for field in ("agentToolCount", "toggleAllToolGroups", "agentToolPresetState"):
+            with self.subTest(field=field):
+                self.assertIn(f'id="{field}"', tools)
 
     def test_scrollable_lists_are_not_clipped(self) -> None:
         """固定 Skill / 工具集列表是滚动容器：分区面板必须 min-height:0 + 自身可滚，否则被裁掉且点不到。"""
