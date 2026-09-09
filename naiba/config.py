@@ -165,9 +165,11 @@ def built_in_agent_ids() -> set[str]:
 
 
 # ---- 工具目录（Agent 编辑页的可选工具集）----
-# 分类是**单一维度**（作用对象 + 风险），共 6 组：读取 / 写入 / 执行 / 联网 / 视觉 / 任务与扩展。
+# 分类是**单一维度**（作用对象 + 风险），共 7 组：读取 / 写入 / 执行 / 联网 / 视觉 / 任务与扩展 / 长会话。
 # 动态注册的 MCP 工具（mcp__<server>__<tool>）统一归入「联网与外部服务」，并按服务器名做
 # 二级分组（见 tool_group_entries 的 subgroups）；分类说明与风险徽标见 TOOL_GROUP_INFO。
+# 「长会话」= 翻历史（find_conversations / recall_history / read_conversation）+ 重置上下文
+# （reset_context）：这一组只在会话层面起作用，成组勾选才有意义（见 TOOL_PRESETS 的 longsession）。
 # 改名或合并分类时，TOOL_PRESETS 里引用的工具名要一起核对——守门见
 # tests/test_agent_cards.py::ToolGroupCatalogTests。
 _ALIAS_MAIN = {
@@ -175,10 +177,11 @@ _ALIAS_MAIN = {
     "grep": "search_files",
 }
 _MCP_GROUP = "联网与外部服务"
+_LONG_SESSION_GROUP = "长会话"
 _TOOL_GROUP = {
     "read_file": "读取与检索", "list_directory": "读取与检索", "search_files": "读取与检索",
-    "recall_history": "读取与检索",
-    "reset_context": "任务与扩展",
+    "find_conversations": _LONG_SESSION_GROUP, "recall_history": _LONG_SESSION_GROUP,
+    "read_conversation": _LONG_SESSION_GROUP, "reset_context": _LONG_SESSION_GROUP,
     "read_pdf": "读取与检索", "pdf_render_pages": "读取与检索", "pdf_zoom_region": "读取与检索",
     "write_file": "文件写入与编辑", "edit_file": "文件写入与编辑",
     "pwsh": "命令与脚本执行", "run_skill_script": "命令与脚本执行",
@@ -232,7 +235,7 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
     # 端到端顺序：与 TOOL_GROUP_INFO 的分组顺序一致，让每组内工具顺序稳定（避免逐轮随机）
     order = (
         # 读取与检索
-        "read_file", "list_directory", "search_files", "recall_history",
+        "read_file", "list_directory", "search_files",
         "read_pdf", "pdf_render_pages", "pdf_zoom_region",
         # 文件写入与编辑
         "write_file", "edit_file",
@@ -247,6 +250,8 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
         "todo_write",
         "install_skill", "unpack_skill_archive", "inspect_installed_skill",
+        # 长会话
+        "find_conversations", "recall_history", "read_conversation", "reset_context",
     )
     index = {name: i for i, name in enumerate(order)}
     entries.sort(key=lambda item: (index.get(item["name"], 999), item["name"]))
@@ -269,6 +274,8 @@ TOOL_GROUP_INFO: tuple[dict[str, str], ...] = (
      "badge": "会写产物", "tone": "warn"},
     {"name": "任务与扩展", "desc": "后台长任务、子 Agent、任务清单；安装与检查 Skill，让 Agent 自己扩展能力",
      "badge": "会改动", "tone": "warn"},
+    {"name": "长会话", "desc": "翻历史（列会话 / 检索 / 读原文）与重置上下文：只在会话层面起作用，不改文件",
+     "badge": "会话控制", "tone": "info"},
     {"name": "其他", "desc": "未归类工具", "badge": "", "tone": "info"},
 )
 
@@ -351,6 +358,18 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
             "read_file", "list_directory", "search_files",
             "write_file", "edit_file", "pwsh", "run_skill_script",
             "vision_analyze",
+        ],
+    },
+    {
+        "id": "longsession",
+        "name": "长会话模式",
+        "tagline": "标准 + 翻历史",
+        "desc": "标准模式全部能力，外加翻历史（列会话 / 检索 / 读原文）与重置上下文，适合长会话与跨会话回忆。",
+        "include": [
+            "read_file", "list_directory", "search_files",
+            "write_file", "edit_file", "pwsh", "run_skill_script",
+            "vision_analyze",
+            "find_conversations", "recall_history", "read_conversation", "reset_context",
         ],
     },
     {

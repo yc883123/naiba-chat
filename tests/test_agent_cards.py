@@ -127,11 +127,11 @@ class BuiltInAgentsRetiredTests(unittest.TestCase):
 
 
 class ToolGroupCatalogTests(unittest.TestCase):
-    """工具分类：单一维度 6 组 + 风险徽标 + MCP 按服务器二级分组（Agent 编辑页可读性的地基）。"""
+    """工具分类：单一维度 7 组 + 风险徽标 + MCP 按服务器二级分组（Agent 编辑页可读性的地基）。"""
 
     EXPECTED_GROUPS = (
         "读取与检索", "文件写入与编辑", "命令与脚本执行",
-        "联网与外部服务", "视觉与图片", "任务与扩展",
+        "联网与外部服务", "视觉与图片", "任务与扩展", "长会话",
     )
 
     def _catalog(self, extra_schemas=()):
@@ -148,7 +148,7 @@ class ToolGroupCatalogTests(unittest.TestCase):
         infos = list(TOOL_GROUP_INFO)
         names = [info["name"] for info in infos]
         self.assertEqual(names[: len(self.EXPECTED_GROUPS)], list(self.EXPECTED_GROUPS),
-                         "分类顺序即前端展示顺序：6 组 = 「作用对象 + 风险」单一维度")
+                         "分类顺序即前端展示顺序：7 组 = 「作用对象 + 风险」单一维度")
         for info in infos:
             with self.subTest(group=info["name"]):
                 self.assertTrue(str(info["desc"]).strip(), "每个分类都要有一句话说明")
@@ -176,7 +176,7 @@ class ToolGroupCatalogTests(unittest.TestCase):
         # 各分类成员固定：合并后的归属一目了然；调整归属必须同步本断言。
         membership = {group["name"]: group["tools"] for group in groups}
         self.assertEqual(membership["读取与检索"], [
-            "read_file", "list_directory", "search_files", "recall_history",
+            "read_file", "list_directory", "search_files",
             "read_pdf", "pdf_render_pages", "pdf_zoom_region",
         ])
         self.assertEqual(membership["文件写入与编辑"], ["write_file", "edit_file"])
@@ -189,8 +189,10 @@ class ToolGroupCatalogTests(unittest.TestCase):
         self.assertEqual(membership["任务与扩展"], [
             "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
             "todo_write", "install_skill", "unpack_skill_archive", "inspect_installed_skill",
-            "reset_context",
         ])
+        self.assertEqual(membership["长会话"], [
+            "find_conversations", "recall_history", "read_conversation", "reset_context",
+        ], "长会话工具集：翻历史三件套 + 重置上下文（成组勾选才有意义）")
 
     def test_mcp_tools_are_subgrouped_by_server(self) -> None:
         from naiba.config import tool_group_entries
@@ -214,7 +216,7 @@ class ToolGroupCatalogTests(unittest.TestCase):
                          ["mcp__comfy-mcp__run_workflow", "mcp__comfy-mcp__system_stats"])
         self.assertEqual(subs["other"], ["mcp__other__ping"])
 
-    def test_presets_are_four_and_closure_complete(self) -> None:
+    def test_presets_are_five_and_closure_complete(self) -> None:
         from naiba.config import (
             TOOL_PRESETS, resolve_tool_preset, tool_group_entries, tool_preset_entries,
         )
@@ -225,8 +227,9 @@ class ToolGroupCatalogTests(unittest.TestCase):
         known_groups = {group["name"] for group in tool_group_entries(entries)}
         items = tool_preset_entries(entries)
         presets = {item["id"]: set(item["tools"]) for item in items}
-        self.assertEqual([item["id"] for item in items], ["readonly", "standard", "comfyui", "full"],
-                         "预设 4 档：只读 / 标准 / ComfyUI 联动 / 全能（按能力从小到大排）")
+        self.assertEqual([item["id"] for item in items],
+                         ["readonly", "standard", "longsession", "comfyui", "full"],
+                         "预设 5 档：只读 / 标准 / 长会话 / ComfyUI 联动 / 全能（按能力从小到大排）")
         # 引用必须都存在（分类名/工具名写错会静默少选，见 resolve_tool_preset 的告警）。
         for preset in TOOL_PRESETS:
             with self.subTest(preset=preset["id"]):
@@ -257,6 +260,12 @@ class ToolGroupCatalogTests(unittest.TestCase):
         self.assertFalse(presets["standard"] & {"http_request", "web_search", "read_pdf",
                                                 "pdf_render_pages", "pdf_zoom_region"},
                          "标准模式不含联网与 PDF 工具")
+        self.assertEqual(presets["longsession"], presets["standard"] | {
+            "find_conversations", "recall_history", "read_conversation", "reset_context",
+        }, "长会话模式 = 标准模式 + 翻历史三件套 + 重置上下文")
+        self.assertFalse(presets["longsession"] & {"http_request", "web_search", "read_pdf",
+                                                   "pdf_render_pages", "pdf_zoom_region"},
+                         "长会话模式也不含联网与 PDF 工具")
         self.assertEqual(presets["comfyui"], presets["standard"] | {
             "comfyui_prepare_workflow", "comfyui_batch",
             "job_output", "job_status", "job_wait",

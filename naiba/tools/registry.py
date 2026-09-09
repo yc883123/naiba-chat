@@ -109,6 +109,8 @@ MEDIA_DECLARATIONS: dict[str, dict[str, str]] = {
     "http_request": {"policy": "inline", "extract": "scan"},
     "register_mcp": {"policy": "never", "extract": "none"},
     "reset_context": {"policy": "never", "extract": "none"},
+    "find_conversations": {"policy": "never", "extract": "none"},
+    "read_conversation": {"policy": "never", "extract": "none"},
     # Harness 兼容别名（执行层归一，与规范名同口径）
     "read": {"policy": "never", "extract": "none"},
     "write": {"policy": "inline", "extract": "scan"},
@@ -698,20 +700,41 @@ def build_search_tool_specs() -> list[ToolSpec]:
     ]
 
 
-def build_recall_tool_specs() -> list[ToolSpec]:
-    """历史会话检索工具：只读本机会话库。"""
+def build_history_tool_specs() -> list[ToolSpec]:
+    """长会话（历史检索）工具：只读本机会话库 + 按会话读原文。
+
+    规则（何时该用、命中怎么解读）一律放系统提示常驻区，描述只留一行钩子——
+    与 reset_context 同口径，见 `run/chat.py` 的「历史检索」段。
+    """
     return [
         ToolSpec(
+            name="find_conversations",
+            description="列出最近的会话：id、标题、更新时间、消息条数与末条预览；给 query 就按标题匹配。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "query": _string("标题关键词（可空；留空=最近会话）"),
+                    "limit": {"type": "integer", "description": "最多返回条数（默认 20，上限 50）", "default": 20},
+                },
+            },
+            side_effect=False,
+            retryable=True,
+            timeout=30,
+            permission="confirm",
+        ),
+        ToolSpec(
             name="recall_history",
-            description=(
-                "在历史会话中检索自己之前与用户的讨论：按关键词返回会话标题、命中片段与时间。"
-                "用户问「之前说过/做过 X」时调用；用户消息已含 Job ID 时不要检索，直接调 job_status 验证。"
-            ),
+            description="在历史会话里按关键词检索，返回会话 id、命中片段与时间；给 conversation_id 就只搜该会话。",
             parameters={
                 "type": "object",
                 "properties": {
                     "query": _string("检索关键词（必填）"),
-                    "max_results": {"type": "integer", "description": "最多返回条数", "default": 5},
+                    "conversation_id": _string("限定会话 id（可空；留空=全库检索）"),
+                    "max_results": {
+                        "type": "integer",
+                        "description": "全库模式=最多几个会话（默认 5）；限定模式=最多几条命中（默认 20）",
+                        "default": 5,
+                    },
                 },
                 "required": ["query"],
             },
@@ -719,7 +742,24 @@ def build_recall_tool_specs() -> list[ToolSpec]:
             retryable=True,
             timeout=30,
             permission="confirm",
-        )
+        ),
+        ToolSpec(
+            name="read_conversation",
+            description="读某个历史会话的原文（按序号区间，只读）；用于核对检索到的片段。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "conversation_id": _string("会话 id（必填，取自 find_conversations / recall_history）"),
+                    "start": {"type": "integer", "description": "起始序号（1 起始，默认 1）", "default": 1},
+                    "count": {"type": "integer", "description": "读取条数（默认 20，上限 50）", "default": 20},
+                },
+                "required": ["conversation_id"],
+            },
+            side_effect=False,
+            retryable=True,
+            timeout=30,
+            permission="confirm",
+        ),
     ]
 
 
@@ -1102,7 +1142,7 @@ def build_tool_registry() -> ToolRegistry:
     registry.register_many(build_capability_tool_specs())
     registry.register_many(build_vision_tool_specs())
     registry.register_many(build_search_tool_specs())
-    registry.register_many(build_recall_tool_specs())
+    registry.register_many(build_history_tool_specs())
     registry.register_many(build_document_tool_specs())
     # 别名表在查询层归一（Phase 5 后唯一来源；当前与 ToolExecutor.TOOL_ALIASES 双轨一致）
     registry.register_alias_map(HARNESS_ALIASES)

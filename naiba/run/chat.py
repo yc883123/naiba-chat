@@ -578,6 +578,24 @@ class ConversationRunMixin:
                                    "并把它的绝对路径传给 handoff_path——文档不存在或为空会被拒绝。"
                                    "成功后本轮立即结束，不要再调用其它工具，用一句话确认交接即可；"
                                    "下一条消息由用户确认后开始。").strip()
+            # 历史检索指引：只在会话固化工具集含长会话工具时注入，且逐条按"确实有这个工具"拼，
+            # 避免让模型去调一个不在本会话工具集里的工具（与 web_search/PDF 同口径）。
+            history_rules: list[str] = []
+            if "recall_history" in allowed_tools:
+                history_rules.append(
+                    "用户问「之前/上次/以前」说过什么时，用 recall_history 按关键词检索"
+                    "（不给 conversation_id 是全库检索、每个会话最多 3 条片段；给了 conversation_id 只搜该会话）")
+            if "find_conversations" in allowed_tools:
+                history_rules.append(
+                    "需要会话 id 时用 find_conversations（可按标题匹配，但标题只是首条消息前 36 字，"
+                    "标题搜不到就改用 recall_history 搜正文）")
+            if "read_conversation" in allowed_tools:
+                history_rules.append("引用具体内容前用 read_conversation 按序号区间读原文复核，片段是截断的、不要当全文")
+            if history_rules:
+                prompt = (prompt + "\n\n历史检索：" + "；".join(history_rules) + "。"
+                                   "命中标「当前会话·在上下文中」的可以直接引用；标「当前会话·已划出上下文」的"
+                                   "是被「新会话」分割线划出模型上下文的老消息，必须当作历史材料重新核对，"
+                                   "不要当成你已经知道的内容。会话 id 必须原样复制，不要编造。").strip()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
             run_context: RunContext = {
                 "run_id": run_id,

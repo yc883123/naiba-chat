@@ -176,7 +176,7 @@ class ResetContextWiringTests(unittest.TestCase):
 
         catalog = tool_catalog_entries(registry.schemas())
         group = next(row for row in catalog if row["name"] == "reset_context")["group"]
-        self.assertEqual(group, "任务与扩展")
+        self.assertEqual(group, "长会话")
 
     def test_provider_binds_custom_execute_and_confirm_policy(self):
         with tempfile.TemporaryDirectory() as tmp:

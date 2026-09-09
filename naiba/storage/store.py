@@ -899,6 +899,271 @@ class ChatStorage:
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
 
+    def find_conversations(self, query: str = "", limit: int = 20) -> list[dict[str, Any]]:
+        """按标题关键词找会话（空 query = 最近会话），带消息条数与最后一条消息预览。
+
+        标题是**首条用户消息前 36 字**自动生成的（`title_customized=0`，见 add_message），
+        所以"按标题搜"本质是"搜第一条消息的开头"——调用方必须把最后一条消息预览一起
+        交给模型，并在标题无命中时引导改用正文检索（`search_history`）。
+        """
+        limit = max(1, min(int(limit if limit is not None else 20), 50))
+        needle = str(query or "").strip()
+        params: list[Any] = []
+        where = ""
+        if needle:
+            where = "WHERE instr(lower(c.title), lower(?)) > 0 "
+            params.append(needle)
+        params.append(limit)
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT c.id, c.title, c.workspace_group, c.title_customized, "
+                "       c.created_at, c.updated_at, "
+                "       (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count, "
+                "       (SELECT m.content FROM messages m WHERE m.conversation_id = c.id "
+                "        ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1) AS last_content "
+                "FROM conversations c " + where + "ORDER BY c.updated_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [
+            {
+                "id": str(row["id"]),
+                "title": str(row["title"] or "（无标题）"),
+                "workspace_group": str(row["workspace_group"] or ""),
+                "title_customized": bool(row["title_customized"]),
+                "created_at": int(row["created_at"] or 0),
+                "updated_at": int(row["updated_at"] or 0),
+                "message_count": int(row["message_count"] or 0),
+                "last_content": str(row["last_content"] or ""),
+            }
+            for row in rows
+        ]
+
+    def conversation_context_boundary(self, conversation_id: str) -> tuple[int, int] | None:
+        """某会话最新「新会话」分割线的排序键 ``(created_at, rowid)``；没有分割线返回 None。
+
+        与 ``core.history.build_model_history`` 同口径：只有 metadata 带 ``session_start``
+        的消息才是边界（早期遗留的 ``role=session`` 标记行也带该键，一条 SQL 覆盖两种形态）。
+        **边界那条消息本身不在上下文里**（重放时被跳过），所以"在上下文内"的判定是
+        ``(created_at, rowid) > boundary``。
+        """
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT created_at, rowid AS rid FROM messages "
+                "WHERE conversation_id = ? AND json_extract(metadata, '$.session_start') IS NOT NULL "
+                "ORDER BY created_at DESC, rowid DESC LIMIT 1",
+                (conversation_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return int(row["created_at"] or 0), int(row["rid"] or 0)
+
+    def _history_scope_counts(self, db: sqlite3.Connection) -> dict[str, int]:
+        row = db.execute(
+            "SELECT (SELECT COUNT(*) FROM conversations) AS conversations, "
+            "       (SELECT COUNT(*) FROM messages) AS messages"
+        ).fetchone()
+        return {
+            "conversations": int(row["conversations"] or 0),
+            "messages": int(row["messages"] or 0),
+        }
+
+    def _history_ordinals(self, db: sqlite3.Connection, conversation_ids: list[str]) -> dict[str, int]:
+        """会话内消息序号（1 起始，按 ``(created_at, rowid)`` 与 read 接口同口径）。"""
+        if not conversation_ids:
+            return {}
+        placeholders = ",".join("?" for _ in conversation_ids)
+        rows = db.execute(
+            "SELECT id, ordinal FROM ("
+            "  SELECT id, ROW_NUMBER() OVER (PARTITION BY conversation_id "
+            "         ORDER BY created_at, rowid) AS ordinal "
+            f"  FROM messages WHERE conversation_id IN ({placeholders})"
+            ")",
+            list(conversation_ids),
+        ).fetchall()
+        return {str(row["id"]): int(row["ordinal"]) for row in rows}
+
+    def _conversation_history_meta(
+        self, db: sqlite3.Connection, conversation_id: str
+    ) -> dict[str, Any] | None:
+        row = db.execute(
+            "SELECT id, title, created_at, updated_at, "
+            "       (SELECT COUNT(*) FROM messages m WHERE m.conversation_id = c.id) AS message_count "
+            "FROM conversations c WHERE c.id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if not row:
+            return None
+        return {
+            "id": str(row["id"]),
+            "title": str(row["title"] or "（无标题）"),
+            "created_at": int(row["created_at"] or 0),
+            "updated_at": int(row["updated_at"] or 0),
+            "message_count": int(row["message_count"] or 0),
+        }
+
+    def search_history(
+        self,
+        query: str,
+        *,
+        conversation_id: str = "",
+        current_conversation_id: str = "",
+        max_conversations: int = 5,
+        per_conversation: int = 3,
+        max_hits: int = 20,
+    ) -> dict[str, Any]:
+        """历史会话检索（正文子串匹配，大小写不敏感）。
+
+        - ``conversation_id`` 为空 = 全库模式：每个会话最多 ``per_conversation`` 条最新命中，
+          会话之间按 ``updated_at`` 倒序取前 ``max_conversations`` 个；**不设隐性上限**，
+          检索范围（会话数/消息数）原样返回给调用方明示给模型。
+        - 给了 ``conversation_id`` = 限定模式：只搜该会话，按时间正序返回最多 ``max_hits`` 条，
+          并给出该会话命中总数（截断必须显式）。
+        - ``current_conversation_id`` 用于标注「这条命中在不在模型当前上下文里」：
+          与 ``conversation_context_boundary`` 比较，分割线及以上 = 已划出上下文。
+        """
+        needle = str(query or "").strip()
+        if not needle:
+            raise ValueError("query 不能为空")
+        with self._connect() as db:
+            scope = self._history_scope_counts(db)
+            if conversation_id:
+                meta = self._conversation_history_meta(db, conversation_id)
+                if meta is None:
+                    return {"mode": "conversation", "query": needle,
+                            "conversation_id": conversation_id, "missing": True,
+                            "scope": scope, "conversations": [], "total_hits": 0, "truncated": False}
+                total = int(db.execute(
+                    "SELECT COUNT(*) FROM messages WHERE conversation_id = ? "
+                    "AND instr(lower(content), lower(?)) > 0",
+                    (conversation_id, needle),
+                ).fetchone()[0] or 0)
+                rows = db.execute(
+                    "SELECT id, role, content, created_at, rowid AS rid FROM messages "
+                    "WHERE conversation_id = ? AND instr(lower(content), lower(?)) > 0 "
+                    "ORDER BY created_at, rowid LIMIT ?",
+                    (conversation_id, needle, max(1, min(int(max_hits or 20), 50))),
+                ).fetchall()
+                ordinals = self._history_ordinals(db, [conversation_id])
+                boundary = self.conversation_context_boundary(conversation_id)
+                hits = [self._history_hit(row, ordinals, boundary) for row in rows]
+                meta = dict(meta)
+                meta["is_current"] = conversation_id == current_conversation_id
+                return {
+                    "mode": "conversation", "query": needle, "conversation_id": conversation_id,
+                    "missing": False, "scope": scope, "conversations": [meta],
+                    "hits": hits, "total_hits": total,
+                    "truncated": total > len(hits),
+                }
+            rows = db.execute(
+                "WITH hits AS ("
+                "  SELECT m.conversation_id AS cid, m.id AS mid, m.role AS role, "
+                "         m.content AS content, m.created_at AS created_at, m.rowid AS rid, "
+                "         ROW_NUMBER() OVER (PARTITION BY m.conversation_id "
+                "                            ORDER BY m.created_at DESC, m.rowid DESC) AS rn "
+                "  FROM messages m WHERE instr(lower(m.content), lower(?)) > 0"
+                ") "
+                "SELECT h.cid, h.mid, h.role, h.content, h.created_at, h.rid, h.rn, "
+                "       c.title, c.updated_at AS conv_updated, "
+                "       (SELECT COUNT(*) FROM messages m2 WHERE m2.conversation_id = h.cid) AS message_count "
+                "FROM hits h JOIN conversations c ON c.id = h.cid "
+                "WHERE h.rn <= ? "
+                "ORDER BY c.updated_at DESC, h.created_at DESC, h.rid DESC",
+                (needle, max(1, min(int(per_conversation or 3), 10))),
+            ).fetchall()
+            total_hits = int(db.execute(
+                "SELECT COUNT(*) FROM messages WHERE instr(lower(content), lower(?)) > 0",
+                (needle,),
+            ).fetchone()[0] or 0)
+            buckets: dict[str, dict[str, Any]] = {}
+            order: list[str] = []
+            for row in rows:
+                cid = str(row["cid"])
+                if cid not in buckets:
+                    if len(order) >= max(1, min(int(max_conversations or 5), 20)):
+                        continue
+                    order.append(cid)
+                    buckets[cid] = {
+                        "id": cid,
+                        "title": str(row["title"] or "（无标题）"),
+                        "updated_at": int(row["conv_updated"] or 0),
+                        "message_count": int(row["message_count"] or 0),
+                        "is_current": cid == current_conversation_id,
+                        "hits": [],
+                    }
+                buckets[cid]["hits"].append({
+                    "message_id": str(row["mid"]),
+                    "role": str(row["role"] or ""),
+                    "content": str(row["content"] or ""),
+                    "created_at": int(row["created_at"] or 0),
+                    "rowid": int(row["rid"] or 0),
+                })
+            ordinals = self._history_ordinals(db, order)
+            boundary = (self.conversation_context_boundary(current_conversation_id)
+                        if current_conversation_id else None)
+            for cid in order:
+                for hit in buckets[cid]["hits"]:
+                    hit["ordinal"] = ordinals.get(hit["message_id"], 0)
+                    rowid = int(hit.pop("rowid", 0))
+                    hit["in_context"] = boundary is None or (hit["created_at"], rowid) > boundary
+        return {
+            "mode": "global", "query": needle, "conversation_id": "", "missing": False,
+            "scope": scope, "conversations": [buckets[cid] for cid in order],
+            "total_hits": total_hits, "truncated": total_hits > sum(len(b["hits"]) for b in buckets.values()),
+        }
+
+    @staticmethod
+    def _history_hit(row: sqlite3.Row, ordinals: dict[str, int], boundary: tuple[int, int] | None) -> dict[str, Any]:
+        created_at = int(row["created_at"] or 0)
+        rid = int(row["rid"] or 0)
+        return {
+            "message_id": str(row["id"]),
+            "role": str(row["role"] or ""),
+            "content": str(row["content"] or ""),
+            "created_at": created_at,
+            "ordinal": ordinals.get(str(row["id"]), 0),
+            "in_context": boundary is None or (created_at, rid) > boundary,
+        }
+
+    def read_conversation_messages(
+        self, conversation_id: str, *, start: int = 1, count: int = 20
+    ) -> dict[str, Any] | None:
+        """按序号区间读某会话原文（序号 1 起始，按 ``(created_at, rowid)``）；不存在返回 None。"""
+        start = max(1, int(start or 1))
+        count = max(1, min(int(count or 20), 50))
+        with self._connect() as db:
+            meta = self._conversation_history_meta(db, conversation_id)
+            if meta is None:
+                return None
+            rows = db.execute(
+                "SELECT id, role, content, created_at, metadata, ordinal FROM ("
+                "  SELECT id, role, content, created_at, metadata, "
+                "         ROW_NUMBER() OVER (ORDER BY created_at, rowid) AS ordinal "
+                "  FROM messages WHERE conversation_id = ?"
+                ") WHERE ordinal >= ? AND ordinal < ? ORDER BY ordinal",
+                (conversation_id, start, start + count),
+            ).fetchall()
+        messages: list[dict[str, Any]] = []
+        for row in rows:
+            attachments: list[str] = []
+            try:
+                metadata = json.loads(row["metadata"] or "{}")
+            except json.JSONDecodeError:
+                metadata = {}
+            for item in (metadata.get("attachments") or []) if isinstance(metadata, dict) else []:
+                if isinstance(item, dict) and item.get("name"):
+                    attachments.append(str(item["name"]))
+            messages.append({
+                "ordinal": int(row["ordinal"] or 0),
+                "role": str(row["role"] or ""),
+                "content": str(row["content"] or ""),
+                "created_at": int(row["created_at"] or 0),
+                "attachments": attachments,
+            })
+        meta["messages"] = messages
+        meta["start"] = start
+        meta["count"] = count
+        return meta
+
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(

@@ -15,7 +15,7 @@ function check(label, ok, detail = '') {
   if (!ok) failures.push(label);
 }
 
-const EXPECTED_GROUPS = ['读取与检索', '文件写入与编辑', '命令与脚本执行', '联网与外部服务', '视觉与图片', '任务与扩展'];
+const EXPECTED_GROUPS = ['读取与检索', '文件写入与编辑', '命令与脚本执行', '联网与外部服务', '视觉与图片', '任务与扩展', '长会话'];
 const EXPECTED_BADGES = {
   '读取与检索': '只读',
   '文件写入与编辑': '会改文件',
@@ -23,6 +23,7 @@ const EXPECTED_BADGES = {
   '联网与外部服务': '联网',
   '视觉与图片': '会写产物',
   '任务与扩展': '会改动',
+  '长会话': '会话控制',
 };
 const RETIRED_GROUPS = ['文件读取/搜索', '文件写入/编辑', '命令执行', 'Skill 脚本', '网络', '会话与记忆',
   'MCP', '后台/Job/子任务', 'ComfyUI', '能力/Skill 管理', '文档（PDF）', '视觉'];
@@ -72,7 +73,7 @@ async function scopeSnapshot(page) {
     // ① 接口数据：分组顺序 / 徽标 / 二级分组字段齐备
     const catalog = await (await fetch(`${BASE}/api/tool_catalog`)).json();
     const apiGroups = catalog.groups || [];
-    check('接口返回 6 个分类', apiGroups.length === 6, JSON.stringify(apiGroups.map((g) => g.name)));
+    check('接口返回 7 个分类', apiGroups.length === 7, JSON.stringify(apiGroups.map((g) => g.name)));
     check('分类顺序与设计一致', JSON.stringify(apiGroups.map((g) => g.name)) === JSON.stringify(EXPECTED_GROUPS),
       JSON.stringify(apiGroups.map((g) => g.name)));
     check('每组都带风险徽标与配色', apiGroups.every((g) => g.badge && g.tone),
@@ -102,7 +103,7 @@ async function scopeSnapshot(page) {
     await page.click('[data-agent-tab="tools"]');
     await page.waitForTimeout(300);
 
-    // ②.5 卡片态：4 张内置预设 + 1 张「添加自定义工具集」卡；工具列表此时不展开。
+    // ②.5 卡片态：5 张内置预设 + 1 张「添加自定义工具集」卡；工具列表此时不展开。
     const cardState = await page.evaluate(() => ({
       cards: [...document.querySelectorAll('#agentToolPresetCards .tool-preset-card')].map((el) => ({
         preset: el.dataset.toolPresetCard || '',
@@ -114,12 +115,13 @@ async function scopeSnapshot(page) {
       summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
       dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
     }));
-    check('卡片态显示 4 张预设 + 1 张添加卡',
-      cardState.cards.filter((c) => c.preset).length === 4 && cardState.cards.some((c) => c.add),
+    check('卡片态显示 5 张预设 + 1 张添加卡',
+      cardState.cards.filter((c) => c.preset).length === 5 && cardState.cards.some((c) => c.add),
       JSON.stringify(cardState.cards));
     check('预设卡名称与个数正确', JSON.stringify(cardState.cards.filter((c) => c.preset).map((c) => [c.title, c.count]))
       === JSON.stringify([
-        ['只读模式', '4 个工具'], ['标准模式', '8 个工具'], ['ComfyUI 联动', '13 个工具'],
+        ['只读模式', '4 个工具'], ['标准模式', '8 个工具'], ['长会话模式', '12 个工具'],
+        ['ComfyUI 联动', '13 个工具'],
         ['全能模式', `${(catalog.tools || []).length} 个工具`],
       ]), JSON.stringify(cardState.cards.map((c) => [c.title, c.count])));
     check('卡片态不展开工具列表', cardState.editorHidden === true, JSON.stringify(cardState));
@@ -204,7 +206,7 @@ async function scopeSnapshot(page) {
 
     let snap = await scopeSnapshot(page);
     check('弹层里有工具搜索框', snap.hasFilter === true, '');
-    check('渲染 6 个分类', snap.groupCount === 6, JSON.stringify(snap.groups.map((g) => g.name)));
+    check('渲染 7 个分类', snap.groupCount === 7, JSON.stringify(snap.groups.map((g) => g.name)));
     check('分类顺序与接口一致', JSON.stringify(snap.groups.map((g) => g.name)) === JSON.stringify(EXPECTED_GROUPS),
       JSON.stringify(snap.groups.map((g) => g.name)));
     check('分类名与徽标逐项匹配',
@@ -272,7 +274,7 @@ async function scopeSnapshot(page) {
     await page.fill('#agentToolFilter', '');
     await page.waitForTimeout(400);
     snap = await scopeSnapshot(page);
-    check('清空搜索框恢复 6 组视图', snap.groupCount === 6, JSON.stringify(snap.groups.map((g) => g.name)));
+    check('清空搜索框恢复 7 组视图', snap.groupCount === 7, JSON.stringify(snap.groups.map((g) => g.name)));
 
     // ⑥ MCP 二级分组：拦截 /api/tool_catalog 注入假 MCP 工具（源码 server 未配 MCP 服务），
     //    验证「联网与外部服务」内按服务器分块 + 二级全选 + 计数。
