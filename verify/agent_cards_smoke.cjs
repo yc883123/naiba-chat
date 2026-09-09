@@ -98,6 +98,11 @@ async function skillSnapshot(page) {
 async function toolSnapshot(page) {
   await page.click('[data-agent-tab="tools"]');
   await page.waitForTimeout(250);
+  // 卡片态默认不展开工具列表：点「添加自定义工具集」卡进入编辑态后再量。
+  if (await page.$('[data-tool-preset-add]')) {
+    await page.click('[data-tool-preset-add]');
+    await page.waitForTimeout(450);
+  }
   return page.evaluate(() => {
     const scope = document.querySelector('#agentToolScope');
     const scopeBox = scope.closest('.agent-tab-panel').getBoundingClientRect();

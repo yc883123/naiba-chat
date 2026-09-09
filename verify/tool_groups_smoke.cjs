@@ -1,12 +1,15 @@
 // 工具分类改版冒烟（随仓库发布的可复用资产；由 tool_groups_smoke.py 起源码 server 后调用）。
-// 覆盖：6 组顺序 / 风险徽标与配色 / 徽标与分类名同行 / 说明非空 / 展开收起 /
+// 覆盖：卡片态（4 张只读预设 + 添加卡 + 弹层降高）/ 卡片套用与摘要 / 编辑态切换与弹层回升 /
+//       6 组顺序 / 风险徽标与配色 / 徽标与分类名同行 / 说明非空 / 展开收起 /
 //       分类级全选与计数 / 搜索框过滤与恢复 / MCP 按服务器二级分组与二级全选 / 零页面错误。
 // 运行：.venv\Scripts\python.exe verify\tool_groups_smoke.py
 const { chromium } = require('playwright');
 
 const BASE = process.env.NAIBA_SMOKE_BASE || 'http://127.0.0.1:8793';
 const failures = [];
+let passes = 0;
 function check(label, ok, detail = '') {
+  if (ok) passes += 1;
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}${ok || !detail ? '' : `  -> ${detail}`}`);
   if (!ok) failures.push(label);
 }
@@ -98,6 +101,66 @@ async function scopeSnapshot(page) {
     await page.click('[data-agent-tab="tools"]');
     await page.waitForTimeout(300);
 
+    // ②.5 卡片态：4 张内置预设 + 1 张「添加自定义工具集」卡；工具列表此时不展开。
+    const cardState = await page.evaluate(() => ({
+      cards: [...document.querySelectorAll('#agentToolPresetCards .tool-preset-card')].map((el) => ({
+        preset: el.dataset.toolPresetCard || '',
+        add: el.dataset.toolPresetAdd !== undefined,
+        title: el.querySelector('b')?.textContent.trim() || '',
+        count: el.querySelector('em')?.textContent.trim() || '',
+      })),
+      editorHidden: document.querySelector('#agentToolEditor')?.hidden === true,
+      summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
+      dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
+    }));
+    check('卡片态显示 4 张预设 + 1 张添加卡',
+      cardState.cards.filter((c) => c.preset).length === 4 && cardState.cards.some((c) => c.add),
+      JSON.stringify(cardState.cards));
+    check('预设卡名称与个数正确', JSON.stringify(cardState.cards.filter((c) => c.preset).map((c) => [c.title, c.count]))
+      === JSON.stringify([
+        ['只读模式', '4 个工具'], ['标准模式', '8 个工具'], ['ComfyUI 联动', '13 个工具'],
+        ['全能模式', `${(catalog.tools || []).length} 个工具`],
+      ]), JSON.stringify(cardState.cards.map((c) => [c.title, c.count])));
+    check('卡片态不展开工具列表', cardState.editorHidden === true, JSON.stringify(cardState));
+    check('卡片态弹层更矮（≤ 500px）', cardState.dialogH > 0 && cardState.dialogH <= 500, String(cardState.dialogH));
+
+    // 点预设卡：整组套用（走依赖闭包）→ 摘要显示命中卡名 + 个数
+    for (const [value, expected] of [['readonly', 4], ['standard', 8], ['comfyui', 13],
+      ['full', (catalog.tools || []).length]]) {
+      await page.click(`[data-tool-preset-card="${value}"]`);
+      await page.waitForTimeout(250);
+      const applied = await page.evaluate(() => ({
+        summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
+        active: document.querySelector('.tool-preset-card.is-active b')?.textContent.trim() || '',
+        checked: document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length,
+      }));
+      check(`套用「${value}」：卡片个数 == 实际勾选数（${expected}）`,
+        applied.checked === expected && applied.summary.includes(`${expected} 个工具`),
+        JSON.stringify(applied));
+      check(`套用「${value}」后该卡高亮且摘要显示卡名`,
+        applied.active.length > 0 && !applied.summary.includes('自定义（未保存）'), JSON.stringify(applied));
+      if (value === 'readonly') {
+        const tools = await page.evaluate(() => [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
+          .map((cb) => cb.value).sort());
+        check('只读模式只含 4 个只读工具', JSON.stringify(tools) === JSON.stringify([
+          'list_directory', 'read_file', 'search_files', 'vision_analyze',
+        ]), JSON.stringify(tools));
+      }
+    }
+
+    // 进入编辑态：点「添加自定义工具集」→ 卡片区收起、横条 + 工具列表展开
+    await page.click('[data-tool-preset-add]');
+    await page.waitForTimeout(500);
+    const editorState = await page.evaluate(() => ({
+      editorVisible: document.querySelector('#agentToolEditor')?.hidden === false,
+      cardsHidden: document.querySelector('#agentToolPresetView')?.hidden === true,
+      hasName: Boolean(document.querySelector('#agentToolSetName')),
+      dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
+    }));
+    check('点添加卡进入编辑态（卡片收起 + 编辑区展开）',
+      editorState.editorVisible && editorState.cardsHidden && editorState.hasName, JSON.stringify(editorState));
+    check('编辑态弹层回到满高（> 600px）', editorState.dialogH > 600, String(editorState.dialogH));
+
     let snap = await scopeSnapshot(page);
     check('弹层里有工具搜索框', snap.hasFilter === true, '');
     check('渲染 6 个分类', snap.groupCount === 6, JSON.stringify(snap.groups.map((g) => g.name)));
@@ -112,46 +175,6 @@ async function scopeSnapshot(page) {
     check('分类头仍是一行（高度 ≤ 44px）', snap.groups.every((g) => g.headHeight <= 44),
       JSON.stringify(snap.groups.map((g) => [g.name, g.headHeight])));
     check('默认全部折叠（展开区隐藏）', snap.groups.every((g) => g.collapsed && g.bodyHidden), '');
-
-    // ③ 预设下拉：4 档 + 「显示的个数 == 套用后实际个数」（依赖闭包必须显式列进预设）
-    const presetSnap = await page.evaluate(() => {
-      const select = document.querySelector('#agentToolPresetSelect');
-      const group = select.querySelector('optgroup');
-      return {
-        options: [...group.querySelectorAll('option')].map((opt) => ({
-          value: opt.value, label: opt.textContent.trim(),
-        })),
-        hasCustomGroup: [...select.querySelectorAll('optgroup')].some((g) => g.label === '手动组合'),
-      };
-    });
-    check('预设下拉只有 4 档', presetSnap.options.length === 4, JSON.stringify(presetSnap.options));
-    check('预设名称与个数正确', JSON.stringify(presetSnap.options.map((o) => o.label)) === JSON.stringify([
-      '只读模式 · 4 个工具', '标准模式 · 8 个工具', 'ComfyUI 联动 · 13 个工具',
-      `全能模式 · ${(catalog.tools || []).length} 个工具`,
-    ]), JSON.stringify(presetSnap.options.map((o) => o.label)));
-    check('仍保留「手动组合 → 自定义」入口', presetSnap.hasCustomGroup === true, '');
-    for (const [value, expected] of [['readonly', 4], ['standard', 8], ['comfyui', 13],
-      ['full', (catalog.tools || []).length]]) {
-      await page.selectOption('#agentToolPresetSelect', value);
-      await page.waitForTimeout(250);
-      const applied = await page.evaluate(() => ({
-        count: document.querySelector('#agentToolCount')?.textContent.trim() || '',
-        state: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
-        checked: document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length,
-        tools: [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
-          .map((cb) => cb.value).sort(),
-      }));
-      check(`套用「${value}」：显示个数 == 实际勾选数（${expected}）`,
-        applied.count.includes(`已选 ${expected} /`) && applied.checked === expected,
-        JSON.stringify(applied));
-      check(`套用「${value}」后不被判成「自定义」`,
-        applied.state.startsWith('当前：') && !applied.state.includes('自定义'), JSON.stringify(applied));
-      if (value === 'readonly') {
-        check('只读模式只含 4 个只读工具', JSON.stringify(applied.tools) === JSON.stringify([
-          'list_directory', 'read_file', 'search_files', 'vision_analyze',
-        ]), JSON.stringify(applied.tools));
-      }
-    }
 
     // ③ 展开「命令与脚本执行」→ 全选 → 计数与勾选状态
     const targetGroup = '命令与脚本执行';
@@ -242,6 +265,8 @@ async function scopeSnapshot(page) {
     await page.waitForTimeout(600);
     await page.click('[data-agent-tab="tools"]');
     await page.waitForTimeout(300);
+    await page.click('[data-tool-preset-add]');
+    await page.waitForTimeout(500);
     await page.click('.agent-tool-group[data-group="联网与外部服务"] .agent-tool-group-head');
     await page.waitForTimeout(300);
     const subgroupSnap = await page.evaluate(() => {
@@ -284,6 +309,60 @@ async function scopeSnapshot(page) {
       subgroupSelected.checked === subgroupSelected.total && subgroupSelected.total === 2
       && subgroupSelected.count === '2/2', JSON.stringify(subgroupSelected));
 
+    // ⑧ 保存「我的工具集」→ 卡片出现并可套用/删除（localStorage 全局存，冒烟用的无痕 profile 不留痕）
+    const beforeSave = await page.evaluate(() => [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
+      .map((cb) => cb.value).sort());
+    await page.fill('#agentToolSetName', '冒烟工具集');
+    await page.click('#agentToolEditorSave');
+    await page.waitForTimeout(600);
+    const savedCard = await page.evaluate(() => {
+      const card = document.querySelector('[data-tool-template-card]');
+      return {
+        hasCard: Boolean(card),
+        name: card?.querySelector('b')?.textContent.trim() || '',
+        count: card?.querySelector('em')?.textContent.trim() || '',
+        hasDelete: Boolean(card?.querySelector('[data-tool-template-del]')),
+        editorHidden: document.querySelector('#agentToolEditor')?.hidden === true,
+        dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
+        stored: JSON.parse(localStorage.getItem('naiba.agentToolTemplates') || '[]').length,
+      };
+    });
+    check('保存后回到卡片态并出现「我的工具集」卡片',
+      savedCard.hasCard && savedCard.editorHidden && savedCard.stored === 1, JSON.stringify(savedCard));
+    check('卡片显示工具集名与个数', savedCard.name === '冒烟工具集' && /^\d+ 个工具$/.test(savedCard.count),
+      JSON.stringify(savedCard));
+    check('「我的工具集」卡片带 × 删除入口', savedCard.hasDelete === true, '');
+    check('保存后弹层重新变矮（≤ 500px）', savedCard.dialogH > 0 && savedCard.dialogH <= 500, String(savedCard.dialogH));
+
+    // 先改成「只读模式」，再点自定义卡：应覆盖回保存时的组合
+    await page.click('[data-tool-preset-card="readonly"]');
+    await page.waitForTimeout(250);
+    await page.click('[data-tool-template-card]');
+    await page.waitForTimeout(300);
+    const appliedCard = await page.evaluate(() => ({
+      summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
+      activePreset: document.querySelector('[data-tool-preset-card].is-active')?.dataset.toolPresetCard || '',
+      activeTemplate: document.querySelector('[data-tool-template-card].is-active')?.querySelector('b')?.textContent.trim() || '',
+      tools: [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
+        .map((cb) => cb.value).sort(),
+    }));
+    check('点「我的工具集」卡片套用回保存时的组合',
+      appliedCard.summary.includes('冒烟工具集')
+      && JSON.stringify(appliedCard.tools) === JSON.stringify(beforeSave),
+      JSON.stringify({ summary: appliedCard.summary, saved: beforeSave.length, applied: appliedCard.tools.length }));
+    check('自定义卡套用后内置预设卡不再高亮、自定义卡自己高亮',
+      appliedCard.activePreset === '' && appliedCard.activeTemplate === '冒烟工具集',
+      JSON.stringify(appliedCard));
+
+    await page.click('[data-tool-template-del]');
+    await page.waitForTimeout(500);
+    const afterDelete = await page.evaluate(() => ({
+      cards: document.querySelectorAll('[data-tool-template-card]').length,
+      stored: JSON.parse(localStorage.getItem('naiba.agentToolTemplates') || '[]').length,
+    }));
+    check('× 删除（确认后）卡片与 localStorage 同步清掉',
+      afterDelete.cards === 0 && afterDelete.stored === 0, JSON.stringify(afterDelete));
+
     // ⑦ 零页面错误
     check('零页面错误 / console.error', pageErrors.length === 0, JSON.stringify(pageErrors.slice(0, 3)));
   } catch (error) {
@@ -292,6 +371,8 @@ async function scopeSnapshot(page) {
     await browser.close();
   }
 
-  console.log(failures.length ? `\nFAILED ${failures.length} 项：${failures.join(' | ')}` : '\nALL PASS');
+  console.log(failures.length
+    ? `\nFAILED ${failures.length} 项：${failures.join(' | ')}`
+    : `\nALL PASS（${passes} 项）`);
   process.exit(failures.length ? 1 : 0);
 })();

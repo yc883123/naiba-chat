@@ -1037,8 +1037,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .agent-card-add { place-content: center; justify-items: center; gap: 7px; border-style: dashed; background: transparent; color: var(--muted); }
 .agent-card-add:hover { border-color: var(--accent); color: var(--accent); }
 .agent-card-add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-/* 固定高度：分区切换时弹层不再忽高忽低，内容区尺寸恒定。 */
-.agent-dialog { width: min(760px, calc(100vw - 30px)); height: min(760px, calc(100dvh - 30px)); max-height: min(760px, calc(100dvh - 30px)); display: flex; flex-direction: column; }
+/* 高度按分区/状态变化（卡片态更矮），按钮固定在顶栏所以不会"跳"。 */
+.agent-dialog { width: min(760px, calc(100vw - 30px)); height: min(var(--agent-dialog-h, 760px), calc(100dvh - 30px)); max-height: min(var(--agent-dialog-h, 760px), calc(100dvh - 30px)); display: flex; flex-direction: column; transition: height .2s ease; }
 /* `grid-auto-rows: max-content` 是必需的：默认 auto 行按「最小内容高度」定尺，而
    `.agent-skills` 里的 `.skill-list`/`.agent-tool-scope` 是滚动容器（overflow:auto），
    其最小内容高度为 0 → 行高只剩表头（实测 70.75px），列表被 `overflow:hidden` 裁掉且点不到。
@@ -1342,50 +1342,51 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   #runtimeStatus { justify-self: start; }
 }
 
-/* ---- Agent 工具集：预设卡片 + 分类折叠选择 ---- */
-.tool-scope-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
-.tool-scope-meta { display: flex; align-items: center; gap: 8px; flex: none; }
-.tool-scope-meta em { font-style: normal; font-size: 11px; font-weight: 600; color: var(--accent); }
-.tool-scope-meta em.custom { color: var(--amber); }
-.tool-scope-meta code { font-size: 11px; color: var(--muted); }
+/* ---- Agent 工具集：卡片态（预设 + 我的工具集）↔ 编辑态 ---- */
 .control-button.tiny { min-height: 24px; padding: 2px 9px; font-size: 11px; border-radius: 4px; }
 
-.tool-preset-wrap { padding: 10px 10px 4px; border-bottom: 1px solid var(--line); }
-.tool-preset-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.tool-preset-row [hidden] { display: none; }
-.tool-preset-label { font-size: 12px; color: var(--muted); flex: none; }
-.tool-preset-select {
-  flex: 1 1 190px; min-width: 190px; max-width: 320px; height: 30px;
-  border: 1px solid var(--line); border-radius: var(--radius);
-  background: var(--surface); color: var(--text);
-  padding: 0 26px 0 10px; font-size: 12px;
+.tool-preset-view { display: grid; gap: 10px; align-content: start; transition: opacity .18s ease, transform .18s ease; }
+.tool-preset-view[hidden] { display: none; }
+.tool-preset-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-content: start; }
+.tool-preset-card {
+  position: relative; display: grid; align-content: start; gap: 4px; min-height: 92px;
+  padding: 12px 12px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); text-align: left; cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease;
 }
-.tool-preset-select:hover { border-color: var(--line-strong); }
-.tool-template-name {
-  flex: 1 1 150px; min-width: 150px; max-width: 200px; height: 30px;
-  padding: 0 10px; border: 1px solid var(--line); border-radius: var(--radius);
+.tool-preset-card:hover { border-color: var(--accent); }
+.tool-preset-card.is-active { border-color: var(--accent); background: var(--accent-soft); }
+.tool-preset-card b { font-size: 13px; padding-right: 18px; }
+.tool-preset-card small {
+  color: var(--muted); font-size: 11.5px; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.tool-preset-card em { font-style: normal; font-size: 11px; color: var(--muted); }
+.tool-preset-card-add { place-content: center; justify-items: center; gap: 6px; border-style: dashed; background: transparent; color: var(--muted); }
+.tool-preset-card-add:hover { border-color: var(--accent); color: var(--accent); }
+.tool-preset-card-add svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.tool-preset-card-del {
+  position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; color: var(--muted);
+  display: grid; place-items: center; cursor: pointer; opacity: 0; transition: opacity .15s ease;
+}
+.tool-preset-card:hover .tool-preset-card-del { opacity: 1; }
+.tool-preset-card-del:hover { color: var(--red); background: var(--surface-2); }
+.tool-preset-card-del svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; }
+.tool-preset-summary { margin: 0; color: var(--muted); font-size: 12px; }
+
+.tool-editor { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; transition: opacity .18s ease, transform .18s ease; }
+.tool-editor[hidden] { display: none; }
+.tool-editor-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tool-set-name {
+  flex: 1 1 180px; min-width: 150px; height: 30px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: var(--radius);
   background: var(--bg); color: var(--text); font-size: 12px;
 }
-.tool-template-name::placeholder { color: var(--muted); }
-.tool-preset-tip { margin-left: 2px; font-size: 11px; color: var(--muted); flex: none; }
-.tool-template-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
-.tool-template-row[hidden] { display: none; }
-.tool-template-label { font-size: 11px; color: var(--muted); flex: none; }
-.tool-template-chips { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
-.tool-template-chip {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
-  padding: 3px 9px; border: 1px solid var(--line); border-radius: 12px;
-  background: var(--surface-2); color: var(--text); cursor: pointer;
-}
-.tool-template-chip:hover { border-color: var(--accent); background: var(--surface); }
-.tool-template-chip b { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
-.tool-template-chip em { font-style: normal; font-size: 10px; color: var(--muted); flex: none; }
-.tool-template-chip .tool-template-del {
-  flex: none; width: 16px; height: 16px; line-height: 1; padding: 0;
-  border: 0; border-radius: 50%; background: transparent; color: var(--muted);
-  font-size: 10px; cursor: pointer;
-}
-.tool-template-chip .tool-template-del:hover { color: var(--red); background: var(--surface); }
+.tool-set-name::placeholder { color: var(--muted); }
+/* 视图切换：退出向上淡出、进入向下淡入（reduced-motion 时 JS 直接切、不等待） */
+.tool-preset-view.is-leaving { opacity: 0; transform: translateY(-8px); }
+.tool-editor.is-entering { opacity: 0; transform: translateY(8px); }
 
 .tool-unknown-hint {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
@@ -1458,7 +1459,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .tool-group-tag { font-style: normal; font-size: 10.5px; color: var(--muted); }
 
 @media (max-width: 520px) {
-  .tool-preset-select, .tool-template-name { flex-basis: 100%; max-width: none; }
+  .tool-set-name { flex-basis: 100%; max-width: none; }
+  .tool-preset-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agent-tool-group-head { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; gap: 6px; }
 }
 

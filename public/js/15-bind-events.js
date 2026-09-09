@@ -9,7 +9,7 @@ import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
 import { clearTerminalTasks, closeAgentPromptPresetPanel, closeConversationMenu, conversationMenuTargetId, createWorkspace, deleteConversation, handleAgentPromptPresetPanelClick, importAgentCharacterCard, onComposerWorkspaceChange, onSidebarTreeClick, openAgentPromptPresetSaveDialog, openConversation, openRenameConversation, positionAgentPromptPresetPanel, renderSidebar, renderSidebarWindow, saveAgentPromptPreset, saveNewWorkspace, saveRenameConversation, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf, toggleAgentPromptPresetPanel } from "./08-conversations.js";
-import { addProvider, addSearchProfile, applyProviderModelCapabilities, applyToolTemplate, cancelProviderEdit, cleanImageCache, collectTemplateFromCurrent, compactDatabase, deleteAgent, deleteProvider, deleteSearchProfile, deleteToolTemplate, deleteVisionProvider, hideAgentForm, handleAgentAvatarFile, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, onToolPresetSelect, openAgentCard, openProviderCard, openVisionProviderForm, persistSearchProfiles, pickAgentAvatar, pickWorkspace, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, renderToolScopeList, saveAccessToken, saveAgentForm, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, switchAgentTab, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateAgentSkillTabCount, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
+import { addProvider, addSearchProfile, applyProviderModelCapabilities, cancelProviderEdit, cleanImageCache, closeAgentToolEditor, compactDatabase, deleteAgent, deleteProvider, deleteSearchProfile, deleteVisionProvider, hideAgentForm, handleAgentAvatarFile, handleAgentToolPresetCardsClick, handleAgentToolPresetCardsKeydown, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, openAgentCard, openProviderCard, openVisionProviderForm, persistSearchProfiles, pickAgentAvatar, pickWorkspace, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, renderToolScopeList, saveAccessToken, saveAgentForm, saveAgentToolSet, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, switchAgentTab, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateAgentSkillTabCount, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
 import { cancelCurrentRun, closeQuickMessagePanel, closeReasoningMenu, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, positionReasoningMenu, quickPanelState, reloadPage, restoreStarterPresets, saveStarterPrompt, sendMessage, setReasoningEffort, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
@@ -701,26 +701,17 @@ export function bindEvents() {
     state.agentToolFilter = event.target.value;
     renderToolScopeList();
   });
-  // 工具预设下拉框 / 自定义模板（芯片行事件委托，✕ 删除、点芯片复刻）。
-  $('#agentToolPresetSelect')?.addEventListener('change', (event) => onToolPresetSelect(event.target.value));
-  $('#agentToolTemplateSave')?.addEventListener('click', () => {
-    const template = collectTemplateFromCurrent();
-    toast(`已存为模板「${template.name}」，点上方模板芯片即可一键复刻`);
-  });
-  $('#agentToolTemplateName')?.addEventListener('keydown', (event) => {
+  // 工具集：卡片态（预设/我的工具集/添加卡，事件委托 + Enter/Space 等同点击）
+  $('#agentToolPresetCards')?.addEventListener('click', handleAgentToolPresetCardsClick);
+  $('#agentToolPresetCards')?.addEventListener('keydown', handleAgentToolPresetCardsKeydown);
+  // 编辑态：横条上的返回 / 保存（名称输入框回车 = 保存）
+  $('#agentToolEditorBack')?.addEventListener('click', closeAgentToolEditor);
+  $('#agentToolEditorSave')?.addEventListener('click', saveAgentToolSet);
+  $('#agentToolSetName')?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
-      $('#agentToolTemplateSave')?.click();
+      saveAgentToolSet();
     }
-  });
-  $('#agentToolTemplates')?.addEventListener('click', (event) => {
-    const del = event.target.closest('[data-template-del]');
-    if (del) {
-      deleteToolTemplate(del.dataset.templateDel);
-      return;
-    }
-    const apply = event.target.closest('[data-template-apply]');
-    if (apply) applyToolTemplate(apply.dataset.templateApply);
   });
   $('#saveRuntime').addEventListener('click', saveRuntimeSettings);
   document.querySelectorAll('input[name="proxyMode"]').forEach((radio) => {

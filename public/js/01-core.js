@@ -113,6 +113,8 @@ export const state = {
   conversationPromptPresets: [],
   // 「存为/编辑快捷提示词」弹窗正在编辑的预设 id（空=另存为新条目）。
   agentPromptPresetEditingId: '',
+  // 工具集编辑态：正在编辑的「我的工具集」id（空=新建）。
+  agentToolEditingId: '',
   // A fresh update check should immediately surface a newer release in the
   // closed select; user choices made afterwards must still be preserved.
   updateAutoSelectLatest: false,

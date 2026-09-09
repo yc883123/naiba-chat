@@ -44,14 +44,15 @@ FORM_FIELD_IDS = (
     "agentAvatarFileInput",
     "agentAvatarPreview",
     "agentSkillList",
+    "agentToolPresetView",
+    "agentToolPresetCards",
     "agentToolPresetState",
+    "agentToolEditor",
+    "agentToolSetName",
+    "agentToolEditorBack",
+    "agentToolEditorSave",
     "agentToolCount",
     "toggleAllToolGroups",
-    "agentToolPresetSelect",
-    "agentToolTemplateName",
-    "agentToolTemplateSave",
-    "agentToolTemplateRow",
-    "agentToolTemplates",
     "agentToolUnknownHint",
     "agentToolScope",
     "agentError",
@@ -237,8 +238,8 @@ class ToolGroupCatalogTests(unittest.TestCase):
                     else:
                         self.assertIn(ref, known, "预设引用的工具名必须仍在工具目录里")
                 self.assertTrue(resolve_tool_preset(preset, entries), "预设不能展开成空集")
-        # 依赖闭包必须已在预设里显式列出：否则「下拉显示的个数」≠「套用后的实际个数」
-        # （前端 onToolPresetSelect 会补闭包，而 matchToolPreset 是精确比对 → 套用即变「自定义」）。
+        # 依赖闭包必须已在预设里显式列出：否则「卡片显示的个数」≠「套用后的实际个数」
+        # （前端 applyToolPresetCard 会补闭包，而 matchToolPreset 是精确比对 → 套用即变「自定义」）。
         for preset_id, tools in presets.items():
             with self.subTest(preset=preset_id):
                 closed = set(tools)
@@ -434,7 +435,7 @@ class AgentTabsTests(unittest.TestCase):
         css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
         dialog_rule = css[css.index(".agent-dialog {"):]
         dialog_rule = dialog_rule[: dialog_rule.index("}")]
-        self.assertIn("height: min(760px", dialog_rule, "固定高度避免切页时弹层忽高忽低")
+        self.assertIn("--agent-dialog-h", dialog_rule, "弹层高度按分区/状态变化（卡片态更矮）")
 
     def test_switch_resets_and_updates_counts(self):
         settings = self._settings()
@@ -446,6 +447,84 @@ class AgentTabsTests(unittest.TestCase):
         self.assertIn("$$('.agent-tabs button[data-agent-tab]').forEach", bind)
         self.assertIn("switchAgentTab(button.dataset.agentTab)", bind)
         self.assertIn("updateAgentSkillTabCount();", bind, "勾选 Skill 后标签计数要刷新")
+
+
+class AgentToolSetCardsTests(unittest.TestCase):
+    """工具集：卡片态（预设 + 我的工具集 + 添加卡）↔ 编辑态（横条 + 工具列表）。"""
+
+    def _index(self):
+        return (ROOT / "public/index.html").read_text(encoding="utf-8")
+
+    def _settings(self):
+        return (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
+
+    def _bind(self):
+        return (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
+
+    def _css(self):
+        return (ROOT / "public/styles.css").read_text(encoding="utf-8")
+
+    def test_card_view_and_editor_are_separate(self):
+        index = self._index()
+        self.assertIn('id="agentToolPresetView"', index)
+        self.assertIn('id="agentToolPresetCards"', index)
+        self.assertIn('id="agentToolEditor" hidden', index, "编辑态默认隐藏")
+        # 旧的下拉框与模板芯片行已退役。
+        for snippet in ("agentToolPresetSelect", "agentToolTemplateName", "agentToolTemplateSave",
+                        "agentToolTemplateRow", "agentToolTemplates"):
+            with self.subTest(snippet=snippet):
+                self.assertNotIn(snippet, index, "旧的预设下拉/模板芯片行残留")
+
+    def test_cards_markup_and_readonly_presets(self):
+        js = self._settings()
+        self.assertIn("export function renderAgentToolPresetCards()", js)
+        self.assertIn('data-tool-preset-card=', js)
+        self.assertIn('data-tool-template-card=', js)
+        self.assertIn("data-tool-preset-add", js, "末尾要有「添加自定义工具集」卡")
+        self.assertIn("data-tool-template-del=", js, "我的工具集卡片要有 × 删除")
+        # 预设卡不给删除入口（只读）。
+        body = js[js.index("export function renderAgentToolPresetCards()"):]
+        body = body[: body.index("// 勾选变化时刷新")]
+        preset_block = body[body.index("const presetCards"): body.index("const templateCards")]
+        self.assertNotIn("tool-preset-card-del", preset_block, "内置预设卡不得给删除按钮")
+
+    def test_editor_flow_and_closure(self):
+        js = self._settings()
+        self.assertIn("export function openAgentToolEditor(", js)
+        self.assertIn("export function closeAgentToolEditor()", js)
+        self.assertIn("export function saveAgentToolSet()", js)
+        self.assertIn("export function handleAgentToolPresetCardsClick(", js)
+        self.assertIn("export function handleAgentToolPresetCardsKeydown(", js)
+        # 套用卡片必须走依赖闭包（否则卡片显示个数 ≠ 实际放行个数）。
+        for fn in ("export function applyToolPresetCard(", "export function applyToolTemplateCard("):
+            body = js[js.index(fn):]
+            body = body[: body.index("\n}")]
+            self.assertIn("normalizeToolScope(", body, f"{fn} 必须套用依赖闭包")
+        bind = self._bind()
+        self.assertIn("$('#agentToolPresetCards')?.addEventListener('click', handleAgentToolPresetCardsClick)", bind)
+        self.assertIn("$('#agentToolEditorBack')?.addEventListener('click', closeAgentToolEditor)", bind)
+        self.assertIn("$('#agentToolEditorSave')?.addEventListener('click', saveAgentToolSet)", bind)
+
+    def test_saved_sets_reuse_template_store(self):
+        """「我的工具集」沿用 localStorage 模板结构（老数据自动变成卡片）。"""
+        js = self._settings()
+        self.assertIn("export const TOOL_TEMPLATE_STORE = 'naiba.agentToolTemplates';", js)
+        save = js[js.index("export function saveAgentToolSet()"):]
+        save = save[: save.index("\n}")]
+        self.assertIn("persistToolTemplates()", save)
+        self.assertIn("tools,", save, "存的是闭包后的工具名列表")
+
+    def test_swap_animation_respects_reduced_motion(self):
+        js = self._settings()
+        swap = js[js.index("function swapToolView(editing)"):]
+        swap = swap[: swap.index("\n}")]
+        self.assertIn("prefers-reduced-motion: reduce", swap)
+        self.assertIn("--agent-dialog-h", swap, "卡片态更矮，弹层高度跟着切")
+        css = self._css()
+        for rule in (".tool-preset-view.is-leaving", ".tool-editor.is-entering",
+                     ".tool-preset-card-add", ".tool-preset-card-del"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, css)
 
 
 class AgentCardsMarkupTests(unittest.TestCase):
@@ -477,7 +556,7 @@ class AgentCardsMarkupTests(unittest.TestCase):
         for field_id in FORM_FIELD_IDS:
             with self.subTest(field=field_id):
                 self.assertIn(f'id="{field_id}"', index)
-        for label in ("名称", "系统提示词（预设与规则）", "固定 Skill", "工具集", "工具预设"):
+        for label in ("名称", "系统提示词（预设与规则）", "固定 Skill", "工具集", "添加自定义工具集"):
             with self.subTest(label=label):
                 self.assertIn(label, index)
 

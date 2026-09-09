@@ -31,6 +31,9 @@ function check(label, ok, detail = '') {
     // 分区切换后默认停在「基本」，工具卡片断言要先切到「工具集」页。
     await page.click('[data-agent-tab="tools"]');
     await page.waitForTimeout(300);
+    // 卡片态默认不展开工具列表：点「添加自定义工具集」卡进入编辑态。
+    await page.click('[data-tool-preset-add]');
+    await page.waitForTimeout(500);
 
     // 展开前：分组头保持原样（透明/白底）
     const collapsedHead = await page.evaluate(() => {
