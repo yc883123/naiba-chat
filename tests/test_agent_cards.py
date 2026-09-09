@@ -239,7 +239,7 @@ class ToolGroupCatalogTests(unittest.TestCase):
                         self.assertIn(ref, known, "预设引用的工具名必须仍在工具目录里")
                 self.assertTrue(resolve_tool_preset(preset, entries), "预设不能展开成空集")
         # 依赖闭包必须已在预设里显式列出：否则「卡片显示的个数」≠「套用后的实际个数」
-        # （前端 applyToolPresetCard 会补闭包，而 matchToolPreset 是精确比对 → 套用即变「自定义」）。
+        # （前端 openAgentToolEditor 会补闭包，而 matchToolPreset 是精确比对 → 载入即变「自定义」）。
         for preset_id, tools in presets.items():
             with self.subTest(preset=preset_id):
                 closed = set(tools)
@@ -435,7 +435,9 @@ class AgentTabsTests(unittest.TestCase):
         css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
         dialog_rule = css[css.index(".agent-dialog {"):]
         dialog_rule = dialog_rule[: dialog_rule.index("}")]
-        self.assertIn("--agent-dialog-h", dialog_rule, "弹层高度按分区/状态变化（卡片态更矮）")
+        self.assertNotIn("--agent-dialog-h", dialog_rule, "弹层高度固定，不再随分区/状态变")
+        self.assertNotIn("transition: height", dialog_rule, "高度不参与过渡（否则卡片态切换会跳）")
+        self.assertIn("height: min(760px", dialog_rule)
 
     def test_switch_resets_and_updates_counts(self):
         settings = self._settings()
@@ -466,9 +468,13 @@ class AgentToolSetCardsTests(unittest.TestCase):
 
     def test_card_view_and_editor_are_separate(self):
         index = self._index()
+        self.assertIn('id="agentToolStage"', index, "两态同框叠放在 .tool-stage 里")
         self.assertIn('id="agentToolPresetView"', index)
         self.assertIn('id="agentToolPresetCards"', index)
         self.assertIn('id="agentToolEditor" hidden', index, "编辑态默认隐藏")
+        stage = index[index.index('id="agentToolStage"'):]
+        stage = stage[: stage.index("</section>")]
+        self.assertLess(stage.index('id="agentToolPresetView"'), stage.index('id="agentToolEditor"'))
         # 旧的下拉框与模板芯片行已退役。
         for snippet in ("agentToolPresetSelect", "agentToolTemplateName", "agentToolTemplateSave",
                         "agentToolTemplateRow", "agentToolTemplates"):
@@ -495,11 +501,23 @@ class AgentToolSetCardsTests(unittest.TestCase):
         self.assertIn("export function saveAgentToolSet()", js)
         self.assertIn("export function handleAgentToolPresetCardsClick(", js)
         self.assertIn("export function handleAgentToolPresetCardsKeydown(", js)
-        # 套用卡片必须走依赖闭包（否则卡片显示个数 ≠ 实际放行个数）。
-        for fn in ("export function applyToolPresetCard(", "export function applyToolTemplateCard("):
-            body = js[js.index(fn):]
-            body = body[: body.index("\n}")]
-            self.assertIn("normalizeToolScope(", body, f"{fn} 必须套用依赖闭包")
+        # 点卡片必须载入该卡的工具并走依赖闭包（否则卡片显示个数 ≠ 实际放行个数）。
+        editor = js[js.index("export function openAgentToolEditor("):]
+        editor = editor[: editor.index("\n}")]
+        self.assertEqual(editor.count("normalizeToolScope("), 2, "预设卡与「我的工具集」卡都要补闭包")
+        self.assertIn("preset.tools", editor)
+        self.assertIn("usableTemplateTools(template)", editor)
+        # 命名栏预填卡片名：预设卡用预设名、「我的工具集」卡用它自己的名字、「添加」卡留空。
+        self.assertIn("nameInput.value = preset ? preset.name", editor)
+        # 三张入口（预设 / 我的工具集 / 添加）都要进编辑态。
+        click = js[js.index("export function handleAgentToolPresetCardsClick("):]
+        click = click[: click.index("\n}")]
+        self.assertEqual(click.count("openAgentToolEditor("), 3)
+        self.assertIn("function markPickedToolCard(", js, "被点的卡要有「按下」状态")
+        mark = js[js.index("function markPickedToolCard("):]
+        mark = mark[: mark.index("\n}")]
+        self.assertIn("is-picked", mark)
+        self.assertIn("aria-pressed", mark)
         bind = self._bind()
         self.assertIn("$('#agentToolPresetCards')?.addEventListener('click', handleAgentToolPresetCardsClick)", bind)
         self.assertIn("$('#agentToolEditorBack')?.addEventListener('click', closeAgentToolEditor)", bind)
@@ -514,14 +532,16 @@ class AgentToolSetCardsTests(unittest.TestCase):
         self.assertIn("persistToolTemplates()", save)
         self.assertIn("tools,", save, "存的是闭包后的工具名列表")
 
-    def test_swap_animation_respects_reduced_motion(self):
+    def test_swap_animation_keeps_height_fixed(self):
         js = self._settings()
         swap = js[js.index("function swapToolView(editing)"):]
         swap = swap[: swap.index("\n}")]
         self.assertIn("prefers-reduced-motion: reduce", swap)
-        self.assertIn("--agent-dialog-h", swap, "卡片态更矮，弹层高度跟着切")
+        self.assertNotIn("--agent-dialog-h", swap, "高度固定，切换时不再改弹层高度")
+        self.assertNotIn("--agent-dialog-h", js, "09-settings 里不该再残留高度变量")
         css = self._css()
-        for rule in (".tool-preset-view.is-leaving", ".tool-editor.is-entering",
+        for rule in (".tool-stage", ".tool-preset-view.is-leaving", ".tool-editor.is-entering",
+                     ".tool-preset-card.is-picked", ".tool-preset-card-add.is-picked",
                      ".tool-preset-card-add", ".tool-preset-card-del"):
             with self.subTest(rule=rule):
                 self.assertIn(rule, css)

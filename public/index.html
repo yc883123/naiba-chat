@@ -682,28 +682,30 @@
         <section class="agent-tab-panel" data-agent-panel="tools" role="tabpanel" hidden>
           <p class="agent-tab-hint">该 Agent 启用的工具（会话启动时固化，不可中途更改）</p>
 
-          <!-- 卡片态：内置预设（只读）+ 我的工具集 + 末尾「添加自定义工具集」卡 -->
-          <div class="tool-preset-view" id="agentToolPresetView">
-            <div class="tool-preset-cards" id="agentToolPresetCards"></div>
-            <p class="tool-preset-summary" id="agentToolPresetState">当前：未限制</p>
-          </div>
+          <!-- 两态同框叠放：卡片态（内置预设只读 + 我的工具集 + 末尾「添加自定义工具集」卡）
+               与编辑态（命名栏 + 工具列表）共用 .tool-stage，弹层高度固定不跳，只做上下过渡。 -->
+          <div class="tool-stage" id="agentToolStage">
+            <div class="tool-preset-view" id="agentToolPresetView">
+              <div class="tool-preset-cards" id="agentToolPresetCards"></div>
+              <p class="tool-preset-summary" id="agentToolPresetState">当前：未限制</p>
+            </div>
 
-          <!-- 编辑态：横条（名称 + 计数 + 动作）+ 工具列表 -->
-          <div class="tool-editor" id="agentToolEditor" hidden>
-            <div class="tool-editor-bar">
-              <input id="agentToolSetName" class="tool-set-name" type="text" maxlength="24" placeholder="工具集名称（留空自动命名）">
-              <code id="agentToolCount" class="tool-count">已选 0 / 0 个工具</code>
-              <button type="button" class="control-button tiny" id="toggleAllToolGroups">展开全部</button>
-              <button type="button" class="control-button tiny" id="agentToolEditorBack">返回</button>
-              <button type="button" class="primary-button tiny" id="agentToolEditorSave">保存工具集</button>
+            <div class="tool-editor" id="agentToolEditor" hidden>
+              <div class="tool-editor-bar">
+                <input id="agentToolSetName" class="tool-set-name" type="text" maxlength="24" placeholder="工具集名称（留空自动命名）">
+                <code id="agentToolCount" class="tool-count">已选 0 / 0 个工具</code>
+                <button type="button" class="control-button tiny" id="toggleAllToolGroups">展开全部</button>
+                <button type="button" class="control-button tiny" id="agentToolEditorBack">返回</button>
+                <button type="button" class="primary-button tiny" id="agentToolEditorSave">保存工具集</button>
+              </div>
+              <p class="hint tool-unknown-hint" id="agentToolUnknownHint" hidden></p>
+              <div class="tool-filter-row">
+                <input id="agentToolFilter" class="tool-filter-input" type="search" autocomplete="off"
+                       placeholder="搜索工具名或说明（如 vision、PDF、job）"
+                       title="输入关键词过滤工具；清空即恢复分组视图">
+              </div>
+              <div class="agent-tool-scope" id="agentToolScope"></div>
             </div>
-            <p class="hint tool-unknown-hint" id="agentToolUnknownHint" hidden></p>
-            <div class="tool-filter-row">
-              <input id="agentToolFilter" class="tool-filter-input" type="search" autocomplete="off"
-                     placeholder="搜索工具名或说明（如 vision、PDF、job）"
-                     title="输入关键词过滤工具；清空即恢复分组视图">
-            </div>
-            <div class="agent-tool-scope" id="agentToolScope"></div>
           </div>
         </section>
       </div>

@@ -1037,8 +1037,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .agent-card-add { place-content: center; justify-items: center; gap: 7px; border-style: dashed; background: transparent; color: var(--muted); }
 .agent-card-add:hover { border-color: var(--accent); color: var(--accent); }
 .agent-card-add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-/* 高度按分区/状态变化（卡片态更矮），按钮固定在顶栏所以不会"跳"。 */
-.agent-dialog { width: min(760px, calc(100vw - 30px)); height: min(var(--agent-dialog-h, 760px), calc(100dvh - 30px)); max-height: min(var(--agent-dialog-h, 760px), calc(100dvh - 30px)); display: flex; flex-direction: column; transition: height .2s ease; }
+/* 高度固定：卡片态与编辑态共用一个尺寸，内容在框内上下过渡（不再随状态改高度）。 */
+.agent-dialog { width: min(760px, calc(100vw - 30px)); height: min(760px, calc(100dvh - 30px)); max-height: min(760px, calc(100dvh - 30px)); display: flex; flex-direction: column; }
 /* `grid-auto-rows: max-content` 是必需的：默认 auto 行按「最小内容高度」定尺，而
    `.agent-skills` 里的 `.skill-list`/`.agent-tool-scope` 是滚动容器（overflow:auto），
    其最小内容高度为 0 → 行高只剩表头（实测 70.75px），列表被 `overflow:hidden` 裁掉且点不到。
@@ -1345,17 +1345,31 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 /* ---- Agent 工具集：卡片态（预设 + 我的工具集）↔ 编辑态 ---- */
 .control-button.tiny { min-height: 24px; padding: 2px 9px; font-size: 11px; border-radius: 4px; }
 
-.tool-preset-view { display: grid; gap: 10px; align-content: start; transition: opacity .18s ease, transform .18s ease; }
+/* 两态同框叠放：同一格子里互相替换，弹层高度不变（只做上下过渡），所以没有布局跳动。 */
+.tool-stage { display: grid; flex: 1; min-height: 0; }
+.tool-stage > .tool-preset-view, .tool-stage > .tool-editor { grid-area: 1 / 1; min-height: 0; }
+
+/* 卡片态：整块在框里居中，点击后整体向上滑出，编辑态从下方滑入。 */
+.tool-preset-view {
+  display: grid; gap: 10px; align-content: center;
+  transition: opacity .18s ease, transform .18s ease;
+}
 .tool-preset-view[hidden] { display: none; }
 .tool-preset-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; align-content: start; }
 .tool-preset-card {
   position: relative; display: grid; align-content: start; gap: 4px; min-height: 92px;
   padding: 12px 12px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius);
   background: var(--surface); color: var(--text); text-align: left; cursor: pointer;
-  transition: border-color .15s ease, box-shadow .15s ease;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .08s ease, background .08s ease;
 }
 .tool-preset-card:hover { border-color: var(--accent); }
 .tool-preset-card.is-active { border-color: var(--accent); background: var(--accent-soft); }
+/* 点击反馈：卡片先按一下（并标为已选），再随整块向上滑出——「添加」卡同样有这一下。 */
+.tool-preset-card.is-picked {
+  transform: scale(.97); border-color: var(--accent); background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.tool-preset-card-add.is-picked { color: var(--accent); }
 .tool-preset-card b { font-size: 13px; padding-right: 18px; }
 .tool-preset-card small {
   color: var(--muted); font-size: 11.5px; line-height: 1.35;
@@ -1375,7 +1389,10 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .tool-preset-card-del svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; }
 .tool-preset-summary { margin: 0; color: var(--muted); font-size: 12px; }
 
-.tool-editor { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; transition: opacity .18s ease, transform .18s ease; }
+.tool-editor {
+  display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0;
+  transition: opacity .18s ease, transform .18s ease;
+}
 .tool-editor[hidden] { display: none; }
 .tool-editor-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tool-set-name {
@@ -1384,9 +1401,10 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   background: var(--bg); color: var(--text); font-size: 12px;
 }
 .tool-set-name::placeholder { color: var(--muted); }
-/* 视图切换：退出向上淡出、进入向下淡入（reduced-motion 时 JS 直接切、不等待） */
-.tool-preset-view.is-leaving { opacity: 0; transform: translateY(-8px); }
-.tool-editor.is-entering { opacity: 0; transform: translateY(8px); }
+/* 视图切换：卡片向上滑出、编辑区从下方滑入（返回时反向）；卡片态多 120ms 延迟，让「按下」那一帧看得见。 */
+.tool-preset-view.is-leaving, .tool-preset-view.is-entering { opacity: 0; transform: translateY(-18px); }
+.tool-preset-view.is-leaving { transition-delay: .12s; }
+.tool-editor.is-leaving, .tool-editor.is-entering { opacity: 0; transform: translateY(18px); }
 
 .tool-unknown-hint {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;

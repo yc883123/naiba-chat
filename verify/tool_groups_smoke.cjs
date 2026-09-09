@@ -1,5 +1,6 @@
 // 工具分类改版冒烟（随仓库发布的可复用资产；由 tool_groups_smoke.py 起源码 server 后调用）。
-// 覆盖：卡片态（4 张只读预设 + 添加卡 + 弹层降高）/ 卡片套用与摘要 / 编辑态切换与弹层回升 /
+// 覆盖：卡片态（4 张只读预设 + 添加卡 + 弹层固定高度）/ 点卡片的「按下」反馈与进入编辑态 /
+//       命名栏预填卡片名 / 编辑态与卡片态弹层同高 / 保存「我的工具集」与复用、× 删除 /
 //       6 组顺序 / 风险徽标与配色 / 徽标与分类名同行 / 说明非空 / 展开收起 /
 //       分类级全选与计数 / 搜索框过滤与恢复 / MCP 按服务器二级分组与二级全选 / 零页面错误。
 // 运行：.venv\Scripts\python.exe verify\tool_groups_smoke.py
@@ -122,23 +123,38 @@ async function scopeSnapshot(page) {
         ['全能模式', `${(catalog.tools || []).length} 个工具`],
       ]), JSON.stringify(cardState.cards.map((c) => [c.title, c.count])));
     check('卡片态不展开工具列表', cardState.editorHidden === true, JSON.stringify(cardState));
-    check('卡片态弹层更矮（≤ 500px）', cardState.dialogH > 0 && cardState.dialogH <= 500, String(cardState.dialogH));
+    check('卡片态与编辑态弹层同高（固定，不跳）', cardState.dialogH > 600, String(cardState.dialogH));
+    const dialogH = cardState.dialogH;
 
-    // 点预设卡：整组套用（走依赖闭包）→ 摘要显示命中卡名 + 个数
+    // 点预设卡：不直接套用，而是「按下 → 卡片上移收起 → 列表从下方滑入」，命名栏预填该卡名字。
+    const PRESET_NAMES = { readonly: '只读模式', standard: '标准模式', comfyui: 'ComfyUI 联动', full: '全能模式' };
     for (const [value, expected] of [['readonly', 4], ['standard', 8], ['comfyui', 13],
       ['full', (catalog.tools || []).length]]) {
       await page.click(`[data-tool-preset-card="${value}"]`);
-      await page.waitForTimeout(250);
-      const applied = await page.evaluate(() => ({
-        summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
-        active: document.querySelector('.tool-preset-card.is-active b')?.textContent.trim() || '',
+      // 先量「按下」那一帧：被点的卡片必须立刻带 .is-picked（选中反馈）。
+      const picked = await page.evaluate((sel) => {
+        const card = document.querySelector(sel);
+        return {
+          picked: card.classList.contains('is-picked'),
+          pressed: card.getAttribute('aria-pressed') || '',
+        };
+      }, `[data-tool-preset-card="${value}"]`);
+      check(`点「${value}」卡立刻有按下反馈`, picked.picked === true && picked.pressed === 'true',
+        JSON.stringify(picked));
+      await page.waitForTimeout(600);
+      const opened = await page.evaluate(() => ({
+        editorVisible: document.querySelector('#agentToolEditor')?.hidden === false,
+        cardsHidden: document.querySelector('#agentToolPresetView')?.hidden === true,
+        name: document.querySelector('#agentToolSetName')?.value || '',
         checked: document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length,
+        dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
       }));
-      check(`套用「${value}」：卡片个数 == 实际勾选数（${expected}）`,
-        applied.checked === expected && applied.summary.includes(`${expected} 个工具`),
-        JSON.stringify(applied));
-      check(`套用「${value}」后该卡高亮且摘要显示卡名`,
-        applied.active.length > 0 && !applied.summary.includes('自定义（未保存）'), JSON.stringify(applied));
+      check(`点「${value}」卡进入编辑态（卡片收起 + 列表展开）`,
+        opened.editorVisible && opened.cardsHidden, JSON.stringify(opened));
+      check(`命名栏自动预填「${PRESET_NAMES[value]}」`, opened.name === PRESET_NAMES[value], JSON.stringify(opened));
+      check(`载入「${value}」的工具个数 == 卡片显示个数（${expected}）`,
+        opened.checked === expected, JSON.stringify(opened));
+      check(`编辑态弹层高度不变（${dialogH}px）`, Math.abs(opened.dialogH - dialogH) <= 2, String(opened.dialogH));
       if (value === 'readonly') {
         const tools = await page.evaluate(() => [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
           .map((cb) => cb.value).sort());
@@ -146,20 +162,39 @@ async function scopeSnapshot(page) {
           'list_directory', 'read_file', 'search_files', 'vision_analyze',
         ]), JSON.stringify(tools));
       }
+      await page.click('#agentToolEditorBack');
+      await page.waitForTimeout(600);
+      const back = await page.evaluate(() => ({
+        cardsVisible: document.querySelector('#agentToolPresetView')?.hidden === false,
+        editorHidden: document.querySelector('#agentToolEditor')?.hidden === true,
+        active: document.querySelector('[data-tool-preset-card].is-active')?.dataset.toolPresetCard || '',
+        summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
+      }));
+      check(`返回卡片态：选中「${value}」的卡高亮且摘要带名字`,
+        back.cardsVisible && back.editorHidden && back.active === value
+        && back.summary.includes(PRESET_NAMES[value]), JSON.stringify(back));
     }
 
-    // 进入编辑态：点「添加自定义工具集」→ 卡片区收起、横条 + 工具列表展开
+    // 进入编辑态：点「添加自定义工具集」→ 卡片区收起、横条 + 工具列表展开、命名栏留空
+    const scopeBeforeAdd = await page.evaluate(() => document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length);
     await page.click('[data-tool-preset-add]');
+    await page.waitForTimeout(200);
+    const addPicked = await page.evaluate(() => document.querySelector('[data-tool-preset-add]')?.classList.contains('is-picked') === true);
+    check('「添加自定义工具集」卡点击后也有按下反馈', addPicked === true, '');
     await page.waitForTimeout(500);
     const editorState = await page.evaluate(() => ({
       editorVisible: document.querySelector('#agentToolEditor')?.hidden === false,
       cardsHidden: document.querySelector('#agentToolPresetView')?.hidden === true,
       hasName: Boolean(document.querySelector('#agentToolSetName')),
+      name: document.querySelector('#agentToolSetName')?.value || '',
+      checked: document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length,
       dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
     }));
     check('点添加卡进入编辑态（卡片收起 + 编辑区展开）',
       editorState.editorVisible && editorState.cardsHidden && editorState.hasName, JSON.stringify(editorState));
-    check('编辑态弹层回到满高（> 600px）', editorState.dialogH > 600, String(editorState.dialogH));
+    check('「添加」卡命名栏留空、勾选保持原样',
+      editorState.name === '' && editorState.checked === scopeBeforeAdd, JSON.stringify(editorState));
+    check('编辑态弹层高度仍与卡片态一致', Math.abs(editorState.dialogH - dialogH) <= 2, String(editorState.dialogH));
 
     let snap = await scopeSnapshot(page);
     check('弹层里有工具搜索框', snap.hasFilter === true, '');
@@ -332,27 +367,36 @@ async function scopeSnapshot(page) {
     check('卡片显示工具集名与个数', savedCard.name === '冒烟工具集' && /^\d+ 个工具$/.test(savedCard.count),
       JSON.stringify(savedCard));
     check('「我的工具集」卡片带 × 删除入口', savedCard.hasDelete === true, '');
-    check('保存后弹层重新变矮（≤ 500px）', savedCard.dialogH > 0 && savedCard.dialogH <= 500, String(savedCard.dialogH));
+    check('保存后弹层高度仍不变', Math.abs(savedCard.dialogH - dialogH) <= 2, String(savedCard.dialogH));
 
-    // 先改成「只读模式」，再点自定义卡：应覆盖回保存时的组合
-    await page.click('[data-tool-preset-card="readonly"]');
-    await page.waitForTimeout(250);
+    // 点自定义卡：回到编辑态，名字与勾选都回来（不是直接套用）
     await page.click('[data-tool-template-card]');
-    await page.waitForTimeout(300);
-    const appliedCard = await page.evaluate(() => ({
-      summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
-      activePreset: document.querySelector('[data-tool-preset-card].is-active')?.dataset.toolPresetCard || '',
-      activeTemplate: document.querySelector('[data-tool-template-card].is-active')?.querySelector('b')?.textContent.trim() || '',
+    await page.waitForTimeout(600);
+    const reopened = await page.evaluate(() => ({
+      editorVisible: document.querySelector('#agentToolEditor')?.hidden === false,
+      cardsHidden: document.querySelector('#agentToolPresetView')?.hidden === true,
+      name: document.querySelector('#agentToolSetName')?.value || '',
       tools: [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
         .map((cb) => cb.value).sort(),
+      dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
     }));
-    check('点「我的工具集」卡片套用回保存时的组合',
-      appliedCard.summary.includes('冒烟工具集')
-      && JSON.stringify(appliedCard.tools) === JSON.stringify(beforeSave),
-      JSON.stringify({ summary: appliedCard.summary, saved: beforeSave.length, applied: appliedCard.tools.length }));
-    check('自定义卡套用后内置预设卡不再高亮、自定义卡自己高亮',
-      appliedCard.activePreset === '' && appliedCard.activeTemplate === '冒烟工具集',
-      JSON.stringify(appliedCard));
+    check('点「我的工具集」卡回到编辑态，命名栏与勾选都还原',
+      reopened.editorVisible && reopened.cardsHidden && reopened.name === '冒烟工具集'
+      && JSON.stringify(reopened.tools) === JSON.stringify(beforeSave),
+      JSON.stringify({ name: reopened.name, saved: beforeSave.length, opened: reopened.tools.length }));
+    check('自定义卡进入编辑态时弹层高度仍不变', Math.abs(reopened.dialogH - dialogH) <= 2, String(reopened.dialogH));
+
+    await page.click('#agentToolEditorBack');
+    await page.waitForTimeout(600);
+    const backToCards = await page.evaluate(() => ({
+      cardsVisible: document.querySelector('#agentToolPresetView')?.hidden === false,
+      activePreset: document.querySelector('[data-tool-preset-card].is-active')?.dataset.toolPresetCard || '',
+      activeTemplate: document.querySelector('[data-tool-template-card].is-active')?.querySelector('b')?.textContent.trim() || '',
+      summary: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
+    }));
+    check('返回卡片态：自定义卡自己高亮、内置预设卡不高亮',
+      backToCards.cardsVisible && backToCards.activePreset === '' && backToCards.activeTemplate === '冒烟工具集'
+      && backToCards.summary.includes('冒烟工具集'), JSON.stringify(backToCards));
 
     await page.click('[data-tool-template-del]');
     await page.waitForTimeout(500);

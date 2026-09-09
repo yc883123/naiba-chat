@@ -898,13 +898,6 @@ export function switchAgentTab(name) {
   });
   $$('.agent-tab-panel').forEach((panel) => { panel.hidden = panel.dataset.agentPanel !== name; });
   closeAgentPromptPresetPanel();
-  // 弹层高度跟随分区：工具集卡片态更矮，编辑态与其它分区用满高（按钮在顶栏，不会跳）。
-  const dialog = $('#agentDialog');
-  if (dialog) {
-    const editor = $('#agentToolEditor');
-    const cardState = name === 'tools' && (!editor || editor.hidden);
-    dialog.style.setProperty('--agent-dialog-h', cardState ? '430px' : '760px');
-  }
 }
 
 export function updateAgentSkillTabCount() {
@@ -1027,9 +1020,9 @@ export function normalizeToolScope(scope) {
 }
 
 // —— 工具集：卡片态（内置预设 + 我的工具集）↔ 编辑态 ——
-// 卡片态只显示卡片与一行摘要；点「添加自定义工具集」或卡片入口才展开 67 个工具的列表。
+// 两态同框叠放、弹层高度固定：点任意卡片（含「添加」卡）都先按一下再向上滑出，工具列表从下方滑入。
 const TOOL_SET_MAX = 30;
-const TOOL_SWAP_MS = 180;
+const TOOL_SWAP_MS = 300;  // = CSS 里 .tool-preset-view.is-leaving 的 120ms 延迟 + 180ms 过渡
 const TOOL_SET_ADD_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>';
 const TOOL_SET_DEL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
 
@@ -1122,14 +1115,13 @@ export function updateToolCounter() {
   }
 }
 
-// 卡片态 ↔ 编辑态切换：退出的向上淡出、进入的向下淡入；弹层高度同步（卡片态更矮）。
+// 卡片态 ↔ 编辑态切换：卡片向上滑出、编辑区从下方滑入（返回时反向）。
+// 两态叠在同一个 .tool-stage 格子里，弹层高度不参与变化，所以没有布局跳动。
 function swapToolView(editing) {
   const view = $('#agentToolPresetView');
   const editor = $('#agentToolEditor');
   if (!view || !editor) return;
-  const dialog = $('#agentDialog');
-  if (dialog) dialog.style.setProperty('--agent-dialog-h', editing ? '760px' : '430px');
-  if (editing === !editor.hidden) return; // 已在目标态（高度已设）
+  if (editing === !editor.hidden) return; // 已在目标态
   const reduce = Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches);
   const outgoing = editing ? view : editor;
   const incoming = editing ? editor : view;
@@ -1153,20 +1145,50 @@ function swapToolView(editing) {
   }, TOOL_SWAP_MS);
 }
 
-// 进入编辑态：从当前勾选开始（或载入某条「我的工具集」），展开工具列表。
-export function openAgentToolEditor(templateId = '') {
-  const template = templateId ? loadToolTemplates().find((item) => item.id === templateId) : null;
+// 进入编辑态：
+//   内置预设卡 → 载入该预设的工具（走依赖闭包）、命名栏预填预设名、保存时另存为「我的工具集」；
+//   我的工具集卡 → 载入该套工具、命名栏预填它的名字、保存时原地更新；
+//   「添加」卡 → 保留当前勾选、命名栏留空（留空自动命名）。
+export function openAgentToolEditor({ presetId = '', templateId = '' } = {}) {
+  const preset = presetId
+    ? (state.toolCatalog?.presets || []).find((item) => item.id === presetId) : null;
+  const template = templateId
+    ? loadToolTemplates().find((item) => item.id === templateId) : null;
   state.agentToolEditingId = template ? template.id : '';
-  if (template) setAgentToolScope(normalizeToolScope(usableTemplateTools(template)));
+  if (preset) {
+    setAgentToolScope(normalizeToolScope(preset.tools || []));
+  } else if (template) {
+    const tools = usableTemplateTools(template);
+    if (!tools.length) {
+      toast('该工具集里的工具当前都已不存在，未载入');
+      return;
+    }
+    setAgentToolScope(normalizeToolScope(tools));
+  }
   const nameInput = $('#agentToolSetName');
-  if (nameInput) nameInput.value = template ? template.name : '';
+  if (nameInput) nameInput.value = preset ? preset.name : (template ? template.name : '');
   state.agentToolFilter = '';
   const filter = $('#agentToolFilter');
   if (filter) filter.value = '';
   renderToolScopeList();
   syncAgentToolCheckboxes($('#agentToolScope'));
   swapToolView(true);
+  // 上面 syncAgentToolCheckboxes → updateToolPresetUI 会重绘卡片（编辑态还没显示），
+  // 所以「按下」状态要在重绘之后再按 key 找回卡片打上。
+  markPickedToolCard({ presetId, templateId });
   nameInput?.focus();
+  nameInput?.select();
+}
+
+// 给刚点的那张卡打上「按下 / 已选」状态（按 key 重新查，兼容重绘后的新节点）。
+function markPickedToolCard({ presetId = '', templateId = '' }) {
+  const selector = presetId
+    ? `[data-tool-preset-card="${presetId}"]`
+    : (templateId ? `[data-tool-template-card="${templateId}"]` : '[data-tool-preset-add]');
+  const card = document.querySelector(selector);
+  if (!card) return;
+  card.classList.add('is-picked');
+  card.setAttribute('aria-pressed', 'true');
 }
 
 export function closeAgentToolEditor() {
@@ -1204,31 +1226,8 @@ export function saveAgentToolSet() {
   toast(editingId ? `已更新工具集「${name}」` : `已保存工具集「${name}」`);
 }
 
-// 套用内置预设（只读卡片）：整组套用，仍走依赖闭包。
-export function applyToolPresetCard(presetId) {
-  const preset = (state.toolCatalog?.presets || []).find((item) => item.id === presetId);
-  if (!preset) return;
-  const tools = normalizeToolScope(preset.tools || []);
-  setAgentToolScope(tools);
-  syncAgentToolCheckboxes($('#agentToolScope'));
-  toast(`已套用「${preset.name}」（${tools.length} 个工具）`);
-}
-
-// 套用「我的工具集」：只应用当前目录里还存在的工具。
-export function applyToolTemplateCard(templateId) {
-  const template = loadToolTemplates().find((item) => item.id === templateId);
-  if (!template) return;
-  const tools = usableTemplateTools(template);
-  if (!tools.length) {
-    toast('该工具集里的工具当前都已不存在，未应用');
-    return;
-  }
-  setAgentToolScope(normalizeToolScope(tools));
-  syncAgentToolCheckboxes($('#agentToolScope'));
-  toast(`已套用工具集「${template.name}」（${tools.length} 个工具）`);
-}
-
-// 卡片区事件委托：× 删除优先，其次「添加」卡与套用。
+// 卡片区事件委托：× 删除优先；其余任意卡片（预设 / 我的工具集 / 添加）都进入编辑态，
+// 命名栏预填该卡片的名字（「添加」卡留空），工具列表供查看与编辑；被点的卡会先「按下」。
 export function handleAgentToolPresetCardsClick(event) {
   const del = event.target.closest('[data-tool-template-del]');
   if (del) {
@@ -1236,17 +1235,18 @@ export function handleAgentToolPresetCardsClick(event) {
     void deleteToolTemplate(del.dataset.toolTemplateDel);
     return;
   }
-  if (event.target.closest('[data-tool-preset-add]')) {
-    openAgentToolEditor('');
+  const add = event.target.closest('[data-tool-preset-add]');
+  if (add) {
+    openAgentToolEditor({});
     return;
   }
   const template = event.target.closest('[data-tool-template-card]');
   if (template) {
-    applyToolTemplateCard(template.dataset.toolTemplateCard);
+    openAgentToolEditor({ templateId: template.dataset.toolTemplateCard });
     return;
   }
   const preset = event.target.closest('[data-tool-preset-card]');
-  if (preset) applyToolPresetCard(preset.dataset.toolPresetCard);
+  if (preset) openAgentToolEditor({ presetId: preset.dataset.toolPresetCard });
 }
 
 // 卡片是 div[role=button]：Enter/Space 等同点击。
