@@ -66,17 +66,20 @@ def main() -> int:
     config = json.loads(original_config.decode("utf-8"))
     config.update({"host": "127.0.0.1", "port": PORT, "data_dir": str(DATA_DIR)})
     config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    seed()
 
-    env = dict(os.environ)
-    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
-    log = (ROOT / "verify" / "branch_first_turn_smoke_server.log").open("w", encoding="utf-8")
-    server = subprocess.Popen(  # noqa: S603 - 固定 argv
-        [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(PORT)],
-        cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=env,
-    )
+    # 从改完 config.json 起，**任何异常路径都必须还原**（包括播种）——
+    # 曾经把 seed() 放在 try 之外，播种一抛异常就把开发配置留在临时端口/临时目录上。
     code = 1
+    server: subprocess.Popen | None = None
+    log = (ROOT / "verify" / "branch_first_turn_smoke_server.log").open("w", encoding="utf-8")
     try:
+        seed()
+        env = dict(os.environ)
+        env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        server = subprocess.Popen(  # noqa: S603 - 固定 argv
+            [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(PORT)],
+            cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=env,
+        )
         if not wait_health():
             print(f"server 未就绪（日志见 {log.name}）")
             return 1
@@ -90,17 +93,19 @@ def main() -> int:
         )
         code = node.returncode
     finally:
-        server.terminate()
-        try:
-            server.wait(timeout=15)
-        except subprocess.TimeoutExpired:
-            server.kill()
-            server.wait(timeout=10)
+        if server is not None:
+            server.terminate()
+            try:
+                server.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=10)
         log.close()
         # 还原现场：config.json（main_entry 会把 host/port 写回）与临时数据目录。
         config_path.write_bytes(original_config)
         shutil.rmtree(DATA_DIR, ignore_errors=True)
-        print(f"已还原 config.json 并清理 {DATA_DIR.name}；server 已退出（exit={server.returncode}）")
+        print(f"已还原 config.json 并清理 {DATA_DIR.name}"
+              f"；server 已退出（exit={server.returncode if server else 'n/a'}）")
     return code
 
 
