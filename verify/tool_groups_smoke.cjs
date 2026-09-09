@@ -175,25 +175,31 @@ async function scopeSnapshot(page) {
         && back.summary.includes(PRESET_NAMES[value]), JSON.stringify(back));
     }
 
-    // 进入编辑态：点「添加自定义工具集」→ 卡片区收起、横条 + 工具列表展开、命名栏留空
-    const scopeBeforeAdd = await page.evaluate(() => document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length);
+    // 进入编辑态：点「添加自定义工具集」→ 卡片区收起、横条 + 工具列表展开、
+    // 命名栏留空、工具以「标准模式」为起点（不跟随当前选中项）。
     await page.click('[data-tool-preset-add]');
-    await page.waitForTimeout(200);
+    await page.waitForTimeout(120);
     const addPicked = await page.evaluate(() => document.querySelector('[data-tool-preset-add]')?.classList.contains('is-picked') === true);
     check('「添加自定义工具集」卡点击后也有按下反馈', addPicked === true, '');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(400);
     const editorState = await page.evaluate(() => ({
       editorVisible: document.querySelector('#agentToolEditor')?.hidden === false,
       cardsHidden: document.querySelector('#agentToolPresetView')?.hidden === true,
       hasName: Boolean(document.querySelector('#agentToolSetName')),
       name: document.querySelector('#agentToolSetName')?.value || '',
       checked: document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length,
+      tools: [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
+        .map((cb) => cb.value).sort(),
       dialogH: Math.round(document.querySelector('#agentDialog')?.getBoundingClientRect().height || 0),
     }));
     check('点添加卡进入编辑态（卡片收起 + 编辑区展开）',
       editorState.editorVisible && editorState.cardsHidden && editorState.hasName, JSON.stringify(editorState));
-    check('「添加」卡命名栏留空、勾选保持原样',
-      editorState.name === '' && editorState.checked === scopeBeforeAdd, JSON.stringify(editorState));
+    check('「添加」卡命名栏留空', editorState.name === '', JSON.stringify(editorState));
+    check('「添加」卡默认载入标准模式的 8 个工具（不跟随当前选中项）',
+      editorState.checked === 8 && JSON.stringify(editorState.tools) === JSON.stringify([
+        'edit_file', 'list_directory', 'pwsh', 'read_file', 'run_skill_script',
+        'search_files', 'vision_analyze', 'write_file',
+      ]), JSON.stringify(editorState));
     check('编辑态弹层高度仍与卡片态一致', Math.abs(editorState.dialogH - dialogH) <= 2, String(editorState.dialogH));
 
     let snap = await scopeSnapshot(page);

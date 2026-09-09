@@ -1022,7 +1022,9 @@ export function normalizeToolScope(scope) {
 // —— 工具集：卡片态（内置预设 + 我的工具集）↔ 编辑态 ——
 // 两态同框叠放、弹层高度固定：点任意卡片（含「添加」卡）都先按一下再向上滑出，工具列表从下方滑入。
 const TOOL_SET_MAX = 30;
-const TOOL_SWAP_MS = 200;  // = CSS 里 .tool-preset-view.is-leaving 的 80ms 延迟 + 120ms 过渡
+const TOOL_SWAP_MS = 130;  // = CSS 里 .tool-preset-view.is-leaving 的 50ms 延迟 + 80ms 过渡
+// 「添加自定义工具集」的起点：不跟随当前选中项，固定以标准模式为底稿。
+const DEFAULT_TOOL_SET_PRESET_ID = 'standard';
 const TOOL_SET_ADD_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>';
 const TOOL_SET_DEL_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
 
@@ -1148,15 +1150,18 @@ function swapToolView(editing) {
 // 进入编辑态：
 //   内置预设卡 → 载入该预设的工具（走依赖闭包）、命名栏预填预设名、保存时另存为「我的工具集」；
 //   我的工具集卡 → 载入该套工具、命名栏预填它的名字、保存时原地更新；
-//   「添加」卡 → 保留当前勾选、命名栏留空（留空自动命名）。
+//   「添加」卡 → 以「标准模式」预设为起点（不跟随当前选中项）、命名栏留空（留空自动命名）。
 export function openAgentToolEditor({ presetId = '', templateId = '' } = {}) {
-  const preset = presetId
-    ? (state.toolCatalog?.presets || []).find((item) => item.id === presetId) : null;
+  const presets = state.toolCatalog?.presets || [];
+  const preset = presetId ? presets.find((item) => item.id === presetId) : null;
   const template = templateId
     ? loadToolTemplates().find((item) => item.id === templateId) : null;
+  // 底稿：点了预设卡就是该预设；点了「添加」卡则固定用标准模式（不跟随当前选中项）。
+  const base = preset || (presetId || templateId ? null
+    : presets.find((item) => item.id === DEFAULT_TOOL_SET_PRESET_ID) || null);
   state.agentToolEditingId = template ? template.id : '';
-  if (preset) {
-    setAgentToolScope(normalizeToolScope(preset.tools || []));
+  if (base) {
+    setAgentToolScope(normalizeToolScope(base.tools || []));
   } else if (template) {
     const tools = usableTemplateTools(template);
     if (!tools.length) {
@@ -1166,6 +1171,7 @@ export function openAgentToolEditor({ presetId = '', templateId = '' } = {}) {
     setAgentToolScope(normalizeToolScope(tools));
   }
   const nameInput = $('#agentToolSetName');
+  // 命名栏只预填「被点的那张卡」的名字；「添加」卡没有名字，留空（保存时自动命名）。
   if (nameInput) nameInput.value = preset ? preset.name : (template ? template.name : '');
   state.agentToolFilter = '';
   const filter = $('#agentToolFilter');

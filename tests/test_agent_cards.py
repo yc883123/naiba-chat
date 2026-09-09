@@ -505,11 +505,13 @@ class AgentToolSetCardsTests(unittest.TestCase):
         editor = js[js.index("export function openAgentToolEditor("):]
         editor = editor[: editor.index("\n}")]
         self.assertEqual(editor.count("normalizeToolScope("), 2, "预设卡与「我的工具集」卡都要补闭包")
-        self.assertIn("preset.tools", editor)
+        self.assertIn("base.tools", editor)
         self.assertIn("usableTemplateTools(template)", editor)
         # 命名栏预填卡片名：预设卡用预设名、「我的工具集」卡用它自己的名字、「添加」卡留空。
         self.assertIn("nameInput.value = preset ? preset.name", editor)
-        # 三张入口（预设 / 我的工具集 / 添加）都要进编辑态。
+        # 「添加」卡不跟随当前选中项：固定以「标准模式」为起点。
+        self.assertIn("DEFAULT_TOOL_SET_PRESET_ID = 'standard'", js)
+        self.assertIn("presets.find((item) => item.id === DEFAULT_TOOL_SET_PRESET_ID)", editor)        # 三张入口（预设 / 我的工具集 / 添加）都要进编辑态。
         click = js[js.index("export function handleAgentToolPresetCardsClick("):]
         click = click[: click.index("\n}")]
         self.assertEqual(click.count("openAgentToolEditor("), 3)
@@ -549,7 +551,7 @@ class AgentToolSetCardsTests(unittest.TestCase):
         view_rule = css[css.index(".tool-preset-view {"):]
         view_rule = view_rule[: view_rule.index("}")]
         self.assertIn("align-content: start", view_rule)
-        self.assertIn("transition: opacity .12s", view_rule, "过渡已按 2/3 缩短")
+        self.assertIn("transition: opacity .08s", view_rule, "切换过渡已再缩短 1/3")
 
 
 class AgentCardsMarkupTests(unittest.TestCase):
