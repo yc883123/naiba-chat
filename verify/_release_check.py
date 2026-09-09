@@ -18,8 +18,8 @@ print(f"[§2/§3] release_notes {len(notes)} 条，与更新清单一致 = {note
 
 # ---- 2) README 版本串 ----
 readme = (ROOT / "README.md").read_text(encoding="utf-8")
-for token in ("# Naiba Chat 2.0.0 Beta", "## 2.0.0 Beta 主要能力",
-              "naiba-chat-2.0.0-beta-windows-x64.zip", "NAIBA_BUILD_VERSION = \"2.0.0-beta\""):
+for token in ("# Naiba Chat 2.1.0 Beta", "## 2.1.0 Beta 主要能力",
+              "naiba-chat-2.1.0-beta-windows-x64.zip", "NAIBA_BUILD_VERSION = \"2.1.0-beta\""):
     print(f"[§4] README 含 {token!r}: {token in readme}")
 
 # ---- 3) 工作流 YAML ----

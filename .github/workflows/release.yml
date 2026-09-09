@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 2.0.0-beta
-  RELEASE_TAG: v2.0.0-beta
-  PACKAGE_NAME: naiba-chat-2.0.0-beta-windows-x64
+  RELEASE_VERSION: 2.1.0-beta
+  RELEASE_TAG: v2.1.0-beta
+  PACKAGE_NAME: naiba-chat-2.1.0-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 2.0.0 Beta release
+      - name: Publish 2.1.0 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 2.0.0 Beta
+          name: Naiba Chat 2.1.0 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,21 +99,17 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 2.0.0 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 2.1.0 Beta Windows build from `${{ github.sha }}`.
 
             本次更新（完整清单见 `release_notes.json` / 应用内「更新说明」）：
-            - 上下文用量提醒：圆环随每次模型请求刷新，达「运行设置 → 上下文提醒阈值」（默认 80%，0=关闭）时弹窗——运行中即时弹、已结束会话改为点发送才弹（可「继续发送」），距上次提醒再涨 5% 才再提醒。
-            - 在线模型 5xx 自动重试：不再直接终止整轮，按瞬时故障退避重试（最多 3 次）并提示重试进度；失败请求体落盘取证（截断、不含 API Key）。
-            - 设置页卡片化：API 供应商与 Agent 管理改为卡片网格 + 点开弹层编辑；四个内置 Agent 预设（dsh-*）下线。
-            - Agent ID 由后台自动分配（不再手填），Agent 支持自定义头像（自动中心裁切，替换会话里的「AI」圆标）。
-            - 工具与 Skill 选择器改版：固定 Skill 卡片化并与工具集等高、工具集分组一行呈现、展开卡片更紧凑、修复列表被裁成一条线。
-            - 设置页文本框右键菜单恢复（撤销/重做/剪切/复制/粘贴/删除/全选），不再被模态弹层盖住或误弹会话页菜单。
-            - 会话页新增「对话刻度轨」：每轮一条横条、滚动时当前轮加粗、悬停看概要、点击跳转。
-            - 多媒体显示改造：工具产出的图片/视频/音频紧跟产生它的那次工具调用就地显示，支持 Range 播放、GIF 首帧缩略图，后台任务（ComfyUI 等）产物自动挂回发起它的消息。
-            - 会话收藏与侧栏交互：五角星收藏 + 跨工作区「已收藏」分组，重命名/删除并入「⋯」菜单；滚动更顺滑、条目更紧凑、点击会话不再强制置顶。
-            - 会话级系统提示词退役：系统提示词统一由 Agent 决定，角色卡导入与快捷提示词套用迁到 Agent 设置页。
-            - 顶栏与输入区精简：任务/Skill 计数改为数字文本、MCP 只看状态点颜色；待发送附件改为固定高度的竖直列表（文件名截断、图片预览）。
-            - 稳定性与守门：550 个单元/契约测试 + golden 回放 3 基线 + 真机浏览器冒烟（含本次新增的上下文圆环/提醒 23 项断言）全通过。
+            - 「新会话」分割线：同一窗口内任意位置划线，线上内容不再进入模型上下文、线下保留，可撤销、可多条并存。
+            - 模型可主动重置上下文（reset_context）：先写交接文档再重置，文档缺失或为空会被拒绝；重置后种子消息自动填入输入框，模板可配置。
+            - 长会话工具集：find_conversations / recall_history / read_conversation + reset_context，新增「长会话模式」预设（标准 + 四件套）。
+            - 长会话懒加载：默认只渲染最近 10 轮、向上滚动自动预渲染；窗口以「轮」为边界（分割线不会被拆散），刻度轨覆盖全部轮次。
+            - 「写交接报告」快捷消息预设：内置、可编辑可删除、升级不覆盖也不复活。
+            - 修复 DeepSeek 空思考工具轮 400 再犯；「思考 自动」右侧实时显示上下文用量百分比。
+            - Agent 工具集改为卡片态 / 编辑态两态、弹层固定高度、卡片显示工具集名；「我的工具集」改存 config.json、工具目录短时效缓存、桌面壳持久 WebView2 配置目录。
+            - 稳定性与守门：685 个单元/契约测试 + golden 回放 3 基线 + 真机浏览器冒烟（含本次新增的长会话懒加载、新会话分割线 / 种子消息、快捷消息预设）全通过。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

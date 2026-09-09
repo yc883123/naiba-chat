@@ -1,10 +1,10 @@
-# Naiba Chat 2.0.0 Beta
+# Naiba Chat 2.1.0 Beta
 
 Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把在线或本地模型、内置工具、后台任务、Skill、MCP、视觉工具和文件产物统一到一个对话界面中。
 
-2.0.0 Beta（重构版）在 1.7.9 的基础上完成后端全面模块化重构：核心代码迁入 `naiba/` 包、依赖图单向无环、`server.py` 收口为门面、契约（RunContext/EventType/MetadataKeys）显式化；HTTP API 与事件协议版式不变，前端零配合。详见下方「2.0.0 Beta 主要能力」。
+2.1.0 Beta 在 2.0.0 的基础上补齐**长会话能力**：同一窗口内可手动或由模型主动划出「新会话」分割线重置上下文、消息列表懒加载、可检索与复核历史会话；Agent 工具集新增「长会话」一组与对应预设。2.0.0 完成的后端模块化重构（核心代码迁入 `naiba/` 包、依赖图单向无环、`server.py` 收口为门面、契约显式化）保持不变，HTTP API 与事件协议版式不变，前端零配合。详见下方「2.1.0 Beta 主要能力」。
 
-## 2.0.0 Beta 主要能力
+## 2.1.0 Beta 主要能力
 
 - **长会话模式（翻历史 + 重置上下文）**：Agent 工具集新增「长会话」一组——`find_conversations`（列出最近会话的 id/标题/时间/条数与末条预览，可按标题匹配）、`recall_history`（按关键词检索：不给会话 id 就全库搜、每个会话最多 3 条片段；给了 id 就只搜那个会话、按时间正序、片段更长）、`read_conversation`（按序号区间读历史会话原文，用于复核片段），加上 `reset_context`。配套新增 **「长会话模式」预设** = 标准模式 + 这四件套。检索结果会明示"检索了全部 N 个会话 / M 条消息"、截断显式、会话 id 不存在直接报错；**当前会话的命中会标注「在上下文中」或「已划出上下文」**——被「新会话」分割线划出去的老消息不会被当成你还记得的内容。
 - **长会话懒加载**：打开会话只渲染最近 10 轮，向上滚动时自动往前预渲染（每次 10 轮，视口不跳动）；渲染窗口**以「轮」为边界**，所以「新会话」分割线永远和它下面那条回复一起出现、不会被拆到两段里。右侧刻度轨仍然覆盖全部轮次，点没渲染出来的轮次会先渲染再跳过去。
@@ -129,7 +129,7 @@ Naiba Chat 是运行在 Windows 本机的通用 AI 自动化工作台。它把�
 
 ### 使用 Windows 版本
 
-1. 下载 `naiba-chat-2.0.0-beta-windows-x64.zip`。
+1. 下载 `naiba-chat-2.1.0-beta-windows-x64.zip`。
 2. 解压到一个可写目录。
 3. 运行 `naiba-chat.exe`。
 4. 在设置中添加在线 API 或本地模型服务。
@@ -217,13 +217,13 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 
 - `naiba-chat.exe`
 - `naiba-chat-update.json`
-- `naiba-chat-2.0.0-beta-windows-x64.zip`
+- `naiba-chat-2.1.0-beta-windows-x64.zip`
 
 更新器会验证清单中的仓库、提交、文件名和 SHA-256。下载文件还必须是有效的 Windows 可执行文件；任何一项不一致都会终止安装。
 
 ## Beta 说明
 
-这是 2.0.0 Beta，适合实际使用和反馈，但仍有以下边界：
+这是 2.1.0 Beta，适合实际使用和反馈，但仍有以下边界：
 
 - 不内置 ComfyUI、模型权重或第三方生成服务，需用户自行安装和配置。
 - 不同模型的工具调用质量差异较大，小型模型可能无法稳定完成长链任务。
@@ -236,7 +236,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ```powershell
 Get-ChildItem public\js\*.js | ForEach-Object { node --check $_.FullName }
 python -m unittest discover -s tests -q
-$env:NAIBA_BUILD_VERSION = "2.0.0-beta"
+$env:NAIBA_BUILD_VERSION = "2.1.0-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
 ```
 
