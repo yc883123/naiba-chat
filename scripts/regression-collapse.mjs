@@ -2,8 +2,11 @@
 // 依赖：headless Chrome --remote-debugging-port=9222 + 隔离实例 http://127.0.0.1:8788
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const OUT = 'd:/naiba-chat/_iso_test2/shots';
+// 从本文件位置派生项目根（禁止硬编码本机盘符路径）。
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = path.join(ROOT, '_iso_test2', 'shots');
 fs.mkdirSync(OUT, { recursive: true });
 
 const res = await fetch('http://127.0.0.1:9222/json');

@@ -2,7 +2,11 @@
 // 用真实 CSS 类名注入 DOM，不引用任何真实图片/对话内容，纯示意图。
 import fs from 'node:fs';
 import path from 'node:path';
-const OUT = 'd:/naiba-chat/docs/manual/images';
+import { fileURLToPath } from 'node:url';
+
+// 从本文件位置派生项目根（禁止硬编码本机盘符路径）。
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = path.join(ROOT, 'docs', 'manual', 'images');
 
 const res = await fetch('http://127.0.0.1:9222/json');
 const target = (await res.json())[0];

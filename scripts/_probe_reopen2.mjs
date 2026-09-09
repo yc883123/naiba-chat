@@ -5,9 +5,14 @@
 // 3) 收起面板 → 按钮出现（带计数）
 // 4) 关闭全部标签 → 按钮消失
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const CDP = 'http://127.0.0.1:9222';
 const URL = 'http://127.0.0.1:8788/?reopen=2';
-const SHOTS = 'D:/naiba-chat/_iso_test2/shots';
+// 从本文件位置派生项目根（禁止硬编码本机盘符路径）。
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SHOTS = path.join(ROOT, '_iso_test2', 'shots');
 fs.mkdirSync(SHOTS, { recursive: true });
 
 async function getWs() {

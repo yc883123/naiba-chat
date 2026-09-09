@@ -1,7 +1,12 @@
 // 一次性验证：折叠左栏前后，中间消息内容列是否真实变宽（桌面 1440）
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 const CDP = 'http://127.0.0.1:9222';
-const SHOTS = 'D:/naiba-chat/_iso_test2/shots';
+// 从本文件位置派生项目根（禁止硬编码本机盘符路径）。
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SHOTS = path.join(ROOT, '_iso_test2', 'shots');
 
 async function getWs() {
   const list = await (await fetch(`${CDP}/json/list`)).json();

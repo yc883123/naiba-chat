@@ -4,9 +4,12 @@
 // 说明：除 3 张「对话示意图」为 CSS 占位注入外，其余全部是真实界面 + 真实渲染。
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const OUT = 'd:/naiba-chat/docs/manual/images';
-const DEMO_DIR = 'D:\\naiba-chat\\docs\\manual';
+// 一律从本文件位置派生项目根，避免硬编码本机盘符路径（换机器/换目录无需改代码）。
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = path.join(ROOT, 'docs', 'manual', 'images');
+const DEMO_DIR = path.join(ROOT, 'docs', 'manual');
 const DEMO_TITLE = '说明书演示';
 const DEMO_FILE = path.join(OUT, '..', '_demo-产品说明.md');
 fs.mkdirSync(OUT, { recursive: true });
@@ -172,8 +175,8 @@ await sleep(1200);
 
 // 注入一条带「本轮修改文件」的助手消息（chip 指向真实文件，可点击）
 const chips = [
-  { op: 'write', file: 'D:\\naiba-chat\\docs\\manual\\_demo-产品说明.md', name: '_demo-产品说明.md' },
-  { op: 'edit', file: 'D:\\naiba-chat\\docs\\manual\\build_html.py', name: 'build_html.py' },
+  { op: 'write', file: path.join(DEMO_DIR, '_demo-产品说明.md'), name: '_demo-产品说明.md' },
+  { op: 'edit', file: path.join(DEMO_DIR, 'build_html.py'), name: 'build_html.py' },
 ];
 const chipHtml = chips.map(c => `<button type="button" class="file-change-chip" data-file-op="${c.op}" data-open-file="${c.file.replace(/\\/g, '\\\\')}" title="${c.op === 'edit' ? '编辑' : '新建'}：${c.name}"><span class="file-change-op">${c.op === 'edit' ? '改' : '新'}</span><span class="file-change-name">${c.name}</span></button>`).join('');
 const demoMsg = `

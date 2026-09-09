@@ -263,7 +263,7 @@ class RunSkillScriptEncodingTests(unittest.TestCase):
             {
                 "skill": "批量生成30s_h3_nsfw_i2v提示词",
                 "script": "scripts/echo_arg.py",
-                "args": [r"C:\Users\ylxia\Desktop\临时提示词\_pending_entry.json"],
+                "args": [r"C:\Users\user\Desktop\临时提示词\_pending_entry.json"],
             },
             active,
         )

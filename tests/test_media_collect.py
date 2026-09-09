@@ -290,7 +290,7 @@ class ContentAddressedCacheTests(_TempCase):
 
     def test_mojibake_path_is_dropped(self) -> None:
         """GBK 乱码路径（非 UTF-8 子进程输出被按 UTF-8 解码的产物）同样丢弃。"""
-        mojibake = "C:\\Users\\ylxia\\Desktop\\\ufffd\ufffd\u02b1\ufffd\\preview_images\\a.png"
+        mojibake = "C:\\Users\\user\\Desktop\\\ufffd\ufffd\u02b1\ufffd\\preview_images\\a.png"
         self.assertEqual(self.collector.collect(_run(f"moved a.png -> {mojibake}"), INLINE)["media"], [])
 
 

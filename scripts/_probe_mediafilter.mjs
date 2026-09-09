@@ -1,7 +1,12 @@
 // 验证：多媒体（图片/视频/音频）不进入"本轮修改文件"chips，仍走原附件预览
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const CDP = 'http://127.0.0.1:9222';
+// 从本文件位置派生项目根（禁止硬编码本机盘符路径）。
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const SHOTS = path.join(ROOT, '_iso_test2', 'shots');
 
 async function main() {
   const list = await (await fetch(`${CDP}/json/list`)).json();
@@ -46,7 +51,7 @@ async function main() {
   })()`);
   await new Promise((r) => setTimeout(r, 600));
   const shot = await send('Page.captureScreenshot', { format: 'png' });
-  fs.writeFileSync('D:/naiba-chat/_iso_test2/shots/mediafilter-chips.png', Buffer.from(shot.result.data, 'base64'));
+  fs.writeFileSync(path.join(SHOTS, 'mediafilter-chips.png'), Buffer.from(shot.result.data, 'base64'));
   console.log('SHOT_SAVED');
   ws.close();
 }

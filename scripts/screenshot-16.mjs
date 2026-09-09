@@ -1,5 +1,11 @@
 // 补一张 16 对话设置：找第一个 conversation-item 的 ⚙ 按钮并点击。
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// 从本文件位置派生项目根（禁止硬编码本机盘符路径）。
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const OUT = path.join(ROOT, 'docs', 'manual', 'images');
 const res = await fetch('http://127.0.0.1:9222/json');
 const target = (await res.json())[0];
 const ws = new WebSocket(target.webSocketDebuggerUrl);
@@ -38,6 +44,6 @@ const ok = await sess('Runtime.evaluate', { expression: `
 console.log('click result:', ok.result?.result?.value);
 await sleep(700);
 const r = await sess('Page.captureScreenshot', { format: 'png' });
-fs.writeFileSync('d:/naiba-chat/docs/manual/images/16-conversation-settings.png', Buffer.from(r.result.data, 'base64'));
+fs.writeFileSync(path.join(OUT, '16-conversation-settings.png'), Buffer.from(r.result.data, 'base64'));
 console.log('shot 16 OK');
 process.exit(0);
