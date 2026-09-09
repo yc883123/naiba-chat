@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import mimetypes
 import os
 import secrets
@@ -28,6 +29,7 @@ from naiba.app import NaibaChatApp
 from naiba.config import tool_catalog_entries, tool_group_entries, tool_preset_entries
 from naiba.core.choices import _detect_choice_groups
 from naiba.core.conv_files import _conv_file_allow, _conv_file_open, _conv_file_save
+from naiba.core.diagnostics import ensure_utf8_stdio
 from naiba.core.exceptions import ActiveRunError
 from naiba.core.http_range import content_range_header, parse_byte_range
 from naiba.core.media_types import MIME_BY_EXT
@@ -36,6 +38,8 @@ from naiba.core.paths import path_within
 from naiba.paths import PathContext, default_path_context, static_asset_version
 from naiba.storage.avatars import AVATAR_MAX_BYTES
 from naiba.storage.media import UPLOAD_MAX_BYTES, _uploads_total_bytes
+
+logger = logging.getLogger("naiba.http")
 
 # multipart 上传的传输层兜底上限（文件 80MB + 表单/边界开销）。
 _UPLOAD_BODY_LIMIT = 100 * 1024 * 1024
@@ -1007,7 +1011,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                     remaining -= len(chunk)
         except OSError as exc:
             # 响应头已发出，只能记录（客户端会看到截断的响应）。
-            print(f"[api/file] 读取文件失败：{path} error={exc}")
+            logger.warning("读取文件失败：path=%s error=%s", path, exc)
 
     def _parse_character_card(self, body: dict[str, Any]) -> None:
         self._json(*self.app._parse_character_card(body))
@@ -1466,10 +1470,7 @@ def main_entry(paths: PathContext | None = None, on_app=None) -> None:
     paths = paths or default_path_context()
     os.environ["PYTHONUTF8"] = "1"
     os.environ["PYTHONIOENCODING"] = "utf-8"
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure:
-            reconfigure(encoding="utf-8", errors="replace", line_buffering=True, write_through=True)
+    ensure_utf8_stdio(line_buffering=True, write_through=True)
     parser = argparse.ArgumentParser(description="naiba-chat 局域网对话服务")
     parser.add_argument("--host", default="")
     parser.add_argument("--port", type=int, default=0)

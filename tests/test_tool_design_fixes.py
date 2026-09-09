@@ -171,7 +171,9 @@ class DeterministicEnumerationTests(unittest.TestCase):
         out = core_provider._tool_list_directory(self.ctx, {"path": str(self.tmp)}, None)
         lines = out.splitlines()
         self.assertTrue(lines[0].startswith("FILE "))
-        self.assertIn(str(self.tmp) + "\\a.txt", lines[0])
+        # 生产侧对工作区路径做过 resolve()：CI runner 的 TEMP 是 8.3 短路径
+        # （形如 RUNNER~1），必须同样解析后再比，否则本机过、CI 挂。
+        self.assertIn(str((self.tmp / "a.txt").resolve()), lines[0])
         self.assertIn("\\d.txt", lines[-1])
 
 

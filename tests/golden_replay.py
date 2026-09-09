@@ -57,13 +57,26 @@ def normalize(value, tmp_root: str) -> object:
 
     临时根可能出现 1–4 层反斜杠转义形态（json.dumps 嵌套时逐层翻倍），
     如 NEED_CONFIRM 参数段或 untrusted_tool_result 内的结果 JSON；
-    按转义层级从高到低逐一替换，保证换临时根回放不会误报漂移。
+    另外生产代码会 `resolve()` 路径，而临时根本身可能是 8.3 短名 / junction
+    （CI runner 的 TEMP 就是短名），因此**解析后的形态也要一并替换**。
+    按长度从高到低替换：短前缀先替换会把长路径截断（如 `…\junc` 会吃掉 `…\junc_target`）。
     """
-    tmp_variants = [str(tmp_root), str(tmp_root).replace(":", "：")]
-    for times in (2, 3, 4):
-        raw = str(tmp_root).replace("\\", "\\" * times)
-        tmp_variants.append(raw)
-        tmp_variants.append(raw.replace(":", "："))
+    roots = [str(tmp_root)]
+    try:
+        resolved = str(Path(tmp_root).resolve())
+    except OSError:
+        resolved = ""
+    if resolved and resolved not in roots:
+        roots.append(resolved)
+    variants: set[str] = set()
+    for root in roots:
+        variants.add(root)
+        variants.add(root.replace(":", "："))
+        for times in (2, 3, 4):
+            raw = root.replace("\\", "\\" * times)
+            variants.add(raw)
+            variants.add(raw.replace(":", "："))
+    tmp_variants = sorted(variants, key=len, reverse=True)
     if isinstance(value, str):
         text = value
         for variant in tmp_variants:

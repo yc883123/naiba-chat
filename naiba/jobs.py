@@ -23,10 +23,10 @@ from __future__ import annotations
 from naiba.core.contracts import AppContext
 
 import json
+import logging
 import subprocess
 import threading
 import time
-import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,6 +37,8 @@ from typing import Any, Callable
 from naiba import net as net_io
 from naiba.events import EventBus
 from naiba.tools.providers.core import POWERSHELL_UTF8_PREFIX
+
+logger = logging.getLogger("naiba.jobs")
 
 JOB_TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
 JOB_ACTIVE = {"queued", "running", "waiting", "stopping"}
@@ -106,7 +108,7 @@ class JobRegistry:
         try:
             self.bus.emit(job_id, payload, raise_on_error=False)
         except Exception:
-            traceback.print_exc()
+            logger.exception("Job 事件写入失败：job=%s", job_id)
 
     def _snapshot(self, job: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -162,12 +164,12 @@ class JobRegistry:
         try:
             written = writer.write_back(job)
         except Exception:  # noqa: BLE001 - 写回失败必须记录且不得影响 Job 终态
-            traceback.print_exc()
+            logger.exception("Job 产物写回失败：job=%s", job_id)
             return
         if written:
-            print(
-                f"[job-media] 产物已写回消息：job={job_id} "
-                f"message={written['message_id']} added={written['added']}"
+            logger.info(
+                "Job 产物已写回消息：job=%s message=%s added=%s",
+                job_id, written["message_id"], written["added"],
             )
 
     # ---- 统一接口 ----
@@ -354,7 +356,7 @@ class JobRegistry:
                 if new_id:
                     resumed.append(new_id)
             except Exception:
-                traceback.print_exc()
+                logger.exception("恢复中断 Job 失败：job=%s", job.get("id"))
         return resumed
 
     # ---- 通用 Worker 框架 ----
@@ -374,7 +376,7 @@ class JobRegistry:
             if job and job["status"] not in JOB_TERMINAL:
                 self._finish(job_id, "completed", result={"subagent_job_id": job_id})
         except Exception as exc:
-            traceback.print_exc()
+            logger.exception("子 Agent Job 执行失败：job=%s", job_id)
             self._finish(job_id, "failed", error=str(exc))
 
     def _run_shell(self, job_id: str, spec: JobSpec, cancel: threading.Event) -> None:
@@ -521,7 +523,7 @@ class JobRegistry:
             except json.JSONDecodeError:
                 return body
         except Exception as exc:
-            traceback.print_exc()
+            logger.exception("Job 提交请求失败：submit=%s", submit.get("url") or submit.get("type"))
             return None
 
     def _poll_status(self, poll: dict[str, Any], handle: Any) -> str:
@@ -757,7 +759,7 @@ class JobRegistry:
                 body = json.loads(resp.read(100000).decode("utf-8", errors="replace"))
             return str(body.get("prompt_id") or "")
         except Exception as exc:
-            traceback.print_exc()
+            logger.exception("ComfyUI 提交任务失败：base=%s", base)
             return None
 
     def _comfyui_wait_history(

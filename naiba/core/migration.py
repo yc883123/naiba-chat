@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from naiba.paths import PathContext
+
+logger = logging.getLogger("naiba.migration")
 
 
 def _config_has_providers(path: Path) -> bool:
@@ -146,7 +149,7 @@ def migrate_legacy_data(paths: PathContext) -> dict[str, Any]:
         migrated = _copy_legacy_data(paths.exe_dir)
         report.update(migrated)
     except OSError as exc:
-        print(f"迁移旧数据失败：{exc}")
+        logger.warning("迁移旧数据失败：%s", exc)
     if report["config"] or report["data"]:
         report["migrated"] = True
         report["source"] = str(paths.exe_dir)

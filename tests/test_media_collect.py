@@ -169,13 +169,17 @@ class CollectTruncationTests(_TempCase):
     def test_data_dir_resolved_per_call(self) -> None:
         target = self._make_png("h.png")
         first = self.collector.collect(_run(str(target)), INLINE)["media"][0]
-        self.assertTrue(Path(first["source"]).is_relative_to(self.data_dir / "generated"))
+        # 采集器输出的是 resolve() 后的绝对路径；self.data_dir 在 CI runner 上可能是 8.3 短路径，
+        # 因此两边都解析后再做 is_relative_to（该判断是纯词法比较）。
+        self.assertTrue(
+            Path(first["source"]).resolve().is_relative_to((self.data_dir / "generated").resolve())
+        )
         other = self.root / "data2"
         other.mkdir(parents=True, exist_ok=True)
         self.config.rebind(other)
         second = self.collector.collect(_run(str(target)), INLINE)["media"][0]
         self.assertTrue(
-            Path(second["source"]).is_relative_to(other / "generated"),
+            Path(second["source"]).resolve().is_relative_to((other / "generated").resolve()),
             "data_dir 必须每次调用实时解析（不得闭包捕获装配期值）",
         )
 

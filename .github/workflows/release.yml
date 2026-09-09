@@ -31,7 +31,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          python -m pip install --disable-pip-version-check --upgrade pyinstaller pywebview pystray "mcp==2.1.1"
+          python -m pip install --disable-pip-version-check --upgrade pyinstaller pywebview pystray "mcp==2.1.1" pymupdf python-multipart
           python -m pip install --disable-pip-version-check --upgrade --force-reinstall --no-cache-dir pillow
           python -c "from PIL import Image; print('Pillow', Image.__version__)"
 
@@ -113,7 +113,7 @@ jobs:
             - 会话收藏与侧栏交互：五角星收藏 + 跨工作区「已收藏」分组，重命名/删除并入「⋯」菜单；滚动更顺滑、条目更紧凑、点击会话不再强制置顶。
             - 会话级系统提示词退役：系统提示词统一由 Agent 决定，角色卡导入与快捷提示词套用迁到 Agent 设置页。
             - 顶栏与输入区精简：任务/Skill 计数改为数字文本、MCP 只看状态点颜色；待发送附件改为固定高度的竖直列表（文件名截断、图片预览）。
-            - 稳定性与守门：544 个单元/契约测试 + golden 回放 3 基线 + 真机浏览器冒烟（含本次新增的上下文圆环/提醒 23 项断言）全通过。
+            - 稳定性与守门：550 个单元/契约测试 + golden 回放 3 基线 + 真机浏览器冒烟（含本次新增的上下文圆环/提醒 23 项断言）全通过。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

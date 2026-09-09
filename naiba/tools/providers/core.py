@@ -72,7 +72,9 @@ def _read_roots(
 ) -> list[Path]:
     """读取类工具的可信根：会话工作区 + active Skill 根 + 宿主托管缓存目录
     （uploads/generated——用户上传附件与宿主产物是"用户放进来的"，不属越界）。"""
-    roots = [workspace]
+    # 工作区根统一 resolve()：path_within 是纯词法比较（core/paths.py 约定"调用方先 resolve"），
+    # 调用方若传入未解析的工作区（8.3 短名 / 符号链接 / junction），工作区内的文件会被误判越界。
+    roots = [Path(workspace).resolve()]
     if data_dir is not None:
         for rel in ("uploads", "generated"):
             try:
@@ -698,6 +700,8 @@ def _make_write_policy(ctx: ToolContext) -> Any:
         workspace: Path | None = None,
     ) -> str:
         ws = workspace if workspace is not None else ctx.workspace
+        # 与 _read_roots 同理：path_within 是词法比较，工作区必须先 resolve()（见 _read_roots 注释）
+        ws = Path(ws).resolve()
         path = _resolve_tool_path(ctx, arguments.get("path"), workspace=ws)
         if permission_mode == "auto" and path_within(path, ws):
             return ""

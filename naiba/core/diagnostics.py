@@ -28,6 +28,31 @@ def _cache_debug_enabled() -> bool:
     return bool(CACHE_DEBUG_ON) or os.environ.get("NAIBA_DEBUG_CACHE") == "1"
 
 
+def ensure_utf8_stdio(
+    streams=None, *, line_buffering: bool = False, write_through: bool = False
+) -> None:
+    """把 stdout/stderr 切成 UTF-8（errors="replace"）。
+
+    背景：Windows 英文控制台（cp1252 等）下打印中文会抛 ``UnicodeEncodeError``——
+    源码 ``python server.py`` 的启动横幅、诊断输出会直接崩（GitHub Actions windows
+    runner 实测）。冻结版 ``runw`` 无控制台不受影响；子进程侧另有
+    ``launcher._force_utf8_stdio``（冻结版 Skill 脚本入口）。
+
+    ``line_buffering``/``write_through`` 供命令行主入口开启（日志即时刷出）；
+    库内调用保持默认，避免擅自改动宿主进程的缓冲策略。
+    """
+    for stream in (streams if streams is not None else (sys.stdout, sys.stderr)):
+        try:
+            stream.reconfigure(
+                encoding="utf-8",
+                errors="replace",
+                line_buffering=line_buffering,
+                write_through=write_through,
+            )
+        except (AttributeError, OSError, ValueError):
+            continue
+
+
 def _sanitize_payload(obj: Any, limit: int = 500) -> Any:
     """把 payload 里的超长字符串（通常是 base64 图片）压成占位符，便于逐字段比对。"""
     if isinstance(obj, str):

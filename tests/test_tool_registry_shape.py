@@ -615,7 +615,11 @@ class VisionEntryUnificationTests(unittest.TestCase):
         )
         reason = executor._confirmation_reason("read_file", {"path": str(assembly_ws / "other.txt")}, [])
         self.assertIn("工作区外", reason)
-        self.assertIn(str(assembly_ws / "other.txt"), reason, "确认理由应显示越界路径（装配区现不属于运行工作区）")
+        # 执行器对 workspace 做过 resolve()；CI runner 的 TEMP 为 8.3 短路径，两侧同解析后再比
+        self.assertIn(
+            str((assembly_ws / "other.txt").resolve()), reason,
+            "确认理由应显示越界路径（装配区现不属于运行工作区）",
+        )
 
     def test_policy_treats_managed_uploads_as_trusted(self) -> None:
         """回归：用户上传附件（宿主 data/uploads、generated）读取免确认（含 confirm 模式）。

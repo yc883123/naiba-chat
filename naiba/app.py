@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import shutil
 import sqlite3
 import sys
@@ -56,6 +57,8 @@ from naiba.tools.executor import ToolExecutor
 from naiba.tools.registry import build_tool_registry
 from naiba.updater import UpdateManager
 from naiba.vision.runtime import VisionRouter
+
+logger = logging.getLogger("naiba.app")
 
 
 class NaibaChatApp:
@@ -148,7 +151,7 @@ class NaibaChatApp:
                 if str(resolved) not in skills_dirs:
                     skills_dirs.append(str(resolved))
             except ValueError:
-                print(f"已忽略不安全的 Skill 目录：{raw}")
+                logger.warning("已忽略不安全的 Skill 目录：%s", raw)
         self.catalog = SkillCatalog(
             [Path(path) for path in skills_dirs],
             base_dir=self._paths.app_dir,
@@ -320,7 +323,7 @@ class NaibaChatApp:
             try:
                 self.mcp.start()  # 置 _persistent=True 并启动所有连接
             except Exception as exc:  # 单个服务启动失败不应中断其他服务
-                print(f"MCP 后台启动部分失败：{exc}")
+                logger.warning("MCP 后台启动部分失败：%s", exc)
             self.mcp.retry_unconnected_until_stopped()
         threading.Thread(target=_worker, name="naiba-mcp-background", daemon=True).start()
 

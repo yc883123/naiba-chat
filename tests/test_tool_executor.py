@@ -57,7 +57,8 @@ class ToolExecutorConfirmTests(unittest.TestCase):
         self.assertIn("写入文件", parts[2], "确认描述缺失")
         # 生成端对确认理由做了半角冒号→全角归一（防盘符截断）；还原后应含完整路径
         normalized_desc = parts[2].replace("：", ":")
-        self.assertIn(str(target), normalized_desc, "确认描述被盘符冒号截断（描述应含完整路径）")
+        # 执行器构造时对 workspace 做过 resolve()（executor.py:38），比较前同样解析
+        self.assertIn(str(target.resolve()), normalized_desc, "确认描述被盘符冒号截断（描述应含完整路径）")
 
 
 if __name__ == "__main__":
