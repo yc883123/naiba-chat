@@ -113,6 +113,9 @@ venv.bak/
 # CodeBuddy
 .codebuddy/
 
+# WorkBuddy 本地 Agent 记忆（本机工作区数据，不入仓库）
+.workbuddy/
+
 # Project specific
 _exe_stderr.txt
 _run_server.py
@@ -177,5 +180,5 @@ _hl_test.js
 .playwright-cli/
 deepseek-harness/
 dsh-vision-router/
-# �Ự�����Բ�������ʱ�ű���ɳ�价��������ύ��
+# 会话级测试补丁与临时脚本（沙箱环境产物，勿提交）
 .tmptest/
