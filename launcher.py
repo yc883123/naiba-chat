@@ -228,6 +228,19 @@ class Launcher:
         start_kwargs = {}
         if icon_path.is_file():
             start_kwargs["icon"] = str(icon_path)
+        # WebView2 持久化 profile：pywebview 的 private_mode 默认 True，会把 profile 放进
+        # 临时目录并在进程退出时整个删除 —— 前端存在 localStorage 的偏好（侧栏宽度、
+        # 文件面板宽度、顶栏 Skill 勾选、交互模式）因此每次启动都被重置。
+        # 目录放在 app_dir 下（冻结版 = %LOCALAPPDATA%\NaibaChat\webview），**不放进 data_dir**：
+        # 免得被数据目录迁移/备份当成用户数据一起搬走。
+        try:
+            storage_dir = srv.APP.paths.app_dir / "webview"
+            storage_dir.mkdir(parents=True, exist_ok=True)
+            start_kwargs["private_mode"] = False
+            start_kwargs["storage_path"] = str(storage_dir)
+        except OSError as exc:
+            # 目录不可写就退回私有模式：界面偏好会重置，但不影响启动与功能。
+            print(f"[launcher] WebView2 持久化目录不可用，回退私有模式：{exc}", file=sys.stderr)
         try:
             webview.start(**start_kwargs)
         finally:

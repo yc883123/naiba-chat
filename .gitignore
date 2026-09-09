@@ -44,6 +44,9 @@ Thumbs.db
 *.lock
 data/
 
+# WebView2 持久化 profile（源码模式落在仓库根 webview/，冻结版落在 %LOCALAPPDATA%\NaibaChat\webview）
+webview/
+
 # Build artifacts
 dist/
 build/
