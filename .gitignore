@@ -198,7 +198,7 @@ verify/*
 !verify/attachment_only_smoke.py
 !verify/backfill_media.py
 !verify/browser_smoke.cjs
-!verify/cleanup_tmptest.py
+!verify/cleanup_verify.py
 !verify/context_menu_smoke.cjs
 !verify/dup_ids.py
 !verify/esm_cross_assign.py
@@ -237,6 +237,8 @@ verify/*
 !verify/skill_prompt_check.mjs
 !verify/starter_reasoning_smoke.cjs
 !verify/tdz_check.py
+!verify/tool_groups_smoke.cjs
+!verify/tool_groups_smoke.py
 !verify/topbar_smoke.cjs
 !verify/upload_smoke.py
 !verify/usage_rate_smoke.cjs

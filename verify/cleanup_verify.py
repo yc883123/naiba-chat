@@ -49,6 +49,8 @@ KEEP = {
     "attachment_only_smoke.py",
     # 上下文圆环/提醒冒烟（§六 已登记）
     "ring_usage_smoke.py", "ring_usage_smoke.cjs",
+    # 工具分类改版冒烟（§六 已登记；Python 自编排 + Node 检查）
+    "tool_groups_smoke.py", "tool_groups_smoke.cjs",
     # 发布清单同步自检（只读）
     "_release_check.py",
     # 本脚本自身

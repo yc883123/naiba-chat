@@ -7,12 +7,14 @@
 
 from __future__ import annotations
 
-import json, os, re, secrets, threading, time, urllib.parse, uuid
+import json, logging, os, re, secrets, threading, time, urllib.parse, uuid
 from pathlib import Path
 from typing import Any
 
 from naiba.core.paths import path_within
 from naiba.paths import PathContext
+
+logger = logging.getLogger("naiba.config")
 
 
 def validate_skills_dir(resolved: Path, *, app_dir: Path, public_dir: Path, data_dir: Path) -> None:
@@ -152,28 +154,40 @@ def built_in_agent_ids() -> set[str]:
 
 
 # ---- 工具目录（Agent 编辑页的可选工具集）----
-# 按职责分组；每个工具的 model_target 标注它是给文本模型（走视觉车道）还是给多模态
-# 视觉模型（vision_analyze 装载形态直接看图）用的；default_selected 决定新建 Agent 的默认勾选。
+# 分类是**单一维度**（作用对象 + 风险），共 6 组：读取 / 写入 / 执行 / 联网 / 视觉 / 任务与扩展。
+# 动态注册的 MCP 工具（mcp__<server>__<tool>）统一归入「联网与外部服务」，并按服务器名做
+# 二级分组（见 tool_group_entries 的 subgroups）；分类说明与风险徽标见 TOOL_GROUP_INFO。
+# 改名或合并分类时，TOOL_PRESETS 里引用的工具名要一起核对——守门见
+# tests/test_agent_cards.py::ToolGroupCatalogTests。
 _ALIAS_MAIN = {
     "read": "read_file", "write": "write_file", "edit": "edit_file",
     "grep": "search_files",
 }
+_MCP_GROUP = "联网与外部服务"
 _TOOL_GROUP = {
-    "read_file": "文件读取/搜索", "list_directory": "文件读取/搜索", "search_files": "文件读取/搜索",
-    "write_file": "文件写入/编辑", "edit_file": "文件写入/编辑",
-    "pwsh": "命令执行",
-    "run_skill_script": "Skill 脚本",
-    "http_request": "网络", "web_search": "网络",
-    "register_mcp": "MCP",
-    "run_in_background": "后台/Job/子任务", "job_output": "后台/Job/子任务", "job_status": "后台/Job/子任务",
-    "job_wait": "后台/Job/子任务", "job_kill": "后台/Job/子任务", "subagent": "后台/Job/子任务",
-    "todo_write": "后台/Job/子任务",
-    "recall_history": "会话与记忆",
-    "comfyui_prepare_workflow": "ComfyUI", "comfyui_batch": "ComfyUI",
-    "install_skill": "能力/Skill 管理", "unpack_skill_archive": "能力/Skill 管理", "inspect_installed_skill": "能力/Skill 管理",
-    "vision_analyze": "视觉", "vision_image_ops": "视觉",
-    "read_pdf": "文档（PDF）", "pdf_render_pages": "文档（PDF）", "pdf_zoom_region": "文档（PDF）",
+    "read_file": "读取与检索", "list_directory": "读取与检索", "search_files": "读取与检索",
+    "recall_history": "读取与检索",
+    "read_pdf": "读取与检索", "pdf_render_pages": "读取与检索", "pdf_zoom_region": "读取与检索",
+    "write_file": "文件写入与编辑", "edit_file": "文件写入与编辑",
+    "pwsh": "命令与脚本执行", "run_skill_script": "命令与脚本执行",
+    "http_request": _MCP_GROUP, "web_search": _MCP_GROUP,
+    "comfyui_prepare_workflow": _MCP_GROUP, "comfyui_batch": _MCP_GROUP,
+    "register_mcp": _MCP_GROUP,
+    "vision_analyze": "视觉与图片", "vision_image_ops": "视觉与图片",
+    "run_in_background": "任务与扩展", "job_output": "任务与扩展", "job_status": "任务与扩展",
+    "job_wait": "任务与扩展", "job_kill": "任务与扩展", "subagent": "任务与扩展",
+    "todo_write": "任务与扩展",
+    "install_skill": "任务与扩展", "unpack_skill_archive": "任务与扩展",
+    "inspect_installed_skill": "任务与扩展",
 }
+
+
+def _mcp_subgroup(name: str) -> str:
+    """mcp__<server>__<tool> → 二级分组名（服务器）；非 MCP 工具返回空串。"""
+    if not name.startswith("mcp__"):
+        return ""
+    server, sep, _tool = name[len("mcp__"):].partition("__")
+    return server if sep else ""
 # 模型能力映射已随视觉单入口重构移除（vision_analyze 按会话能力换形态，不再按模型裁剪工具集）。
 _DEFAULT_SELECTED_TOOLS = frozenset({
     "read_file", "write_file", "list_directory", "search_files", "edit_file",
@@ -183,7 +197,7 @@ _DEFAULT_SELECTED_TOOLS = frozenset({
 
 
 def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """从 tool_registry schemas 构建 Agent 编辑页的工具目录（不显示 5 个别名）。"""
+    """从 tool_registry schemas 构建 Agent 编辑页的工具目录（不显示 4 个 Harness 别名）。"""
     known = {str(spec.get("name") or ""): spec for spec in schemas if isinstance(spec, dict)}
     entries: list[dict[str, Any]] = []
     for name in known:
@@ -195,22 +209,30 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
         entries.append({
             "name": name,
             "description": first_line[:120],
-            "group": "MCP" if name.startswith("mcp__") else _TOOL_GROUP.get(name, "其他"),
+            "group": _TOOL_GROUP.get(name, _MCP_GROUP if name.startswith("mcp__") else "其他"),
+            "subgroup": _mcp_subgroup(name),
             "model_target": "any",
             "default_selected": name in _DEFAULT_SELECTED_TOOLS,
             "alias_of": _ALIAS_MAIN.get(name),
         })
-    # 端到端顺序：把前端呈现顺序稳定化，避免逐轮随机
+    # 端到端顺序：与 TOOL_GROUP_INFO 的分组顺序一致，让每组内工具顺序稳定（避免逐轮随机）
     order = (
-        "read_file", "write_file", "list_directory", "search_files", "edit_file",
-        "pwsh", "run_skill_script", "http_request", "web_search",
-        "register_mcp",
-        "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
-        "todo_write", "recall_history",
-        "comfyui_prepare_workflow", "comfyui_batch",
-        "install_skill", "unpack_skill_archive", "inspect_installed_skill",
-        "vision_analyze", "vision_image_ops",
+        # 读取与检索
+        "read_file", "list_directory", "search_files", "recall_history",
         "read_pdf", "pdf_render_pages", "pdf_zoom_region",
+        # 文件写入与编辑
+        "write_file", "edit_file",
+        # 命令与脚本执行
+        "pwsh", "run_skill_script",
+        # 联网与外部服务
+        "http_request", "web_search", "register_mcp",
+        "comfyui_prepare_workflow", "comfyui_batch",
+        # 视觉与图片
+        "vision_analyze", "vision_image_ops",
+        # 任务与扩展
+        "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+        "todo_write",
+        "install_skill", "unpack_skill_archive", "inspect_installed_skill",
     )
     index = {name: i for i, name in enumerate(order)}
     entries.sort(key=lambda item: (index.get(item["name"], 999), item["name"]))
@@ -218,49 +240,83 @@ def tool_catalog_entries(schemas: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 # ---- 工具分类说明（Agent 编辑页：给小白看的分类级解释）----
-# (分类名, 一句话说明)。顺序即前端展示顺序；未列出的分组自动追加到末尾。
-TOOL_GROUP_INFO: tuple[tuple[str, str], ...] = (
-    ("文件读取/搜索", "查看、搜索你电脑里的文件。只读，不会改动任何内容"),
-    ("文件写入/编辑", "新建文件、修改已有文件。会产生真实改动"),
-    ("命令执行", "在本机运行命令（PowerShell）。能力最强，也最需要留意"),
-    ("视觉", "图片解读：描述、定位、检测、OCR、取色、裁剪、对比；多模态模型可直接看图"),
-    ("Skill 脚本", "运行 Skill 自带的脚本，用现成流程干活"),
-    ("网络", "联网搜索、请求接口、抓取网页，获取训练数据之外的信息"),
-    ("会话与记忆", "检索自己过去与用户的对话记录。只读，帮你回忆此前讨论过的内容"),
-    ("MCP", "连接并调用 MCP 服务器提供的外部能力（含各服务动态注册的 mcp__ 工具）"),
-    ("后台/Job/子任务", "后台长任务、子 Agent、任务清单与报告。适合批量、耗时的活"),
-    ("ComfyUI", "联动本机 ComfyUI：准备工作流、批量出图"),
-    ("能力/Skill 管理", "安装、解包、查看 Skill，让 Agent 自己扩展能力"),
-    ("文档（PDF）", "解析 PDF 文档：提取文本层、渲染页图、局部高清放大。只读，不改原文件"),
-    ("其他", "未归类工具"),
+# 每项：name 分类名 / desc 一句话说明 / badge 风险徽标 / tone 徽标配色（safe|warn|danger|info）。
+# 顺序即前端展示顺序；未列出的分组自动追加到末尾。
+TOOL_GROUP_INFO: tuple[dict[str, str], ...] = (
+    {"name": "读取与检索", "desc": "看文件、搜内容、读 PDF、翻历史记录。只读，不改动任何东西",
+     "badge": "只读", "tone": "safe"},
+    {"name": "文件写入与编辑", "desc": "新建、改写、精确替换文件内容。会产生真实改动",
+     "badge": "会改文件", "tone": "warn"},
+    {"name": "命令与脚本执行", "desc": "在本机运行 PowerShell 与 Skill 脚本。能力最强，也最需要留意",
+     "badge": "高风险", "tone": "danger"},
+    {"name": "联网与外部服务", "desc": "联网搜索、抓网页、调接口；含 ComfyUI 直连与 MCP 外部能力（按服务器分组）",
+     "badge": "联网", "tone": "info"},
+    {"name": "视觉与图片", "desc": "图片解读：描述、定位、检测、OCR、取色、裁剪、对比；多模态模型可直接看图",
+     "badge": "会写产物", "tone": "warn"},
+    {"name": "任务与扩展", "desc": "后台长任务、子 Agent、任务清单；安装与检查 Skill，让 Agent 自己扩展能力",
+     "badge": "会改动", "tone": "warn"},
+    {"name": "其他", "desc": "未归类工具", "badge": "", "tone": "info"},
 )
 
 
 def tool_group_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """按 TOOL_GROUP_INFO 的顺序输出分类（含说明与该分类下的工具名）。"""
+    """按 TOOL_GROUP_INFO 的顺序输出分类。
+
+    每组返回：
+    - tools：该分类下全部工具名（整组全选与计数用，含二级分组里的）；
+    - direct_tools：不属于任何二级分组的工具名（前端先渲染这一批）；
+    - subgroups：[{name, tools}]，按工具目录顺序聚合（MCP 动态工具未登记在 order 表里，
+      组内即按名字排序；当前用于 MCP 按服务器分组）。
+    """
     by_group: dict[str, list[str]] = {}
+    subgroup_of: dict[str, str] = {}
     for item in entries:
-        by_group.setdefault(str(item.get("group") or "其他"), []).append(str(item.get("name") or ""))
-    known_desc = {name: desc for name, desc in TOOL_GROUP_INFO}
+        name = str(item.get("name") or "")
+        by_group.setdefault(str(item.get("group") or "其他"), []).append(name)
+        sub = str(item.get("subgroup") or "")
+        if sub:
+            subgroup_of[name] = sub
+    known = {str(info["name"]): info for info in TOOL_GROUP_INFO}
+
+    def _build(name: str, info: dict[str, str]) -> dict[str, Any]:
+        tools = by_group[name]
+        buckets: dict[str, list[str]] = {}
+        for tool in tools:
+            sub = subgroup_of.get(tool)
+            if sub:
+                buckets.setdefault(sub, []).append(tool)
+        return {
+            "name": name,
+            "desc": str(info.get("desc") or ""),
+            "badge": str(info.get("badge") or ""),
+            "tone": str(info.get("tone") or "info"),
+            "tools": tools,
+            "direct_tools": [tool for tool in tools if tool not in subgroup_of],
+            "subgroups": [{"name": sub, "tools": members} for sub, members in buckets.items()],
+        }
+
     groups: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for name, desc in TOOL_GROUP_INFO:
+    for info in TOOL_GROUP_INFO:
+        name = str(info["name"])
         if name not in by_group:
             continue
         seen.add(name)
-        groups.append({"name": name, "desc": desc, "tools": by_group[name]})
+        groups.append(_build(name, info))
     # 兜底：工具目录里出现了未登记的新分组时追加到末尾，不至于丢工具。
     for name in sorted(by_group):
         if name in seen:
             continue
-        groups.append({"name": name, "desc": known_desc.get(name, ""), "tools": by_group[name]})
+        groups.append(_build(name, known.get(name, {"name": name, "desc": "", "badge": "", "tone": "info"})))
     return groups
 
 
 # ---- 工具集预设（Agent 编辑页：一键选中一批工具）----
 # include 支持两种写法：具体工具名，或 "group:分类名"（"group:*" 表示所有分类）。
-# exclude 用于从已包含的分类里再剔除个别工具。新增工具只要落进已有分类，
-# 就会自动被对应预设收进去，不需要逐个维护工具名。
+# exclude 用于从已包含的分类里再剔除个别工具。
+# 注意：分类收敛为 6 组后，组的粒度比单个预设的意图更粗（「联网与外部服务」同时含 ComfyUI
+# 与 MCP 动态工具、「任务与扩展」含 Skill 管理），因此**除 group:* 外一律显式列工具名**，
+# 保持每个预设的语义精确。写错的组名/工具名由 resolve_tool_preset 告警 + 守门测试兜住。
 TOOL_PRESETS: tuple[dict[str, Any], ...] = (
     {
         "id": "minimal",
@@ -286,8 +342,9 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "tagline": "查资料出报告",
         "desc": "标准能力 + 联网全套 + 任务清单与报告产出，适合查资料、做调研、写文档。",
         "include": [
-            "group:文件读取/搜索", "group:文件写入/编辑", "group:Skill 脚本", "group:网络",
-            "group:会话与记忆",
+            "read_file", "list_directory", "search_files", "recall_history",
+            "write_file", "edit_file",
+            "run_skill_script", "http_request", "web_search",
             "todo_write", "vision_analyze",
         ],
     },
@@ -297,8 +354,11 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "tagline": "长任务并行",
         "desc": "标准能力 + 后台任务/子 Agent 全套，适合一次跑很多、跑很久的活。",
         "include": [
-            "group:文件读取/搜索", "group:文件写入/编辑", "group:命令执行", "group:Skill 脚本",
-            "group:网络", "group:后台/Job/子任务", "vision_analyze",
+            "read_file", "list_directory", "search_files",
+            "write_file", "edit_file",
+            "pwsh", "run_skill_script", "http_request", "web_search",
+            "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+            "todo_write", "vision_analyze",
         ],
     },
     {
@@ -307,9 +367,12 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "tagline": "批量出图",
         "desc": "标准能力 + ComfyUI 工作流与批量出图 + 后台任务，适合批量生成图片/视频素材。走 HTTP 通道直连本机 ComfyUI，不启用任何 MCP 连接。",
         "include": [
-            "group:文件读取/搜索", "group:文件写入/编辑", "group:命令执行", "group:Skill 脚本",
-            "group:ComfyUI", "group:后台/Job/子任务", "vision_analyze", "http_request",
-            "web_search",
+            "read_file", "list_directory", "search_files",
+            "write_file", "edit_file",
+            "pwsh", "run_skill_script",
+            "comfyui_prepare_workflow", "comfyui_batch",
+            "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+            "todo_write", "vision_analyze", "http_request", "web_search",
         ],
         "exclude_mcp": True,
     },
@@ -324,11 +387,17 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
 
 
 def resolve_tool_preset(preset: dict[str, Any], entries: list[dict[str, Any]]) -> list[str]:
-    """把一个预设展开成具体工具名列表（按工具目录顺序返回）。"""
+    """把一个预设展开成具体工具名列表（按工具目录顺序返回）。
+
+    引用了不存在的分类名或工具名时**记录告警**而非静默丢弃——分类改名漏改预设会让
+    「一键套用」悄悄少选一批工具，属于难察觉的错配（守门见 tests/test_agent_cards.py）。
+    """
     by_group: dict[str, list[str]] = {}
     for item in entries:
         by_group.setdefault(str(item.get("group") or "其他"), []).append(str(item.get("name") or ""))
+    known_names = {str(item.get("name") or "") for item in entries}
     selected: set[str] = set()
+    unknown: list[str] = []
     for raw in preset.get("include") or []:
         item = str(raw)
         if item.startswith("group:"):
@@ -336,12 +405,24 @@ def resolve_tool_preset(preset: dict[str, Any], entries: list[dict[str, Any]]) -
             if group == "*":
                 for names in by_group.values():
                     selected.update(names)
+            elif group in by_group:
+                selected.update(by_group[group])
             else:
-                selected.update(by_group.get(group, []))
-        else:
+                unknown.append(item)
+        elif item in known_names:
             selected.add(item)
+        else:
+            unknown.append(item)
     for raw in preset.get("exclude") or []:
-        selected.discard(str(raw))
+        item = str(raw)
+        if item not in known_names:
+            unknown.append(f"exclude:{item}")
+        selected.discard(item)
+    if unknown:
+        logger.warning(
+            "工具预设 %s 引用了不存在的分组/工具：%s（当前分组：%s）",
+            preset.get("id"), "、".join(unknown), "、".join(sorted(by_group)),
+        )
     # exclude_mcp：预设声明“不启用 MCP 通道”时，无论 include 怎么展开，都剔除
     # 动态 MCP 工具（mcp__<server>__<tool>）与 MCP 网关入口（register_mcp），
     # 防止将来新增 MCP 服务/分类后自动污染本预设。

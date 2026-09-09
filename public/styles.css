@@ -1396,6 +1396,47 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .agent-tool-group .permission-grid { padding: 8px 10px 10px; border-top: 1px solid var(--line); background: var(--surface); }
 .agent-tool-group.collapsed .permission-grid { display: none; }
 
+/* ── 工具分类改版（6 组 · 风险徽标 · MCP 二级分组 · 搜索框）──
+   分类收敛为「作用对象 + 风险」单一维度；说明与徽标由后端 TOOL_GROUP_INFO 下发。 */
+.tool-filter-row { padding: 8px 10px 0; }
+.tool-filter-input {
+  width: 100%; min-height: 32px; padding: 0 10px; border: 1px solid var(--line-strong);
+  border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 12.5px;
+}
+.tool-filter-input:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.tool-scope-empty { margin: 0; padding: 14px 10px; color: var(--muted); font-size: 12px; text-align: center; }
+
+/* 分类名 + 风险徽标同排（徽标随标题走，不额外占分组头的列） */
+.group-title { display: inline-flex; align-items: center; gap: 6px; }
+.group-badge {
+  font-style: normal; font-size: 10.5px; font-weight: 500; line-height: 1.7;
+  padding: 0 6px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--surface-2); color: var(--muted); white-space: nowrap;
+}
+.group-badge[data-tone="safe"] { border-color: var(--success-soft); background: var(--success-soft); color: var(--success); }
+.group-badge[data-tone="warn"] { border-color: var(--warning-soft); background: var(--warning-soft); color: var(--warning); }
+.group-badge[data-tone="danger"] { border-color: var(--danger-soft); background: var(--danger-soft); color: var(--danger); }
+.group-badge[data-tone="info"] { border-color: var(--accent-soft); background: var(--accent-soft); color: var(--accent); }
+
+/* 展开区容器：单层网格，或"平铺工具 + 二级分组"两种形态 */
+.agent-tool-group-body { background: var(--surface); }
+.agent-tool-group.collapsed .agent-tool-group-body { display: none; }
+
+/* 二级分组（MCP 按服务器）：服务器名 + 该服务器的全选框与计数 */
+.tool-subgroup { border-top: 1px solid var(--line); }
+.tool-subgroup .permission-grid { border-top: 0; }
+.tool-subgroup-head { display: flex; align-items: center; gap: 8px; padding: 9px 10px 0; }
+.tool-subgroup-head .subgroup-select-all {
+  width: 16px; height: 16px; margin: 0; padding: 0; border: 0; flex: none;
+  accent-color: var(--accent); cursor: pointer;
+}
+.subgroup-title { font-size: 12px; font-weight: 600; color: var(--text); }
+.subgroup-count { font-size: 11px; color: var(--muted); }
+
+/* 搜索结果视图：头部三列（标题 · 提示 · 计数），不可折叠 */
+.agent-tool-group-head.search-head { grid-template-columns: max-content minmax(0, 1fr) auto; cursor: default; }
+.tool-group-tag { font-style: normal; font-size: 10.5px; color: var(--muted); }
+
 @media (max-width: 520px) {
   .tool-preset-select, .tool-template-name { flex-basis: 100%; max-width: none; }
   .agent-tool-group-head { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; gap: 6px; }

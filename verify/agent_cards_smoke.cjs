@@ -92,7 +92,8 @@ async function listSnapshot(page) {
       const descRect = desc.getBoundingClientRect();
       const countRect = count.getBoundingClientRect();
       return {
-        title: title.textContent.trim(),
+        title: title.childNodes[0]?.textContent.trim() || '',
+        badge: head.querySelector('.group-badge')?.textContent.trim() || '',
         desc: desc.textContent.trim(),
         sameLine: Math.abs(titleRect.top - descRect.top) < 6 && descRect.left >= titleRect.right - 2,
         descRightOfTitle: descRect.left >= titleRect.right - 2,
@@ -117,7 +118,8 @@ async function listSnapshot(page) {
       groupsNotSingleLine: groupInfo.filter((item) => !item.sameLine).map((item) => item.title),
       groupsWithoutDesc: groupInfo.filter((item) => !item.desc).map((item) => item.title),
       groupsCountMisplaced: groupInfo.filter((item) => !item.countRightOfDesc).map((item) => item.title),
-      visionGroup: groupInfo.find((item) => item.title === '视觉') || null,
+      visionGroup: groupInfo.find((item) => item.title === '视觉与图片') || null,
+      badges: groupInfo.map((item) => item.badge),
     };
   });
 }
@@ -238,11 +240,12 @@ async function waitForCardCount(page, expected, timeout = 15000) {
       JSON.stringify({ notSingleLine: lists.groupsNotSingleLine, countMisplaced: lists.groupsCountMisplaced }));
     check('每个分组都有小字说明',
       lists.groupsWithoutDesc.length === 0, JSON.stringify(lists.groupsWithoutDesc));
-    check('视觉分组紧跟命令执行且带说明',
-      Boolean(lists.visionGroup)
-      && lists.groupTitles.indexOf('视觉') === lists.groupTitles.indexOf('命令执行') + 1
-      && Boolean(lists.visionGroup.desc),
+    check('视觉分组存在且带说明（分类收敛为「视觉与图片」）',
+      Boolean(lists.visionGroup) && Boolean(lists.visionGroup.desc),
       JSON.stringify({ order: lists.groupTitles, vision: lists.visionGroup }));
+    check('每个分组都带风险徽标',
+      lists.badges.length === lists.groups && lists.badges.every((badge) => badge),
+      JSON.stringify(lists.badges));
     const expand = await page.evaluate(() => {
       const group = document.querySelector('#agentToolScope .agent-tool-group');
       const head = group.querySelector('.agent-tool-group-head');

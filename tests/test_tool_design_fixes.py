@@ -259,11 +259,11 @@ class RunSkillScriptEncodingTests(unittest.TestCase):
         script = tmp / "scripts" / "echo_arg.py"
         script.write_text("import sys\nprint(sys.argv[1])\n", encoding="utf-8")
         ctx = _ctx(tmp)
-        active = [{"name": "批量生成30s_h3_nsfw_i2v提示词", "id": "skill-x", "root": str(tmp), "path": str(tmp)}]
+        active = [{"name": "批量生成提示词", "id": "skill-x", "root": str(tmp), "path": str(tmp)}]
         result = core_provider._tool_run_skill_script(
             ctx,
             {
-                "skill": "批量生成30s_h3_nsfw_i2v提示词",
+                "skill": "批量生成提示词",
                 "script": "scripts/echo_arg.py",
                 "args": [r"C:\Users\user\Desktop\临时提示词\_pending_entry.json"],
             },

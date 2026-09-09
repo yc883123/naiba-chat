@@ -74,6 +74,8 @@ export const state = {
   // 界面上按“全选”展示，但只要用户没动过就仍以空数组保存，避免被固化成死列表。
   agentFormUnrestricted: false,
   agentFormScopeTouched: false,
+  // 工具集搜索框关键词（Agent 表单打开时复位）：非空时工具列表切成平铺搜索结果视图。
+  agentToolFilter: '',
   // 自定义工具模板：把某个自定义组合存成命名模板（localStorage 全局持久化），
   // 之后在任意 Agent 表单里点一下模板芯片即可一键复刻。
   toolTemplates: [],

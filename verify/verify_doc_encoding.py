@@ -52,7 +52,7 @@ checks = {
     "§六 检查器 69 文件": "（69 文件 0 候选）" in doc,
     "§六 不再提 verify_split_merge": "verify_split_merge" not in doc,
     "§六 补工具卡片检查": "_check_tool_cards_compact.cjs" in doc,
-    "§六 550 用例": "（550 用例，" in doc,
+    "§六 555 用例": "（555 用例，" in doc,
     "§8.8 路径纪律": "### 8.8 路径纪律：禁止本机绝对路径" in doc,
     "§六 路径守门": "test_no_absolute_paths" in doc,
     "§3.4 发送前判定": "pendingContextWarning" in doc,
@@ -70,6 +70,9 @@ checks = {
     "§8.1 链含第 9 步": "9. 会话收尾（用户表示结束会话时）" in doc,
     "§8.7 会话收尾清理": "### 8.7 会话收尾清理" in doc,
     "§8.7 指向一键脚本": "verify\\cleanup_verify.py" in doc,
+    "§3.3 工具分类 6 组": "6 组单一维度分类" in doc,
+    "§3.4 风险徽标": "group-badge" in doc,
+    "§六 工具分类冒烟": "tool_groups_smoke.py" in doc,
 }
 readme = pathlib.Path("README.md").read_text(encoding="utf-8")
 checks["README 无 public/app.js"] = "public/app.js" not in readme
@@ -79,6 +82,7 @@ checks[".gitignore 含 .workbuddy/"] = "\n.workbuddy/\n" in ignore
 checks[".gitignore 注释无乱码"] = "验证脚本目录" in ignore
 checks[".gitignore 默认忽略 verify 产物"] = "\nverify/*\n" in ignore
 checks[".gitignore 放行可复用脚本"] = "\n!verify/scan_undef_all.py\n" in ignore
+checks[".gitignore 放行工具分类冒烟"] = "\n!verify/tool_groups_smoke.cjs\n" in ignore
 checks["§六 目录分工表"] = "**目录分工（`tests/` vs `verify/`）**" in doc
 checks["无 .tmptest 残留"] = ".tmptest" not in doc
 

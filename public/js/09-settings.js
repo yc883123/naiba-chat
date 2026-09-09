@@ -912,6 +912,10 @@ export function showAgentForm(agent = null) {
   // 界面上按“全选”展示，但只要用户没动过勾选就仍以空数组保存，避免被固化成死列表。
   state.agentFormUnrestricted = Boolean(agent) && !state.agentFormToolScope.length;
   state.agentFormScopeTouched = false;
+  // 搜索框每次打开表单复位（否则会残留上一次的关键词，只看到过滤后的工具）。
+  state.agentToolFilter = '';
+  const toolFilter = $('#agentToolFilter');
+  if (toolFilter) toolFilter.value = '';
   // 表单每次打开由 renderAgentToolPicker 重建预设下拉框与模板行；
   // 「存为模板」控件随下方勾选实时显隐（自定义组合时出现）。
   renderAgentSkillPicker();
@@ -1225,25 +1229,40 @@ export function renderUnknownToolsHint() {
 export function setToolGroupCollapsed(groupEl, collapsed) {
   if (!groupEl) return;
   groupEl.classList.toggle('collapsed', collapsed);
-  const grid = groupEl.querySelector('.permission-grid');
-  if (grid) grid.hidden = collapsed;
+  // 展开区统一包在 .agent-tool-group-body 里（单层网格，或"平铺 + MCP 二级分组"两种形态）。
+  const body = groupEl.querySelector('.agent-tool-group-body');
+  if (body) body.hidden = collapsed;
 }
 
 export function toggleToolGroup(groupEl) {
   setToolGroupCollapsed(groupEl, !groupEl.classList.contains('collapsed'));
 }
 
+// 二级分组（当前用于 MCP：按服务器聚合）的全选框与计数，口径与分类级完全一致。
+function updateSubgroupSelectAll(subEl) {
+  const all = subEl.querySelector('input.subgroup-select-all');
+  if (!all) return;
+  const cbs = [...subEl.querySelectorAll('.permission-grid input[type="checkbox"]')];
+  const selected = cbs.filter((cb) => state.agentFormToolScope.includes(cb.value));
+  all.checked = cbs.length > 0 && selected.length === cbs.length;
+  all.indeterminate = cbs.length > 0 && selected.length > 0 && selected.length < cbs.length;
+  const count = subEl.querySelector('.subgroup-count');
+  if (count) count.textContent = `${selected.length}/${cbs.length}`;
+}
+
 export function updateGroupSelectAll(groupEl) {
   if (!groupEl) return;
   const all = groupEl.querySelector('input.group-select-all');
-  if (!all) return;
-  const toolCbs = [...groupEl.querySelectorAll('.permission-grid input[type="checkbox"]')];
-  const selected = toolCbs.filter((cb) => state.agentFormToolScope.includes(cb.value));
-  all.checked = toolCbs.length > 0 && selected.length === toolCbs.length;
-  // 半选态：该分类下只有部分工具被勾选。
-  all.indeterminate = toolCbs.length > 0 && selected.length > 0 && selected.length < toolCbs.length;
-  const count = groupEl.querySelector('.group-count');
-  if (count) count.textContent = `${selected.length}/${toolCbs.length}`;
+  if (all) {
+    const toolCbs = [...groupEl.querySelectorAll('.permission-grid input[type="checkbox"]')];
+    const selected = toolCbs.filter((cb) => state.agentFormToolScope.includes(cb.value));
+    all.checked = toolCbs.length > 0 && selected.length === toolCbs.length;
+    // 半选态：该分类下只有部分工具被勾选。
+    all.indeterminate = toolCbs.length > 0 && selected.length > 0 && selected.length < toolCbs.length;
+    const count = groupEl.querySelector('.group-count');
+    if (count) count.textContent = `${selected.length}/${toolCbs.length}`;
+  }
+  groupEl.querySelectorAll('.tool-subgroup').forEach(updateSubgroupSelectAll);
 }
 
 export function syncAgentToolCheckboxes(list) {
@@ -1268,7 +1287,6 @@ export async function renderAgentToolPicker() {
     }
   }
   const catalog = state.toolCatalog?.tools || [];
-  const groups = state.toolCatalog?.groups || [];
   // 兼容旧配置：挑出当前工具目录里已不存在的名字（老版本移除的工具、临时掉线的
   // MCP 工具等）单独保留。它们不参与勾选、计数与预设匹配，但保存时原样写回，
   // 这样旧 Agent 打开就能看到原本的勾选，不用重新配一遍。
@@ -1291,99 +1309,226 @@ export async function renderAgentToolPicker() {
   renderToolPresetSelect();
   renderToolTemplates();
   renderUnknownToolsHint();
-  const toolMap = new Map(catalog.map((tool) => [tool.name, tool]));
-  list.innerHTML = '';
-  for (const group of groups) {
-    const tools = (group.tools || []).map((name) => toolMap.get(name)).filter(Boolean);
-    if (!tools.length) continue;
-    const groupEl = document.createElement('div');
-    groupEl.className = 'agent-tool-group collapsed';
-    groupEl.dataset.group = group.name;
+  renderToolScopeList();
+}
 
-    const head = document.createElement('div');
-    head.className = 'agent-tool-group-head';
-    head.setAttribute('role', 'button');
-    head.tabIndex = 0;
-    head.title = '点击展开/收起，展开后可逐个勾选';
-
-    const caret = document.createElement('span');
-    caret.className = 'group-caret';
-    caret.textContent = '▸';
-
-    // 分类级“全选”：点击一次勾选/取消该分类所有工具（沿用依赖联动）。
-    const allCb = document.createElement('input');
-    allCb.type = 'checkbox';
-    allCb.className = 'group-select-all';
-    allCb.setAttribute('data-group', group.name);
-    allCb.title = `全选/取消全选「${group.name}」分类下的所有工具`;
-    allCb.addEventListener('click', (e) => e.stopPropagation());
-    allCb.addEventListener('change', () => {
-      let scope = state.agentFormToolScope;
-      for (const tool of tools) {
-        scope = applyAgentToolDependency(scope, tool.name, allCb.checked);
-      }
-      setAgentToolScope(scope);
-      // 勾上分类时自动展开，让用户看到自己到底开了什么。
-      if (allCb.checked) setToolGroupCollapsed(groupEl, false);
-      syncAgentToolCheckboxes(list);
-    });
-
-    const title = document.createElement('span');
-    title.className = 'group-title';
-    title.textContent = group.name;
-    const count = document.createElement('span');
-    count.className = 'group-count';
-    const desc = document.createElement('small');
-    desc.className = 'group-desc';
-    desc.textContent = group.desc || '';
-    // 一行顺序：箭头 · 全选框 · 分类名 · 小字说明 · 计数（CSS 按此列序排布）
-    head.append(caret, allCb, title, desc, count);
-    head.addEventListener('click', () => toggleToolGroup(groupEl));
-    head.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        toggleToolGroup(groupEl);
-      }
-    });
-    groupEl.append(head);
-
-    const grid = document.createElement('div');
-    grid.className = 'permission-grid';
-    grid.hidden = true;
-    for (const tool of tools) {
-      const label = document.createElement('label');
-      const cb = document.createElement('input');
-      cb.type = 'checkbox';
-      cb.value = tool.name;
-      cb.checked = state.agentFormToolScope.includes(tool.name);
-      if (tool.model_target === 'vision') {
-        cb.title = '针对支持看图的视觉模型（多模态大脑）：直接读取图片。';
-      } else if (tool.model_target === 'text') {
-        cb.title = '针对文本模型：通过视觉车道解读图片。';
-      }
-      cb.addEventListener('change', (e) => {
-        setAgentToolScope(applyAgentToolDependency(
-          state.agentFormToolScope, tool.name, e.target.checked,
-        ));
-        syncAgentToolCheckboxes(list);
-      });
-      const span = document.createElement('span');
-      const b = document.createElement('b');
-      b.textContent = tool.name;
-      if (AGENT_TOOL_DEP_RULES[tool.name]) {
-        b.title = '选中后会自动带上其依赖的查询工具（job_output/job_status/job_wait/job_kill 等）。';
-      }
-      const small = document.createElement('small');
-      small.textContent = tool.description || '';
-      // 卡片里说明只显示两行（保持紧凑、行高一致），完整说明放 title 悬停查看。
-      if (tool.description) label.title = `${tool.name}：${tool.description}`;
-      span.append(b, small);
-      label.append(cb, span);
-      grid.append(label);
-    }
-    groupEl.append(grid);
-    list.append(groupEl);
+// 工具卡片（分组视图与搜索结果共用）：勾选框 + 名称 + 两行说明。
+function buildToolCard(tool, list) {
+  const label = document.createElement('label');
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.value = tool.name;
+  cb.checked = state.agentFormToolScope.includes(tool.name);
+  if (tool.model_target === 'vision') {
+    cb.title = '针对支持看图的视觉模型（多模态大脑）：直接读取图片。';
+  } else if (tool.model_target === 'text') {
+    cb.title = '针对文本模型：通过视觉车道解读图片。';
   }
+  cb.addEventListener('change', (e) => {
+    setAgentToolScope(applyAgentToolDependency(
+      state.agentFormToolScope, tool.name, e.target.checked,
+    ));
+    syncAgentToolCheckboxes(list);
+  });
+  const span = document.createElement('span');
+  const b = document.createElement('b');
+  b.textContent = tool.name;
+  if (AGENT_TOOL_DEP_RULES[tool.name]) {
+    b.title = '选中后会自动带上其依赖的查询工具（job_output/job_status/job_wait/job_kill 等）。';
+  }
+  const small = document.createElement('small');
+  small.textContent = tool.description || '';
+  // 卡片里说明只显示两行（保持紧凑、行高一致），完整说明放 title 悬停查看。
+  if (tool.description) label.title = `${tool.name}：${tool.description}`;
+  span.append(b, small);
+  label.append(cb, span);
+  return label;
+}
+
+function buildToolGrid(tools, list) {
+  const grid = document.createElement('div');
+  grid.className = 'permission-grid';
+  for (const tool of tools) grid.append(buildToolCard(tool, list));
+  return grid;
+}
+
+// 二级分组（当前用于 MCP：按服务器聚合）：服务器名 + 该服务器的全选框与计数 + 工具网格。
+// 这样 40 个 MCP 工具按服务器分块，可以整块全选，不用逐个点。
+function buildSubgroupBlock(sub, tools, list) {
+  const block = document.createElement('div');
+  block.className = 'tool-subgroup';
+  const head = document.createElement('div');
+  head.className = 'tool-subgroup-head';
+  const all = document.createElement('input');
+  all.type = 'checkbox';
+  all.className = 'subgroup-select-all';
+  all.title = `全选/取消全选「${sub.name}」服务器下的所有工具`;
+  all.addEventListener('click', (e) => e.stopPropagation());
+  all.addEventListener('change', () => {
+    let scope = state.agentFormToolScope;
+    for (const tool of tools) {
+      scope = applyAgentToolDependency(scope, tool.name, all.checked);
+    }
+    setAgentToolScope(scope);
+    syncAgentToolCheckboxes(list);
+  });
+  const name = document.createElement('span');
+  name.className = 'subgroup-title';
+  name.textContent = sub.name;
+  const count = document.createElement('span');
+  count.className = 'subgroup-count';
+  head.append(all, name, count);
+  block.append(head, buildToolGrid(tools, list));
+  return block;
+}
+
+function buildGroupBlock(group, toolMap, list) {
+  const groupEl = document.createElement('div');
+  groupEl.className = 'agent-tool-group collapsed';
+  groupEl.dataset.group = group.name;
+
+  const head = document.createElement('div');
+  head.className = 'agent-tool-group-head';
+  head.setAttribute('role', 'button');
+  head.tabIndex = 0;
+  head.title = '点击展开/收起，展开后可逐个勾选';
+
+  const caret = document.createElement('span');
+  caret.className = 'group-caret';
+  caret.textContent = '▸';
+
+  // 分类级“全选”：点击一次勾选/取消该分类所有工具（沿用依赖联动）。
+  const allCb = document.createElement('input');
+  allCb.type = 'checkbox';
+  allCb.className = 'group-select-all';
+  allCb.setAttribute('data-group', group.name);
+  allCb.title = `全选/取消全选「${group.name}」分类下的所有工具`;
+  allCb.addEventListener('click', (e) => e.stopPropagation());
+  allCb.addEventListener('change', () => {
+    let scope = state.agentFormToolScope;
+    for (const name of group.tools || []) {
+      const tool = toolMap.get(name);
+      if (tool) scope = applyAgentToolDependency(scope, tool.name, allCb.checked);
+    }
+    setAgentToolScope(scope);
+    // 勾上分类时自动展开，让用户看到自己到底开了什么。
+    if (allCb.checked) setToolGroupCollapsed(groupEl, false);
+    syncAgentToolCheckboxes(list);
+  });
+
+  const title = document.createElement('span');
+  title.className = 'group-title';
+  title.textContent = group.name;
+  // 风险徽标（只读 / 会改文件 / 高风险 / 联网 / 会写产物 / 会改动）：配色走 data-tone。
+  if (group.badge) {
+    const badge = document.createElement('em');
+    badge.className = 'group-badge';
+    badge.dataset.tone = group.tone || 'info';
+    badge.textContent = group.badge;
+    title.append(badge);
+  }
+  const count = document.createElement('span');
+  count.className = 'group-count';
+  const desc = document.createElement('small');
+  desc.className = 'group-desc';
+  desc.textContent = group.desc || '';
+  // 一行顺序：箭头 · 全选框 · 分类名（含徽标）· 小字说明 · 计数（CSS 按此列序排布）
+  head.append(caret, allCb, title, desc, count);
+  head.addEventListener('click', () => toggleToolGroup(groupEl));
+  head.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleToolGroup(groupEl);
+    }
+  });
+
+  // 展开区：先平铺"不属于二级分组"的工具，再逐个渲染二级分组（MCP 按服务器）。
+  const body = document.createElement('div');
+  body.className = 'agent-tool-group-body';
+  body.hidden = true;
+  const direct = (group.direct_tools || group.tools || [])
+    .map((name) => toolMap.get(name)).filter(Boolean);
+  if (direct.length) body.append(buildToolGrid(direct, list));
+  for (const sub of group.subgroups || []) {
+    const tools = (sub.tools || []).map((name) => toolMap.get(name)).filter(Boolean);
+    if (!tools.length) continue;
+    body.append(buildSubgroupBlock(sub, tools, list));
+  }
+  groupEl.append(head, body);
+  return groupEl;
+}
+
+function emptyScopeHint(text) {
+  const p = document.createElement('p');
+  p.className = 'tool-scope-empty';
+  p.textContent = text;
+  return p;
+}
+
+// 分组视图：6 个分类；MCP 动态工具在「联网与外部服务」内按服务器二级分组。
+function renderGroupedScope(list, groups, toolMap) {
+  let rendered = 0;
+  for (const group of groups) {
+    if (!(group.tools || []).some((name) => toolMap.has(name))) continue;
+    list.append(buildGroupBlock(group, toolMap, list));
+    rendered += 1;
+  }
+  if (!rendered) list.append(emptyScopeHint('工具目录为空'));
+}
+
+// 搜索结果视图：命中工具平铺一层（卡片带所属分类标签），省去在分组里逐层展开找。
+function renderFilteredScope(list, catalog, filter) {
+  const matched = catalog.filter((tool) => (
+    `${tool.name} ${tool.description || ''}`.toLowerCase().includes(filter)
+  ));
+  if (!matched.length) {
+    list.append(emptyScopeHint(`没有匹配「${String(state.agentToolFilter).trim()}」的工具`));
+    return;
+  }
+  const groupOf = new Map();
+  for (const group of state.toolCatalog?.groups || []) {
+    for (const name of group.tools || []) groupOf.set(name, group.name);
+  }
+  const box = document.createElement('div');
+  box.className = 'agent-tool-group';
+  const head = document.createElement('div');
+  head.className = 'agent-tool-group-head search-head';
+  const title = document.createElement('span');
+  title.className = 'group-title';
+  title.textContent = '搜索结果';
+  const tip = document.createElement('small');
+  tip.className = 'group-desc';
+  tip.textContent = '清空搜索框即恢复分组视图';
+  const count = document.createElement('span');
+  count.className = 'group-count';
+  count.textContent = `${matched.length} 个`;
+  head.append(title, tip, count);
+  const body = document.createElement('div');
+  body.className = 'agent-tool-group-body';
+  const grid = buildToolGrid(matched, list);
+  // 卡片上标出所属分类，避免"只看到工具名、不知道它属于哪一组"。
+  [...grid.children].forEach((card, index) => {
+    const tag = document.createElement('em');
+    tag.className = 'tool-group-tag';
+    tag.textContent = groupOf.get(matched[index].name) || '';
+    card.querySelector('span')?.append(tag);
+  });
+  body.append(grid);
+  box.append(head, body);
+  list.append(box);
+}
+
+// 只重画工具列表（搜索框输入时调用）：不重拉目录、不改已选范围。
+export function renderToolScopeList() {
+  const list = $('#agentToolScope');
+  if (!list) return;
+  const catalog = state.toolCatalog?.tools || [];
+  const groups = state.toolCatalog?.groups || [];
+  const toolMap = new Map(catalog.map((tool) => [tool.name, tool]));
+  const filter = String(state.agentToolFilter || '').trim().toLowerCase();
+  list.innerHTML = '';
+  if (filter) renderFilteredScope(list, catalog, filter);
+  else renderGroupedScope(list, groups, toolMap);
   // 初始渲染后同步一次，让各分类“全选”框进入正确的勾选/半选状态。
   syncAgentToolCheckboxes(list);
 }

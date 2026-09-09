@@ -125,28 +125,141 @@ class BuiltInAgentsRetiredTests(unittest.TestCase):
 
 
 class ToolGroupCatalogTests(unittest.TestCase):
-    """工具集分类目录：视觉分组必须有说明，且紧跟在「命令执行」之后。"""
+    """工具分类：单一维度 6 组 + 风险徽标 + MCP 按服务器二级分组（Agent 编辑页可读性的地基）。"""
 
-    def test_vision_group_follows_command_group_and_has_desc(self) -> None:
+    EXPECTED_GROUPS = (
+        "读取与检索", "文件写入与编辑", "命令与脚本执行",
+        "联网与外部服务", "视觉与图片", "任务与扩展",
+    )
+
+    def _catalog(self, extra_schemas=()):
+        from naiba.config import tool_catalog_entries
+        from naiba.tools.registry import build_tool_registry
+
+        schemas = list(build_tool_registry().schemas())
+        schemas.extend(extra_schemas)
+        return tool_catalog_entries(schemas)
+
+    def test_group_order_badge_and_desc(self) -> None:
         from naiba.config import TOOL_GROUP_INFO
 
-        names = [name for name, _ in TOOL_GROUP_INFO]
-        self.assertIn("视觉", names)
-        self.assertEqual(
-            names.index("视觉"), names.index("命令执行") + 1,
-            "视觉必须排在「命令执行」后面",
+        infos = list(TOOL_GROUP_INFO)
+        names = [info["name"] for info in infos]
+        self.assertEqual(names[: len(self.EXPECTED_GROUPS)], list(self.EXPECTED_GROUPS),
+                         "分类顺序即前端展示顺序：6 组 = 「作用对象 + 风险」单一维度")
+        for info in infos:
+            with self.subTest(group=info["name"]):
+                self.assertTrue(str(info["desc"]).strip(), "每个分类都要有一句话说明")
+                self.assertIn(info["tone"], ("safe", "warn", "danger", "info"))
+        self.assertTrue(dict((i["name"], i["badge"]) for i in infos)["视觉与图片"].strip(),
+                        "视觉分类必须有风险徽标")
+        # 收敛前的旧分类名不得复活：改名漏改会让 preset 的 group: 引用静默失效。
+        for retired in ("文件读取/搜索", "文件写入/编辑", "命令执行", "Skill 脚本", "网络",
+                        "会话与记忆", "MCP", "后台/Job/子任务", "ComfyUI", "能力/Skill 管理",
+                        "文档（PDF）", "视觉"):
+            with self.subTest(retired=retired):
+                self.assertNotIn(retired, names)
+
+    def test_every_tool_lands_in_exactly_one_group(self) -> None:
+        from naiba.config import tool_group_entries
+
+        entries = self._catalog()
+        groups = tool_group_entries(entries)
+        self.assertEqual([group["name"] for group in groups], list(self.EXPECTED_GROUPS),
+                         "没有未归类工具时「其他」不该出现")
+        placed = [tool for group in groups for tool in group["tools"]]
+        self.assertEqual(sorted(placed), sorted(entry["name"] for entry in entries),
+                         "每个工具必须且只落进一个分类")
+        self.assertEqual(len(placed), len(set(placed)))
+        # 各分类成员固定：合并后的归属一目了然；调整归属必须同步本断言。
+        membership = {group["name"]: group["tools"] for group in groups}
+        self.assertEqual(membership["读取与检索"], [
+            "read_file", "list_directory", "search_files", "recall_history",
+            "read_pdf", "pdf_render_pages", "pdf_zoom_region",
+        ])
+        self.assertEqual(membership["文件写入与编辑"], ["write_file", "edit_file"])
+        self.assertEqual(membership["命令与脚本执行"], ["pwsh", "run_skill_script"])
+        self.assertEqual(membership["视觉与图片"], ["vision_analyze", "vision_image_ops"])
+        self.assertEqual(membership["联网与外部服务"], [
+            "http_request", "web_search", "register_mcp",
+            "comfyui_prepare_workflow", "comfyui_batch",
+        ])
+        self.assertEqual(membership["任务与扩展"], [
+            "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
+            "todo_write", "install_skill", "unpack_skill_archive", "inspect_installed_skill",
+        ])
+
+    def test_mcp_tools_are_subgrouped_by_server(self) -> None:
+        from naiba.config import tool_group_entries
+
+        entries = self._catalog((
+            {"name": "mcp__comfy-mcp__system_stats", "description": "查看 ComfyUI 状态"},
+            {"name": "mcp__comfy-mcp__run_workflow", "description": "运行工作流"},
+            {"name": "mcp__other__ping", "description": "探活"},
+        ))
+        groups = {group["name"]: group for group in tool_group_entries(entries)}
+        net = groups["联网与外部服务"]
+        self.assertIn("mcp__comfy-mcp__system_stats", net["tools"],
+                      "动态 MCP 工具统一归入「联网与外部服务」")
+        self.assertNotIn("mcp__comfy-mcp__system_stats", net["direct_tools"],
+                         "带服务器名的工具不进平铺区，只在二级分组里出现")
+        self.assertIn("http_request", net["direct_tools"])
+        subs = {sub["name"]: sub["tools"] for sub in net["subgroups"]}
+        self.assertEqual(list(subs), ["comfy-mcp", "other"], "二级分组按服务器聚合，顺序稳定")
+        # MCP 工具未登记在 order 表里 → 组内按名字排序（稳定、可预期）。
+        self.assertEqual(subs["comfy-mcp"],
+                         ["mcp__comfy-mcp__run_workflow", "mcp__comfy-mcp__system_stats"])
+        self.assertEqual(subs["other"], ["mcp__other__ping"])
+
+    def test_presets_reference_existing_tools_only(self) -> None:
+        from naiba.config import (
+            TOOL_PRESETS, resolve_tool_preset, tool_group_entries, tool_preset_entries,
         )
-        self.assertTrue(dict(TOOL_GROUP_INFO)["视觉"].strip(), "视觉分类必须有说明小字")
-        # 旧的「视觉（文本模型）/（视觉模型）」分类名随视觉单入口重构早已退役，别再复活。
-        self.assertNotIn("视觉（文本模型）", names)
-        self.assertNotIn("视觉（视觉模型）", names)
+
+        entries = self._catalog()
+        known = {entry["name"] for entry in entries}
+        known_groups = {group["name"] for group in tool_group_entries(entries)}
+        for preset in TOOL_PRESETS:
+            with self.subTest(preset=preset["id"]):
+                for raw in list(preset.get("include") or []) + list(preset.get("exclude") or []):
+                    ref = str(raw)
+                    if ref.startswith("group:"):
+                        group = ref[len("group:"):]
+                        self.assertTrue(group == "*" or group in known_groups,
+                                        f"预设引用了不存在的分类：{ref}")
+                    else:
+                        self.assertIn(ref, known, "预设引用的工具名必须仍在工具目录里")
+                self.assertTrue(resolve_tool_preset(preset, entries), "预设不能展开成空集")
+        presets = {item["id"]: set(item["tools"]) for item in tool_preset_entries(entries)}
+        # 语义保持：分类合并不得把工具顺手带进本不该有的预设。
+        self.assertNotIn("pwsh", presets["research"], "联网研究不含命令执行")
+        self.assertNotIn("run_in_background", presets["research"])
+        self.assertNotIn("register_mcp", presets["batch"], "批量后台不自动带 MCP")
+        self.assertFalse([n for n in presets["comfyui"] if n.startswith("mcp__")],
+                         "ComfyUI 预设声明不启用 MCP")
+        self.assertIn("comfyui_batch", presets["comfyui"])
+        self.assertIn("run_in_background", presets["batch"])
+        self.assertIn("read_pdf", presets["standard"])
+        self.assertEqual(len(presets["full"]), len(known), "全能模式覆盖全部工具")
+
+    def test_unknown_preset_reference_logs_warning(self) -> None:
+        from naiba.config import resolve_tool_preset
+
+        entries = self._catalog()
+        with self.assertLogs("naiba.config", level="WARNING") as captured:
+            resolved = resolve_tool_preset(
+                {"id": "bad", "include": ["group:不存在的分类", "not_a_tool"]}, entries)
+        self.assertEqual(resolved, [])
+        self.assertIn("不存在的分类", "\n".join(captured.output))
+        self.assertIn("not_a_tool", "\n".join(captured.output))
 
     def test_tool_group_head_renders_title_and_desc_in_one_line(self) -> None:
         settings = (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
-        body = settings[settings.index("const head = document.createElement('div');"):]
-        body = body[: body.index("groupEl.append(head)")]
+        body = settings[settings.index("function buildGroupBlock(group, toolMap, list) {"):]
+        body = body[: body.index("function emptyScopeHint(")]
         self.assertIn("head.append(caret, allCb, title, desc, count)", body,
                       "小字说明必须排在标题之后、计数之前（一行呈现）")
+        self.assertIn("title.append(badge)", body, "风险徽标随分类名同行，不额外占列")
         css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
         head_rule = css[css.index(".agent-tool-group-head {"):]
         head_rule = head_rule[: head_rule.index("}")]
@@ -156,6 +269,24 @@ class ToolGroupCatalogTests(unittest.TestCase):
         self.assertIn("white-space: nowrap", desc_rule)
         self.assertIn("text-overflow: ellipsis", desc_rule)
         self.assertNotIn("grid-column", desc_rule, "小字不能再独占第二行")
+
+    def test_frontend_renders_badge_subgroups_and_search(self) -> None:
+        """前端接线守门：徽标 / 二级分组 / 搜索框三件套缺一不可（改版的核心可见物）。"""
+        settings = (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
+        self.assertIn("export function renderToolScopeList()", settings)
+        self.assertIn("buildSubgroupBlock(sub, tools, list)", settings)
+        self.assertIn("badge.dataset.tone = group.tone || 'info'", settings)
+        self.assertIn("renderFilteredScope(list, catalog, filter)", settings)
+        self.assertIn("subgroup-select-all", settings, "二级分组要能整组全选")
+        index = (ROOT / "public/index.html").read_text(encoding="utf-8")
+        self.assertIn('id="agentToolFilter"', index)
+        bind = (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
+        self.assertIn("$('#agentToolFilter')?.addEventListener('input'", bind)
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        for rule in ('.group-badge[data-tone="danger"]', ".tool-subgroup-head {",
+                     ".agent-tool-group.collapsed .agent-tool-group-body { display: none; }"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, css)
 
 
 class AgentCardsMarkupTests(unittest.TestCase):
