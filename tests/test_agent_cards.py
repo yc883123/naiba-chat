@@ -342,18 +342,23 @@ class AgentPromptPresetUiTests(unittest.TestCase):
     def _bind(self):
         return (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
 
-    def test_save_dialog_takes_only_title(self):
+    def test_dialog_has_title_and_body(self):
         index = self._index()
         self.assertIn('id="promptPresetDialog"', index)
         self.assertIn('id="promptPresetTitle"', index)
+        self.assertIn('id="promptPresetText"', index, "编辑路径要能改正文")
         self.assertIn('id="savePromptPreset"', index)
-        # 正文取当前系统提示词文本框，弹窗里不再有第二个正文输入框。
         dialog = index[index.index('id="promptPresetDialog"'):]
         dialog = dialog[: dialog.index("</dialog>")]
-        self.assertNotIn("textarea", dialog, "弹窗只填标题，正文来自上方系统提示词")
-
-    def test_panel_items_have_delete_button(self):
+        self.assertIn("textarea", dialog, "弹窗要能改正文（另存时预填当前系统提示词）")
         js = self._js()
+        self.assertIn("export function openAgentPromptPresetEditDialog(", js)
+        self.assertIn("state.agentPromptPresetEditingId = id;", js)
+        self.assertIn("state.agentPromptPresetEditingId = '';", js, "另存路径要清掉编辑中的 id")
+
+    def test_panel_items_have_edit_and_delete(self):
+        js = self._js()
+        self.assertIn("data-agent-preset-edit=", js, "面板条目要有 ✎ 编辑")
         self.assertIn("data-agent-preset-delete=", js, "面板条目右侧要有 × 删除")
         self.assertIn("export async function removeAgentPromptPreset(", js)
         self.assertIn("export function handleAgentPromptPresetPanelClick(", js)

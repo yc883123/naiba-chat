@@ -782,6 +782,7 @@ export function renderRunTasks() {
 // 会话级系统提示词已移除：系统提示词只有一个来源（Agent），因此快捷提示词的入口
 // 全部落在 Agent 编辑表单的「系统提示词（预设与规则）」下方（设置页的快捷提示词页已下线）。
 const AGENT_PROMPT_LIMIT = 12000; // 与 naiba/config.py 里 Agent system_prompt 的截断上限一致
+const PRESET_EDIT_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.12 2.12 0 0 0-3-3L5 17l-1 4Z"></path><path d="M13.5 6.5l3 3"></path></svg>';
 const PRESET_DELETE_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>';
 
 // 纯函数（可单测）：把角色卡文本追加到 Agent 系统提示词末尾（不覆盖已有内容）。
@@ -820,6 +821,7 @@ export function renderAgentPromptPresetList() {
         <b>${escapeHtml(item.title)}</b>
         ${preview ? `<small>${escapeHtml(preview)}${text.length > 90 ? '…' : ''}</small>` : ''}
       </div>
+      <button type="button" class="quick-msg-action" data-agent-preset-edit="${escapeHtml(item.id)}" title="编辑标题与正文" aria-label="编辑">${PRESET_EDIT_SVG}</button>
       <button type="button" class="quick-msg-action" data-agent-preset-delete="${escapeHtml(item.id)}" title="删除这条快捷提示词" aria-label="删除">${PRESET_DELETE_SVG}</button>
     </div>`;
   }).join('');
@@ -891,8 +893,14 @@ export async function removeAgentPromptPreset(id) {
   }
 }
 
-// 面板内事件委托：× 删除优先于条目套用。
+// 面板内事件委托：✎ 编辑 / × 删除优先于条目套用。
 export function handleAgentPromptPresetPanelClick(event) {
+  const edit = event.target.closest('[data-agent-preset-edit]');
+  if (edit) {
+    event.stopPropagation();
+    openAgentPromptPresetEditDialog(edit.dataset.agentPresetEdit);
+    return;
+  }
   const remove = event.target.closest('[data-agent-preset-delete]');
   if (remove) {
     event.stopPropagation();
@@ -930,7 +938,7 @@ export async function importAgentCharacterCard(file) {
   }
 }
 
-// 存为快捷提示词：只填标题，正文取当前系统提示词文本框（空则提示，不弹窗）。
+// 存为快捷提示词：正文预填当前系统提示词（可改），标题默认取正文首行。
 export function openAgentPromptPresetSaveDialog() {
   const field = $('#agentSystemPromptEdit');
   const text = String(field?.value || '').trim();
@@ -939,11 +947,26 @@ export function openAgentPromptPresetSaveDialog() {
     field?.focus();
     return;
   }
-  state.agentPromptPresetDraft = text;
-  // 标题默认取正文首个非空行（可改），省一次输入。
+  state.agentPromptPresetEditingId = '';
   const firstLine = text.split('\n').map((line) => line.trim()).find(Boolean) || '';
+  $('#promptPresetDialogTitle').textContent = '存为快捷提示词';
   $('#promptPresetTitle').value = firstLine.slice(0, 40);
-  $('#promptPresetHint').textContent = `将保存当前系统提示词（${text.length} 字符）`;
+  $('#promptPresetText').value = text;
+  $('#promptPresetHint').textContent = `正文取自当前系统提示词（${text.length} 字符），可再修改`;
+  $('#promptPresetDialog').showModal();
+  $('#promptPresetTitle').focus();
+  $('#promptPresetTitle').select();
+}
+
+// 编辑已有快捷提示词：标题 + 正文都可改，保存走同一接口（带 id 即覆盖）。
+export function openAgentPromptPresetEditDialog(id) {
+  const item = state.conversationPromptPresets.find((preset) => preset.id === id);
+  if (!item) return;
+  state.agentPromptPresetEditingId = id;
+  $('#promptPresetDialogTitle').textContent = '编辑快捷提示词';
+  $('#promptPresetTitle').value = String(item.title || '');
+  $('#promptPresetText').value = String(item.system_prompt || '');
+  $('#promptPresetHint').textContent = '保存后覆盖这条快捷提示词（已套用到 Agent 的文本不会被改动）';
   $('#promptPresetDialog').showModal();
   $('#promptPresetTitle').focus();
   $('#promptPresetTitle').select();
@@ -951,11 +974,12 @@ export function openAgentPromptPresetSaveDialog() {
 
 export async function saveAgentPromptPreset(event) {
   event.preventDefault();
-  const text = String(state.agentPromptPresetDraft || '').trim();
+  const id = String(state.agentPromptPresetEditingId || '');
   const title = String($('#promptPresetTitle').value || '').trim();
+  const text = String($('#promptPresetText').value || '').trim();
   if (!text) {
-    toast('系统提示词为空，已取消');
-    $('#promptPresetDialog').close();
+    toast('正文不能为空');
+    $('#promptPresetText').focus();
     return;
   }
   if (!title) {
@@ -966,13 +990,15 @@ export async function saveAgentPromptPreset(event) {
   const button = $('#savePromptPreset');
   if (button) button.disabled = true;
   try {
-    await api('/api/conversation-prompt-presets', {
-      method: 'POST', body: { title, system_prompt: text, source: 'manual' },
-    });
-    state.agentPromptPresetDraft = '';
+    const path = id
+      ? `/api/conversation-prompt-presets/${encodeURIComponent(id)}`
+      : '/api/conversation-prompt-presets';
+    await api(path, { method: 'POST', body: { title, system_prompt: text, source: 'manual' } });
+    state.agentPromptPresetEditingId = '';
     $('#promptPresetDialog').close();
     await loadConversationPromptPresets();
-    toast(`已存为快捷提示词「${title}」`);
+    positionAgentPromptPresetPanel();
+    toast(id ? `已更新快捷提示词「${title}」` : `已存为快捷提示词「${title}」`);
   } catch (error) {
     toast(`保存失败：${error.message}`);
   } finally {

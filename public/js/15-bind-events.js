@@ -174,11 +174,14 @@ export function bindEvents() {
   $('#agentPromptPresetClose')?.addEventListener('click', closeAgentPromptPresetPanel);
   $('#agentPromptPresetPanel')?.addEventListener('click', handleAgentPromptPresetPanelClick);
   // 点击面板与按钮之外收起；面板挂在弹层内部，用 composedPath 判断是否点在面板里。
+  // 编辑/另存弹窗（#promptPresetDialog）属于同一流程，点它不算"点外面"——否则从面板点 ✎
+  // 进去改完保存，面板会在保存那一下被误关（冒烟实测）。
   document.addEventListener('click', (event) => {
     const panel = $('#agentPromptPresetPanel');
     if (!panel || panel.hidden) return;
     const path = event.composedPath ? event.composedPath() : [];
-    if (path.includes(panel) || path.includes($('#agentPromptPresetButton'))) return;
+    if (path.includes(panel) || path.includes($('#agentPromptPresetButton'))
+        || path.includes($('#promptPresetDialog'))) return;
     closeAgentPromptPresetPanel();
   });
   window.addEventListener('resize', positionAgentPromptPresetPanel);

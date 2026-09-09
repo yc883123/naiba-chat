@@ -111,8 +111,8 @@ export const state = {
   // 编辑弹窗的目标列表：'starter'（开始页自定义指令）/ 'quick'（会话内快捷消息）
   editingPromptTarget: 'starter',
   conversationPromptPresets: [],
-  // 「存为快捷提示词」弹窗里待保存的正文（取点按钮那一刻的系统提示词文本框内容）。
-  agentPromptPresetDraft: '',
+  // 「存为/编辑快捷提示词」弹窗正在编辑的预设 id（空=另存为新条目）。
+  agentPromptPresetEditingId: '',
   // A fresh update check should immediately surface a newer release in the
   // closed select; user choices made afterwards must still be preserved.
   updateAutoSelectLatest: false,

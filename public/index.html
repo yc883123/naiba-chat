@@ -633,25 +633,24 @@
         <label>名称
           <input id="agentName" type="text" placeholder="例如 通用 Agent">
         </label>
-        <label>系统提示词（预设与规则）
-          <textarea id="agentSystemPromptEdit" rows="5" placeholder="角色、规则和输出偏好"></textarea>
-        </label>
-        <div class="agent-prompt-tools">
-          <div class="agent-prompt-actions">
-            <button class="control-button" id="agentPromptPresetButton" type="button"
-                    aria-haspopup="menu" aria-expanded="false"
-                    title="套用或删除已保存的快捷提示词">套用快捷提示词</button>
-            <button class="control-button" id="saveAgentPromptPreset" type="button"
-                    title="把上方系统提示词另存为一条快捷提示词（以后可一键套用）">存为快捷提示词</button>
-            <span class="character-card-import">
+        <div class="agent-prompt-block">
+          <div class="agent-prompt-head">
+            <span class="agent-prompt-title">系统提示词（预设与规则）</span>
+            <div class="agent-prompt-actions">
+              <button class="control-button" id="agentPromptPresetButton" type="button"
+                      aria-haspopup="menu" aria-expanded="false"
+                      title="套用、编辑或删除已保存的快捷提示词">套用快捷提示词</button>
+              <button class="control-button" id="saveAgentPromptPreset" type="button"
+                      title="把上方系统提示词另存为一条快捷提示词（以后可一键套用）">存为快捷提示词</button>
               <button class="control-button" id="importAgentCharacterCard" type="button">导入角色卡 PNG</button>
               <input id="agentCharacterCardFileInput" type="file" accept="image/png" hidden>
               <button class="control-button" id="pickAgentAvatar" type="button">自定义头像</button>
               <input id="agentAvatarFileInput" type="file" accept="image/*" hidden>
               <img id="agentAvatarPreview" class="agent-avatar-preview" alt="" hidden>
-            </span>
+            </div>
           </div>
-          <small class="agent-prompt-hint">导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；自定义头像会中心裁切为正方形，用于该 Agent 的会话头像（保存后生效）。</small>
+          <textarea id="agentSystemPromptEdit" rows="6" placeholder="角色、规则和输出偏好"></textarea>
+          <small class="agent-prompt-hint" title="导入角色卡会追加到上方文本框末尾（不覆盖已有内容）；自定义头像会中心裁切为正方形，用于该 Agent 的会话头像（保存后生效）。">导入角色卡追加到末尾；头像裁切为正方形用于该 Agent 的会话头像。</small>
         </div>
         <div class="agent-skills">
           <div class="agent-skills-head"><span><b>固定 Skill</b><small>该 Agent 启用时自动加载</small></span></div>
@@ -701,20 +700,24 @@
     <div class="quick-msg-panel agent-preset-panel" id="agentPromptPresetPanel" hidden role="menu">
       <div class="quick-msg-head"><span>快捷提示词</span><button type="button" id="agentPromptPresetClose">关闭</button></div>
       <div class="quick-msg-list" id="agentPromptPresetList"></div>
-      <div class="quick-msg-foot">点击条目套用；右侧 × 删除</div>
+      <div class="quick-msg-foot">点击条目套用；✎ 编辑、× 删除</div>
     </div>
   </dialog>
 
-  <!-- 存为快捷提示词：只填标题，正文取当前系统提示词文本框内容 -->
-  <dialog id="promptPresetDialog" class="rename-conversation-dialog">
+  <!-- 存为/编辑快捷提示词：标题 + 正文；正文在「另存」时预填当前系统提示词 -->
+  <dialog id="promptPresetDialog" class="rename-conversation-dialog prompt-preset-dialog">
     <form id="promptPresetForm" method="dialog">
       <div class="dialog-toolbar">
-        <div><h2>存为快捷提示词</h2><p id="promptPresetHint">将保存当前系统提示词</p></div>
+        <div><h2 id="promptPresetDialogTitle">存为快捷提示词</h2><p id="promptPresetHint">将保存当前系统提示词</p></div>
         <button class="icon-button" type="button" data-close="promptPresetDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
       </div>
       <label class="field-wide">
         标题
         <input id="promptPresetTitle" type="text" maxlength="80" placeholder="例如：代码审查助手">
+      </label>
+      <label class="field-wide">
+        正文
+        <textarea id="promptPresetText" rows="7" maxlength="20000" placeholder="角色、规则和输出要求"></textarea>
       </label>
       <div class="form-actions">
         <button class="control-button" type="button" data-close="promptPresetDialog">取消</button>

@@ -57,9 +57,8 @@ async function presetTitles() {
     await page.waitForSelector('#agentDialog[open]', { timeout: 10000 });
 
     const wiring = await page.evaluate(() => {
-      const promptRow = [...document.querySelectorAll('#agentForm label')]
-        .find((el) => (el.textContent || '').includes('系统提示词（预设与规则）'));
-      const tools = document.querySelector('.agent-prompt-tools');
+      const block = document.querySelector('.agent-prompt-block');
+      const head = document.querySelector('.agent-prompt-head');
       const dialog = document.querySelector('#agentDialog');
       return {
         hasButton: Boolean(document.querySelector('#agentPromptPresetButton')),
@@ -67,8 +66,9 @@ async function presetTitles() {
         hasPanelInDialog: Boolean(dialog && dialog.querySelector('#agentPromptPresetPanel')),
         hasImport: Boolean(document.querySelector('#importAgentCharacterCard')),
         hasFileInput: Boolean(document.querySelector('#agentCharacterCardFileInput')),
-        toolsAfterPrompt: Boolean(promptRow && tools
-          && promptRow.compareDocumentPosition(tools) & Node.DOCUMENT_POSITION_FOLLOWING),
+        hasBlock: Boolean(block),
+        toolbarInsideBlock: Boolean(block && block.querySelector('#agentPromptPresetButton')),
+        titleInsideHead: Boolean(head && head.querySelector('.agent-prompt-title')),
         hint: document.querySelector('.agent-prompt-hint')?.textContent || '',
       };
     });
@@ -76,7 +76,8 @@ async function presetTitles() {
     check('表单有「存为快捷提示词」按钮', wiring.hasSaveButton, JSON.stringify(wiring));
     check('面板挂在 Agent 弹层内部（top layer 不被盖住）', wiring.hasPanelInDialog, JSON.stringify(wiring));
     check('导入角色卡按钮 + 文件输入就位', wiring.hasImport && wiring.hasFileInput, JSON.stringify(wiring));
-    check('快捷提示词/导入入口位于「系统提示词」行下方', wiring.toolsAfterPrompt, JSON.stringify(wiring));
+    check('系统提示词成块：工具栏在标题行内', wiring.hasBlock && wiring.toolbarInsideBlock && wiring.titleInsideHead,
+      JSON.stringify(wiring));
     check('提示文案说明「追加不覆盖」', wiring.hint.includes('追加'), wiring.hint);
 
     // 1) 角色卡导入 = 追加（不覆盖已有内容）
@@ -114,25 +115,28 @@ async function presetTitles() {
     const closedAfterApply = await page.evaluate(() => document.querySelector('#agentPromptPresetPanel')?.hidden === true);
     check('套用后面板自动收起', closedAfterApply === true, '');
 
-    // 3) 存为快捷提示词：正文取当前文本框，弹窗只填标题
+    // 3) 存为快捷提示词：正文预填当前文本框，标题默认取首行
     await page.fill('#agentSystemPromptEdit', '你是「另存冒烟」提示词。');
     await page.click('#saveAgentPromptPreset');
     await page.waitForTimeout(400);
     const saveDialog = await page.evaluate(() => ({
       open: Boolean(document.querySelector('#promptPresetDialog')?.open),
       title: document.querySelector('#promptPresetTitle')?.value || '',
+      text: document.querySelector('#promptPresetText')?.value || '',
       hint: document.querySelector('#promptPresetHint')?.textContent || '',
+      dialogTitle: document.querySelector('#promptPresetDialogTitle')?.textContent || '',
     }));
-    check('点「存为快捷提示词」弹出标题对话框', saveDialog.open === true, JSON.stringify(saveDialog));
+    check('点「存为快捷提示词」弹出标题+正文弹窗', saveDialog.open === true, JSON.stringify(saveDialog));
     check('标题默认取正文首行、提示显示字符数',
       saveDialog.title.includes('另存冒烟') && saveDialog.hint.includes('字符'), JSON.stringify(saveDialog));
+    check('正文预填当前系统提示词', saveDialog.text === '你是「另存冒烟」提示词。', JSON.stringify(saveDialog.text));
     await page.fill('#promptPresetTitle', '另存冒烟提示词');
     await page.click('#savePromptPreset');
     await page.waitForTimeout(900);
     const titlesAfterSave = await presetTitles();
     check('新快捷提示词已入库', titlesAfterSave.includes('另存冒烟提示词'), JSON.stringify(titlesAfterSave));
 
-    // 4) × 删除：删掉刚存的（确认框已自动 accept）
+    // 4) ✎ 编辑：改标题与正文，保存后库内同步更新
     await page.click('#agentPromptPresetButton');
     await page.waitForTimeout(500);
     const savedId = await page.evaluate(() => {
@@ -142,13 +146,41 @@ async function presetTitles() {
     });
     check('面板里能看到刚存的条目', Boolean(savedId), savedId);
     if (savedId) {
+      await page.click(`[data-agent-preset-edit="${savedId}"]`);
+      await page.waitForTimeout(400);
+      const editDialog = await page.evaluate(() => ({
+        open: Boolean(document.querySelector('#promptPresetDialog')?.open),
+        dialogTitle: document.querySelector('#promptPresetDialogTitle')?.textContent || '',
+        title: document.querySelector('#promptPresetTitle')?.value || '',
+        text: document.querySelector('#promptPresetText')?.value || '',
+      }));
+      check('点 ✎ 打开编辑弹窗并回填标题+正文',
+        editDialog.open === true && editDialog.title === '另存冒烟提示词'
+        && editDialog.text === '你是「另存冒烟」提示词。', JSON.stringify(editDialog));
+      check('编辑态弹窗标题为「编辑快捷提示词」', editDialog.dialogTitle.includes('编辑'), editDialog.dialogTitle);
+      await page.fill('#promptPresetTitle', '另存冒烟提示词改');
+      await page.fill('#promptPresetText', '编辑后的正文。');
+      await page.click('#savePromptPreset');
+      await page.waitForTimeout(900);
+      const afterEdit = await presetTitles();
+      check('编辑后标题已更新且不新增条目',
+        afterEdit.includes('另存冒烟提示词改') && !afterEdit.includes('另存冒烟提示词'),
+        JSON.stringify(afterEdit));
+      const editedText = await page.evaluate(() => {
+        const items = [...document.querySelectorAll('#agentPromptPresetPanel .quick-msg-item')];
+        const hit = items.find((item) => item.querySelector('b')?.textContent.trim() === '另存冒烟提示词改');
+        return hit ? hit.querySelector('small')?.textContent.trim() || '' : '';
+      });
+      check('面板预览同步为新正文', editedText.includes('编辑后的正文'), editedText);
+
+      // 5) × 删除（确认框已自动 accept）
       await page.click(`[data-agent-preset-delete="${savedId}"]`);
       await page.waitForTimeout(900);
       const titlesAfterDelete = await presetTitles();
-      check('× 删除后条目从库里消失', !titlesAfterDelete.includes('另存冒烟提示词'), JSON.stringify(titlesAfterDelete));
+      check('× 删除后条目从库里消失', !titlesAfterDelete.includes('另存冒烟提示词改'), JSON.stringify(titlesAfterDelete));
       const stillInPanel = await page.evaluate(() => [...document.querySelectorAll('#agentPromptPresetPanel .quick-msg-item b')]
         .map((el) => el.textContent.trim()));
-      check('× 删除后面板列表同步刷新', !stillInPanel.includes('另存冒烟提示词'), JSON.stringify(stillInPanel));
+      check('× 删除后面板列表同步刷新', !stillInPanel.includes('另存冒烟提示词改'), JSON.stringify(stillInPanel));
     }
 
     check('零 pageerror / console.error', pageErrors.length === 0, pageErrors.slice(0, 3).join(' | '));
