@@ -52,7 +52,7 @@ checks = {
     "§六 检查器 69 文件": "（69 文件 0 候选）" in doc,
     "§六 不再提 verify_split_merge": "verify_split_merge" not in doc,
     "§六 补工具卡片检查": "_check_tool_cards_compact.cjs" in doc,
-    "§六 555 用例": "（555 用例，" in doc,
+    "§六 560 用例": "（560 用例，" in doc,
     "§8.8 路径纪律": "### 8.8 路径纪律：禁止本机绝对路径" in doc,
     "§六 路径守门": "test_no_absolute_paths" in doc,
     "§3.4 发送前判定": "pendingContextWarning" in doc,
@@ -71,6 +71,8 @@ checks = {
     "§8.7 会话收尾清理": "### 8.7 会话收尾清理" in doc,
     "§8.7 指向一键脚本": "verify\\cleanup_verify.py" in doc,
     "§3.3 工具分类 6 组": "6 组单一维度分类" in doc,
+    "§3.3 预设 4 档": "**4 档**" in doc,
+    "§四 PDF 条件注入": "仅当会话工具集含 `read_pdf` 时注入" in doc,
     "§3.4 风险徽标": "group-badge" in doc,
     "§六 工具分类冒烟": "tool_groups_smoke.py" in doc,
 }

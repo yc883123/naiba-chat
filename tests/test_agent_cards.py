@@ -211,14 +211,20 @@ class ToolGroupCatalogTests(unittest.TestCase):
                          ["mcp__comfy-mcp__run_workflow", "mcp__comfy-mcp__system_stats"])
         self.assertEqual(subs["other"], ["mcp__other__ping"])
 
-    def test_presets_reference_existing_tools_only(self) -> None:
+    def test_presets_are_four_and_closure_complete(self) -> None:
         from naiba.config import (
             TOOL_PRESETS, resolve_tool_preset, tool_group_entries, tool_preset_entries,
         )
+        from naiba.run.session import JOB_CREATOR_TOOL_DEPS
 
         entries = self._catalog()
         known = {entry["name"] for entry in entries}
         known_groups = {group["name"] for group in tool_group_entries(entries)}
+        items = tool_preset_entries(entries)
+        presets = {item["id"]: set(item["tools"]) for item in items}
+        self.assertEqual([item["id"] for item in items], ["readonly", "standard", "comfyui", "full"],
+                         "预设 4 档：只读 / 标准 / ComfyUI 联动 / 全能（按能力从小到大排）")
+        # 引用必须都存在（分类名/工具名写错会静默少选，见 resolve_tool_preset 的告警）。
         for preset in TOOL_PRESETS:
             with self.subTest(preset=preset["id"]):
                 for raw in list(preset.get("include") or []) + list(preset.get("exclude") or []):
@@ -230,17 +236,51 @@ class ToolGroupCatalogTests(unittest.TestCase):
                     else:
                         self.assertIn(ref, known, "预设引用的工具名必须仍在工具目录里")
                 self.assertTrue(resolve_tool_preset(preset, entries), "预设不能展开成空集")
-        presets = {item["id"]: set(item["tools"]) for item in tool_preset_entries(entries)}
-        # 语义保持：分类合并不得把工具顺手带进本不该有的预设。
-        self.assertNotIn("pwsh", presets["research"], "联网研究不含命令执行")
-        self.assertNotIn("run_in_background", presets["research"])
-        self.assertNotIn("register_mcp", presets["batch"], "批量后台不自动带 MCP")
+        # 依赖闭包必须已在预设里显式列出：否则「下拉显示的个数」≠「套用后的实际个数」
+        # （前端 onToolPresetSelect 会补闭包，而 matchToolPreset 是精确比对 → 套用即变「自定义」）。
+        for preset_id, tools in presets.items():
+            with self.subTest(preset=preset_id):
+                closed = set(tools)
+                for creator, deps in JOB_CREATOR_TOOL_DEPS.items():
+                    if creator in closed:
+                        closed.update(deps)
+                self.assertEqual(closed, set(tools), f"{preset_id} 预设缺少依赖闭包")
+        self.assertEqual(presets["readonly"],
+                         {"read_file", "list_directory", "search_files", "vision_analyze"})
+        self.assertEqual(presets["standard"], {
+            "read_file", "list_directory", "search_files", "write_file", "edit_file",
+            "pwsh", "run_skill_script", "vision_analyze",
+        })
+        self.assertFalse(presets["standard"] & {"http_request", "web_search", "read_pdf",
+                                                "pdf_render_pages", "pdf_zoom_region"},
+                         "标准模式不含联网与 PDF 工具")
+        self.assertEqual(presets["comfyui"], presets["standard"] | {
+            "comfyui_prepare_workflow", "comfyui_batch",
+            "job_output", "job_status", "job_wait",
+        }, "ComfyUI 联动 = 标准模式 + ComfyUI 两个工具 + 依赖的 Job 查询工具")
         self.assertFalse([n for n in presets["comfyui"] if n.startswith("mcp__")],
                          "ComfyUI 预设声明不启用 MCP")
-        self.assertIn("comfyui_batch", presets["comfyui"])
-        self.assertIn("run_in_background", presets["batch"])
-        self.assertIn("read_pdf", presets["standard"])
         self.assertEqual(len(presets["full"]), len(known), "全能模式覆盖全部工具")
+
+    def test_default_selected_tools_equal_standard_preset(self) -> None:
+        from naiba.config import TOOL_PRESETS, _DEFAULT_SELECTED_TOOLS
+
+        standard = next(preset for preset in TOOL_PRESETS if preset["id"] == "standard")
+        self.assertEqual(set(standard["include"]), set(_DEFAULT_SELECTED_TOOLS),
+                         "新建 Agent 的默认勾选必须等于标准模式，否则打开表单显示「自定义」")
+
+    def test_frontend_dep_rules_match_backend(self) -> None:
+        """前端 AGENT_TOOL_DEP_RULES 必须与后端 JOB_CREATOR_TOOL_DEPS 逐项一致（闭包同源）。"""
+        from naiba.run.session import JOB_CREATOR_TOOL_DEPS
+
+        settings = (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
+        body = settings[settings.index("export const AGENT_TOOL_DEP_RULES = {"):]
+        body = body[: body.index("};")]
+        for creator, deps in JOB_CREATOR_TOOL_DEPS.items():
+            with self.subTest(creator=creator):
+                match = re.search(rf"{creator}: \[([^\]]*)\]", body)
+                self.assertIsNotNone(match, f"前端缺少 {creator} 的依赖规则")
+                self.assertEqual(set(re.findall(r"'([^']+)'", match.group(1))), set(deps))
 
     def test_unknown_preset_reference_logs_warning(self) -> None:
         from naiba.config import resolve_tool_preset

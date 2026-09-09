@@ -34,12 +34,14 @@ def _is_media_product_path(raw: str) -> bool:
 ATTACHMENT_ONLY_NOTICE = "[用户未输入文字，只发送了以下附件]"
 
 
-def upload_reference_lines(uploads: list[dict[str, Any]]) -> list[str]:
+def upload_reference_lines(uploads: list[dict[str, Any]], *, pdf_tools: bool = True) -> list[str]:
     """用户上传附件的模型侧引用行（_run_chat 与历史重放共用，保证逐字节一致）。
 
-    PDF 附件追加固定处理指引：提取文本用 read_pdf；扫描版/看图用 pdf_render_pages
-    渲染页图后 vision_analyze；细节不清时 pdf_zoom_region 局部放大。
+    PDF 附件在 ``pdf_tools=True`` 时追加固定处理指引：提取文本用 read_pdf；扫描版/看图用
+    pdf_render_pages 渲染页图后 vision_analyze；细节不清时 pdf_zoom_region 局部放大。
     该文本条件出现、每轮稳定，不改变非 PDF 会话的前缀。
+    会话工具集不含 read_pdf 时传 ``pdf_tools=False``：不再指引模型调用不存在的工具
+    （系统提示的「PDF 处理策略」段同口径，见 ``run/chat.py``）。
     """
     lines: list[str] = []
     for item in uploads or []:
@@ -49,25 +51,30 @@ def upload_reference_lines(uploads: list[dict[str, Any]]) -> list[str]:
         if not path:
             continue
         if path.lower().endswith(".pdf"):
-            lines.append(
-                f"[用户上传文件：{path}]"
-                "（PDF 文档：提取文本用 read_pdf；扫描版或需要看图时用 "
-                "pdf_render_pages 渲染页图后调用 vision_analyze；细节不清时用 pdf_zoom_region 局部放大）"
-            )
+            line = f"[用户上传文件：{path}]"
+            if pdf_tools:
+                line += (
+                    "（PDF 文档：提取文本用 read_pdf；扫描版或需要看图时用 "
+                    "pdf_render_pages 渲染页图后调用 vision_analyze；细节不清时用 pdf_zoom_region 局部放大）"
+                )
+            lines.append(line)
         else:
             lines.append(f"[用户上传文件：{path}]")
     return lines
 
 
-def compose_user_content(message: str, uploads: list[dict[str, Any]]) -> str:
+def compose_user_content(
+    message: str, uploads: list[dict[str, Any]], *, pdf_tools: bool = True,
+) -> str:
     """用户轮次的模型可见文本（_run_chat 与历史重放共用的唯一拼接口径）。
 
     非空文字：保持历史口径逐字节不变（``文字 + "\\n" + 引用行``），前缀缓存不受影响；
     纯附件（用户未输入文字）：以固定提示行替代空文字，再接附件引用行，使模型明确
     "本轮只有附件、没有指令"，而不是自行脑补诉求。
+    ``pdf_tools`` 透传给 ``upload_reference_lines``（会话工具集是否含 read_pdf）。
     """
     text = str(message or "")
-    lines = upload_reference_lines(uploads)
+    lines = upload_reference_lines(uploads, pdf_tools=pdf_tools)
     if not lines:
         return text
     body = "\n".join(lines)

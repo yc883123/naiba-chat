@@ -184,12 +184,16 @@ def _copy_model_trace_message(message: Any) -> dict[str, Any] | None:
 def build_model_history(
     conversation_messages: list[dict[str, Any]],
     event=None,
+    *,
+    pdf_tools: bool = True,
 ) -> list[dict[str, Any]]:
     """Build model history, carrying EVERY user message's own images (all kept).
 
     此版本**保留全部历史图片**作为真图，不翻转、不留占位（每条 user 消息独立携带自己的图，
     按 MODEL_IMAGE_HISTORY_LIMIT 封顶）。用于对照测试：预判 DeepSeek 不跨不同图片缓存，
     全部真图会让缓存冻在第一张图处；以实测为准。
+    ``pdf_tools``：会话工具集是否含 read_pdf，决定 PDF 附件引用行是否带处理指引
+    （与 _run_chat 同口径，同一会话内恒定）。
     """
     history: list[dict[str, Any]] = []
     replay_seq = 0
@@ -200,7 +204,7 @@ def build_model_history(
         previous_uploads = (item.get("metadata") or {}).get(MetadataKeys.ATTACHMENTS) or []
         if item.get("role") == "user" and previous_uploads:
             # 与 _run_chat 同一拼接口径（纯附件轮次补固定提示行，见 compose_user_content）。
-            content = compose_user_content(content, previous_uploads)
+            content = compose_user_content(content, previous_uploads, pdf_tools=pdf_tools)
             image_parts: list[dict[str, Any]] = []
             for upload in previous_uploads:
                 path = str(upload.get("path") or "")

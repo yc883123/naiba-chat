@@ -411,8 +411,11 @@ class ConversationRunMixin:
                 raise TaskCancelled("任务已取消")
             message = str(run.get("message") or "")
             uploads = snapshot.get("attachments") or []
+            # PDF 处理指引只在会话工具集确实含 read_pdf 时出现（系统提示段 + 附件引用行同口径）。
+            # 会话工具集首轮固化 → 同一会话内恒定，不会像"本轮是否含图"那样破坏前缀缓存。
+            pdf_tools_enabled = "read_pdf" in {str(item) for item in (snapshot.get("allowed_tools") or [])}
             # 与历史重放（build_model_history）同一拼接口径：纯附件轮次补固定提示行。
-            effective = compose_user_content(message, uploads)
+            effective = compose_user_content(message, uploads, pdf_tools=pdf_tools_enabled)
             model_key = str(snapshot.get("model_key") or "")
             if not model_key and snapshot.get("provider_id"):
                 model_key = f"online:{snapshot['provider_id']}"
@@ -436,7 +439,9 @@ class ConversationRunMixin:
                     "medium" if snapshot.get("deep_reasoning_enabled", False) else "off"
                 )
             reasoning_effort = profile["reasoning_effort"]
-            history = build_model_history(snapshot.get("conversation_messages") or [], event)
+            history = build_model_history(
+                snapshot.get("conversation_messages") or [], event, pdf_tools=pdf_tools_enabled,
+            )
             # 视觉统一由模型驱动（自动路由已移除）：文本大脑不支持看图时，只把图片改写为
             # 安全文本占位（路径引用 + 工具提示），由模型按需主动调用 vision_analyze；
             # 纯文本大脑绝不会收到原始 image_url，也不会再有后台自动识图。
@@ -519,9 +524,13 @@ class ConversationRunMixin:
             prompt = (prompt + "\n\n图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径；"
                        "图片已作为原图直接可见时（多模态模型）无需调用；仅当用户明确要求裁剪、OCR、坐标、像素比较等"
                        "新操作时才调用 vision_image_ops。").strip()
-            prompt = (prompt + "\n\nPDF 处理策略：解析 PDF 文本层用 read_pdf；扫描版（无文本层）或需要看图时，先调用 "
-                       "pdf_render_pages 渲染页图，再将页图路径传给 vision_analyze；整页图细节看不清（小字/表格/图表）时，"
-                       "用 pdf_zoom_region 局部放大后再次 vision_analyze。").strip()
+            # PDF 处理策略只在工具集含 read_pdf 时注入：否则系统提示让模型去用不存在的工具，
+            # 而会话工具集首轮固化、中途不可改，用户只能重开会话换 Agent（实测死路）。
+            # 与 web_search 引导同口径（按会话固化的工具集判定，同一会话内恒定）。
+            if pdf_tools_enabled:
+                prompt = (prompt + "\n\nPDF 处理策略：解析 PDF 文本层用 read_pdf；扫描版（无文本层）或需要看图时，先调用 "
+                           "pdf_render_pages 渲染页图，再将页图路径传给 vision_analyze；整页图细节看不清（小字/表格/图表）时，"
+                           "用 pdf_zoom_region 局部放大后再次 vision_analyze。").strip()
             executor = ReadOnlyToolExecutor(run_executor) if mode == "plan" else CraftToolExecutor(run_executor)
             run_context: RunContext = {
                 "run_id": run_id,

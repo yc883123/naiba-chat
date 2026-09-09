@@ -189,10 +189,12 @@ def _mcp_subgroup(name: str) -> str:
     server, sep, _tool = name[len("mcp__"):].partition("__")
     return server if sep else ""
 # 模型能力映射已随视觉单入口重构移除（vision_analyze 按会话能力换形态，不再按模型裁剪工具集）。
+# 新建 Agent 的默认勾选 = 「标准模式」预设的工具集（守门测试钉死两者一致，
+# 否则新建 Agent 打开时会显示「当前：自定义」而不是「标准模式」）。
 _DEFAULT_SELECTED_TOOLS = frozenset({
-    "read_file", "write_file", "list_directory", "search_files", "edit_file",
-    "pwsh", "run_skill_script", "http_request", "web_search", "vision_analyze",
-    "read_pdf", "pdf_render_pages", "pdf_zoom_region",
+    "read_file", "list_directory", "search_files",
+    "write_file", "edit_file", "pwsh", "run_skill_script",
+    "vision_analyze",
 })
 
 
@@ -312,15 +314,18 @@ def tool_group_entries(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 # ---- 工具集预设（Agent 编辑页：一键选中一批工具）----
+# 4 档：只读模式 / 标准模式 / ComfyUI 联动 / 全能模式（按能力从小到大排）。
 # include 支持两种写法：具体工具名，或 "group:分类名"（"group:*" 表示所有分类）。
 # exclude 用于从已包含的分类里再剔除个别工具。
 # 注意：分类收敛为 6 组后，组的粒度比单个预设的意图更粗（「联网与外部服务」同时含 ComfyUI
 # 与 MCP 动态工具、「任务与扩展」含 Skill 管理），因此**除 group:* 外一律显式列工具名**，
 # 保持每个预设的语义精确。写错的组名/工具名由 resolve_tool_preset 告警 + 守门测试兜住。
+# 另一个硬约束：预设的工具名必须**已经包含依赖闭包**（如 ComfyUI 预设显式带 job_output/
+# job_status/job_wait），否则「下拉显示的个数」与「套用后的实际个数」会不一致。
 TOOL_PRESETS: tuple[dict[str, Any], ...] = (
     {
-        "id": "minimal",
-        "name": "极简模式",
+        "id": "readonly",
+        "name": "只读模式",
         "tagline": "只读不改",
         "desc": "只能查看和搜索文件、看图片。不写文件、不跑命令、不联网，最省心。",
         "include": ["read_file", "list_directory", "search_files", "vision_analyze"],
@@ -329,50 +334,25 @@ TOOL_PRESETS: tuple[dict[str, Any], ...] = (
         "id": "standard",
         "name": "标准模式",
         "tagline": "日常推荐",
-        "desc": "读写文件 + 搜索 + 跑命令 + 联网 + 看图 + 解析 PDF，覆盖绝大多数日常任务。",
-        "include": [
-            "read_file", "write_file", "list_directory", "search_files",
-            "edit_file", "pwsh", "run_skill_script", "http_request", "web_search",
-            "vision_analyze", "read_pdf", "pdf_render_pages", "pdf_zoom_region",
-        ],
-    },
-    {
-        "id": "research",
-        "name": "联网研究",
-        "tagline": "查资料出报告",
-        "desc": "标准能力 + 联网全套 + 任务清单与报告产出，适合查资料、做调研、写文档。",
-        "include": [
-            "read_file", "list_directory", "search_files", "recall_history",
-            "write_file", "edit_file",
-            "run_skill_script", "http_request", "web_search",
-            "todo_write", "vision_analyze",
-        ],
-    },
-    {
-        "id": "batch",
-        "name": "批量后台",
-        "tagline": "长任务并行",
-        "desc": "标准能力 + 后台任务/子 Agent 全套，适合一次跑很多、跑很久的活。",
+        "desc": "读写文件 + 搜索 + 跑命令 + 看图，覆盖绝大多数本机任务。",
         "include": [
             "read_file", "list_directory", "search_files",
-            "write_file", "edit_file",
-            "pwsh", "run_skill_script", "http_request", "web_search",
-            "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
-            "todo_write", "vision_analyze",
+            "write_file", "edit_file", "pwsh", "run_skill_script",
+            "vision_analyze",
         ],
     },
     {
         "id": "comfyui",
         "name": "ComfyUI 联动",
         "tagline": "批量出图",
-        "desc": "标准能力 + ComfyUI 工作流与批量出图 + 后台任务，适合批量生成图片/视频素材。走 HTTP 通道直连本机 ComfyUI，不启用任何 MCP 连接。",
+        "desc": "标准能力 + ComfyUI 工作流与批量出图，并带上任务查询工具。走 HTTP 通道直连本机 ComfyUI，不启用任何 MCP 连接。",
         "include": [
             "read_file", "list_directory", "search_files",
-            "write_file", "edit_file",
-            "pwsh", "run_skill_script",
+            "write_file", "edit_file", "pwsh", "run_skill_script", "vision_analyze",
             "comfyui_prepare_workflow", "comfyui_batch",
-            "run_in_background", "job_output", "job_status", "job_wait", "job_kill", "subagent",
-            "todo_write", "vision_analyze", "http_request", "web_search",
+            # comfyui_batch 的依赖闭包（JOB_CREATOR_TOOL_DEPS / 前端 AGENT_TOOL_DEP_RULES）：
+            # 必须显式列出，否则下拉显示的个数会小于套用后的实际个数（选中即被闭包补上）。
+            "job_output", "job_status", "job_wait",
         ],
         "exclude_mcp": True,
     },

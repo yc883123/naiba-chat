@@ -47,6 +47,37 @@ class ComposeUserContentTests(unittest.TestCase):
         # 非字典/无 path 的条目一律忽略：既不产出引用行，也不抛异常。
         self.assertEqual(compose_user_content("", [None, "x", {}, {"name": "无路径"}]), "")
 
+    def test_pdf_guidance_dropped_when_pdf_tools_disabled(self):
+        """会话工具集不含 read_pdf 时，PDF 引用行不得再指引调用不存在的工具。"""
+        uploads = [{"path": "C:/tmp/文档.pdf"}]
+        with_guidance = compose_user_content("看看", uploads, pdf_tools=True)
+        without = compose_user_content("看看", uploads, pdf_tools=False)
+        self.assertIn("read_pdf", with_guidance)
+        self.assertNotIn("read_pdf", without)
+        self.assertIn("[用户上传文件：C:/tmp/文档.pdf]", without, "引用行本身必须保留")
+        self.assertEqual(
+            compose_user_content("看看", [{"path": "C:/tmp/a.png"}], pdf_tools=False),
+            compose_user_content("看看", [{"path": "C:/tmp/a.png"}], pdf_tools=True),
+            "非 PDF 附件不受该开关影响",
+        )
+
+
+class PdfPromptGatingSourceTests(unittest.TestCase):
+    """PDF 处理指引必须与工具集同口径（系统提示段 + 附件引用行），不能无条件注入。"""
+
+    def test_run_chat_gates_pdf_prompt_on_allowed_tools(self):
+        source = (Path(__file__).resolve().parents[1] / "naiba/run/chat.py").read_text(encoding="utf-8")
+        self.assertIn('pdf_tools_enabled = "read_pdf" in', source,
+                      "PDF 开关必须按会话固化的工具集判定")
+        self.assertIn("if pdf_tools_enabled:", source, "PDF 处理策略段必须条件注入")
+        self.assertGreaterEqual(source.count("pdf_tools=pdf_tools_enabled"), 2,
+                                "当前轮与历史重放必须同口径")
+
+    def test_history_replay_accepts_pdf_tools_flag(self):
+        source = (Path(__file__).resolve().parents[1] / "naiba/core/history.py").read_text(encoding="utf-8")
+        self.assertIn("pdf_tools: bool = True", source)
+        self.assertIn("pdf_tools=pdf_tools", source)
+
 
 class _VisionStub:
     def resolve_brain_supports_images(self, profile, probe_if_unknown=False):

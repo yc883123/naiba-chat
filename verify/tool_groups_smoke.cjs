@@ -110,6 +110,46 @@ async function scopeSnapshot(page) {
       JSON.stringify(snap.groups.map((g) => [g.name, g.headHeight])));
     check('默认全部折叠（展开区隐藏）', snap.groups.every((g) => g.collapsed && g.bodyHidden), '');
 
+    // ③ 预设下拉：4 档 + 「显示的个数 == 套用后实际个数」（依赖闭包必须显式列进预设）
+    const presetSnap = await page.evaluate(() => {
+      const select = document.querySelector('#agentToolPresetSelect');
+      const group = select.querySelector('optgroup');
+      return {
+        options: [...group.querySelectorAll('option')].map((opt) => ({
+          value: opt.value, label: opt.textContent.trim(),
+        })),
+        hasCustomGroup: [...select.querySelectorAll('optgroup')].some((g) => g.label === '手动组合'),
+      };
+    });
+    check('预设下拉只有 4 档', presetSnap.options.length === 4, JSON.stringify(presetSnap.options));
+    check('预设名称与个数正确', JSON.stringify(presetSnap.options.map((o) => o.label)) === JSON.stringify([
+      '只读模式 · 4 个工具', '标准模式 · 8 个工具', 'ComfyUI 联动 · 13 个工具',
+      `全能模式 · ${(catalog.tools || []).length} 个工具`,
+    ]), JSON.stringify(presetSnap.options.map((o) => o.label)));
+    check('仍保留「手动组合 → 自定义」入口', presetSnap.hasCustomGroup === true, '');
+    for (const [value, expected] of [['readonly', 4], ['standard', 8], ['comfyui', 13],
+      ['full', (catalog.tools || []).length]]) {
+      await page.selectOption('#agentToolPresetSelect', value);
+      await page.waitForTimeout(250);
+      const applied = await page.evaluate(() => ({
+        count: document.querySelector('#agentToolCount')?.textContent.trim() || '',
+        state: document.querySelector('#agentToolPresetState')?.textContent.trim() || '',
+        checked: document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked').length,
+        tools: [...document.querySelectorAll('#agentToolScope .permission-grid input[type="checkbox"]:checked')]
+          .map((cb) => cb.value).sort(),
+      }));
+      check(`套用「${value}」：显示个数 == 实际勾选数（${expected}）`,
+        applied.count.includes(`已选 ${expected} /`) && applied.checked === expected,
+        JSON.stringify(applied));
+      check(`套用「${value}」后不被判成「自定义」`,
+        applied.state.startsWith('当前：') && !applied.state.includes('自定义'), JSON.stringify(applied));
+      if (value === 'readonly') {
+        check('只读模式只含 4 个只读工具', JSON.stringify(applied.tools) === JSON.stringify([
+          'list_directory', 'read_file', 'search_files', 'vision_analyze',
+        ]), JSON.stringify(applied.tools));
+      }
+    }
+
     // ③ 展开「命令与脚本执行」→ 全选 → 计数与勾选状态
     const targetGroup = '命令与脚本执行';
     await page.click(`.agent-tool-group[data-group="${targetGroup}"] .agent-tool-group-head`);
