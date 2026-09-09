@@ -74,15 +74,34 @@ async function dialogSnapshot(page) {
 }
 
 // 固定 Skill / 工具集必须真的可见可点（本轮修的回归：滚动容器被网格行裁掉）。
-async function listSnapshot(page) {
+// 分区切换后两个面板不同时可见 → 各自切到对应页再量。
+async function skillSnapshot(page) {
+  await page.click('[data-agent-tab="skills"]');
+  await page.waitForTimeout(250);
   return page.evaluate(() => {
     const skills = document.querySelector('#agentSkillList');
-    const scope = document.querySelector('#agentToolScope');
     const skillsBox = skills.closest('.agent-skills').getBoundingClientRect();
-    const scopeBox = scope.closest('.agent-skills').getBoundingClientRect();
-    const groups = [...scope.querySelectorAll('.agent-tool-group')];
     const cards = [...skills.querySelectorAll('.skill-card')];
     const cardStyle = cards.length ? getComputedStyle(cards[0]) : null;
+    return {
+      skillCards: cards.length,
+      legacySkillItems: skills.querySelectorAll('.skill-item').length,
+      skillCardBorder: cardStyle ? cardStyle.borderTopWidth : '',
+      skillCardRadius: cardStyle ? cardStyle.borderTopLeftRadius : '',
+      skillCardColumns: getComputedStyle(skills).gridTemplateColumns.split(' ').filter(Boolean).length,
+      listH: Math.round(skills.getBoundingClientRect().height),
+      boxH: Math.round(skillsBox.height),
+    };
+  });
+}
+
+async function toolSnapshot(page) {
+  await page.click('[data-agent-tab="tools"]');
+  await page.waitForTimeout(250);
+  return page.evaluate(() => {
+    const scope = document.querySelector('#agentToolScope');
+    const scopeBox = scope.closest('.agent-skills').getBoundingClientRect();
+    const groups = [...scope.querySelectorAll('.agent-tool-group')];
     const groupInfo = groups.map((group) => {
       const head = group.querySelector('.agent-tool-group-head');
       const title = head.querySelector('.group-title');
@@ -101,13 +120,6 @@ async function listSnapshot(page) {
       };
     });
     return {
-      skillCards: cards.length,
-      legacySkillItems: skills.querySelectorAll('.skill-item').length,
-      skillCardBorder: cardStyle ? cardStyle.borderTopWidth : '',
-      skillCardRadius: cardStyle ? cardStyle.borderTopLeftRadius : '',
-      skillCardColumns: getComputedStyle(skills).gridTemplateColumns.split(' ').filter(Boolean).length,
-      skillListH: Math.round(skills.getBoundingClientRect().height),
-      skillBoxH: Math.round(skillsBox.height),
       groups: groups.length,
       scopeH: Math.round(scope.getBoundingClientRect().height),
       scopeBoxH: Math.round(scopeBox.height),
@@ -215,37 +227,38 @@ async function waitForCardCount(page, expected, timeout = 15000) {
       dialog.subtitle.includes(target.id), JSON.stringify(dialog.subtitle));
     check('有「自定义头像」按钮', dialog.hasAvatarButton === true, '');
 
-    // 固定 Skill / 工具集必须真的可见、可展开、可勾选（本轮修的裁切回归）
-    const lists = await listSnapshot(page);
+    // 固定 Skill / 工具集必须真的可见、可展开、可勾选（分区切换后各自切页再断言）
+    const lists = await skillSnapshot(page);
     check('固定 Skill 以卡片形式渲染（复选框 + 名称 + 说明）',
       lists.skillCards > 0 && lists.legacySkillItems === 0 && lists.skillCardBorder === '1px'
       && parseFloat(lists.skillCardRadius) > 0,
       JSON.stringify(lists));
     check('固定 Skill 卡片两列网格',
       lists.skillCardColumns === 2, String(lists.skillCardColumns));
-    check('固定 Skill 版块与工具集版块等高',
-      lists.skillListH > 0 && lists.skillListH === lists.scopeH,
-      JSON.stringify({ skillListH: lists.skillListH, scopeH: lists.scopeH }));
     check('固定 Skill 列表可见且有内容',
-      lists.skillCards > 0 && lists.skillListH > 0 && lists.skillBoxH >= lists.skillListH,
+      lists.skillCards > 0 && lists.listH > 0 && lists.boxH >= lists.listH,
       JSON.stringify(lists));
+    const tools = await toolSnapshot(page);
+    check('固定 Skill 版块与工具集版块共用同一高度变量',
+      lists.listH > 0 && lists.listH === tools.scopeH,
+      JSON.stringify({ skillListH: lists.listH, scopeH: tools.scopeH }));
     check('工具集分类可见（未被行高裁掉）',
-      lists.groups > 0 && lists.scopeH > 0 && lists.scopeBoxH >= lists.scopeH && lists.firstGroupVisible > 0,
-      JSON.stringify(lists));
+      tools.groups > 0 && tools.scopeH > 0 && tools.scopeBoxH >= tools.scopeH && tools.firstGroupVisible > 0,
+      JSON.stringify(tools));
     check('工具集分组行未被压扁（行高 ≥ 分组头高度）',
-      lists.firstGroupVisible >= lists.firstGroupHeadH && lists.firstGroupVisible >= 30,
-      JSON.stringify({ group: lists.firstGroupVisible, head: lists.firstGroupHeadH }));
+      tools.firstGroupVisible >= tools.firstGroupHeadH && tools.firstGroupVisible >= 30,
+      JSON.stringify({ group: tools.firstGroupVisible, head: tools.firstGroupHeadH }));
     check('分组头一行呈现（小字说明与标题同行、计数在最后）',
-      lists.groupsNotSingleLine.length === 0 && lists.groupsCountMisplaced.length === 0,
-      JSON.stringify({ notSingleLine: lists.groupsNotSingleLine, countMisplaced: lists.groupsCountMisplaced }));
+      tools.groupsNotSingleLine.length === 0 && tools.groupsCountMisplaced.length === 0,
+      JSON.stringify({ notSingleLine: tools.groupsNotSingleLine, countMisplaced: tools.groupsCountMisplaced }));
     check('每个分组都有小字说明',
-      lists.groupsWithoutDesc.length === 0, JSON.stringify(lists.groupsWithoutDesc));
+      tools.groupsWithoutDesc.length === 0, JSON.stringify(tools.groupsWithoutDesc));
     check('视觉分组存在且带说明（分类收敛为「视觉与图片」）',
-      Boolean(lists.visionGroup) && Boolean(lists.visionGroup.desc),
-      JSON.stringify({ order: lists.groupTitles, vision: lists.visionGroup }));
+      Boolean(tools.visionGroup) && Boolean(tools.visionGroup.desc),
+      JSON.stringify({ order: tools.groupTitles, vision: tools.visionGroup }));
     check('每个分组都带风险徽标',
-      lists.badges.length === lists.groups && lists.badges.every((badge) => badge),
-      JSON.stringify(lists.badges));
+      tools.badges.length === tools.groups && tools.badges.every((badge) => badge),
+      JSON.stringify(tools.badges));
     const expand = await page.evaluate(() => {
       const group = document.querySelector('#agentToolScope .agent-tool-group');
       const head = group.querySelector('.agent-tool-group-head');
@@ -281,7 +294,10 @@ async function waitForCardCount(page, expected, timeout = 15000) {
       dialog.open === true && dialog.name === '' && dialog.title.includes('新增') && dialog.hasIdField === false,
       JSON.stringify(dialog));
     check('新建时提示 ID 由后台分配', dialog.subtitle.includes('自动分配'), JSON.stringify(dialog.subtitle));
+    // 表单默认停在「基本」页，名称直接可填；系统提示词要先切到对应分区。
     await page.fill('#agentName', `${PREFIX}卡片`);
+    await page.click('[data-agent-tab="prompt"]');
+    await page.waitForTimeout(250);
     await page.fill('#agentSystemPromptEdit', '这是冒烟测试用的 Agent 提示词，用来验证卡片摘要渲染。');
     await page.click('#saveAgentForm');
     const closed = await waitForClosed(page);

@@ -28,6 +28,9 @@ function check(label, ok, detail = '') {
     await page.click('#agentCards [data-agent-card] .agent-card-name');
     await page.waitForSelector('#agentDialog[open]', { timeout: 10000 });
     await page.waitForTimeout(2000);
+    // 分区切换后默认停在「基本」，工具卡片断言要先切到「工具集」页。
+    await page.click('[data-agent-tab="tools"]');
+    await page.waitForTimeout(300);
 
     // 展开前：分组头保持原样（透明/白底）
     const collapsedHead = await page.evaluate(() => {

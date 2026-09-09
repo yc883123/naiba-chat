@@ -55,6 +55,9 @@ async function presetTitles() {
     await page.waitForSelector('#agentCards .agent-card', { timeout: 10000 });
     await page.click('#agentCards [data-agent-card] .agent-card-name');
     await page.waitForSelector('#agentDialog[open]', { timeout: 10000 });
+    // 分区切换后默认停在「基本」，提示词相关操作要先切到「系统提示词」页。
+    await page.click('[data-agent-tab="prompt"]');
+    await page.waitForTimeout(200);
 
     const wiring = await page.evaluate(() => {
       const block = document.querySelector('.agent-prompt-block');
@@ -69,7 +72,7 @@ async function presetTitles() {
         hasBlock: Boolean(block),
         toolbarInsideBlock: Boolean(block && block.querySelector('#agentPromptPresetButton')),
         titleInsideHead: Boolean(head && head.querySelector('.agent-prompt-title')),
-        hint: document.querySelector('.agent-prompt-hint')?.textContent || '',
+        hint: document.querySelector('.agent-prompt-block .agent-prompt-hint')?.textContent || '',
       };
     });
     check('表单有「套用快捷提示词」按钮', wiring.hasButton, JSON.stringify(wiring));

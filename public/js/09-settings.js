@@ -888,6 +888,23 @@ export function openAgentCard(agentId) {
   showAgentForm(agent);
 }
 
+// Agent 弹层分区切换（基本 / 系统提示词 / 固定 Skill / 工具集）。
+// 四块面板都留在 DOM 里、只切 hidden —— 切页不丢勾选与已输入内容；快捷提示词面板随切页收起。
+export function switchAgentTab(name) {
+  $$('.agent-tabs button[data-agent-tab]').forEach((button) => {
+    const active = button.dataset.agentTab === name;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  $$('.agent-tab-panel').forEach((panel) => { panel.hidden = panel.dataset.agentPanel !== name; });
+  closeAgentPromptPresetPanel();
+}
+
+export function updateAgentSkillTabCount() {
+  const count = $('#agentSkillTabCount');
+  if (count) count.textContent = String(state.agentFormSkillIds.length);
+}
+
 export function renderAgentSkillPicker() {
   const list = $('#agentSkillList');
   if (!list) return;
@@ -898,6 +915,7 @@ export function renderAgentSkillPicker() {
       <input type="checkbox" value="${skill.id}" ${state.agentFormSkillIds.includes(skill.id) ? 'checked' : ''}>
       <span><b>${escapeHtml(skill.name)}</b><p>${escapeHtml(skill.description)}</p></span>
     </label>`).join('') || '<p class="activity">暂无可用 Skill</p>';
+  updateAgentSkillTabCount();
 }
 
 export function showAgentForm(agent = null) {
@@ -923,6 +941,8 @@ export function showAgentForm(agent = null) {
   // 快捷提示词面板每次打开表单收起并重建列表（套用结果只进文本框，保存 Agent 才落库）。
   closeAgentPromptPresetPanel();
   renderAgentPromptPresetList();
+  // 分区复位到「基本」：避免上一次停留的页残留观感。
+  switchAgentTab('basic');
   $('#agentError').textContent = '';
   // 卡片点开即编辑；ID 由后台分配，只在副标题里显示已有 ID 供核对。
   agentAvatarFile = null;
@@ -1039,11 +1059,18 @@ export function updateToolPresetUI() {
 export function updateToolCounter() {
   const total = (state.toolCatalog?.tools || []).length;
   const counter = $('#agentToolCount');
+  const unrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
   if (counter) {
-    const unrestricted = state.agentFormUnrestricted && !state.agentFormScopeTouched;
     counter.textContent = unrestricted
       ? `全部 ${total} 个（未限制）`
       : `已选 ${state.agentFormToolScope.length} / ${total} 个工具`;
+  }
+  // 分区标签上的计数：切到别的页也能一眼看到勾了多少。
+  const tabCount = $('#agentToolTabCount');
+  if (tabCount) {
+    tabCount.textContent = unrestricted
+      ? `${total}/${total}`
+      : `${state.agentFormToolScope.length}/${total}`;
   }
 }
 

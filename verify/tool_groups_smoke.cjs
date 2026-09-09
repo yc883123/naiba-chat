@@ -94,6 +94,9 @@ async function scopeSnapshot(page) {
     await page.waitForTimeout(400);
     await page.click('#agentCards .agent-card');
     await page.waitForTimeout(600);
+    // 分区切换后默认停在「基本」，工具集相关断言要先切到「工具集」页。
+    await page.click('[data-agent-tab="tools"]');
+    await page.waitForTimeout(300);
 
     let snap = await scopeSnapshot(page);
     check('弹层里有工具搜索框', snap.hasFilter === true, '');
@@ -237,6 +240,8 @@ async function scopeSnapshot(page) {
     await page.waitForTimeout(400);
     await page.click('#agentCards .agent-card');
     await page.waitForTimeout(600);
+    await page.click('[data-agent-tab="tools"]');
+    await page.waitForTimeout(300);
     await page.click('.agent-tool-group[data-group="联网与外部服务"] .agent-tool-group-head');
     await page.waitForTimeout(300);
     const subgroupSnap = await page.evaluate(() => {

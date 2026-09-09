@@ -383,6 +383,48 @@ class AgentPromptPresetUiTests(unittest.TestCase):
                       "Esc 先收面板，不能把整个 Agent 弹层关掉")
 
 
+class AgentTabsTests(unittest.TestCase):
+    """Agent 弹层分区切换：模块不再往尾部堆叠，顶端按钮切换显示。"""
+
+    def _index(self):
+        return (ROOT / "public/index.html").read_text(encoding="utf-8")
+
+    def _settings(self):
+        return (ROOT / "public/js/09-settings.js").read_text(encoding="utf-8")
+
+    def _bind(self):
+        return (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
+
+    def test_four_tabs_and_panels(self):
+        index = self._index()
+        tabs = index[index.index('class="agent-tabs"'):]
+        tabs = tabs[: tabs.index("</nav>")]
+        for name in ("basic", "prompt", "skills", "tools"):
+            with self.subTest(tab=name):
+                self.assertIn(f'data-agent-tab="{name}"', tabs)
+                self.assertIn(f'data-agent-panel="{name}"', index)
+        self.assertEqual(index.count("data-agent-panel="), 4, "只有 4 个分区面板")
+        # 默认只有第一个分区可见，其余带 hidden。
+        self.assertIn('<section class="agent-tab-panel" data-agent-panel="basic" role="tabpanel">', index)
+        for name in ("prompt", "skills", "tools"):
+            with self.subTest(hidden=name):
+                self.assertIn(f'data-agent-panel="{name}" role="tabpanel" hidden', index)
+        # 标签带计数：固定 Skill 个数 / 工具已选/总数
+        self.assertIn('id="agentSkillTabCount"', index)
+        self.assertIn('id="agentToolTabCount"', index)
+
+    def test_switch_resets_and_updates_counts(self):
+        settings = self._settings()
+        self.assertIn("export function switchAgentTab(name)", settings)
+        self.assertIn("switchAgentTab('basic')", settings, "打开表单复位到基本分区")
+        self.assertIn("export function updateAgentSkillTabCount()", settings)
+        self.assertIn("closeAgentPromptPresetPanel();", settings, "切页要收起快捷提示词面板")
+        bind = self._bind()
+        self.assertIn("$$('.agent-tabs button[data-agent-tab]').forEach", bind)
+        self.assertIn("switchAgentTab(button.dataset.agentTab)", bind)
+        self.assertIn("updateAgentSkillTabCount();", bind, "勾选 Skill 后标签计数要刷新")
+
+
 class AgentCardsMarkupTests(unittest.TestCase):
     def _index(self) -> str:
         return (ROOT / "public/index.html").read_text(encoding="utf-8")
@@ -524,11 +566,19 @@ class AgentCardsMarkupTests(unittest.TestCase):
         self.assertIn("id: $('#agentFormId').value.trim()", body)
         self.assertIn("保存后自动分配 ID", source)
 
-    def test_avatar_button_next_to_character_card(self) -> None:
-        """「自定义头像」按钮必须紧挨「导入角色卡 PNG」，且选图只做预览、保存才上传。"""
+    def test_avatar_button_in_basic_tab(self) -> None:
+        """「自定义头像」在「基本」分区（紧挨名称），选图只做预览、保存才上传。"""
         index = self._index()
-        self.assertLess(index.index('id="importAgentCharacterCard"'), index.index('id="pickAgentAvatar"'))
-        self.assertLess(index.index('id="pickAgentAvatar"'), index.index('id="agentAvatarPreview"'))
+        basic = index[index.index('data-agent-panel="basic"'):]
+        basic = basic[: basic.index('data-agent-panel="prompt"')]
+        self.assertIn('id="pickAgentAvatar"', basic, "头像属于基本属性，放在基本分区")
+        self.assertIn('id="agentAvatarPreview"', basic)
+        self.assertLess(basic.index('id="agentName"'), basic.index('id="pickAgentAvatar"'))
+        # 导入角色卡仍留在「系统提示词」分区（它作用于提示词文本）。
+        prompt = index[index.index('data-agent-panel="prompt"'):]
+        prompt = prompt[: prompt.index('data-agent-panel="skills"')]
+        self.assertIn('id="importAgentCharacterCard"', prompt)
+        self.assertNotIn('id="pickAgentAvatar"', prompt)
         source = self._settings()
         for snippet in ("export function pickAgentAvatar(", "export function handleAgentAvatarFile(",
                         "agentAvatarUrl(", "/api/agents/avatar/", "FormData()"):

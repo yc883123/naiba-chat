@@ -1038,6 +1038,24 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
    其最小内容高度为 0 → 行高只剩表头（实测 70.75px），列表被 `overflow:hidden` 裁掉且点不到。
    用 max-content 让行跟住内容高度（字段区照旧整体滚动）。 */
 .agent-form-body { display: grid; grid-auto-rows: max-content; gap: 12px; padding: 18px; overflow: auto; }
+/* 分区切换：模块不再一段段往尾部追加，改为顶端按钮切换（一次只看一块）。 */
+.agent-tabs { display: flex; align-items: center; gap: 6px; padding: 0 0 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.agent-tabs button {
+  border: 1px solid transparent; border-radius: var(--radius); background: none;
+  color: var(--muted); font-size: 13px; padding: 7px 12px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.agent-tabs button:hover { background: var(--surface-2); color: var(--text); }
+.agent-tabs button.active { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.agent-tab-count {
+  font-size: 11px; font-weight: 500; color: var(--muted); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 9px; padding: 0 6px;
+}
+.agent-tabs button.active .agent-tab-count { background: var(--surface); color: var(--accent); border-color: var(--accent-soft); }
+.agent-tab-panel { display: grid; gap: 12px; }
+.agent-tab-panel[hidden] { display: none; }
+.agent-avatar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agent-avatar-row .agent-prompt-hint { flex: 1; min-width: 200px; }
 /* 错误提示与按钮行固定在弹层底部（字段本身仍按原格式滚动）。 */
 .agent-form-footer { padding: 4px 18px 16px; border-top: 1px solid var(--line); }
 .agent-form-footer .form-actions { margin: 0; }
@@ -1047,7 +1065,7 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .agent-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .agent-form input[type="text"], .agent-form textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }
 .agent-form input[disabled] { opacity: .6; }
-.agent-skills { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; /* 固定 Skill 与工具集两个列表共用同一高度，视觉上等高 */ --agent-list-h: 320px; }
+.agent-skills { border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; /* 分区切换后两个列表不同时可见，仍共用同一高度变量 */ --agent-list-h: 420px; }
 .agent-skills-head { padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--surface-2); }
 .agent-skills-head b { font-size: 13px; }
 .agent-skills-head small { display: block; color: var(--muted); margin-top: 2px; }
