@@ -52,7 +52,7 @@ checks = {
     "§六 检查器 69 文件": "（69 文件 0 候选）" in doc,
     "§六 不再提 verify_split_merge": "verify_split_merge" not in doc,
     "§六 补工具卡片检查": "_check_tool_cards_compact.cjs" in doc,
-    "§六 574 用例": "（574 用例，" in doc,
+    "§六 575 用例": "（575 用例，" in doc,
     "§六 提示注入口径守门": "test_prompt_gating" in doc,
     "§3.3 视觉文案分流": "按模型视觉能力分「分析/装载」两种文案" in doc,
     "§九.23 条件注入口径": "按会话固化工具集条件注入" in doc,

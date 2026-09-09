@@ -31,8 +31,7 @@ from naiba.core.tool_results import display_tool_run
 from naiba.run.stream import _RunEventSink, _safe_activity
 
 VISION_ANALYZE_GUIDE = (
-    "图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径；"
-    "图片已作为原图直接可见时（多模态模型）无需调用。"
+    "图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径。"
 )
 VISION_ANALYZE_LOAD_GUIDE = (
     "图片处理策略：附件图片已作为原图直接可见，无需调用 vision_analyze；"

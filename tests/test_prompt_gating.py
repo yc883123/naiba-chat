@@ -49,10 +49,14 @@ class VisionPromptGatingTests(unittest.TestCase):
         parts = vision_prompt_sections({"vision_analyze", "vision_image_ops"}, model_has_vision=False)
         self.assertEqual(parts, [VISION_ANALYZE_GUIDE, VISION_OPS_GUIDE])
         self.assertEqual("".join(parts), (
-            "图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径；"
-            "图片已作为原图直接可见时（多模态模型）无需调用。"
+            "图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径。"
             "仅当用户明确要求裁剪、OCR、坐标、像素比较等新操作时才调用 vision_image_ops。"
         ))
+
+    def test_text_guide_has_no_multimodal_clause(self):
+        """文本模型看不到原图，不该出现"（多模态模型）无需调用"这类描述别的模型的从句。"""
+        self.assertNotIn("多模态模型", VISION_ANALYZE_GUIDE)
+        self.assertNotIn("无需调用", VISION_ANALYZE_GUIDE)
 
     def test_load_plus_ops_appends_ops_sentence(self):
         parts = vision_prompt_sections({"vision_analyze", "vision_image_ops"}, model_has_vision=True)
