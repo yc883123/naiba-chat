@@ -227,7 +227,7 @@ ComfyUI HTTP API:  http://127.0.0.1:8188
 ## 测试与构建
 
 ```powershell
-node --check public/app.js
+Get-ChildItem public\js\*.js | ForEach-Object { node --check $_.FullName }
 python -m unittest discover -s tests -q
 $env:NAIBA_BUILD_VERSION = "2.0.0-beta"
 python -m PyInstaller --noconfirm --clean naiba-chat.spec
