@@ -49,6 +49,9 @@ async function cardSnapshot(page) {
         badges: [...card.querySelectorAll('.agent-card-badge, .agent-card-tag')].map((el) => el.textContent.trim()),
         hasDelete: Boolean(card.querySelector('[data-agent-delete]')),
         cursor: getComputedStyle(card).cursor,
+        className: card.className,
+        background: getComputedStyle(card).backgroundColor,
+        borderColor: getComputedStyle(card).borderTopColor,
       })),
     };
   });
@@ -202,9 +205,14 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     check('卡片整张可点（手型光标）',
       cards.agents.every((card) => card.cursor === 'pointer'),
       JSON.stringify(cards.agents.map((card) => card.cursor)));
-    check('默认 Agent 卡片带「默认」角标',
-      cards.agents.filter((card) => card.badges.includes('默认')).length === 1,
+    check('卡片上不再有「默认」角标', cards.agents.every((card) => !card.badges.includes('默认')),
       JSON.stringify(cards.agents.map((card) => card.badges)));
+    check('默认 Agent 不再带高亮类（is-default）',
+      cards.agents.every((card) => !card.className.includes('is-default')),
+      JSON.stringify(cards.agents.map((card) => card.className)));
+    check('所有卡片底色/描边一致（没有哪张看起来像"被选中"）',
+      new Set(cards.agents.map((card) => `${card.background}|${card.borderColor}`)).size === 1,
+      JSON.stringify(cards.agents.map((card) => [card.id, card.background, card.borderColor])));
     check('页面上不再出现「内置」徽标',
       cards.agents.every((card) => !card.badges.includes('内置')),
       JSON.stringify(cards.agents.map((card) => card.badges)));

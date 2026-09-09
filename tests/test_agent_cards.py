@@ -608,17 +608,31 @@ class AgentCardsMarkupTests(unittest.TestCase):
             "agent-card-name",
             "agent-card-meta",
             "agent-card-prompt",
-            "agent-card-badge",
             "agent-card-tag",
             "新增 Agent",
         ):
             with self.subTest(snippet=snippet):
                 self.assertIn(snippet, source)
         self.assertLess(
-            source.index("agents.map((agent) => agentCardMarkup(agent, defaultId)).join('')"),
+            source.index("agents.map((agent) => agentCardMarkup(agent)).join('')"),
             source.index("agent-card-add"),
             "「新增 Agent」卡片必须排在最后一张",
         )
+
+    def test_default_agent_has_no_badge_or_highlight(self) -> None:
+        """默认 Agent 在卡片上不做任何标记：角标/强调色会被误读成「当前选中」。"""
+        source = self._settings()
+        card = source[source.index("function agentCardMarkup("):]
+        card = card[: card.index("\n}")]
+        self.assertNotIn("agent-card-badge", card, "「默认」角标已移除")
+        self.assertNotIn("is-default", card, "默认 Agent 不再加高亮类")
+        self.assertNotIn("defaultId", card, "卡片渲染不再需要默认项 ID")
+        self.assertNotIn("agent-card-badge", source)
+        self.assertNotIn("agentCardMarkup(agent, defaultId)", source)
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        self.assertNotIn(".agent-card.is-default", css)
+        self.assertNotIn(".agent-card-badge", css, "角标样式一并退役")
+        self.assertIn(".agent-card:hover", css, "悬停反馈保留（那不是选中态）")
 
     def test_built_in_agents_have_no_delete_button(self) -> None:
         source = self._settings()

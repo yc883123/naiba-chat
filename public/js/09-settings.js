@@ -846,7 +846,7 @@ export function agentAvatarUrl(agent) {
   return file ? `/api/agents/avatar/${encodeURIComponent(file)}` : '';
 }
 
-function agentCardMarkup(agent, defaultId) {
+function agentCardMarkup(agent) {
   const id = escapeHtml(agent.id || '');
   const name = escapeHtml(agent.name || '未命名 Agent');
   const skills = Array.isArray(agent.skill_ids) ? agent.skill_ids.length : 0;
@@ -855,12 +855,13 @@ function agentCardMarkup(agent, defaultId) {
     ? `${prompt.slice(0, AGENT_PROMPT_PREVIEW_LIMIT)}…`
     : prompt;
   const avatar = agentAvatarUrl(agent);
+  // 卡片上不再标「默认」角标、也不给默认 Agent 加高亮：默认项由顶栏 Agent 选择器体现，
+  // 卡片上一旦有强调色/角标，会被误读成"当前选中/正在编辑的那一个"。
   const badges = [
-    agent.id === defaultId ? '<span class="agent-card-badge">默认</span>' : '',
     agent.built_in ? '<span class="agent-card-tag">内置</span>' : '',
   ].join('');
   return `
-    <div class="agent-card${agent.id === defaultId ? ' is-default' : ''}" data-agent-card="${id}" role="button" tabindex="0" aria-label="编辑 ${name}">
+    <div class="agent-card" data-agent-card="${id}" role="button" tabindex="0" aria-label="编辑 ${name}">
       ${agent.built_in ? '' : `<button class="agent-card-delete" type="button" data-agent-delete="${id}" title="删除 ${name}" aria-label="删除 ${name}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>`}
       <span class="agent-card-name" title="${name}">${avatar ? `<img class="agent-card-avatar" src="${escapeHtml(avatar)}" alt="">` : ''}${name}</span>
       <span class="agent-card-meta">${skills ? `${skills} 个固定 Skill` : '无固定 Skill'}</span>
@@ -873,9 +874,8 @@ export function renderAgentManager() {
   const list = $('#agentCards');
   if (!list) return;
   const agents = state.bootstrap?.agents || [];
-  const defaultId = String(state.bootstrap?.default_agent_id || '');
   // 「新增 Agent」卡片固定排在最后一张（列表为空时它就是唯一一张卡）。
-  list.innerHTML = agents.map((agent) => agentCardMarkup(agent, defaultId)).join('') + `
+  list.innerHTML = agents.map((agent) => agentCardMarkup(agent)).join('') + `
     <button type="button" class="agent-card agent-card-add" data-agent-add>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>
       <span>新增 Agent</span>
