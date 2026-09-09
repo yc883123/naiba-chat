@@ -786,7 +786,13 @@ export function updateContextUsage(messages = null, message = null) {
       }
     }
   }
-  state.contextUsage = target?.metadata?.usage || null;
+  setContextUsage(target?.metadata?.usage || null);
+}
+
+// 上下文圆环/弹层的唯一写入点：流式期间每完成一次模型请求（usage 事件）就刷新，
+// 不必等整轮结束；终态 done/error/取消 与历史渲染统一经 updateContextUsage 复用本入口。
+export function setContextUsage(usage) {
+  state.contextUsage = usage || null;
   renderContextUsage();
 }
 

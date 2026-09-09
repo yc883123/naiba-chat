@@ -4,7 +4,7 @@
 
 import { $, $$, api, escapeHtml, notifyComposerChanged, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
-import { toolMediaMarkup, updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
+import { setContextUsage, toolMediaMarkup, updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
 import { getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
@@ -810,6 +810,9 @@ function handleUsageEvent(event, { row, answer }) {
     answer.insertAdjacentElement('afterend', box);
   }
   box.innerHTML = usageMarkup(event.usage || {});
+  // 上下文圆环随每次模型请求即时刷新（不再等整轮结束）：usage 事件本就是
+  // 「最后一次请求」口径（含 context_tokens），与终态 metadata.usage 同构。
+  setContextUsage(event.usage || null);
 }
 
 function handleDoneEvent(event, { row, answer, collapseReasoning, conversationId }) {
