@@ -445,6 +445,15 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 /* 运行中不显示“分支”按钮；只有模型回复完毕或用户停止后才允许分支 */
 #messages.conversation-running .message-actions [data-branch-message] { display: none; }
 .message-actions [data-branch-message]:hover { color: var(--accent); }
+
+/* 「新会话开始」分隔条（role=session）：横条划分上下文窗口，旧消息仍在下方/上方可见 */
+.message-row.session-divider { grid-template-columns: minmax(0, 1fr); margin: 6px 0 2px; }
+.session-divider-bar { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 11.5px; }
+.session-divider-line { flex: 1; height: 1px; background: var(--line-strong); }
+.session-divider-label { flex: none; padding: 2px 8px; border: 1px dashed var(--line-strong); border-radius: 999px; white-space: nowrap; }
+.session-divider-cancel { flex: none; border: 0; background: none; color: var(--muted); padding: 2px 5px; font-size: 11.5px; cursor: pointer; }
+.session-divider-cancel:hover { color: var(--accent); }
+.session-divider-handoff { margin: 4px 0 0; color: var(--muted); font-size: 11px; text-align: center; word-break: break-all; }
 .usage-line { margin-top: 8px; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 /* 流式期间常驻消息尾端的用量框：首次请求完成时挂载、之后原位更新 */
 .usage-stream { margin-top: 6px; padding: 4px 10px; border-radius: 8px; background: rgba(128, 128, 128, 0.06); }

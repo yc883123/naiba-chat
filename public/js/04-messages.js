@@ -5,7 +5,7 @@
 import { $, api, draggedFileCache, emptyStateElement, escapeHtml, notifyComposerChanged, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
 import { activityMarkup, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, mediaTruncatedNotice, reasoningMarkup, remainingAttachments, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, uploadedFileMarkup, usageMarkup } from "./03-media.js";
-import { openConversation } from "./08-conversations.js";
+import { openConversation, syncCurrentConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
 import { hideSkillPopup, renderInputMirror, renderUserContent, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
@@ -20,7 +20,30 @@ export function currentAgentAvatarUrl() {
   return file ? `/api/agents/avatar/${encodeURIComponent(file)}` : '';
 }
 
+// 「新会话开始」分隔条（role=session 的边界标记行）：模型上下文从这一行之后重算，
+// 旧消息仍留在界面上；点「撤销」即可恢复此前完整上下文。
+export function sessionDividerElement(message) {
+  const info = (message.metadata || {}).session_start || {};
+  const at = Number(info.at || message.created_at || 0);
+  const time = at ? new Date(at).toLocaleString('zh-CN', { hour12: false }) : '';
+  const source = String(info.source || 'manual') === 'tool' ? '模型重置' : '手动重置';
+  const handoff = String(info.handoff_path || '');
+  const row = document.createElement('article');
+  row.className = 'message-row session-divider';
+  row.dataset.messageId = message.id || '';
+  row.innerHTML = `
+    <div class="session-divider-bar" title="此前的消息不再进入模型上下文；聊天记录仍保留在界面上">
+      <span class="session-divider-line" aria-hidden="true"></span>
+      <span class="session-divider-label">新会话开始 · ${escapeHtml(source)}${time ? ` · ${escapeHtml(time)}` : ''}</span>
+      <span class="session-divider-line" aria-hidden="true"></span>
+      ${message.id ? '<button type="button" class="session-divider-cancel" data-cancel-session-start title="撤销标记：恢复此前的完整上下文">撤销</button>' : ''}
+    </div>
+    ${handoff ? `<div class="session-divider-handoff">交接文档：${escapeHtml(handoff)}</div>` : ''}`;
+  return row;
+}
+
 export function messageElement(message, temporary = false) {
+  if (message.role === 'session') return sessionDividerElement(message);
   const row = document.createElement('article');
   row.className = `message-row ${message.role}`;
   row.dataset.messageId = message.id || '';
@@ -192,6 +215,43 @@ export async function branchMessage(row) {
     toast('已从该消息分支到新会话');
   } catch (error) {
     toast(`分支失败：${error.message}`);
+  }
+}
+
+// 手动「新会话开始」：在当前末尾落一条边界标记（不删消息），下一轮起模型只看此后的内容。
+export async function startNewSession() {
+  if (state.abortController || state.chatRunId) {
+    toast('请先等待当前回答结束或停止后再开始新会话');
+    return;
+  }
+  const conversationId = state.conversationId;
+  if (!conversationId) {
+    toast('请先打开一个对话');
+    return;
+  }
+  if (!window.confirm('从当前位置开始新会话？\n\n模型将不再看到此前的消息（聊天记录仍保留在界面上，可随时撤销）。')) return;
+  try {
+    await api(`/api/conversations/${conversationId}/session_start`, {
+      method: 'POST',
+      body: { source: 'manual' },
+    });
+    await syncCurrentConversation();
+    toast('已标记新会话开始：下一条消息起模型只看到此后的内容');
+  } catch (error) {
+    toast(`开始新会话失败：${error.message}`);
+  }
+}
+
+// 撤销边界标记：此前的上下文重新进入模型请求。
+export async function cancelSessionStart(messageId) {
+  if (!messageId) return;
+  if (!window.confirm('撤销「新会话开始」标记？\n\n此前的上下文会重新进入模型请求。')) return;
+  try {
+    await api(`/api/session_start/${encodeURIComponent(messageId)}`, { method: 'DELETE' });
+    await syncCurrentConversation();
+    toast('已撤销新会话标记');
+  } catch (error) {
+    toast(`撤销失败：${error.message}`);
   }
 }
 

@@ -388,6 +388,20 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
                 return
             self._json(result, HTTPStatus.CREATED)
+        elif path.startswith("/api/conversations/") and path.endswith("/session_start"):
+            # 手动「新会话开始」边界：不删任何消息，只让模型上下文从此行之后重算。
+            conversation_id = path.split("/")[-2]
+            conversation = self.app.storage.get_conversation(conversation_id, include_messages=False)
+            if not conversation:
+                self._json({"error": "对话不存在"}, HTTPStatus.NOT_FOUND)
+                return
+            marker = self.app.storage.add_session_start(
+                conversation_id,
+                source=str(body.get("source") or "manual"),
+                handoff_path=str(body.get("handoff_path") or ""),
+                note=str(body.get("note") or ""),
+            )
+            self._json({"message": marker}, HTTPStatus.CREATED)
         elif path.startswith("/api/conversations/") and path.endswith("/tools"):
             conversation_id = path.split("/")[-2]
             tools = body.get("tools") or []
@@ -854,6 +868,10 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": "当前对话仍有运行中的任务，无法清空"}, HTTPStatus.CONFLICT)
                 return
             self._json({"deleted": self.app.storage.clear_conversation_messages(conversation_id)})
+        elif path.startswith("/api/session_start/"):
+            # 撤销「新会话开始」标记（旧消息仍在，上下文恢复到此前的完整历史）。
+            deleted = self.app.storage.delete_session_start(path.rsplit("/", 1)[-1])
+            self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
         elif path.startswith("/api/conversations/"):
             deleted = self.app.storage.delete_conversation(path.rsplit("/", 1)[-1])
             self._json({"ok": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)

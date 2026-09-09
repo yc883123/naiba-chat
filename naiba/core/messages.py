@@ -24,6 +24,8 @@ MESSAGE_METADATA_KEYS: tuple[str, ...] = (
     "run_id",
     "agent_id",
     "display_content",
+    # 「新会话开始」边界标记（role=session 的标记行）：重放时从此清空此前历史。
+    "session_start",
 )
 
 
@@ -48,3 +50,6 @@ class MetadataKeys:
     RUN_ID = "run_id"
     AGENT_ID = "agent_id"
     DISPLAY_CONTENT = "display_content"
+    # 新会话边界（写在 role=session 的标记行上）：build_model_history 遇到它即清空
+    # 此前的历史；聊天记录本身不删，前端在该位置渲染分隔条。
+    SESSION_START = "session_start"

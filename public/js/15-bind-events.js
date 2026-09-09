@@ -4,7 +4,7 @@
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarning, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, resetContextWarningResume, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
-import { branchMessage, initTurnRail, isNearBottom, setStickToBottom, startEditMessage } from "./04-messages.js";
+import { branchMessage, cancelSessionStart, initTurnRail, isNearBottom, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
@@ -282,6 +282,8 @@ export function bindEvents() {
     toggleQuickMessagePanel();
   });
   $('#quickMessagePanel')?.addEventListener('click', handleQuickMessagePanelClick);
+  // composer-meta「新会话」：在当前末尾落一条上下文边界（不删消息，可撤销）
+  $('#newSessionButton')?.addEventListener('click', () => { void startNewSession(); });
   window.addEventListener('resize', positionQuickMessagePanel);
   window.addEventListener('scroll', positionQuickMessagePanel, true);
   document.addEventListener('click', (event) => {
@@ -435,6 +437,11 @@ export function bindEvents() {
     const branchButton = event.target.closest('[data-branch-message]');
     if (branchButton) {
       branchMessage(branchButton.closest('.message-row'));
+      return;
+    }
+    const cancelSessionButton = event.target.closest('[data-cancel-session-start]');
+    if (cancelSessionButton) {
+      cancelSessionStart(cancelSessionButton.closest('.message-row')?.dataset.messageId);
       return;
     }
     const editButton = event.target.closest('[data-edit-message]');

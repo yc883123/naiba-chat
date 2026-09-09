@@ -198,6 +198,12 @@ def build_model_history(
     history: list[dict[str, Any]] = []
     replay_seq = 0
     for item in conversation_messages:
+        metadata = item.get("metadata") or {}
+        # 「新会话开始」边界：从这里重算上下文（此前的消息一条都不进模型请求，
+        # 聊天记录本身仍在库里/界面上）。多个边界取最后一个。
+        if metadata.get(MetadataKeys.SESSION_START):
+            history = []
+            continue
         if item.get("role") not in {"user", "assistant"}:
             continue
         content = str(item.get("content") or "")

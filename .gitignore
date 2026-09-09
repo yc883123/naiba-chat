@@ -237,6 +237,8 @@ verify/*
 !verify/seed_usage_message.py
 !verify/send_button_smoke.cjs
 !verify/send_state_smoke.cjs
+!verify/session_start_smoke.cjs
+!verify/session_start_smoke.py
 !verify/sidebar_favorites_smoke.cjs
 !verify/sitecustomize.py
 !verify/skill_prompt_check.mjs

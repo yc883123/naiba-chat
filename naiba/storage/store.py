@@ -11,6 +11,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
+from naiba.core.messages import MetadataKeys
+
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
 CURRENT_SCHEMA_VERSION = 16
@@ -1200,6 +1202,46 @@ class ChatStorage:
             "metadata": metadata or {},
             "created_at": now,
         }
+
+    def add_session_start(
+        self,
+        conversation_id: str,
+        *,
+        source: str = "manual",
+        handoff_path: str = "",
+        note: str = "",
+    ) -> dict[str, Any]:
+        """落一条「新会话开始」边界标记（role=session，无正文）。
+
+        语义：模型上下文从这一行之后重算——`build_model_history` 遇到该标记即清空此前历史；
+        聊天记录一条不删（旧消息仍留在界面上，用户随时可回看）。多次标记取最后一个。
+        """
+        marker = {
+            MetadataKeys.SESSION_START: {
+                "at": int(time.time() * 1000),
+                "source": str(source or "manual")[:20],
+                "handoff_path": str(handoff_path or ""),
+                "note": str(note or "")[:200],
+            }
+        }
+        return self.add_message(conversation_id, "session", "", marker)
+
+    def delete_session_start(self, message_id: str) -> bool:
+        """撤销一条边界标记（只允许删 role=session 的行，避免误删对话消息）。"""
+        now = int(time.time() * 1000)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT conversation_id FROM messages WHERE id = ? AND role = 'session'",
+                (message_id,),
+            ).fetchone()
+            if not row:
+                return False
+            db.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+            db.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, row["conversation_id"]),
+            )
+        return True
 
     def update_message_metadata(
         self, conversation_id: str, message_id: str, metadata: dict[str, Any]
