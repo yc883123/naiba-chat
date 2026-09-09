@@ -61,6 +61,23 @@ SKILL_PROMPT_HEADER = "以下技能说明必须遵循。需要技能附带的参
 # （点 13：只提示、不静默截断）。前端在发送前也用同类阈值自行估算提醒。
 SKILL_CONTENT_WARN_CHARS = 60000
 
+def comfyui_script_guide_enabled(allowed_tools: set[str]) -> bool:
+    """是否注入「ComfyUI/短剧自动化优先小型脚本路径」这条编排指引。
+
+    两个条件同时满足才注入：
+    ① 会话工具集里确有 ComfyUI 能力——内置 `comfyui_*` 工具，或名字里带 comfy 的 MCP 工具
+       （如 `mcp__comfy-mcp__run_workflow`；MCP 服务器改名后不再命中，届时同步这条启发式）；
+    ② 该指引提到的 `write_file` / `pwsh` / `run_in_background` 至少有一个可用，否则等于让模型
+       去用不存在的工具。
+
+    工具集是会话固化的 → 同一会话内结果恒定（与 web_search/PDF/视觉引导同口径）。
+    """
+    tools = {str(name).lower() for name in allowed_tools}
+    return any("comfy" in name for name in tools) and bool(
+        tools & {"write_file", "pwsh", "run_in_background"}
+    )
+
+
 def _extract_step_image_batches(
     step_runs: list[dict[str, Any]], inject: bool = True
 ) -> list[dict[str, Any]]:
@@ -420,7 +437,7 @@ class SkillAgent:
         if "todo_write" in allowed:
             guide_parts.append("多步骤任务用 todo_write 维护进度。")
         guide_parts.append("互不依赖的只读查询可以在同一轮并行调用。")
-        if {"write_file", "pwsh", "run_in_background"} & allowed:
+        if comfyui_script_guide_enabled(allowed):
             guide_parts.append(
                 "ComfyUI/短剧自动化优先采用小型脚本路径：先用 write_file 生成或复用一个小型 Python 编排脚本，再用 pwsh 或 run_in_background 执行。"
             )
