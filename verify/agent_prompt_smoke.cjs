@@ -55,8 +55,6 @@ async function presetTitles() {
     await page.waitForSelector('#agentCards .agent-card', { timeout: 10000 });
     await page.click('#agentCards [data-agent-card] .agent-card-name');
     await page.waitForSelector('#agentDialog[open]', { timeout: 10000 });
-    // 分区切换后默认停在「基本」，提示词相关操作要先切到「系统提示词」页。
-    await page.click('[data-agent-tab="prompt"]');
     await page.waitForTimeout(200);
 
     const wiring = await page.evaluate(() => {
@@ -73,6 +71,7 @@ async function presetTitles() {
         toolbarInsideBlock: Boolean(block && block.querySelector('#agentPromptPresetButton')),
         titleInsideHead: Boolean(head && head.querySelector('.agent-prompt-title')),
         hint: document.querySelector('.agent-prompt-block .agent-prompt-hint')?.textContent || '',
+        importTitle: document.querySelector('#importAgentCharacterCard')?.getAttribute('title') || '',
       };
     });
     check('表单有「套用快捷提示词」按钮', wiring.hasButton, JSON.stringify(wiring));
@@ -81,7 +80,8 @@ async function presetTitles() {
     check('导入角色卡按钮 + 文件输入就位', wiring.hasImport && wiring.hasFileInput, JSON.stringify(wiring));
     check('系统提示词成块：工具栏在标题行内', wiring.hasBlock && wiring.toolbarInsideBlock && wiring.titleInsideHead,
       JSON.stringify(wiring));
-    check('提示文案说明「追加不覆盖」', wiring.hint.includes('追加'), wiring.hint);
+    check('导入按钮说明「追加不覆盖」',
+      wiring.importTitle.includes('追加') && wiring.importTitle.includes('不覆盖'), wiring.importTitle);
 
     // 1) 角色卡导入 = 追加（不覆盖已有内容）
     await page.fill('#agentSystemPromptEdit', '原始规则：保持简短。');

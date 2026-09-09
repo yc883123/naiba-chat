@@ -384,7 +384,7 @@ class AgentPromptPresetUiTests(unittest.TestCase):
 
 
 class AgentTabsTests(unittest.TestCase):
-    """Agent 弹层分区切换：模块不再往尾部堆叠，顶端按钮切换显示。"""
+    """Agent 弹层分区切换：模块不再往尾部堆叠，顶端按钮切换；操作按钮与分区同排。"""
 
     def _index(self):
         return (ROOT / "public/index.html").read_text(encoding="utf-8")
@@ -395,23 +395,46 @@ class AgentTabsTests(unittest.TestCase):
     def _bind(self):
         return (ROOT / "public/js/15-bind-events.js").read_text(encoding="utf-8")
 
-    def test_four_tabs_and_panels(self):
+    def test_three_tabs_and_panels(self):
         index = self._index()
         tabs = index[index.index('class="agent-tabs"'):]
         tabs = tabs[: tabs.index("</nav>")]
-        for name in ("basic", "prompt", "skills", "tools"):
+        for name in ("basic", "skills", "tools"):
             with self.subTest(tab=name):
                 self.assertIn(f'data-agent-tab="{name}"', tabs)
                 self.assertIn(f'data-agent-panel="{name}"', index)
-        self.assertEqual(index.count("data-agent-panel="), 4, "只有 4 个分区面板")
+        self.assertEqual(index.count("data-agent-panel="), 3, "只有 3 个分区面板")
+        self.assertNotIn('data-agent-panel="prompt"', index, "系统提示词已并入「基本」，不再单独分区")
         # 默认只有第一个分区可见，其余带 hidden。
         self.assertIn('<section class="agent-tab-panel" data-agent-panel="basic" role="tabpanel">', index)
-        for name in ("prompt", "skills", "tools"):
+        for name in ("skills", "tools"):
             with self.subTest(hidden=name):
                 self.assertIn(f'data-agent-panel="{name}" role="tabpanel" hidden', index)
         # 标签带计数：固定 Skill 个数 / 工具已选/总数
         self.assertIn('id="agentSkillTabCount"', index)
         self.assertIn('id="agentToolTabCount"', index)
+
+    def test_basic_tab_holds_name_avatar_and_prompt(self):
+        index = self._index()
+        basic = index[index.index('data-agent-panel="basic"'):]
+        basic = basic[: basic.index('data-agent-panel="skills"')]
+        for field in ("agentName", "pickAgentAvatar", "agentSystemPromptEdit",
+                      "agentPromptPresetButton", "saveAgentPromptPreset", "importAgentCharacterCard"):
+            with self.subTest(field=field):
+                self.assertIn(f'id="{field}"', basic, "基本分区应包含名称/头像/系统提示词")
+
+    def test_actions_pinned_to_tabs_row(self):
+        """取消/保存移到分区行右侧：不随面板高度上下跳，底部腾给内容。"""
+        index = self._index()
+        row = index[index.index('class="agent-tabs-row"'):]
+        row = row[: row.index("</div>", row.index("agent-form-actions"))]
+        self.assertIn('id="cancelAgent"', row)
+        self.assertIn('id="saveAgentForm"', row)
+        self.assertNotIn('class="agent-form-footer"', index, "旧底栏已移除")
+        css = (ROOT / "public/styles.css").read_text(encoding="utf-8")
+        dialog_rule = css[css.index(".agent-dialog {"):]
+        dialog_rule = dialog_rule[: dialog_rule.index("}")]
+        self.assertIn("height: min(760px", dialog_rule, "固定高度避免切页时弹层忽高忽低")
 
     def test_switch_resets_and_updates_counts(self):
         settings = self._settings()
@@ -457,16 +480,6 @@ class AgentCardsMarkupTests(unittest.TestCase):
         for label in ("名称", "系统提示词（预设与规则）", "固定 Skill", "工具集", "工具预设"):
             with self.subTest(label=label):
                 self.assertIn(label, index)
-
-    def test_actions_pinned_to_dialog_footer(self) -> None:
-        index = self._index()
-        self.assertIn('class="agent-form-footer"', index)
-        self.assertLess(index.index('class="agent-form-body"'), index.index('class="agent-form-footer"'))
-        self.assertLess(index.index('class="agent-form-footer"'), index.index('id="saveAgentForm"'))
-        css = self._css()
-        footer = css[css.index(".agent-form-footer {"):]
-        footer = footer[: footer.index("}")]
-        self.assertIn("border-top", footer)
 
     def test_legacy_structures_removed_everywhere(self) -> None:
         sources = {
@@ -567,18 +580,13 @@ class AgentCardsMarkupTests(unittest.TestCase):
         self.assertIn("保存后自动分配 ID", source)
 
     def test_avatar_button_in_basic_tab(self) -> None:
-        """「自定义头像」在「基本」分区（紧挨名称），选图只做预览、保存才上传。"""
+        """「自定义头像」与名称同排（基本分区），选图只做预览、保存才上传。"""
         index = self._index()
         basic = index[index.index('data-agent-panel="basic"'):]
-        basic = basic[: basic.index('data-agent-panel="prompt"')]
-        self.assertIn('id="pickAgentAvatar"', basic, "头像属于基本属性，放在基本分区")
+        basic = basic[: basic.index('data-agent-panel="skills"')]
+        self.assertIn('id="pickAgentAvatar"', basic)
         self.assertIn('id="agentAvatarPreview"', basic)
         self.assertLess(basic.index('id="agentName"'), basic.index('id="pickAgentAvatar"'))
-        # 导入角色卡仍留在「系统提示词」分区（它作用于提示词文本）。
-        prompt = index[index.index('data-agent-panel="prompt"'):]
-        prompt = prompt[: prompt.index('data-agent-panel="skills"')]
-        self.assertIn('id="importAgentCharacterCard"', prompt)
-        self.assertNotIn('id="pickAgentAvatar"', prompt)
         source = self._settings()
         for snippet in ("export function pickAgentAvatar(", "export function handleAgentAvatarFile(",
                         "agentAvatarUrl(", "/api/agents/avatar/", "FormData()"):
@@ -629,12 +637,15 @@ class AgentCardsMarkupTests(unittest.TestCase):
                       "固定高度 + 默认 align-content:stretch 会把分组行均摊压扁（实测 19.6px vs 分组头 59px）")
 
     def test_scrollable_lists_are_not_clipped(self) -> None:
-        """固定 Skill / 工具集列表是滚动容器：网格行必须按内容定高，否则被裁掉且点不到。"""
+        """固定 Skill / 工具集列表是滚动容器：分区面板必须 min-height:0 + 自身可滚，否则被裁掉且点不到。"""
         css = self._css()
         body = css[css.index(".agent-form-body {"):]
         body = body[: body.index("}")]
-        self.assertIn("grid-auto-rows: max-content", body,
-                      "auto 行按最小内容高度定尺，滚动容器贡献 0 → 行高只剩表头")
+        self.assertIn("min-height: 0", body, "flex 子项默认 min-height:auto 会被内容顶破")
+        panel = css[css.index(".agent-tab-panel {"):]
+        panel = panel[: panel.index("}")]
+        self.assertIn("min-height: 0", panel)
+        self.assertIn("overflow: auto", panel, "面板自身滚动，列表不被裁掉")
         provider_body = css[css.index(".provider-form-body {"):]
         provider_body = provider_body[: provider_body.index("}")]
         self.assertIn("grid-auto-rows: max-content", provider_body)

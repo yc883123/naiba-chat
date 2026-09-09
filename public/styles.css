@@ -885,11 +885,16 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .conversation-menu button:hover, .conversation-menu button:focus-visible { background: var(--surface-2); outline: 2px solid var(--accent); outline-offset: -2px; }
 .conversation-menu button.is-danger { color: var(--danger); }
 .conversation-menu button.is-danger:hover { background: var(--danger-soft); }
-/* 系统提示词成块：标题行右侧放工具栏（套用/另存/导入角色卡/头像），文本框占满宽度 */
-.agent-prompt-block { display: grid; gap: 7px; }
+/* 系统提示词块：文本框吃掉剩余高度（分区固定高度后下方有效面积更大） */
+.agent-prompt-block { display: flex; flex-direction: column; gap: 7px; flex: 1; min-height: 0; }
+.agent-prompt-block textarea { flex: 1; min-height: 160px; resize: none; }
 .agent-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .agent-prompt-title { font-size: 12px; color: var(--muted); }
-.agent-prompt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.agent-prompt-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* 轻量按钮：工具栏与整体页面同一套"无边框、悬停浅底"语言（与分区标签一致） */
+.control-button.ghost { border-color: transparent; background: none; color: var(--muted); }
+.control-button.ghost:hover { border-color: transparent; background: var(--surface-2); color: var(--text); }
+.control-button.ghost:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .agent-avatar-preview { width: 32px; height: 32px; flex: none; border-radius: 50%; object-fit: cover; border: 1px solid var(--line-strong); }
 .agent-avatar-preview[hidden] { display: none; }
 .agent-prompt-hint { color: var(--muted); font-size: 11px; line-height: 1.5; }
@@ -1032,14 +1037,17 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .agent-card-add { place-content: center; justify-items: center; gap: 7px; border-style: dashed; background: transparent; color: var(--muted); }
 .agent-card-add:hover { border-color: var(--accent); color: var(--accent); }
 .agent-card-add svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.agent-dialog { width: min(760px, calc(100vw - 30px)); height: auto; max-height: min(820px, calc(100dvh - 30px)); }
+/* 固定高度：分区切换时弹层不再忽高忽低，内容区尺寸恒定。 */
+.agent-dialog { width: min(760px, calc(100vw - 30px)); height: min(760px, calc(100dvh - 30px)); max-height: min(760px, calc(100dvh - 30px)); display: flex; flex-direction: column; }
 /* `grid-auto-rows: max-content` 是必需的：默认 auto 行按「最小内容高度」定尺，而
    `.agent-skills` 里的 `.skill-list`/`.agent-tool-scope` 是滚动容器（overflow:auto），
    其最小内容高度为 0 → 行高只剩表头（实测 70.75px），列表被 `overflow:hidden` 裁掉且点不到。
    用 max-content 让行跟住内容高度（字段区照旧整体滚动）。 */
-.agent-form-body { display: grid; grid-auto-rows: max-content; gap: 12px; padding: 18px; overflow: auto; }
-/* 分区切换：模块不再一段段往尾部追加，改为顶端按钮切换（一次只看一块）。 */
-.agent-tabs { display: flex; align-items: center; gap: 6px; padding: 0 0 12px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.agent-form-body { display: flex; flex-direction: column; gap: 10px; padding: 18px; min-height: 0; flex: 1; }
+/* 分区切换：模块不再一段段往尾部追加，改为顶端按钮切换；操作按钮同排，不再随面板高度上下跳。 */
+.agent-tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.agent-form-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.agent-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .agent-tabs button {
   border: 1px solid transparent; border-radius: var(--radius); background: none;
   color: var(--muted); font-size: 13px; padding: 7px 12px; cursor: pointer;
@@ -1052,16 +1060,14 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   border: 1px solid var(--line); border-radius: 9px; padding: 0 6px;
 }
 .agent-tabs button.active .agent-tab-count { background: var(--surface); color: var(--accent); border-color: var(--accent-soft); }
-.agent-tab-panel { display: grid; gap: 12px; }
+.agent-tab-panel { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow: auto; }
 .agent-tab-panel[hidden] { display: none; }
-.agent-avatar-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.agent-avatar-row .agent-prompt-hint { flex: 1; min-width: 200px; }
-/* 错误提示与按钮行固定在弹层底部（字段本身仍按原格式滚动）。 */
-.agent-form-footer { padding: 4px 18px 16px; border-top: 1px solid var(--line); }
-.agent-form-footer .form-actions { margin: 0; }
+.agent-basic-row { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+.agent-basic-row .agent-name-field { flex: 1; min-width: 220px; }
+.agent-avatar-row { display: flex; align-items: center; gap: 8px; flex: none; }
 .agent-control { min-width: 0; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
 .agent-control select { max-width: min(220px, 20vw); height: 34px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: 0 28px 0 10px; }
-.agent-form { display: flex; flex-direction: column; max-height: inherit; }
+.agent-form { display: flex; flex-direction: column; flex: 1; min-height: 0; max-height: inherit; }
 .agent-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
 .agent-form input[type="text"], .agent-form textarea { width: 100%; padding: 9px 11px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg); color: var(--text); }
 .agent-form input[disabled] { opacity: .6; }

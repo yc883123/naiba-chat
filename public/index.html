@@ -630,42 +630,47 @@
         <button class="icon-button" type="button" data-close="agentDialog" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
       </div>
       <div class="agent-form-body">
-        <!-- 分区切换：模块不再一段段往尾部追加，改为顶端按钮切换（一次只看一块，弹层不再越来越长） -->
-        <nav class="agent-tabs" role="tablist" aria-label="Agent 设置分区">
-          <button type="button" class="active" data-agent-tab="basic" role="tab" aria-selected="true">基本</button>
-          <button type="button" data-agent-tab="prompt" role="tab" aria-selected="false">系统提示词</button>
-          <button type="button" data-agent-tab="skills" role="tab" aria-selected="false">固定 Skill <span class="agent-tab-count" id="agentSkillTabCount">0</span></button>
-          <button type="button" data-agent-tab="tools" role="tab" aria-selected="false">工具集 <span class="agent-tab-count" id="agentToolTabCount">0/0</span></button>
-        </nav>
+        <!-- 分区切换 + 操作按钮同一行：按钮不再随面板高度上下跳，下方内容区也更大 -->
+        <div class="agent-tabs-row">
+          <nav class="agent-tabs" role="tablist" aria-label="Agent 设置分区">
+            <button type="button" class="active" data-agent-tab="basic" role="tab" aria-selected="true">基本</button>
+            <button type="button" data-agent-tab="skills" role="tab" aria-selected="false">固定 Skill <span class="agent-tab-count" id="agentSkillTabCount">0</span></button>
+            <button type="button" data-agent-tab="tools" role="tab" aria-selected="false">工具集 <span class="agent-tab-count" id="agentToolTabCount">0/0</span></button>
+          </nav>
+          <div class="agent-form-actions">
+            <button type="button" class="control-button" id="cancelAgent">取消</button>
+            <button type="button" class="primary-button" id="saveAgentForm">保存 Agent</button>
+          </div>
+        </div>
+        <p class="form-error" id="agentError"></p>
 
         <section class="agent-tab-panel" data-agent-panel="basic" role="tabpanel">
-          <label>名称
-            <input id="agentName" type="text" placeholder="例如 通用 Agent">
-          </label>
-          <div class="agent-avatar-row">
-            <button class="control-button" id="pickAgentAvatar" type="button">自定义头像</button>
-            <input id="agentAvatarFileInput" type="file" accept="image/*" hidden>
-            <img id="agentAvatarPreview" class="agent-avatar-preview" alt="" hidden>
-            <small class="agent-prompt-hint">中心裁切为正方形，用作该 Agent 会话里助手气泡的圆标（保存后生效）。</small>
+          <div class="agent-basic-row">
+            <label class="agent-name-field">名称
+              <input id="agentName" type="text" placeholder="例如 通用 Agent">
+            </label>
+            <div class="agent-avatar-row">
+              <button class="control-button ghost" id="pickAgentAvatar" type="button"
+                      title="上传图片会中心裁切为正方形，用作该 Agent 会话里助手气泡的圆标（保存后生效）">自定义头像</button>
+              <input id="agentAvatarFileInput" type="file" accept="image/*" hidden>
+              <img id="agentAvatarPreview" class="agent-avatar-preview" alt="" hidden>
+            </div>
           </div>
-        </section>
-
-        <section class="agent-tab-panel" data-agent-panel="prompt" role="tabpanel" hidden>
           <div class="agent-prompt-block">
             <div class="agent-prompt-head">
               <span class="agent-prompt-title">系统提示词（预设与规则）</span>
               <div class="agent-prompt-actions">
-                <button class="control-button" id="agentPromptPresetButton" type="button"
+                <button class="control-button ghost" id="agentPromptPresetButton" type="button"
                         aria-haspopup="menu" aria-expanded="false"
                         title="套用、编辑或删除已保存的快捷提示词">套用快捷提示词</button>
-                <button class="control-button" id="saveAgentPromptPreset" type="button"
+                <button class="control-button ghost" id="saveAgentPromptPreset" type="button"
                         title="把下方系统提示词另存为一条快捷提示词（以后可一键套用）">存为快捷提示词</button>
-                <button class="control-button" id="importAgentCharacterCard" type="button">导入角色卡 PNG</button>
+                <button class="control-button ghost" id="importAgentCharacterCard" type="button"
+                        title="解析角色卡 PNG 并把人设追加到下方文本框末尾（不覆盖已有内容）">导入角色卡 PNG</button>
                 <input id="agentCharacterCardFileInput" type="file" accept="image/png" hidden>
               </div>
             </div>
-            <textarea id="agentSystemPromptEdit" rows="12" placeholder="角色、规则和输出偏好"></textarea>
-            <small class="agent-prompt-hint" title="导入角色卡会追加到下方文本框末尾（不覆盖已有内容）；自定义头像在「基本」页设置。">导入角色卡追加到末尾（不覆盖已有内容）；自定义头像在「基本」页设置。</small>
+            <textarea id="agentSystemPromptEdit" rows="10" placeholder="角色、规则和输出偏好"></textarea>
           </div>
         </section>
 
@@ -708,13 +713,6 @@
           <div class="agent-tool-scope" id="agentToolScope"></div>
           </div>
         </section>
-      </div>
-      <div class="agent-form-footer">
-        <p class="form-error" id="agentError"></p>
-        <div class="form-actions">
-          <button type="button" class="control-button" id="cancelAgent">取消</button>
-          <button type="button" class="primary-button" id="saveAgentForm">保存 Agent</button>
-        </div>
       </div>
     </form>
     <!-- 快捷提示词面板：挂在弹层内部（模态 <dialog> 在 top layer，body 上的 fixed 浮层会被盖住），
