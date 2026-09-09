@@ -688,10 +688,18 @@ def _tool_reset_context(
     tasks: list[dict[str, Any]] = []
     getter = ctx.extra.get("active_background_tasks") if isinstance(ctx.extra, dict) else None
     conversation_id = str((run_context or {}).get("conversation_id") or "")
+    # 排除「正在执行本轮的那条任务」：它就是发起重置的 run 本身（kind=chat），
+    # 重置成功后它立即结束，把它算进"仍在运行的后台任务"会误导模型（用户实测踩过）。
+    current_ids = {
+        str((run_context or {}).get("run_id") or ""),
+        str((run_context or {}).get("job_id") or ""),
+    } - {""}
     if callable(getter) and conversation_id:
         try:
             for row in getter(conversation_id) or []:
                 if not isinstance(row, dict):
+                    continue
+                if str(row.get("id") or "") in current_ids:
                     continue
                 tasks.append({
                     "id": str(row.get("id") or ""),

@@ -121,6 +121,36 @@ class ResetContextToolTests(unittest.TestCase):
         self.assertTrue(payload["ok"], "后台任务快照失败不能阻断重置")
         self.assertEqual(run_context["context_reset"]["tasks"], [])
 
+    def test_current_run_is_not_counted_as_background_task(self):
+        """用户实测：把发起重置的这一轮 chat run 自己也列进了"仍在运行的后台任务"。"""
+        def getter(_conversation_id):
+            return [
+                {"id": "run-self", "kind": "chat", "status": "running", "message": "你现在写一份交接报告"},
+                {"id": "job-child", "kind": "job", "status": "running", "message": "渲染第 3 批"},
+            ]
+
+        run_context = {"conversation_id": "conv-1", "run_id": "run-self"}
+        payload = json.loads(self._call({"handoff_path": str(self.handoff)},
+                                        ctx=_context(self.root, tasks=getter), run_context=run_context))
+        self.assertTrue(payload["ok"])
+        tasks = run_context["context_reset"]["tasks"]
+        self.assertEqual([task["id"] for task in tasks], ["job-child"],
+                         "发起重置的这一轮自己不能算作后台任务")
+        self.assertEqual(payload["background_tasks"], 1)
+
+    def test_subagent_job_excludes_its_own_job_id(self):
+        def getter(_conversation_id):
+            return [
+                {"id": "job-self", "kind": "job", "status": "running", "message": "当前子任务"},
+                {"id": "job-other", "kind": "job", "status": "running", "message": "别的任务"},
+            ]
+
+        run_context = {"conversation_id": "conv-1", "run_id": "run-parent", "job_id": "job-self"}
+        payload = json.loads(self._call({"handoff_path": str(self.handoff)},
+                                        ctx=_context(self.root, tasks=getter), run_context=run_context))
+        self.assertTrue(payload["ok"])
+        self.assertEqual([task["id"] for task in run_context["context_reset"]["tasks"]], ["job-other"])
+
     def test_result_success_uses_ok_field(self):
         self.assertTrue(_reset_context_ok('{"ok": true}'))
         self.assertFalse(_reset_context_ok('{"ok": false, "error": "x"}'))

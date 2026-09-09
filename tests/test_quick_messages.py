@@ -18,7 +18,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from naiba.config import (  # noqa: E402
+    BUILTIN_QUICK_MESSAGES,
     BUILTIN_STARTER_PRESETS,
+    QUICK_MESSAGE_PRESET_DISMISSED_KEY,
     QUICK_MESSAGE_USE_CAP,
     ConfigStore,
     quick_message_score,
@@ -27,10 +29,68 @@ from naiba.config import (  # noqa: E402
 DAY_MS = 86400000
 
 
+class QuickMessagePresetTests(unittest.TestCase):
+    """内置快捷消息预设：首次自动补齐、可编辑、可删除且升级不覆盖/不复活。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self.tmp.name) / "config.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_fresh_install_seeds_builtin_preset(self):
+        store = ConfigStore(self.path)
+        messages = store.get_quick_messages()
+        self.assertEqual([item.get("preset_id") for item in messages],
+                         [preset["id"] for preset in BUILTIN_QUICK_MESSAGES])
+        handoff = messages[0]
+        self.assertIn("reset_context", handoff["text"])
+        self.assertIn("交接", handoff["text"])
+        self.assertEqual(handoff["count"], 0)
+
+    def test_sync_is_idempotent(self):
+        store = ConfigStore(self.path)
+        before = [item["text"] for item in store.get_quick_messages()]
+        reloaded = ConfigStore(self.path)
+        self.assertEqual([item["text"] for item in reloaded.get_quick_messages()], before,
+                         "重复加载不得重复插入内置预设")
+
+    def test_user_edit_survives_reload_and_is_not_overwritten(self):
+        store = ConfigStore(self.path)
+        index = store.get_quick_messages()[0]["index"]
+        store.update_quick_message(index, "我改过的交接指令")
+        reloaded = ConfigStore(self.path)
+        entry = reloaded.get_quick_messages()[0]
+        self.assertEqual(entry["text"], "我改过的交接指令", "升级/重载不得覆盖用户编辑")
+        self.assertEqual(entry.get("preset_id"), BUILTIN_QUICK_MESSAGES[0]["id"],
+                         "编辑要保留 preset_id，否则会被当成缺失而补回原版")
+        self.assertEqual(len(reloaded.get_quick_messages()), 1)
+
+    def test_user_delete_is_remembered_and_never_resurrected(self):
+        store = ConfigStore(self.path)
+        index = store.get_quick_messages()[0]["index"]
+        store.remove_quick_message(index)
+        self.assertEqual(store.get_quick_messages(), [])
+        self.assertEqual(store.data.get(QUICK_MESSAGE_PRESET_DISMISSED_KEY),
+                         [BUILTIN_QUICK_MESSAGES[0]["id"]])
+        reloaded = ConfigStore(self.path)
+        self.assertEqual(reloaded.get_quick_messages(), [], "删除过的内置预设不得自动复活")
+
+    def test_user_messages_keep_no_preset_id(self):
+        store = ConfigStore(self.path)
+        messages = store.add_quick_message("我自己写的")
+        mine = [item for item in messages if item["text"] == "我自己写的"][0]
+        self.assertNotIn("preset_id", mine, "用户自建条目不属于任何内置预设")
+        self.assertNotIn(QUICK_MESSAGE_PRESET_DISMISSED_KEY, store.data)
+
+
 class QuickMessageStatsTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.config = ConfigStore(Path(self.tmp.name) / "config.json")
+        # 本节测用户自建条目的统计口径：先清掉内置预设，保持索引从 0 开始。
+        self.config.data["quick_messages"] = []
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -178,6 +238,8 @@ class PromptListsIndependenceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.config = ConfigStore(Path(self.tmp.name) / "config.json")
+        # 本节只关心"两份列表互不干扰"：先清掉内置快捷消息预设，避免干扰计数。
+        self.config.data["quick_messages"] = []
 
     def tearDown(self):
         self.tmp.cleanup()

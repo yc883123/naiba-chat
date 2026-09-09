@@ -80,10 +80,26 @@ async function purge(path, key) {
     await page.click('#quickMessageButton');
     await page.waitForSelector('#quickMessagePanel:not([hidden]) .quick-msg-item', { timeout: 10000 });
     let order = await titles();
-    check('面板列出 3 条快捷消息', order.length === 3, JSON.stringify(order));
+    const smokeOrder = () => order.filter((t) => String(t).startsWith('冒烟'));
+    check('面板列出 3 条冒烟快捷消息', smokeOrder().length === 3, JSON.stringify(order));
     check('面板不含开始页自定义指令', !order.some((t) => String(t).startsWith('开始页')), JSON.stringify(order));
-    check('行内显示正文（无标题）', order.every((t) => String(t).endsWith('的内容')), JSON.stringify(order));
-    check('同权重按新增时间倒序（C→B→A）', JSON.stringify(order) === JSON.stringify(['冒烟C 的内容', '冒烟B 的内容', '冒烟A 的内容']), JSON.stringify(order));
+    check('冒烟行内显示正文（无标题）', smokeOrder().every((t) => String(t).endsWith('的内容')), JSON.stringify(order));
+    check('同权重按新增时间倒序（C→B→A）', JSON.stringify(smokeOrder()) === JSON.stringify(['冒烟C 的内容', '冒烟B 的内容', '冒烟A 的内容']), JSON.stringify(order));
+    // 内置预设：随版本附带、可编辑/可删除，列表里带「默认」标签
+    const preset = await page.evaluate(() => {
+      const item = [...document.querySelectorAll('#quickMessageList .quick-msg-item')]
+        .find((row) => Boolean(row.querySelector('.quick-msg-tag')));
+      return item ? {
+        headline: item.querySelector('.quick-msg-main b')?.textContent.trim() || '',
+        tag: item.querySelector('.quick-msg-tag')?.textContent.trim() || '',
+        hasEdit: Boolean(item.querySelector('[data-quick-edit]')),
+        hasDelete: Boolean(item.querySelector('[data-quick-delete]')),
+      } : null;
+    });
+    check('内置快捷消息预设出现在列表且带「默认」标签',
+      Boolean(preset) && preset.tag === '默认' && preset.headline.includes('交接报告'), JSON.stringify(preset));
+    check('内置预设同样可编辑/可删除（与用户条目同权）',
+      Boolean(preset) && preset.hasEdit && preset.hasDelete, JSON.stringify(preset));
 
     // ③ 点击插入 + 使用次数累加（等 /use 响应，避免与 fire-and-forget 竞态）
     const useResponse = page.waitForResponse((res) => res.url().includes('/use'), { timeout: 8000 }).catch(() => null);
@@ -102,7 +118,7 @@ async function purge(path, key) {
       () => document.querySelector('#quickMessageList .quick-msg-main b')?.textContent === '冒烟A 的内容',
       null, { timeout: 10000 });
     order = await titles();
-    check('使用过的条目排到最前（A→C→B）', JSON.stringify(order) === JSON.stringify(['冒烟A 的内容', '冒烟C 的内容', '冒烟B 的内容']), JSON.stringify(order));
+    check('使用过的条目排到最前（A→C→B）', JSON.stringify(smokeOrder()) === JSON.stringify(['冒烟A 的内容', '冒烟C 的内容', '冒烟B 的内容']), JSON.stringify(order));
 
     // ⑤ 编辑弹窗：快捷消息不设标题字段
     await page.click('#quickMessageList .quick-msg-item:has-text("冒烟B") [data-quick-edit]');
@@ -142,7 +158,7 @@ async function purge(path, key) {
     await page.click('#quickMessageList .quick-msg-item:has-text("冒烟C") [data-quick-delete]');
     await page.waitForTimeout(800);
     order = await titles();
-    check('删除后条目消失', !order.includes('冒烟C'), JSON.stringify(order));
+    check('删除后条目消失', !order.includes('冒烟C 的内容'), JSON.stringify(order));
     const starters = (await apiJson('/api/starter-prompts')).prompts.filter((i) => String(i.title).startsWith('开始页'));
     check('开始页自定义指令未受影响', starters.length === 2, JSON.stringify(starters.map((i) => i.title)));
     const startersShape = starters[0] || {};
@@ -157,10 +173,11 @@ async function purge(path, key) {
       [...document.querySelectorAll('.starter-grid .custom-starter .starter-title')].map((el) => el.textContent));
     check('开始页渲染自定义指令卡片', cards.includes('开始页A') && cards.includes('开始页B'), JSON.stringify(cards));
     check('开始页不显示快捷消息', !cards.some((t) => String(t).startsWith('冒烟')), JSON.stringify(cards));
-    // 开始页编辑弹窗仍保留标题字段（编辑按钮悬停卡片才显示）
-    await page.hover('.starter-grid .custom-starter');
+    // 开始页编辑弹窗仍保留标题字段（编辑按钮悬停卡片才显示）——按标题选中冒烟卡片，
+    // 不能取"第一张"：内置预设卡片排在最前。
+    await page.hover('.starter-grid .custom-starter:has-text("开始页A")');
     await page.waitForTimeout(300);
-    await page.click('.starter-grid .custom-starter .starter-edit');
+    await page.click('.starter-grid .custom-starter:has-text("开始页A") .starter-edit');
     await page.waitForTimeout(400);
     const starterDialog = await page.evaluate(() => ({
       heading: document.querySelector('#starterPromptHeading')?.textContent || '',

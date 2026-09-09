@@ -476,9 +476,11 @@ def _clean_tool_set_tools(tools: Any) -> list[str]:
 
 
 def _quick_message_entries(items: Any) -> list[dict[str, Any]]:
-    """规整快捷消息条目：只有正文 + 使用统计（``index`` 恒为原始插入序号）。
+    """规整快捷消息条目：正文 + 使用统计（``index`` 恒为原始插入序号）。
 
     正文为空的条目跳过（占位不影响 index 定位）；旧数据里的 ``title`` 字段忽略。
+    内置预设条目带 ``preset_id``（用户可编辑/删除，升级不覆盖也不复活，见
+    ``BUILTIN_QUICK_MESSAGES``）。
     """
     result: list[dict[str, Any]] = []
     for position, item in enumerate(items if isinstance(items, list) else []):
@@ -487,15 +489,17 @@ def _quick_message_entries(items: Any) -> list[dict[str, Any]]:
         text = str(item.get("text") or "").strip()
         if not text:
             continue
-        result.append(
-            {
-                "index": position,
-                "text": text,
-                "count": max(0, int(item.get("count") or 0)),
-                "added_at": max(0, int(item.get("added_at") or 0)),
-                "used_at": max(0, int(item.get("used_at") or 0)),
-            }
-        )
+        entry = {
+            "index": position,
+            "text": text,
+            "count": max(0, int(item.get("count") or 0)),
+            "added_at": max(0, int(item.get("added_at") or 0)),
+            "used_at": max(0, int(item.get("used_at") or 0)),
+        }
+        preset_id = _quick_preset_id(item)
+        if preset_id:
+            entry["preset_id"] = preset_id
+        result.append(entry)
     return result
 
 
@@ -590,6 +594,37 @@ STARTER_PRESET_DISMISSED_KEY = "starter_presets_dismissed"
 # 旧方案（一次性并入布尔标记）的迁移来源：置位时把"当前缺失的内置预设"视为用户已删除。
 _LEGACY_STARTER_PRESET_SEED_KEY = "starter_presets_seeded"
 
+# ---- 会话内「快捷消息」的内置预设 ----
+# 与开始页预设同款语义：条目带稳定 `preset_id`，用户可编辑/删除；
+# - 编辑只改正文，`preset_id` 原样保留 → 升级时不会被"补回"成原版；
+# - 删除的 id 记入 `quick_message_presets_dismissed`，永不自动复活；
+# - 版本新增的预设（id 未出现、也未被删过）在下次启动自动补齐。
+BUILTIN_QUICK_MESSAGES: tuple[dict[str, str], ...] = (
+    {
+        "id": "handoff-report",
+        "text": (
+            "现在写一份交接报告，然后调用一次 reset_context 重置上下文。\n"
+            "报告写进当前工作区（文件名建议：交接报告_<主题>_<日期>.md），必须包含：\n"
+            "1) 任务目标与当前进度（已完成 / 待办，逐条写清）；\n"
+            "2) 关键文件与路径（产物、脚本、配置，写绝对路径）；\n"
+            "3) 已确认的决定与约束（用户明确要求过的口径，不要遗漏）；\n"
+            "4) 仍在运行的后台任务（job id、用途、怎么取结果）；\n"
+            "5) 下一步该做什么（给接手者的第一条指令）。\n"
+            "写完用 read_file 复核文件非空，再把该文件的绝对路径传给 reset_context 的 handoff_path。"
+            "本轮不要再做别的活；若当前工具集没有 reset_context，就只写报告并告诉我。"
+        ),
+    },
+)
+
+# 用户主动删除的内置快捷消息 id 清单：不再自动补回。
+QUICK_MESSAGE_PRESET_DISMISSED_KEY = "quick_message_presets_dismissed"
+
+
+def _quick_preset_id(entry: Any) -> str:
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("preset_id") or "")
+
 
 def _starter_preset_id(entry: Any) -> str:
     """条目对应的内置预设 id：优先 `preset_id`，旧条目按标题回退匹配（空串=用户自建）。"""
@@ -681,6 +716,7 @@ class ConfigStore:
         self._migrate_conversation_prompt_presets()
         self._migrate_tool_sets()
         self._sync_starter_presets()
+        self._sync_builtin_quick_messages()
         # Legacy builds persisted max_agent_steps; it is intentionally ignored.
         self.data.pop("max_agent_steps", None)
         self._migrate_default_agent_skills()
@@ -922,6 +958,34 @@ class ConfigStore:
             self.data["starter_prompts"] = prompts
             self.data[STARTER_PRESET_DISMISSED_KEY] = sorted(dismissed_ids)
             self.save()
+
+    def _sync_builtin_quick_messages(self) -> None:
+        """按"已删除 id 清单"补齐缺失的内置快捷消息（每次加载都跑，幂等）。
+
+        与 `_sync_starter_presets` 同款语义：用户改过正文的条目靠 `preset_id` 识别，
+        不会被原版覆盖、也不会被重复插入；删掉的 id 记入删除清单，永不自动复活。
+        """
+        items = self.data.get("quick_messages")
+        if not isinstance(items, list):
+            items = []
+        items = [item for item in items if isinstance(item, dict)]
+        dismissed = self.data.get(QUICK_MESSAGE_PRESET_DISMISSED_KEY)
+        dismissed_ids = {str(item) for item in dismissed} if isinstance(dismissed, list) else set()
+        present_ids = {_quick_preset_id(item) for item in items} - {""}
+        missing = [preset for preset in BUILTIN_QUICK_MESSAGES
+                   if preset["id"] not in present_ids and preset["id"] not in dismissed_ids]
+        if not missing:
+            return
+        now = int(time.time() * 1000)
+        items.extend({
+            "text": preset["text"],
+            "count": 0,
+            "added_at": now,
+            "used_at": 0,
+            "preset_id": preset["id"],
+        } for preset in missing)
+        self.data["quick_messages"] = items
+        self.save()
 
     def save(self) -> None:
         with self.lock:
@@ -1203,6 +1267,14 @@ class ConfigStore:
         with self.lock:
             items = self.data.setdefault("quick_messages", [])
             if isinstance(items, list) and 0 <= int(index) < len(items):
+                removed = items[int(index)]
+                # 删的是内置预设 → 记入删除清单，升级时不再自动补回。
+                preset_id = _quick_preset_id(removed)
+                if preset_id:
+                    dismissed = self.data.get(QUICK_MESSAGE_PRESET_DISMISSED_KEY)
+                    ids = {str(item) for item in dismissed} if isinstance(dismissed, list) else set()
+                    ids.add(preset_id)
+                    self.data[QUICK_MESSAGE_PRESET_DISMISSED_KEY] = sorted(ids)
                 items.pop(int(index))
                 self.save()
         return self.get_quick_messages()
@@ -1215,13 +1287,18 @@ class ConfigStore:
             items = self.data.setdefault("quick_messages", [])
             if isinstance(items, list) and 0 <= int(index) < len(items):
                 current = items[int(index)] if isinstance(items[int(index)], dict) else {}
-                # 编辑只改正文：使用次数/新增时间/最近使用时间原样保留。
-                items[int(index)] = {
+                # 编辑只改正文：使用次数/新增时间/最近使用时间原样保留；
+                # 内置预设的 preset_id 也要保留，否则升级会被当成"缺失"而补回原版。
+                entry = {
                     "text": text,
                     "count": max(0, int(current.get("count") or 0)),
                     "added_at": max(0, int(current.get("added_at") or 0)),
                     "used_at": max(0, int(current.get("used_at") or 0)),
                 }
+                preset_id = _quick_preset_id(current)
+                if preset_id:
+                    entry["preset_id"] = preset_id
+                items[int(index)] = entry
                 self.save()
         return self.get_quick_messages()
 

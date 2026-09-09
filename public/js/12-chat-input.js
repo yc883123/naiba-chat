@@ -209,7 +209,7 @@ function renderQuickMessages() {
     const preview = lines.slice(1).join(' ').slice(0, 80);
     return `<div class="quick-msg-item" role="menuitem" tabindex="-1" data-quick-index="${item.index}" title="点击插入到输入框">
       <div class="quick-msg-main">
-        <b>${escapeHtml(headline)}</b>
+        <span class="quick-msg-title"><b>${escapeHtml(headline)}</b>${item.preset_id ? '<em class="quick-msg-tag" title="内置预设：可编辑、可删除，改动与删除都不会被版本更新覆盖">默认</em>' : ''}</span>
         ${preview ? `<small>${escapeHtml(preview)}</small>` : ''}
       </div>
       <button type="button" class="quick-msg-action" data-quick-edit="${item.index}" title="编辑" aria-label="编辑">${QUICK_EDIT_SVG}</button>

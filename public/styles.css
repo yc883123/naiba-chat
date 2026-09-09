@@ -764,6 +764,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .quick-msg-item:hover,
 .quick-msg-item:focus-visible { background: var(--surface-2); }
 .quick-msg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.quick-msg-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.quick-msg-tag { flex: none; padding: 1px 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 10.5px; font-style: normal; }
 .quick-msg-main b { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quick-msg-main small { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quick-msg-item:hover .quick-msg-main b { color: var(--accent); }
