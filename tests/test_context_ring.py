@@ -106,21 +106,26 @@ class ContextWarningTests(unittest.TestCase):
         body = _function_body(_read("03-media.js"), "export function renderContextUsage")
         self.assertIn("maybeWarnContextUsage(", body, "圆环渲染后必须做阈值判定")
 
-    def test_warning_fires_once_per_conversation(self) -> None:
-        body = _function_body(_read("03-media.js"), "export function maybeWarnContextUsage")
-        self.assertIn("contextWarningArmed", body, "必须用 armed 标记保证只提醒一次")
+    def test_warning_rearms_every_5_percent(self) -> None:
+        source = _read("03-media.js")
+        self.assertIn(
+            "const CONTEXT_WARNING_STEP = 5;", source, "再涨 5 个百分点就再提醒一次"
+        )
+        due = _function_body(source, "function contextWarningDue")
+        self.assertIn("threshold > 0", due, "阈值 0 = 关闭提醒")
+        self.assertIn("percent < threshold", due, "未达阈值不提醒")
+        self.assertIn(
+            "percent >= warnedAt + CONTEXT_WARNING_STEP", due, "距上次提醒再涨 5% 才再提醒"
+        )
+        body = _function_body(source, "export function maybeWarnContextUsage")
+        self.assertIn("contextWarningAtPercent", body, "记录上次提醒的百分比")
         self.assertIn("contextWarningConversationId", body, "换会话要重新武装")
-        self.assertIn("threshold > 0", body, "阈值 0 = 关闭提醒")
         self.assertIn("showContextWarning(", body)
 
     def test_idle_conversation_does_not_popup_on_render(self) -> None:
         """空闲会话（只是切到旧会话）不得弹窗——留给点击发送时判定。"""
         body = _function_body(_read("03-media.js"), "export function maybeWarnContextUsage")
-        self.assertIn(
-            "if (!state.chatBusy || !state.contextWarningArmed) return;",
-            body,
-            "渲染路径必须要求运行中才弹窗",
-        )
+        self.assertIn("if (!state.chatBusy) return;", body, "渲染路径必须要求运行中才弹窗")
 
     def test_send_path_checks_pending_warning(self) -> None:
         source = _read("11-run-stream.js")
@@ -137,7 +142,8 @@ class ContextWarningTests(unittest.TestCase):
         pending = _function_body(_read("03-media.js"), "export function pendingContextWarning")
         self.assertIn("state.chatBusy", pending, "运行中不走发送前判定")
         self.assertIn("state.contextPercent", pending, "用最近一次渲染出的百分比判定")
-        self.assertIn("contextWarningArmed", pending, "提醒过一次就不再拦")
+        self.assertIn("contextWarningDue(", pending, "与运行中路径共用同一判定")
+        self.assertIn("contextWarningAtPercent = percent", pending, "发送前提醒后要记下本次百分比")
 
     def test_continue_button_wiring_and_reset(self) -> None:
         html = (ROOT / "public" / "index.html").read_text(encoding="utf-8")

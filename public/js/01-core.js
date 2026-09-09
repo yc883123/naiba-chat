@@ -96,8 +96,8 @@ export const state = {
   contextPercent: 0,
   // 实时圆环所属会话：运行中历史重渲染不得覆盖实时值（见 updateContextUsage）。
   contextUsageConversationId: '',
-  // 上下文提醒：每个会话只弹一次；换会话或用量回落到阈值以下后重新武装。
-  contextWarningArmed: true,
+  // 上下文提醒：上次提醒时的占用百分比（0 = 本会话尚未提醒）。再涨 5% 会再次提醒。
+  contextWarningAtPercent: 0,
   contextWarningConversationId: '',
   providerModelCapabilities: {},
   workspaces: [],

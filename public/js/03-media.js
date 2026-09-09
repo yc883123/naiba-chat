@@ -862,7 +862,17 @@ export function contextWarningPercent() {
   return Number.isFinite(raw) ? raw : 80;
 }
 
-// 达到阈值时弹窗提醒一次：**以会话为单位**只提醒一次——换会话重新武装，用量回落到
+// 距上次提醒再涨这么多个百分点就再提醒一次（不是每会话只提醒一次，也不是每次发送都提醒）。
+const CONTEXT_WARNING_STEP = 5;
+
+// 是否需要提醒：已达阈值，且距上次提醒已经又涨了 CONTEXT_WARNING_STEP 个百分点。
+function contextWarningDue(percent, threshold) {
+  if (!(threshold > 0) || !(percent > 0) || percent < threshold) return false;
+  const warnedAt = Number(state.contextWarningAtPercent) || 0;
+  return warnedAt <= 0 || percent >= warnedAt + CONTEXT_WARNING_STEP;
+}
+
+// 达到阈值时弹窗提醒：**以会话为单位**记录上次提醒的百分比——换会话重新武装，用量回落到
 // 阈值以下也重新武装（例如新建对话）。percent<=0（无数据/上限未知）不提醒。
 // **运行中才在这里弹**；空闲会话（例如只是切到旧会话）留给"点击发送"前的
 // pendingContextWarning 判定，避免浏览旧会话就被打扰。
@@ -871,28 +881,29 @@ export function maybeWarnContextUsage(percent) {
   const conversationId = String(state.conversationId || '');
   if (state.contextWarningConversationId !== conversationId) {
     state.contextWarningConversationId = conversationId;
-    state.contextWarningArmed = true;
+    state.contextWarningAtPercent = 0;
   }
   const value = Number(percent) || 0;
   if (!(threshold > 0) || !(value > 0) || value < threshold) {
-    state.contextWarningArmed = true;
+    state.contextWarningAtPercent = 0;
     return;
   }
-  if (!state.chatBusy || !state.contextWarningArmed) return;
-  state.contextWarningArmed = false;
+  if (!state.chatBusy) return;
+  if (!contextWarningDue(value, threshold)) return;
+  state.contextWarningAtPercent = value;
   showContextWarning(value, threshold, { mode: 'running' });
 }
 
-// 发送前判定（空闲会话）：已达阈值且本会话尚未提醒过 → 返回 {percent, threshold}
-// 并消耗"提醒一次"的标记；调用方负责弹窗（弹窗里可选「继续发送」）。
+// 发送前判定（空闲会话）：已达阈值且距上次提醒又涨了 5% → 返回 {percent, threshold}
+// 并记下本次提醒的百分比；调用方负责弹窗（弹窗里可选「继续发送」）。
 export function pendingContextWarning() {
   const threshold = contextWarningPercent();
   const percent = Number(state.contextPercent) || 0;
   const conversationId = String(state.conversationId || '');
   if (state.contextWarningConversationId !== conversationId) return null;
-  if (state.chatBusy || !state.contextWarningArmed) return null;
-  if (!(threshold > 0) || !(percent > 0) || percent < threshold) return null;
-  state.contextWarningArmed = false;
+  if (state.chatBusy) return null;
+  if (!contextWarningDue(percent, threshold)) return null;
+  state.contextWarningAtPercent = percent;
   return { percent, threshold };
 }
 
