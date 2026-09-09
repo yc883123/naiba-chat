@@ -197,6 +197,8 @@ verify/*
 !verify/agent_prompt_smoke.cjs
 !verify/attachment_only_smoke.py
 !verify/backfill_media.py
+!verify/branch_first_turn_smoke.cjs
+!verify/branch_first_turn_smoke.py
 !verify/browser_smoke.cjs
 !verify/cleanup_verify.py
 !verify/context_menu_smoke.cjs

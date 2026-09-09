@@ -27,7 +27,7 @@ class FavoriteMigrationTests(unittest.TestCase):
     """迁移 v15：列存在、幂等、旧库可升级。"""
 
     def test_schema_version_registers_v15(self) -> None:
-        self.assertEqual(CURRENT_SCHEMA_VERSION, 15)
+        self.assertGreaterEqual(CURRENT_SCHEMA_VERSION, 15)
         self.assertIn(15, MIGRATIONS)
 
     def test_migration_adds_column_and_is_idempotent(self) -> None:

@@ -13,7 +13,7 @@ from typing import Any, Callable, Iterator
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 # 自该版本起存在"数据改写型"迁移（v14 起），执行前自动备份整库。
 FIRST_DATA_WRITING_MIGRATION = 14
@@ -448,6 +448,20 @@ def _migrate_to_v15(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE conversations ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
 
 
+def _migrate_to_v16(db: sqlite3.Connection) -> None:
+    """会话级首轮上下文（「首轮上下文」折叠卡的数据落地处）。
+
+    该数据原本只存在该会话**最早 chat run 的 snapshot** 里，于是两处会丢：
+    ① 分支对话只复制消息与设置、不复制 run 行 → 新会话读不到，卡片不显示（用户报障）；
+    ② 「清空已结束任务」会删掉 chat run 行（`clear_terminal_background_tasks` 无 kind 过滤）。
+    纯增量列：默认空串（老会话读时回退到 run 快照），列已存在时跳过（幂等）。
+    """
+    try:
+        db.execute("SELECT first_turn FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute("ALTER TABLE conversations ADD COLUMN first_turn TEXT NOT NULL DEFAULT ''")
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -465,6 +479,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     13: _migrate_to_v13,
     14: _migrate_to_v14,
     15: _migrate_to_v15,
+    16: _migrate_to_v16,
 }
 
 
@@ -945,6 +960,16 @@ class ChatStorage:
             # 有历史时才继承源会话冻结技能集（保证新会话 system 前缀与复制的一致）；
             # 分支点是首条消息时留空，让首轮按现有规则重新冻结。
             inherited_skill_policy = src["skill_policy"] if branch_idx > 0 else ""
+            # 首轮上下文（会话顶部折叠卡）同样只在有历史时继承：分支点之前的首轮与源会话
+            # 是同一轮（消息前缀一致）；否则新会话没有 chat run，卡片永远不显示。
+            # 老会话（v16 之前）列里为空，回退读源会话最早 chat run 的快照。
+            inherited_first_turn = ""
+            if branch_idx > 0:
+                inherited_first_turn = str(src["first_turn"] or "")
+                if not inherited_first_turn:
+                    legacy = (self._first_chat_run_snapshot(db, source_id) or {}).get("first_turn")
+                    if isinstance(legacy, dict) and legacy:
+                        inherited_first_turn = json.dumps(legacy, ensure_ascii=False)
             # 标题用递增序号，避免“（分支）（分支）”叠加：去掉源标题末尾的 (N)，再取已有同名标题的最大序号 +1。
             src_title = str(src["title"] or "新对话").strip() or "新对话"
             base_title = re.sub(r"\s*\(\d+\)\s*$", "", src_title).rstrip()
@@ -965,15 +990,16 @@ class ChatStorage:
                 "id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, "
                 "lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, "
                 "stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, "
-                "skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, "
+                "first_turn, created_at, updated_at"
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_id, new_title, src["mode"], src["permission_mode"],
                     src["web_search_enabled"], src["deep_reasoning_enabled"], src["lightweight_mode"],
                     src["lightweight_disabled_features"], 1, src["system_prompt"], src["stream_enabled"],
                     src["workspace_dir"], src["workspace_group"], src["reasoning_effort"],
                     src["enabled_tool_ids"], inherited_skill_policy, src["chat_supports_images"], src["provider_id"], src["model_key"],
-                    src["agent_id"], src["interaction_mode"], now, now,
+                    src["agent_id"], src["interaction_mode"], inherited_first_turn, now, now,
                 ),
             )
             for m in branch_rows[:branch_idx]:
@@ -1451,19 +1477,54 @@ class ChatStorage:
     def first_chat_run_snapshot(self, conversation_id: str) -> dict[str, Any] | None:
         """该会话最早的 chat run 快照（首轮固化的 first_turn 上下文来源）。"""
         with self._connect() as db:
-            row = db.execute(
-                "SELECT id, snapshot FROM background_tasks "
-                "WHERE conversation_id = ? AND kind = 'chat' "
-                "ORDER BY created_at, rowid LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
+            return self._first_chat_run_snapshot(db, conversation_id)
+
+    @staticmethod
+    def _first_chat_run_snapshot(
+        db: sqlite3.Connection, conversation_id: str,
+    ) -> dict[str, Any] | None:
+        row = db.execute(
+            "SELECT id, snapshot FROM background_tasks "
+            "WHERE conversation_id = ? AND kind = 'chat' "
+            "ORDER BY created_at, rowid LIMIT 1",
+            (conversation_id,),
+        ).fetchone()
         if not row:
             return None
         try:
             value = json.loads(row["snapshot"] or "{}")
         except (json.JSONDecodeError, TypeError):
-            value = {}
-        return value if isinstance(value, dict) else {}
+            return None
+        return value if isinstance(value, dict) else None
+
+    def set_conversation_first_turn(self, conversation_id: str, info: dict[str, Any]) -> None:
+        """落盘会话级首轮上下文（分支对话继承、清空已结束任务后仍可读）。
+
+        与 run 快照同时写：快照是「那次运行」的记录，本列是「这个会话」的持久记录
+        （分支不复制 run 行、清空已结束任务会删掉 chat run，两者都读不到快照）。
+        """
+        if not conversation_id:
+            return
+        payload = json.dumps(info or {}, ensure_ascii=False) if info else ""
+        with self._connect() as db:
+            db.execute(
+                "UPDATE conversations SET first_turn = ? WHERE id = ?",
+                (payload, conversation_id),
+            )
+
+    def conversation_first_turn(self, conversation_id: str) -> dict[str, Any] | None:
+        """会话级首轮上下文；无则 None（调用方回退读最早 chat run 快照）。"""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT first_turn FROM conversations WHERE id = ?", (conversation_id,)
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            value = json.loads(row["first_turn"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            return None
+        return value if isinstance(value, dict) and value else None
 
     def append_run_event(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         now = int(time.time() * 1000)

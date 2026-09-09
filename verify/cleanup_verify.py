@@ -51,6 +51,8 @@ KEEP = {
     "ring_usage_smoke.py", "ring_usage_smoke.cjs",
     # 工具分类改版冒烟（§六 已登记；Python 自编排 + Node 检查）
     "tool_groups_smoke.py", "tool_groups_smoke.cjs",
+    # 分支对话继承首轮上下文冒烟（§六 已登记；Python 自编排 + Node 检查）
+    "branch_first_turn_smoke.py", "branch_first_turn_smoke.cjs",
     # 发布清单同步自检（只读）
     "_release_check.py",
     # 本脚本自身

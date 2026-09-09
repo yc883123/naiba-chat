@@ -1022,6 +1022,11 @@ class ConversationRunMixin:
             ),
         }
         self.app.storage.update_run_snapshot(run_id, {"first_turn": first_turn})
+        # 会话级副本：分支对话不复制 run 行、「清空已结束任务」会删掉 chat run 行，
+        # 只存 run 快照的话这两种情况都会让顶部折叠卡消失（用户报障的分支场景）。
+        conversation_id = str((run_context or {}).get("conversation_id") or "")
+        if conversation_id:
+            self.app.storage.set_conversation_first_turn(conversation_id, first_turn)
 
     @staticmethod
     def _rebuild_partial_run(

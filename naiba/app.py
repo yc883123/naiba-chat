@@ -995,14 +995,16 @@ class NaibaChatApp:
     def _first_turn_info(self, conversation_id: str) -> dict[str, Any] | None:
         """会话首轮「第一轮发送上下文」（系统提示词原文 + 工具集 + 模型/技能信息）。
 
-        数据来源：该会话最早的 chat run 快照里的 first_turn 键（_run_chat 首轮落盘）。
-        老会话（快照无该键）返回 None，前端不显示折叠卡；旧版落盘结构（prompt 字段
-        而非 system）在此归一兼容——前端仅认 system。
+        数据来源：会话级 `conversations.first_turn` 列（分支对话会继承、清空已结束任务不丢）；
+        v16 之前的老会话该列为空，回退读最早 chat run 快照里的 first_turn 键。
+        都没有时返回 None，前端不显示折叠卡；旧版落盘结构（prompt 字段而非 system）
+        在此归一兼容——前端仅认 system。
         """
-        snapshot = self.storage.first_chat_run_snapshot(conversation_id)
-        if not snapshot:
-            return None
-        info = snapshot.get("first_turn")
+        info = self.storage.conversation_first_turn(conversation_id)
+        if info is None:
+            snapshot = self.storage.first_chat_run_snapshot(conversation_id)
+            legacy = snapshot.get("first_turn") if isinstance(snapshot, dict) else None
+            info = legacy if isinstance(legacy, dict) and legacy else None
         if not isinstance(info, dict) or not info:
             return None
         if not info.get("system") and info.get("prompt"):
