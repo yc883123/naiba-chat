@@ -174,7 +174,7 @@ export function populateModels() {
       list.forEach((p) => {
         const option = document.createElement('option');
         option.value = p.model_key;
-        option.textContent = `${p.name} · ${p.model}`;
+        option.textContent = p.name || p.model_key;
         og.append(option);
       });
       select.append(og);
@@ -191,6 +191,7 @@ export function populateModels() {
     select.selectedIndex = 0;
   }
   updateUnloadModelButton();
+  void populateComposerModels();
 }
 
 export function selectedProvider() {
@@ -198,6 +199,110 @@ export function selectedProvider() {
   if (!value) return null;
   const profiles = state.bootstrap.model_profiles || state.bootstrap.providers || [];
   return profiles.find((p) => p.model_key === value) || null;
+}
+
+export function selectedModelName() {
+  const select = $('#composerModelSelect');
+  const custom = $('#composerModelCustom');
+  if (select?.value === '__custom__') return String(custom?.value || '').trim();
+  if (select?.value) return String(select.value).trim();
+  return String(selectedProvider()?.model || '').trim();
+}
+
+function composerModelEntries(provider) {
+  const entries = [];
+  const seen = new Set();
+  const add = (id, name = id) => {
+    const clean = String(id || '').trim();
+    if (!clean || seen.has(clean)) return;
+    seen.add(clean);
+    entries.push({ id: clean, name: String(name || clean) });
+  };
+  add(provider?.model);
+  (state.providerModelCatalogs[provider?.model_key] || []).forEach((model) => {
+    add(model?.id, model?.name || model?.id);
+  });
+  return entries;
+}
+
+function renderComposerModels(provider, preferredModel = '') {
+  const select = $('#composerModelSelect');
+  const custom = $('#composerModelCustom');
+  if (!select || !custom) return;
+  const desired = String(preferredModel || '').trim();
+  const entries = composerModelEntries(provider);
+  select.innerHTML = '';
+  entries.forEach((model) => {
+    const option = document.createElement('option');
+    option.value = model.id;
+    option.textContent = model.name;
+    select.append(option);
+  });
+  const customOption = document.createElement('option');
+  customOption.value = '__custom__';
+  customOption.textContent = '手动输入模型名称…';
+  select.append(customOption);
+  const selected = desired || String(provider?.model || '').trim();
+  if (selected && entries.some((item) => item.id === selected)) {
+    select.value = selected;
+    custom.hidden = true;
+    custom.value = '';
+  } else {
+    select.value = '__custom__';
+    custom.hidden = false;
+    custom.value = selected;
+  }
+}
+
+export async function populateComposerModels(preferredModel = '') {
+  const provider = selectedProvider();
+  const providerKey = String(provider?.model_key || '');
+  renderComposerModels(provider, preferredModel || selectedModelName());
+  if (!providerKey || state.providerModelCatalogs[providerKey]) return;
+  try {
+    const result = await api('/api/providers/models', { method: 'POST', body: { model_key: providerKey } });
+    if ($('#modelSelect')?.value !== providerKey) return;
+    state.providerModelCatalogs[providerKey] = Array.isArray(result.models) ? result.models : [];
+    renderComposerModels(provider, preferredModel || selectedModelName());
+  } catch (error) {
+    // 某些 API 不提供 models 目录；保留 API 配置中的默认模型与手动输入入口。
+    console.debug('[naiba] 获取 API 模型目录失败:', error.message);
+  }
+}
+
+async function persistConversationModelName(modelName) {
+  if (!state.conversationId) return;
+  const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
+    method: 'POST', body: { model_name: modelName },
+  });
+  const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+  if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
+}
+
+export async function saveComposerModelSelection() {
+  const select = $('#composerModelSelect');
+  const custom = $('#composerModelCustom');
+  if (!select || !custom) return;
+  custom.hidden = select.value !== '__custom__';
+  if (select.value === '__custom__') {
+    custom.focus();
+    return;
+  }
+  custom.value = '';
+  try {
+    await persistConversationModelName(selectedModelName());
+  } catch (error) {
+    toast(`保存模型失败：${error.message}`);
+  }
+}
+
+export async function saveCustomComposerModel() {
+  if ($('#composerModelSelect')?.value !== '__custom__') return;
+  try {
+    await persistConversationModelName(selectedModelName());
+  } catch (error) {
+    toast(`保存模型失败：${error.message}`);
+  }
 }
 
 export function localProviderKind(provider) {
@@ -258,19 +363,22 @@ export async function saveModelSelection() {
   state.bootstrap.default_model_key = result.default_model_key || value;
   if (state.conversationId) {
     try {
-      await api(`/api/conversations/${state.conversationId}/settings`, {
+      const updated = await api(`/api/conversations/${state.conversationId}/settings`, {
         method: 'POST',
-        body: { model_key: value },
+        body: { model_key: value, model_name: '' },
       });
+      const index = state.conversations.findIndex((item) => item.id === state.conversationId);
+      if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
     } catch (error) {
       console.debug('[naiba] 保存对话模型失败:', error.message);
     }
   }
-  populateModels();
-  toast('模型已切换');
+  updateUnloadModelButton();
+  await populateComposerModels(String(selectedProvider()?.model || ''));
+  toast('API 已切换');
 }
 
-// 根据对话已保存的 model_key 恢复模型选择；未绑定或已删除时回退到全局默认
+// 根据对话已保存的 API 与模型名恢复选择；未绑定或已删除时回退到全局默认。
 export function applyConversationModel(conversation) {
   const select = $('#modelSelect');
   if (!select) return;
@@ -278,6 +386,7 @@ export function applyConversationModel(conversation) {
   if (target && [...select.options].some((o) => o.value === target)) {
     select.value = target;
     updateUnloadModelButton();
+    void populateComposerModels(String(conversation?.model_name || ''));
     return;
   }
   const fallback = String(state.bootstrap.default_model_key || '');
@@ -287,6 +396,7 @@ export function applyConversationModel(conversation) {
     select.selectedIndex = 0;
   }
   updateUnloadModelButton();
+  void populateComposerModels(String(conversation?.model_name || ''));
 }
 
 export function renderAgents() {

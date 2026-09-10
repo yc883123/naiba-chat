@@ -40,6 +40,15 @@ VISION_ANALYZE_LOAD_GUIDE = (
 VISION_OPS_GUIDE = "仅当用户明确要求裁剪、OCR、坐标、像素比较等新操作时才调用 vision_image_ops。"
 
 
+def _profile_with_model_override(config: Any, model_key: str, model_name: str) -> dict[str, Any]:
+    """Resolve an API profile and apply the conversation's optional model override."""
+    profile = dict(config.profile(model_key))
+    clean_name = str(model_name or "").strip()
+    if clean_name:
+        profile["model"] = clean_name
+    return profile
+
+
 def vision_prompt_sections(allowed_tools: set[str], *, model_has_vision: bool) -> list[str]:
     """图片处理指引按会话固化工具集 + 模型视觉能力条件注入（缺哪个工具就不提哪个）。
 
@@ -201,8 +210,21 @@ class ConversationRunMixin:
             model_key = str(body.get("model_key") or conversation.get("model_key") or "")
             if not model_key and conversation.get("provider_id"):
                 model_key = f"online:{conversation['provider_id']}"
+            raw_model_name = body.get("model_name", conversation.get("model_name") or "")
+            if not isinstance(raw_model_name, str):
+                raise ValueError("model_name 必须是文本")
+            model_name = raw_model_name.strip()[:256]
+            if (
+                model_key != str(conversation.get("model_key") or "")
+                or model_name != str(conversation.get("model_name") or "")
+            ):
+                updated = self.app.storage.update_conversation_settings(
+                    conversation_id, model_key=model_key, model_name=model_name
+                )
+                if updated:
+                    conversation = {**conversation, **updated, "messages": conversation.get("messages") or []}
             try:
-                chat_profile = self.app.config.profile(model_key)
+                chat_profile = _profile_with_model_override(self.app.config, model_key, model_name)
                 resolver = getattr(self.app.vision, "resolve_brain_supports_images", None)
                 # 按会话固化图像能力：首次确定后写入会话，之后复用，不再随“本轮是否带图”
                 # 重复探测（避免结果漂移破坏视觉工具集与前缀缓存）。
@@ -262,6 +284,7 @@ class ConversationRunMixin:
                 "provider_id": str(conversation.get("provider_id") or ""),
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
                 "model_key": model_key,
+                "model_name": model_name,
                 "chat_supports_images": chat_supports_images,
                 "generation_options": self._generation_options(self.app.config, model_key),
                 "skill_policy": skill_policy,
@@ -333,8 +356,9 @@ class ConversationRunMixin:
             if not model_key:
                 provider_id = str(conversation.get("provider_id") or "")
                 model_key = f"online:{provider_id}" if provider_id else ""
+            model_name = str(conversation.get("model_name") or "").strip()
             try:
-                chat_profile = self.app.config.profile(model_key)
+                chat_profile = _profile_with_model_override(self.app.config, model_key, model_name)
                 resolver = getattr(self.app.vision, "resolve_brain_supports_images", None)
                 chat_supports_images = (
                     bool(resolver(chat_profile)) if callable(resolver)
@@ -351,6 +375,7 @@ class ConversationRunMixin:
                 "conversation_messages": conversation.get("messages") or [],
                 "provider_id": str(conversation.get("provider_id") or ""),
                 "model_key": model_key,
+                "model_name": model_name,
                 "chat_supports_images": chat_supports_images,
                 "stream_enabled": bool(conversation.get("stream_enabled", 1)),
                 "generation_options": self._generation_options(self.app.config, model_key),
@@ -456,6 +481,9 @@ class ConversationRunMixin:
             # 先解析当前模型 profile（含 supports_images 能力），再交给视觉路由判断。
             # 顺序错误会导致 prepare_history 因 profile 未定义而整体被跳过（视觉失效）。
             profile = dict(self.app.config.profile(model_key))
+            model_name = str(snapshot.get("model_name") or "").strip()
+            if model_name:
+                profile["model"] = model_name
             conversation_effort = str(snapshot.get("reasoning_effort") or "").strip().lower()
             if conversation_effort in {"off", "low", "medium", "high"}:
                 # 会话显式指定了思维强度，覆盖 provider 设置。

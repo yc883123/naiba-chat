@@ -55,8 +55,8 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
         </button>
         <label class="model-control">
-          <span>模型</span>
-          <select id="modelSelect" aria-label="当前模型"></select>
+          <span>API</span>
+          <select id="modelSelect" aria-label="当前 API"></select>
         </label>
         <label class="model-control agent-control">
           <span>Agent</span>
@@ -153,6 +153,11 @@
                 <option value="">未分组</option>
               </select>
             </div>
+            <label class="composer-model" for="composerModelSelect">
+              <span>模型</span>
+              <select id="composerModelSelect" aria-label="当前模型"></select>
+              <input id="composerModelCustom" type="text" maxlength="256" placeholder="输入模型名称" aria-label="手动输入模型名称" hidden>
+            </label>
             <div class="permission-mode-switch" id="permissionModeSwitch" role="radiogroup" aria-label="当前对话审批模式">
               <span>审批</span>
               <button type="button" data-permission-mode="confirm" class="active" role="radio" title="敏感操作逐次确认">确认</button>

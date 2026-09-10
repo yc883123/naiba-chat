@@ -1,7 +1,8 @@
-// Naiba Chat 说明书配图一键生成（1.6.9+）
+// Naiba Chat 说明书配图一键生成（2.1.0）
 // 依赖：本地服务 http://127.0.0.1:8765 已启动；Chrome --remote-debugging-port=9222 已启动。
 // 用法：node scripts/screenshot.mjs
-// 说明：除 3 张「对话示意图」为 CSS 占位注入外，其余全部是真实界面 + 真实渲染。
+// 说明：标注「示意」的几张是新特性（分割线 / 刻度轨 / 附件 / 上下文提醒）用真实 CSS 类注入渲染，
+//       其余全部是真实界面 + 真实交互 + 真实文件渲染。
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -64,7 +65,7 @@ ws.addEventListener('message', (e) => {
 });
 await new Promise((r, j) => { ws.addEventListener('open', r); ws.addEventListener('error', j); });
 
-const send = (method, params = {}, sessionId) => {
+const rawSend = (method, params = {}, sessionId) => {
   seq++;
   return new Promise((resolve, reject) => {
     pending.set(seq, { resolve, reject });
@@ -73,6 +74,17 @@ const send = (method, params = {}, sessionId) => {
     ws.send(JSON.stringify(msg));
   });
 };
+// 无头 Chrome 的 Page.captureScreenshot 偶发不回包（渲染器被 hover/过渡动画占住），
+// 这里给每条命令加超时，截图命令由 shot() 重试，避免整轮卡死。
+function withTimeout(promise, ms, label) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('TIMEOUT ' + label)), ms); }),
+  ]);
+}
+const send = (method, params = {}, sessionId) =>
+  withTimeout(rawSend(method, params, sessionId), 20000, method);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
 const { result: { targetInfos } } = await send('Target.getTargets');
@@ -103,21 +115,38 @@ async function navigate(url) {
   await sleep(1500);
 }
 async function ev(expr) {
-  const r = await sess('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true });
+  let r;
+  try {
+    r = await withTimeout(sess('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }), 15000, 'evaluate');
+  } catch (error) {
+    console.log('  ! evaluate timeout：', expr.slice(0, 60));
+    return null;
+  }
   if (r.result?.exceptionDetails) console.error('EVAL ERR:', expr.slice(0, 120), r.result.exceptionDetails);
   return r.result?.result?.value;
 }
 async function shot(file) {
-  const r = await sess('Page.captureScreenshot', { format: 'png' });
-  fs.writeFileSync(path.join(OUT, file), Buffer.from(r.result.data, 'base64'));
-  console.log('  ✓', file, (fs.statSync(path.join(OUT, file)).size / 1024).toFixed(0), 'KB');
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const r = await withTimeout(
+        sess('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }),
+        15000, 'captureScreenshot ' + file);
+      fs.writeFileSync(path.join(OUT, file), Buffer.from(r.result.data, 'base64'));
+      console.log('  ✓', file, (fs.statSync(path.join(OUT, file)).size / 1024).toFixed(0), 'KB');
+      return;
+    } catch (error) {
+      console.log('  !', file, 'attempt', attempt, error.message);
+      await sleep(1200);
+    }
+  }
+  console.log('  ✗', file, '截图失败（3 次均未返回）');
 }
 // 关闭所有浮层，回到干净的主界面
 async function clean() {
   await ev(`(() => {
     document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch(_){} });
-    ['#imageLightbox','#imageContextMenu','#skillPopup','#reasoningMenu','#contextUsagePopover',
-     '#topbarOverflowMenu','#quickMessagePanel'].forEach(sel => {
+    ['#imageLightbox','#imageContextMenu','#skillPopup','#filePopup','#reasoningMenu',
+     '#contextUsagePopover','#quickMessagePanel'].forEach(sel => {
       const el = document.querySelector(sel); if (el) el.hidden = true;
     });
   })()`);
@@ -137,7 +166,7 @@ async function settingsTab(name) {
   await sleep(500);
 }
 
-// ---------- 0. 准备演示会话（用于文件面板 / 消息渲染截图） ----------
+// ---------- 0. 准备演示会话（用于文件面板 / @ 引用 / 消息渲染截图） ----------
 console.log('[0] 准备演示会话');
 await metrics(1600, 1000);
 await navigate('http://127.0.0.1:8765');
@@ -154,24 +183,24 @@ console.log('[1] 主界面');
 await navigate('http://127.0.0.1:8765');
 await shot('01-main-empty.png');
 
-// 侧栏折叠（1.6.9 新）
+// 侧栏折叠
 await ev(`document.querySelector('#collapseSidebar')?.click()`);
 await sleep(700);
 await shot('02-sidebar-collapsed.png');
 await ev(`document.querySelector('#expandSidebar')?.click()`);
 await sleep(700);
 
-// ---------- 2. 文件面板（1.6.9 新） ----------
+// ---------- 2. 文件面板 ----------
 console.log('[2] 文件面板');
 await navigate('http://127.0.0.1:8765');
 const opened = await ev(`(() => {
-  const items = [...document.querySelectorAll('#sidebarWorkspaceTree .conversation-item')];
+  const items = [...document.querySelectorAll('.conversation-item')];
   const hit = items.find(i => (i.textContent || '').includes('${DEMO_TITLE}'));
   if (hit) { hit.click(); return 'clicked:' + items.length; }
   return 'notfound:' + items.length;
 })()`);
 console.log('  open demo conversation ->', opened);
-await sleep(1200);
+await sleep(1500);
 
 // 注入一条带「本轮修改文件」的助手消息（chip 指向真实文件，可点击）
 const chips = [
@@ -207,6 +236,7 @@ const demoMsg = `
     </div>
   </article>`;
 await ev(`(() => {
+  document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch(_){} });
   const es = document.querySelector('#emptyState'); if (es) es.hidden = true;
   document.querySelector('#messages').innerHTML = ${JSON.stringify(demoMsg)};
 })()`);
@@ -215,14 +245,14 @@ await shot('21-chat-filechanges.png');
 
 // 点击第一个 chip（Markdown）→ 打开右侧文件面板（展示 Markdown 渲染）
 await ev(`document.querySelector('.file-change-chip[data-file-op="write"]')?.click()`);
-await sleep(1200);
+await sleep(1400);
 await shot('03-file-panel.png');
 
-// 再点第二个 chip（Python 文本），先截一张两个标签但都打开过的状态
+// 再点第二个 chip（Python 文本），两个标签都打开过
 await ev(`document.querySelector('.file-change-chip[data-file-op="edit"]')?.click()`);
 await sleep(1200);
 
-// 收起面板 → 顶栏出现「文件 N」按钮（两个标签都被记住）
+// 收起面板 → 顶栏出现「文件」按钮（两个标签都被记住）
 await ev(`document.querySelector('#closeFilePanel')?.click()`);
 await sleep(800);
 await shot('04-file-panel-closed.png');
@@ -245,16 +275,32 @@ for (const [tab, file] of tabs) {
   await settingsTab(tab);
   await shot(file);
 }
+
+// ---------- 4. Agent 编辑弹层（卡片化 → 点卡片进表单） ----------
+console.log('[4] Agent 编辑弹层');
+await settingsTab('agent');
+await ev(`(() => {
+  const card = document.querySelector('#agentCards [data-agent-card]');
+  if (card) card.click();
+})()`);
+await sleep(900);
+await shot('20-agent-edit.png');
+// 工具集两态：切到「工具集」页，展示只读预设卡 + 我的工具集 + 添加卡
+await ev(`(() => {
+  const tab = document.querySelector('.agent-tabs button[data-agent-tab="tools"]');
+  if (tab) tab.click();
+})()`);
+await sleep(700);
+await shot('20b-agent-tools.png');
 await clean();
 
-// ---------- 4. 各弹窗 ----------
-console.log('[4] 弹窗');
+// ---------- 5. 各弹窗 ----------
+console.log('[5] 弹窗');
 await openDialog('#skillsDialog');
 await shot('14-skill-refs.png');
 await clean();
 
 await openDialog('#tasksDialog');
-// 任务历史通常为空，注入 3 条示例行（真实 DOM 结构，状态样式齐全）
 await ev(`(() => {
   const list = document.querySelector('#taskList');
   if (!list) return;
@@ -282,7 +328,29 @@ await openDialog('#workspaceDialog');
 await shot('17-workspace-dialog.png');
 await clean();
 
-// 深度思考菜单
+// 上下文用量提醒弹窗（2.1.0 新增）
+await ev(`(() => {
+  const d = document.querySelector('#contextWarningDialog');
+  const detail = document.querySelector('#contextWarningDetail');
+  if (detail) detail.textContent = '上下文用量已达 82%（40,960 / 50,000 tokens）';
+  const cont = document.querySelector('#contextWarningContinue'); if (cont) cont.hidden = false;
+  if (d && !d.open) d.showModal();
+})()`);
+await sleep(600);
+await shot('31-context-warning.png');
+await clean();
+
+// ---------- 6. 输入区：思考强度 / 上下文 / 快捷消息 / @ 引用 / 附件 ----------
+console.log('[6] 输入区');
+await navigate('http://127.0.0.1:8765');
+await ev(`(() => {
+  const items = [...document.querySelectorAll('.conversation-item')];
+  const hit = items.find(i => (i.textContent || '').includes('${DEMO_TITLE}'));
+  if (hit) hit.click();
+})()`);
+await sleep(1500);
+
+// 深度思考菜单（直接展开，不 click 以免切档）
 await ev(`(() => { const m = document.querySelector('#reasoningMenu'); if (m) m.hidden = false; })()`);
 await sleep(400);
 await shot('18-reasoning-menu.png');
@@ -290,36 +358,123 @@ await clean();
 
 // 上下文用量
 await ev(`document.querySelector('#contextUsageButton')?.click()`);
-await sleep(600);
+await sleep(700);
 await shot('19-context-usage.png');
 await clean();
 
-// 顶栏 ⋯ 溢出菜单（卸载模型 / 刷新）
-await ev(`(() => { const m = document.querySelector('#topbarOverflowMenu'); if (m) m.hidden = false; })()`);
-await sleep(400);
-await shot('19b-topbar-overflow.png');
-await clean();
-
-// 底部「快捷消息」面板（常用提示词列表）
+// 快捷消息面板（2.1.0：内置交接报告预设）
 await ev(`(() => { const b = document.querySelector('#quickMessageButton'); if (b) b.click(); })()`);
-await sleep(600);
-await shot('19c-quick-messages-panel.png');
+await sleep(700);
+await shot('27-quick-messages.png');
+
+// @ 引用工作区文件（输入 @ 触发真实目录浏览弹层）
+// 先铺一条用户消息当背景，再输入 @（空态背景太抢眼）
+await clean();
+await ev(`(() => {
+  const es = document.querySelector('#emptyState'); if (es) es.hidden = true;
+  document.querySelector('#messages').innerHTML = \`
+  <article class="message-row user">
+    <div class="message-body"><p>把工作区里那份封面规范读一下，按它检查刚出的图。</p></div>
+  </article>\`;
+  const i = document.querySelector('#messageInput');
+  if (!i) return;
+  i.focus();
+  i.value = '@';
+  i.setSelectionRange(1, 1);
+  i.dispatchEvent(new Event('input', { bubbles: true }));
+})()`);
+await sleep(1800);
+const filePopupOk = await ev(`(() => {
+  const p = document.querySelector('#filePopup');
+  if (!p || p.hidden) return 'hidden';
+  return 'open:' + p.querySelectorAll('.file-popup-item').length;
+})()`);
+console.log('  file popup ->', filePopupOk);
+await shot('28-file-ref-popup.png');
 await clean();
 
-// 对话设置（侧栏会话行 ⚙）
+// 待发送附件列表（2.1.0：输入框上方竖排卡片）
 await ev(`(() => {
-  const items = [...document.querySelectorAll('#sidebarWorkspaceTree .conversation-item')];
-  for (const it of items) {
-    const btn = it.querySelector('.conversation-settings');
-    if (btn) { btn.style.opacity = '1'; btn.click(); return; }
+  const box = document.querySelector('#pendingFiles');
+  if (!box) return;
+  const grads = ['linear-gradient(135deg,#7a86b6,#3b4a6b)','linear-gradient(135deg,#b68a7a,#6b3b3b)','linear-gradient(135deg,#7ab68a,#3b6b4a)'];
+  const rows = [
+    { name: 'reference_sheet_角色参考图_v3.png', img: 0, size: '1.8 MB' },
+    { name: 'cover_v2_api_workflow.json', img: -1, size: '36 KB' },
+    { name: '2026年Q3分镜脚本_终稿（含修改批注）.docx', img: 1, size: '412 KB' },
+  ];
+  box.innerHTML = rows.map((r, i) => {
+    const thumb = r.img >= 0
+      ? \`<img class="pending-thumb" src="data:image/svg+xml,\${encodeURIComponent('<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;64&quot; height=&quot;64&quot;><rect width=&quot;64&quot; height=&quot;64&quot; fill=&quot;hsl(' + (200 + i * 40) + ',30%,55%)&quot;/></svg>')}" alt="">\`
+      : '<span class="pending-thumb pending-thumb-file" aria-hidden="true"></span>';
+    return \`<div class="pending-item">\${thumb}<span class="pending-name" title="\${r.name}">\${r.name}</span><button type="button" class="pending-remove" title="移除" aria-label="移除"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>\`;
+  }).join('');
+  box.hidden = false;
+})()`);
+await sleep(600);
+await shot('30-attachments.png');
+await clean();
+
+// ---------- 7. 新会话分割线 + 对话刻度轨（示意，真实 CSS 类） ----------
+console.log('[7] 分割线与刻度轨');
+await ev(`(() => {
+  const es = document.querySelector('#emptyState'); if (es) es.hidden = true;
+  // 清掉上一步演示的待发送附件
+  const box = document.querySelector('#pendingFiles');
+  if (box) { box.innerHTML = ''; box.hidden = true; }
+  const turn = (n, user, reply) => \`
+  <article class="message-row user" data-message-id="u\${n}">
+    <div class="message-body"><p>\${user}</p></div>
+  </article>
+  <article class="message-row assistant" data-message-id="a\${n}">
+    <div class="message-avatar">AI</div>
+    <div class="message-body">
+      <div class="answer-content"><p>\${reply}</p></div>
+      <div class="usage-line">本轮 1,2\${n}0 tokens · 缓存命中率 7\${n}.4% · 1 次请求</div>
+      <div class="message-actions"><button data-copy-message>复制</button><button type="button" title="在此之后划分割线">新会话</button></div>
+    </div>
+  </article>\`;
+  const divider = \`
+  <article class="message-row session-divider" data-message-id="a1" data-session-divider="a1">
+    <div class="session-divider-bar" title="此线以上的消息不再进入模型上下文；下方消息仍保留在上下文中（聊天记录全部保留）">
+      <span class="session-divider-line" aria-hidden="true"></span>
+      <span class="session-divider-label">新会话 · 手动 · 2026/9/10 10:24:31</span>
+      <span class="session-divider-line" aria-hidden="true"></span>
+      <button type="button" class="session-divider-cancel" title="撤销这条分割线：此线以上的消息重新进入模型上下文">撤销</button>
+    </div>
+    <div class="session-divider-hint">此线以上不再进入模型上下文</div>
+  </article>\`;
+  document.querySelector('#messages').innerHTML =
+    turn(1, '把 D:\\\\素材4 下前 3 张 png 加日期前缀改名，先列方案别动文件。', '找到 3 个匹配文件，方案已列出，等你确认后再执行。')
+    + divider
+    + turn(2, '确认，执行改名。', '已改完 3 个文件：cover_01.png → 20260902_cover_01.png，另外两个同步完成。')
+    + turn(3, '再出 6 张古风竖构图封面，尺寸 1080×1440。', '已提交 6 个文生图任务，产出在 data/generated 下，聊天里可以直接预览。')
+    + turn(4, '把第 3 张的 seed 固定下来再跑一版。', '已固定 seed=20260902 重跑，这一版人物面部更稳定。');
+})()`);
+await sleep(600);
+// 刻度轨由 state.messages 驱动，注入 DOM 不会触发它；直接按真实类名铺横条并立刻截图
+await ev(`(() => {
+  const rail = document.querySelector('#turnRail');
+  if (!rail) return;
+  rail.hidden = false;
+  rail.replaceChildren();
+  for (let i = 0; i < 10; i += 1) {
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = 'turn-tick' + (i === 4 ? ' active' : '');
+    tick.dataset.turnIndex = String(i);
+    tick.setAttribute('aria-label', '第 ' + (i + 1) + ' 轮对话');
+    const line = document.createElement('span');
+    line.className = 'turn-tick-line';
+    tick.append(line);
+    rail.append(tick);
   }
 })()`);
-await sleep(900);
-await shot('20-conversation-settings.png');
-await clean();
+await sleep(300);
+await shot('29-session-divider.png');
 
-// ---------- 5. 对话示意图（CSS 占位，不引用真实产物） ----------
-console.log('[5] 对话示意图');
+// ---------- 8. 对话示意图（CSS 占位，不引用真实产物） ----------
+console.log('[8] 对话示意图');
 async function renderMsgs(html) {
   await ev(`(() => {
     document.querySelectorAll('dialog[open]').forEach(d => { try { d.close(); } catch(_){} });
@@ -464,8 +619,8 @@ const htmlApproval = `
 await renderMsgs(htmlApproval);
 await shot('24-tool-approval.png');
 
-// ---------- 6. 移动端 ----------
-console.log('[6] 移动端');
+// ---------- 9. 移动端 ----------
+console.log('[9] 移动端');
 await metrics(430, 932, true);
 await navigate('http://127.0.0.1:8765');
 await shot('25-mobile-main.png');
@@ -474,8 +629,8 @@ await settingsTab('models');
 await shot('26-mobile-settings.png');
 await clean();
 
-// ---------- 7. 清理 ----------
-console.log('[7] 清理演示会话与演示文件');
+// ---------- 10. 清理 ----------
+console.log('[10] 清理演示会话与演示文件');
 await metrics(1600, 1000);
 if (demoConv) {
   const del = await ev(`fetch('/api/conversations/${demoConv}', { method: 'DELETE' }).then(r => r.status).catch(e => 'err')`);

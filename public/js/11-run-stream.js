@@ -7,6 +7,7 @@ import { pendingContextWarning, showContextWarning } from "./03-media.js";
 import { messageElement, scrollToBottom, setStickToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { createConversation, loadConversations, openConversation } from "./08-conversations.js";
+import { selectedModelName } from "./07-models-agents.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { closeQuickMessagePanel, handleChatEvent, hideChoiceButtons, setBusy } from "./12-chat-input.js";
 import { hideSkillPopup, parseSkillReferences, renderInputMirror, resizeTextarea, stripSkillReferences } from "./13-skill-refs.js";
@@ -492,6 +493,7 @@ export async function sendChatMessage(textOverride = '', { skipContextWarning = 
         display_message: text,
         attachments,
         model_key: $('#modelSelect').value,
+        model_name: selectedModelName(),
         skill_policy: {
           mode: 'exclusive',
           referenced_ids: referencedIds,

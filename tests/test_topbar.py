@@ -121,6 +121,22 @@ class TopbarStyleTests(unittest.TestCase):
         self.assertIn("fill: none", rule)
         self.assertIn("stroke: currentColor", rule)
 
+    def test_api_stays_in_topbar_and_model_selector_stays_by_composer(self) -> None:
+        """API 负责选连接配置，实际模型在输入区紧凑选择或手动填写。"""
+        index = self._index()
+        topbar = index[index.index('<header class="topbar">'):index.index('</header>')]
+        self.assertIn('<span>API</span>', topbar)
+        self.assertIn('id="modelSelect"', topbar)
+        composer = index[index.index('<div class="composer-meta">'):index.index('</section>', index.index('<div class="composer-meta">'))]
+        self.assertIn('id="composerModelSelect"', composer)
+        self.assertIn('id="composerModelCustom"', composer)
+        self.assertIn('手动输入模型名称', composer)
+        bind = self._bind()
+        self.assertIn("$('#composerModelSelect').addEventListener('change', saveComposerModelSelection)", bind)
+        self.assertIn("$('#composerModelCustom').addEventListener('blur', saveCustomComposerModel)", bind)
+        stream = (ROOT / "public/js/11-run-stream.js").read_text(encoding="utf-8")
+        self.assertIn("model_name: selectedModelName()", stream)
+
 
 if __name__ == "__main__":
     unittest.main()

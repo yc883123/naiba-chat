@@ -556,6 +556,7 @@ class NaibaChatApp:
         title = str(body.get("title") or "新对话")
         provider_id = str(body.get("provider_id") or self.config.data.get("provider_id") or "")
         model_key = str(body.get("model_key") or "")
+        model_name = body.get("model_name", "")
         raw_agent_id = body.get("agent_id")
         agent_id = str(raw_agent_id or self.config.default_agent_id())
         if raw_agent_id is not None and not self.config.get_agent(agent_id):
@@ -580,6 +581,10 @@ class NaibaChatApp:
             return {"error": "workspace_dir 必须是文本"}, HTTPStatus.BAD_REQUEST
         if workspace_group is not None and not isinstance(workspace_group, str):
             return {"error": "workspace_group 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if not isinstance(model_name, str):
+            return {"error": "model_name 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if len(model_name.strip()) > 256:
+            return {"error": "模型名称不能超过 256 个字符"}, HTTPStatus.BAD_REQUEST
         workspace_group = str(workspace_group or "").strip()
         if workspace_group:
             try:
@@ -598,7 +603,7 @@ class NaibaChatApp:
         return (
             self.storage.create_conversation(
                 title=title, provider_id=provider_id, agent_id=agent_id,
-                interaction_mode="craft", model_key=model_key,
+                interaction_mode="craft", model_key=model_key, model_name=model_name,
                 permission_mode=permission_mode,
                 web_search_enabled=web_search_enabled,
                 deep_reasoning_enabled=deep_reasoning_enabled,
@@ -616,6 +621,7 @@ class NaibaChatApp:
         provider_id = body.get("provider_id")
         agent_id = body.get("agent_id")
         model_key = body.get("model_key")
+        model_name = body.get("model_name")
         if title is not None and not isinstance(title, str):
             return {"error": "title 必须是文本"}, HTTPStatus.BAD_REQUEST
         if title is not None and len(title.strip()) > 120:
@@ -644,6 +650,10 @@ class NaibaChatApp:
                 )
         if model_key is not None and not isinstance(model_key, str):
             return {"error": "model_key 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if model_name is not None and not isinstance(model_name, str):
+            return {"error": "model_name 必须是文本"}, HTTPStatus.BAD_REQUEST
+        if isinstance(model_name, str) and len(model_name.strip()) > 256:
+            return {"error": "模型名称不能超过 256 个字符"}, HTTPStatus.BAD_REQUEST
         interaction_mode = body.get("interaction_mode")
         if interaction_mode is not None:
             if not isinstance(interaction_mode, str):
@@ -703,7 +713,7 @@ class NaibaChatApp:
             conversation_id,
             title=title, system_prompt=system_prompt, stream_enabled=stream_enabled,
             provider_id=provider_id, agent_id=agent_id, interaction_mode=interaction_mode,
-            model_key=model_key, permission_mode=permission_mode,
+            model_key=model_key, model_name=model_name, permission_mode=permission_mode,
             web_search_enabled=web_search_enabled, deep_reasoning_enabled=deep_reasoning_enabled,
             reasoning_effort=reasoning_effort, workspace_dir=workspace_dir,
             workspace_group=workspace_group,

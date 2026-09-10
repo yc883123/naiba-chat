@@ -108,6 +108,8 @@ export const state = {
   contextWarningAtPercent: 0,
   contextWarningConversationId: '',
   providerModelCapabilities: {},
+  // 已按 API profile 缓存的可用模型目录；加载失败时仍保留该 API 配置中的默认模型。
+  providerModelCatalogs: {},
   workspaces: [],
   workspaceSort: 'updated',
   workspaceSearch: '',

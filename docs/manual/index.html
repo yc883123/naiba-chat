@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Naiba Chat 应用说明书 · 1.6.9 Beta</title>
+<title>Naiba Chat 应用说明书 · 2.1.0 Beta</title>
 <style>
   :root {
     --bg: #fbfaf7;
@@ -108,11 +108,11 @@
 <div class="layout">
   <nav class="toc-nav">
     <div class="brand">Naiba Chat<br>应用说明书</div>
-    <div class="sub">1.6.5 Beta · Windows</div>
+    <div class="sub">2.1.0 Beta · Windows</div>
     <input class="search" type="search" placeholder="搜索标题（Ctrl+F）" onfocus="this.select()">
     <ul class="toc">
 </ul><ul class="toc toc-l1">
-<li><a href="#naiba-chat-169-beta">Naiba Chat 应用说明书（1.6.9 Beta）</a></li>
+<li><a href="#naiba-chat-210-beta">Naiba Chat 应用说明书（2.1.0 Beta）</a></li>
 <li><a href="#_1">阅读路径</a></li>
 <li><a href="#30-naiba-chat">十大亮点（用 30 秒了解 Naiba Chat 能干什么）</a></li>
 </ul><ul class="toc toc-l1">
@@ -123,41 +123,44 @@
 <li><a href="#14-30">1.4 界面 30 秒认识</a></li>
 <li><a href="#15">1.5 你必须知道的三个开关</a></li>
 <li><a href="#1_1">① 审批三档</a></li>
-<li><a href="#2-169">② 轻量选项（1.6.9 重构）</a></li>
-<li><a href="#3">③ 深度思考</a></li>
+<li><a href="#2">② 深度思考</a></li>
+<li><a href="#3">③ 上下文提醒</a></li>
 </ul><ul class="toc toc-l1">
-<li><a href="#2">第 2 章　一次对话能干什么</a></li>
+<li><a href="#2_1">第 2 章　一次对话能干什么</a></li>
 <li><a href="#21">2.1 普通问答</a></li>
 <li><a href="#22">2.2 让它读 / 写 / 搜文件</a></li>
-<li><a href="#23">2.3 让它看图</a></li>
-<li><a href="#24">2.4 让它执行命令</a></li>
-<li><a href="#25-http">2.5 让它发 HTTP 请求</a></li>
-<li><a href="#26">2.6 让它联网搜</a></li>
-<li><a href="#27">2.7 长任务放后台</a></li>
-<li><a href="#28">2.8 中途插话、暂停、取消</a></li>
-<li><a href="#29-token">2.9 上下文用量 &amp;amp; Token</a></li>
-<li><a href="#210-169">2.10 本轮修改文件（1.6.9 新）</a></li>
-<li><a href="#211-169">2.11 右侧文件面板（1.6.9 新）</a></li>
-<li><a href="#212">2.12 消息编辑重发 / 分支到新会话</a></li>
+<li><a href="#23-210">2.3 发附件给它（2.1.0 新：可以只发附件）</a></li>
+<li><a href="#24-210">2.4 用 @ 引用工作区文件（2.1.0 新）</a></li>
+<li><a href="#25-pdf">2.5 让它看图、看 PDF</a></li>
+<li><a href="#26">2.6 让它执行命令</a></li>
+<li><a href="#27-http">2.7 让它发 HTTP 请求 / 联网搜</a></li>
+<li><a href="#28">2.8 长任务放后台</a></li>
+<li><a href="#29">2.9 中途插话、暂停、取消</a></li>
+<li><a href="#210-token">2.10 上下文用量 &amp;amp; Token</a></li>
+<li><a href="#211">2.11 本轮修改文件</a></li>
+<li><a href="#212">2.12 右侧文件面板</a></li>
+<li><a href="#213">2.13 消息编辑重发 / 分支到新会话</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#3_1">第 3 章　特色功能（重点章）</a></li>
-<li><a href="#31">3.1 一个不够就接一堆模型</a></li>
-<li><a href="#32-skill-ai">3.2 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
-<li><a href="#33-mcp-ai">3.3 MCP：给 AI 插外设</a></li>
-<li><a href="#34-comfyui">3.4 ComfyUI 自动流水线</a></li>
-<li><a href="#35-runninghub">3.5 RunningHub 云端生成</a></li>
-<li><a href="#36">3.6 并行与分身</a></li>
-<li><a href="#37">3.7 手机/局域网远程访问</a></li>
-<li><a href="#38">3.8 权限三档与安全</a></li>
-<li><a href="#39">3.9 稳如老狗</a></li>
-<li><a href="#310-169">3.10 侧栏折叠与文件面板（1.6.9 新）</a></li>
-<li><a href="#_2">侧栏折叠</a></li>
-<li><a href="#211">文件面板（在 2.11 详述）</a></li>
+<li><a href="#31-210">3.1 长会话模式：聊一整天也不怕（2.1.0 头牌）</a></li>
+<li><a href="#30">30 秒试：手动划一条「新会话」分割线</a></li>
+<li><a href="#_2">能玩到什么程度</a></li>
+<li><a href="#32">3.2 快捷消息：把常用提示词存成一键插入</a></li>
+<li><a href="#33">3.3 一个不够就接一堆模型</a></li>
+<li><a href="#34-skill-ai">3.4 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
+<li><a href="#35-mcp-ai">3.5 MCP：给 AI 插外设</a></li>
+<li><a href="#36-comfyui">3.6 ComfyUI 自动流水线</a></li>
+<li><a href="#37-runninghub">3.7 RunningHub 云端生成</a></li>
+<li><a href="#38">3.8 并行与分身</a></li>
+<li><a href="#39">3.9 手机/局域网远程访问</a></li>
+<li><a href="#310">3.10 权限与安全</a></li>
+<li><a href="#311">3.11 稳如老狗</a></li>
+<li><a href="#312">3.12 侧栏、收藏与折叠</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#4">第 4 章　场景实战</a></li>
 <li><a href="#41">4.1 短剧/漫画批量出图</a></li>
 <li><a href="#42">4.2 读懂并改造一个代码项目</a></li>
-<li><a href="#43">4.3 批量整理资料</a></li>
+<li><a href="#43-pdf">4.3 批量整理资料 / 读 PDF</a></li>
 <li><a href="#44">4.4 一句话跑一条流水线</a></li>
 <li><a href="#45-skill-ai">4.5 用 Skill 把 AI 调教成领域专家</a></li>
 </ul><ul class="toc toc-l1">
@@ -171,31 +174,31 @@
 <li><a href="#57-skills">5.7 Skills 管理</a></li>
 <li><a href="#58">5.8 数据与迁移</a></li>
 <li><a href="#59">5.9 软件更新</a></li>
-<li><a href="#510">5.10 对话级设置</a></li>
-<li><a href="#511">5.11 工作区</a></li>
+<li><a href="#510">5.10 工作区</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#6">第 6 章　常见问题与高手技巧</a></li>
 <li><a href="#61-500">6.1 模型连不上 / 报 500 / 代理冲突</a></li>
 <li><a href="#62-comfyui">6.2 ComfyUI 工作流报错</a></li>
 <li><a href="#63-mcp">6.3 MCP 工具调不到</a></li>
 <li><a href="#64">6.4 权限一直弹窗</a></li>
-<li><a href="#65">6.5 卡住了怎么办</a></li>
-<li><a href="#66">6.6 十个高手技巧</a></li>
+<li><a href="#65">6.5 上下文快满了怎么办</a></li>
+<li><a href="#66">6.6 卡住了怎么办</a></li>
+<li><a href="#67">6.7 十个高手技巧</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#_3">附录</a></li>
 <li><a href="#a">A 文件都存哪儿</a></li>
 <li><a href="#b">B 速查卡</a></li>
-<li><a href="#_4">斜杠命令</a></li>
+<li><a href="#_4">输入快捷键</a></li>
 <li><a href="#_5">顶栏按钮</a></li>
 <li><a href="#_6">底部状态栏</a></li>
 <li><a href="#c">C 术语表</a></li>
 </ul>
-    <a class="dl-pdf" href="Naiba-Chat-手册-1.6.5.pdf" download>下载 PDF</a>
+    <a class="dl-pdf" href="Naiba-Chat-手册-2.1.0.pdf" download>下载 PDF</a>
   </nav>
   <main class="doc">
-    <h1 id="naiba-chat-169-beta">Naiba Chat 应用说明书（1.6.9 Beta）</h1>
+    <h1 id="naiba-chat-210-beta">Naiba Chat 应用说明书（2.1.0 Beta）</h1>
 <blockquote>
-<p>本说明书面向「第一次打开 Naiba Chat」的小白读者，配图全部来自真实运行界面（1.6.9 Beta · 源码模式 · 截图 2026-09-03）。</p>
+<p>本说明书面向「第一次打开 Naiba Chat」的小白读者，配图全部来自真实运行界面（2.1.0 Beta · 源码模式 · 截图 2026-09-10）。</p>
 </blockquote>
 <hr>
 <h2 id="_1">阅读路径</h2>
@@ -208,16 +211,16 @@
 <hr>
 <h2 id="30-naiba-chat">十大亮点（用 30 秒了解 Naiba Chat 能干什么）</h2>
 <ol>
-<li><strong>一个不够就接一堆模型</strong>：在线 8 种格式（OpenAI 兼容 / Claude / Gemini / Codex / LM Studio / Ollama / llama.cpp / Unsloth）+ 本地模型一键连。</li>
+<li><strong>长会话不会越聊越贵（2.1.0 头牌）</strong>：聊到上下文快满时划一条「新会话」分割线，线以上的老消息不再发给模型，<strong>聊天记录一条不删</strong>，还能让模型自己写交接文档再重置。</li>
+<li><strong>一个不够就接一堆模型</strong>：OpenAI 兼容 / Anthropic / Gemini / Ollama / LM Studio / llama.cpp / Unsloth……在线本地都能接。</li>
 <li><strong>Skill：给 AI 装"行业操作手册"</strong>：写小说、跑 ComfyUI、写视频提示词……用 <code>/</code> 一键把领域知识塞进对话。</li>
 <li><strong>MCP：给 AI 插外设</strong>：ComfyUI、文件、网页……只要 MCP 服务器在跑，AI 就能直接调用。</li>
 <li><strong>ComfyUI 自动流水线</strong>：批改工作流 → 批量提交 → 自动收图 → 缩略图预览 → 一句话复用到下一轮。</li>
 <li><strong>RunningHub 云端生成</strong>：没显卡也能出 420+ 类型的图、视频、音频、3D。</li>
 <li><strong>并行与分身</strong>：后台 Job + 子 Agent，任务互不阻塞，跑图的时候还能写稿。</li>
 <li><strong>手机/局域网远程访问</strong>：同 WiFi 扫码，躺床上也能用家里电脑。</li>
-<li><strong>权限三档</strong>：确认 / 自动 / 完全，按场景随时切。</li>
-<li><strong>稳如老狗</strong>：断线重连不重放、失败不丢已生成内容、SHA-256 校验更新、可版本回退。</li>
-<li><strong>🆕 1.6.9 文件面板</strong>：AI 改过的文件直接在右侧看、可编辑、可存回磁盘，<strong>改了什么一目了然</strong>。</li>
+<li><strong>稳如老狗</strong>：断线重连不重放、失败不丢已生成内容、5xx 自动重试、SHA-256 校验更新、可版本回退。</li>
+<li><strong>文件面板 + 本轮修改文件</strong>：AI 改过的文件直接在右侧看、可编辑、可存回磁盘，<strong>改了什么一目了然</strong>。</li>
 </ol>
 <hr>
 <h1 id="1">第 1 章　三分钟跑起来</h1>
@@ -226,38 +229,39 @@
 </blockquote>
 <h2 id="11">1.1 它到底是什么</h2>
 <p>Naiba Chat 不是聊天框，是装在你电脑上的 <strong>AI 工作台</strong>——它能跟你对话，更能直接动手：读你的文件、改你的代码、跑你的命令、上网搜资料、出图出视频。<strong>所有数据留在本地</strong>，API Key 不出机器。</p>
+<p>一句话比喻：<strong>你雇了一个员工（Agent），给他配了工位（工作区）、工具箱（Tools）、行业手册（Skill）和外线电话（MCP），他干完活会把改过的文件摊在你桌上（文件面板）让你验收。</strong></p>
 <h2 id="12">1.2 下载、解压、双击</h2>
 <ol>
-<li>去 GitHub Releases 页面下载 <code>naiba-chat-1.6.9-beta-windows-x64.zip</code>。</li>
+<li>去 GitHub Releases 页面下载 <code>naiba-chat-2.1.0-beta-windows-x64.zip</code>。</li>
 <li><strong>解压到可写目录</strong>（桌面 / D 盘 / 工作盘都行，<strong>不要放 <code>C:\Program Files</code></strong>，需要写权限）。</li>
 <li>双击 <code>naiba-chat.exe</code>（或源码模式直接 <code>python server.py</code>）。</li>
 <li>浏览器自动打开 <code>http://127.0.0.1:8765</code>，看到主界面就成功了。</li>
 </ol>
+<blockquote>
+<p>从源码跑：<code>python -m pip install pywebview pystray pillow "mcp==2.1.1" pymupdf python-multipart</code>，然后 <code>python server.py</code>。</p>
+</blockquote>
 <h2 id="13">1.3 第一次打开要做的三件事</h2>
 <blockquote>
-<p><strong>本机访问免口令</strong>；手机/局域网访问要口令（在「连接状态」页查看）。</p>
+<p><strong>本机访问免口令</strong>；手机/局域网访问要口令（在「设置 → 连接状态」页查看）。</p>
 </blockquote>
 <ol>
-<li><strong>填一个模型</strong> → 右上角 ⚙ 设置 → 「API 供应商」→ 添加或选一个现成供应商 → 点「检查」测连通。</li>
+<li><strong>填一个模型</strong> → 顶栏 ⚙ 设置 → 「API 供应商」→ 点「添加 API」卡片 → 填地址 / Key / 模型名 → 点「检查」测连通。</li>
 </ol>
 <p><img alt="API 供应商" src="images/05-settings-models.png"></p>
 <ol start="2">
 <li>
-<p><strong>选一个 Agent</strong> → 顶栏「Agent」下拉里选「通用 Agent」/「编程」/「短剧」等。</p>
+<p><strong>选一个 Agent</strong> → 顶栏「Agent」下拉里选一个（Agent = 人设 + 系统提示词 + 工具集）。</p>
 </li>
 <li>
 <p><strong>发第一句话</strong> → 底部输入框打字 → 按 <code>Enter</code> 或点 ↑ 发送。</p>
 </li>
 </ol>
 <blockquote>
-<p><strong>没配过模型？</strong> 主界面空态里已经放了 8 张常用指令卡片（点一下就发），新手按顺序点「列出可用工具」试试水；左下角「自定义指令」能把你常用的话存成卡片。</p>
-<p>主界面长这样（紫色主题 · 顶栏右侧 ⋯ 里藏着「刷新」「卸载模型」）：</p>
-<p><img alt="主界面" src="images/01-main-empty.png"></p>
+<p><strong>没配过模型？</strong> 主界面空态里已经放了常用指令卡片（点一下就发），新手按顺序点「列出可用工具」试试水。</p>
 </blockquote>
-<h2 id="14-30">1.4 界面 30 秒认识</h2>
-<p>顶栏右侧收不下的按钮折叠进 <strong>⋯ 更多</strong>菜单（里面是「刷新」「卸载模型」）：</p>
-<p><img alt="顶栏更多菜单" src="images/19b-topbar-overflow.png"></p>
+<p>主界面长这样：</p>
 <p><img alt="主界面" src="images/01-main-empty.png"></p>
+<h2 id="14-30">1.4 界面 30 秒认识</h2>
 <table>
 <thead>
 <tr>
@@ -268,35 +272,39 @@
 <tbody>
 <tr>
 <td><strong>顶栏左</strong></td>
-<td>展开/收起侧栏（新版可折叠）</td>
+<td>展开/收起侧栏（状态会记住）</td>
 </tr>
 <tr>
 <td><strong>顶栏中</strong></td>
-<td>切模型、切 Agent</td>
+<td>切模型、切 Agent（两个下拉）</td>
 </tr>
 <tr>
 <td><strong>顶栏右</strong></td>
-<td>文件 / 任务 / Skill / MCP + <strong>⋯ 更多</strong>（里面是「刷新」「卸载模型」）</td>
+<td>文件 / 任务 / Skill / MCP 状态 / 刷新</td>
 </tr>
 <tr>
 <td><strong>左侧栏</strong></td>
-<td>工作区、会话、设置入口、局域网手机访问地址</td>
+<td>工作区分组、会话列表、底部「已收藏」分组</td>
 </tr>
 <tr>
 <td><strong>中间聊天区</strong></td>
-<td>对话、思考块、工具块、产物、本轮修改文件、Token 用量</td>
+<td>对话、思考块、工具块、产物、本轮修改文件、<strong>新会话分割线</strong></td>
+</tr>
+<tr>
+<td><strong>聊天区右侧</strong></td>
+<td><strong>对话刻度轨</strong>：一轮一条横条，点一下跳到那一轮</td>
 </tr>
 <tr>
 <td><strong>右侧文件面板</strong></td>
-<td>1.6.9 新增：AI 改过的文件在这里多标签预览/编辑</td>
+<td>AI 改过的文件在这里多标签预览/编辑</td>
 </tr>
 <tr>
 <td><strong>底部输入区</strong></td>
-<td>附件 / 深度思考 / 上下文用量环 / 发送按钮</td>
+<td>附件列表 / 添加文件 / 思考强度 / 上下文圆环 / 发送</td>
 </tr>
 <tr>
 <td><strong>底部状态栏</strong></td>
-<td>工作区、审批档位、「轻量」按钮（点开是工具 / Skill 勾选面板）、就绪状态</td>
+<td>工作区下拉、审批档位、快捷消息 ｜ 右侧：思考强度、上下文百分比、就绪状态</td>
 </tr>
 </tbody>
 </table>
@@ -309,32 +317,36 @@
 <li><strong>自动</strong>：工作区内的操作不用问；工作区外的写操作才问。</li>
 <li><strong>完全</strong>：工具无需逐次确认（<strong>最省事，但写错可能毁文件</strong>）。</li>
 </ul>
-<h3 id="2-169">② 轻量选项（1.6.9 重构）</h3>
-<p>底部点「轻量」按钮，弹出两个独立勾选：</p>
-<p><img alt="轻量选项面板" src="images/19c-lightweight-panel.png"></p>
-<ul>
-<li>勾选 <strong>工具</strong> → 关闭本对话的工具调用</li>
-<li>勾选 <strong>Skill</strong> → 关闭本对话的 Skill 能力</li>
-<li><strong>都不勾</strong> → 普通模式（默认）</li>
-<li>新建会话默认不自动勾（之前的「轻量对话」开关已废除）</li>
-</ul>
-<p>适用场景：纯聊天不写代码就勾工具；只想问 Skill 内容但不想让 AI 注入就勾 Skill。</p>
-<h3 id="3">③ 深度思考</h3>
+<blockquote>
+<p>2.1.0 起没有「轻量 / 富文本」开关了——<strong>AI 能用哪些工具完全由 Agent 的工具集决定</strong>，不再有会话级开关。想收窄能力，去「设置 → Agent」里改工具集。</p>
+</blockquote>
+<h3 id="2">② 深度思考</h3>
 <p><img alt="深度思考菜单" src="images/18-reasoning-menu.png"></p>
-<p>输入区右侧球形按钮，点开有 5 档：</p>
+<p>输入区右侧的球形按钮，点开有 5 档：</p>
 <ul>
 <li><strong>跟随 API（自动）</strong>——按模型自身行为</li>
 <li><strong>关闭</strong>——直接答，不思考</li>
 <li><strong>低 / 中 / 高</strong>——强制思考强度</li>
 </ul>
-<p>模型支持时（DeepSeek-R1、Claude、o1/o3）才有效，否则忽略。</p>
+<p>当前档位常显在输入框下方（「思考 自动」）。模型支持时（DeepSeek-R1、Claude、o 系列）才有效，否则忽略。</p>
+<blockquote>
+<p>2.1.0 改动：点这个按钮<strong>只展开/收起列表</strong>，不会再顺手帮你切档。</p>
+</blockquote>
+<h3 id="3">③ 上下文提醒</h3>
+<p><img alt="上下文提醒" src="images/31-context-warning.png"></p>
+<p>输入框右侧的彩色圆环 + 下方常驻的「上下文 x.x%」就是上下文用量：</p>
+<ul>
+<li>每次模型请求后刷新，70% 转黄、90% 转红，鼠标悬停看 <code>已用 / 上限</code>。</li>
+<li>超过阈值（默认 80%，在「设置 → 运行设置」改，填 0 关闭）会弹窗提醒，建议让模型写交接文档并开始新会话。</li>
+<li>隔 5 个百分点才提醒第二次，不会一直弹。</li>
+</ul>
 <hr>
-<h1 id="2">第 2 章　一次对话能干什么</h1>
+<h1 id="2_1">第 2 章　一次对话能干什么</h1>
 <blockquote>
 <p><strong>读完这章你能</strong>：让 AI 读你的文件、改你的代码、跑你的命令、出你的图，而且知道每一步在背后发生了什么。</p>
 </blockquote>
 <h2 id="21">2.1 普通问答</h2>
-<p>直接在输入框打字发就行。AI 拿到的是你<strong>当前会话的完整上下文</strong>（含系统提示词 + 历史消息 + Skill + 工具结果）。一条典型的「思考 → 工具 → 正文」交错长这样：</p>
+<p>直接在输入框打字发就行。AI 拿到的是你<strong>当前会话的上下文</strong>（Agent 系统提示词 + 历史消息 + Skill + 工具结果）。一条典型的「思考 → 工具 → 正文」交错长这样：</p>
 <p><img alt="流式渲染（示意）" src="images/22-chat-streaming.png"></p>
 <h2 id="22">2.2 让它读 / 写 / 搜文件</h2>
 <table>
@@ -350,12 +362,12 @@
 <td><code>read_file</code></td>
 </tr>
 <tr>
-<td>「把 build_info.json 的 version 改成 1.6.10」</td>
+<td>「把 build_info.json 的 version 改成 2.1.1」</td>
 <td><code>read_file</code> + <code>edit_file</code></td>
 </tr>
 <tr>
 <td>「在 docs/ 下搜包含 'TODO' 的 md」</td>
-<td><code>search_files</code> + <code>grep_files</code></td>
+<td><code>search_files</code></td>
 </tr>
 <tr>
 <td>「列出工作区所有 png」</td>
@@ -372,64 +384,77 @@
 </tbody>
 </table>
 <p>所有写操作默认是「<strong>工作区内允许、工作区外询问</strong>」（取决于审批档位）。</p>
-<h2 id="23">2.3 让它看图</h2>
+<h2 id="23-210">2.3 发附件给它（2.1.0 新：可以只发附件）</h2>
+<p>拖文件进输入框、粘贴、或点左侧回形针都能加附件。待发送附件在<strong>输入框上方竖排显示</strong>：一行一个，图片有缩略图，每行右侧 ✕ 可单独移除。</p>
+<p><img alt="待发送附件（示意）" src="images/30-attachments.png"></p>
 <ul>
-<li><strong>直接拖到输入框</strong> → 自动作为本轮附件</li>
-<li><strong>让它看自己之前生成的图</strong> → 用 <code>/ref</code> 或缩略图右下角 ↩ 复用按钮</li>
-<li><strong>让它看文件夹里所有 png</strong> → 「列出 png」「按顺序看」</li>
+<li><strong>纯附件也能发</strong>：输入框一个字不写，直接点发送。模型会明确收到「用户未输入文字，只发送了以下附件」+ 附件路径，不会自己脑补你的诉求。</li>
+<li>上传是流式直传，有真实进度，单文件可取消，多文件最多 3 个并行，单文件上限 80MB。</li>
+<li>重复文件自动去重，移除未发送的附件会自动清理文件。</li>
 </ul>
-<p>视觉模型可设：在「设置 → 视觉」里挑供应商，可留空走 OVH 免费链兜底。</p>
+<h2 id="24-210">2.4 用 <code>@</code> 引用工作区文件（2.1.0 新）</h2>
+<p>输入空格 + <code>@</code> 就弹出当前工作区的目录列表：</p>
+<p><img alt="@ 引用工作区文件" src="images/28-file-ref-popup.png"></p>
+<ul>
+<li><code>↑↓</code> 选择、<strong><code>Tab</code> 进入子目录</strong>、<strong><code>Shift+Tab</code> 返回上级</strong>、<code>Enter</code> 或点击即引用。</li>
+<li>手机没 Tab 键：点目录行右侧的 <code>›</code> 箭头进入，列表首项「返回上一级」逐级退出。</li>
+<li>引用后输入框里保留 <code>@相对路径</code> 高亮，<strong>发送时自动替换成绝对路径</strong>；目录保留尾部的 <code>/</code>，模型就知道要处理整个目录。</li>
+<li>只有工作区里真实存在的路径才会被替换，所以 <code>@gmail.com</code> 这种普通文本不受影响。</li>
+</ul>
+<h2 id="25-pdf">2.5 让它看图、看 PDF</h2>
+<ul>
+<li><strong>直接拖图片到输入框</strong> → 自动作为本轮附件。</li>
+<li><strong>让它看自己之前生成的图</strong> → 用缩略图右下角 ↩ 复用按钮发回输入框。</li>
+<li><strong>多图分批</strong>：<code>vision_analyze</code> 单批 4 张，超出的自动分批并标注「共 N 张 / 已展示前 M 张」，模型不会误以为只有这几张。</li>
+<li><strong>PDF 三件套</strong>（2.1.0 新）：<code>read_pdf</code> 抽文本层、<code>pdf_render_pages</code> 把页面渲成图、<code>pdf_zoom_region</code> 局部高清放大看小字和表格。扫描件（没文本层）会自动引导转页图，再让视觉模型识图。</li>
+</ul>
+<p>视觉后端在「设置 → 视觉」里挑供应商，留空会走免费兜底链：</p>
 <p><img alt="视觉设置" src="images/09-settings-vision.png"></p>
-<h2 id="24">2.4 让它执行命令</h2>
+<blockquote>
+<p>文本模型收到图片时只拿到路径引用，由模型按需调用 <code>vision_analyze</code>（结果以工具块呈现）；原生多模态模型直接收到原图。</p>
+</blockquote>
+<h2 id="26">2.6 让它执行命令</h2>
 <p>Naiba Chat <strong>只用一个工具</strong>：<code>pwsh</code>（PowerShell 7+）。所有系统操作都走它。</p>
 <pre><code>&quot;在 D:\naiba-chat 下跑 pytest，失败的话把 trace 给我看&quot;
 </code></pre>
-<p><strong>注意</strong>：1.6.5 之后不再有 <code>bash</code> 工具，跨平台需求请用 <code>pwsh</code> 或 <code>http_request</code>。</p>
-<h2 id="25-http">2.5 让它发 HTTP 请求</h2>
-<p><code>http_request</code> 工具，GET/POST/PUT/DELETE 都行，可设 header / body / 超时。</p>
-<pre><code>&quot;调 https://api.github.com/repos/anthropics/claude-code/releases/latest 拿最新 release 信息&quot;
-</code></pre>
-<h2 id="26">2.6 让它联网搜</h2>
-<p><code>web_search</code> 工具（需在「设置 → 联网搜索」配置 API profile）。</p>
-<pre><code>&quot;搜一下 RunningHub 最新支持的视频生成端点&quot;
-</code></pre>
-<p>搜索结果会作为「联网来源」折叠块附在消息末尾，<strong>当素材引用，别当真理</strong>。</p>
-<h2 id="27">2.7 长任务放后台</h2>
+<h2 id="27-http">2.7 让它发 HTTP 请求 / 联网搜</h2>
+<ul>
+<li><code>http_request</code>：GET/POST/PUT/DELETE 都行，可设 header / body / 超时。</li>
+<li><code>web_search</code>：需在「设置 → 联网搜索」配置 API profile。搜索结果会作为「联网来源」折叠块附在消息末尾，<strong>当素材引用，别当真理</strong>。</li>
+</ul>
+<p><img alt="联网搜索设置" src="images/10-settings-search.png"></p>
+<h2 id="28">2.8 长任务放后台</h2>
 <p>对耗时任务（出图、出视频、跑大命令）AI 会自动用 <code>run_in_background</code> 启动后台 Job，按 <code>job_output</code> 轮询。</p>
 <blockquote>
 <p>顶栏「任务」按钮随时能看所有后台任务的历史和状态：</p>
-<p><img alt="异步任务面板" src="images/15-tasks-dialog.png"></p>
 </blockquote>
+<p><img alt="异步任务面板" src="images/15-tasks-dialog.png"></p>
 <p><code>run_in_background</code> / <code>job_output</code> / <code>job_status</code> / <code>job_wait</code> / <code>job_kill</code> 五个工具覆盖完整生命周期。</p>
-<h2 id="28">2.8 中途插话、暂停、取消</h2>
+<h2 id="29">2.9 中途插话、暂停、取消</h2>
 <ul>
 <li><strong>插话</strong>：AI 跑着时，你在输入框打字回车 → AI 接住你这条引导，把当前步骤合并（用于纠偏）。</li>
 <li><strong>暂停</strong>：消息下面的「暂停」按钮 → 停止当前轮，<strong>已生成内容保留</strong>。</li>
 <li><strong>取消</strong>：右上角 ✕ → 标记当前轮为「中止」，已生成内容同样保留。</li>
 <li><strong>停止级联子任务</strong>：取消父任务会自动 kill 所有子任务。</li>
 </ul>
-<h2 id="29-token">2.9 上下文用量 &amp; Token</h2>
+<h2 id="210-token">2.10 上下文用量 &amp; Token</h2>
 <p><img alt="上下文用量" src="images/19-context-usage.png"></p>
 <ul>
 <li><strong>彩色环</strong>（输入区右）：上下文用满的百分比，越满越红。</li>
-<li><strong>点开看详情</strong>：本轮消耗（输入 / 输出 / 缓存命中率 / 请求数）。</li>
+<li><strong>点开看详情</strong>：本轮消耗（输入 / 输出 / 缓存命中率 / 请求数 / 生成速率）。</li>
 <li><strong>缓存命中率</strong>：70% 以上是常态；突然掉到 0% 说明切了模型或改了系统提示词，DeepSeek 等支持前缀缓存的模型会贵一点。</li>
 </ul>
-<h2 id="210-169">2.10 本轮修改文件（1.6.9 新）</h2>
+<h2 id="211">2.11 本轮修改文件</h2>
 <p>每轮结束后，AI 用 <code>write_file</code> / <code>edit_file</code> 改过的文件会在消息末尾列出来：</p>
 <p><img alt="本轮修改文件" src="images/21-chat-filechanges.png"></p>
-<blockquote>
-<p>「本轮修改文件（新建 1 · 编辑 1）」下面两个 chip：<code>新 _demo-产品说明.md</code>、<code>改 build_html.py</code></p>
-</blockquote>
 <ul>
-<li><strong><code>新</code></strong> = <code>write_file</code> 创建</li>
-<li><strong><code>改</code></strong> = <code>edit_file</code> 改动</li>
-<li><strong>多媒体产物</strong>（图片 / 视频 / 音频）仍走原附件卡片，<strong>不进 chip</strong>（避免重复）</li>
-<li><strong>点文件名</strong> → 右侧文件面板打开（见 2.11）</li>
-<li><strong>中止/失败的轮次</strong>只要写盘成功也保留记录</li>
+<li><strong><code>新</code></strong> = 新建，<strong><code>改</code></strong> = 编辑。</li>
+<li><strong>多媒体产物</strong>（图片 / 视频 / 音频）走原附件卡片，<strong>不进 chip</strong>（避免重复）。</li>
+<li><strong>点文件名</strong> → 右侧文件面板打开（见 2.12）。</li>
+<li><strong>中止/失败的轮次</strong>只要写盘成功也保留记录。</li>
 </ul>
-<h2 id="211-169">2.11 右侧文件面板（1.6.9 新）</h2>
-<p>点 chip 或顶栏「文件 N」按钮 → 右侧文件面板打开，多标签管理：</p>
+<h2 id="212">2.12 右侧文件面板</h2>
+<p>点 chip 或顶栏「文件」按钮 → 右侧文件面板打开，多标签管理：</p>
 <p><img alt="右侧文件面板" src="images/03-file-panel.png"></p>
 <table>
 <thead>
@@ -441,7 +466,7 @@
 <tbody>
 <tr>
 <td><strong>Markdown</strong></td>
-<td>直接渲染（带 TOC / 表格 / 代码块）</td>
+<td>直接渲染（带表格 / 代码块）</td>
 </tr>
 <tr>
 <td><strong>文本</strong>（.py / .json / .txt 等）</td>
@@ -452,15 +477,15 @@
 <td>直接预览，点开是大图</td>
 </tr>
 <tr>
-<td><strong>二进制</strong>（.pdf / .zip 等）</td>
-<td>给出大小、路径、明确提示「无法预览」</td>
+<td><strong>PDF / 二进制</strong></td>
+<td>走 PDF 三件套或给出明确提示，不再吐乱码</td>
 </tr>
 </tbody>
 </table>
 <p><strong>安全边界</strong>：面板只允许看<strong>本会话改动过</strong>或<strong>位于会话工作区内</strong>的文件，「保存写回」要求同时满足两者。路径越界一律拒绝（不能当任意文件读写入口用）。</p>
-<p>收起面板后顶栏出现「文件 N」按钮，记录仍在：</p>
+<p>面板左缘可以拖动调宽（280px ~ 半个窗口，会记住）。收起后顶栏出现「文件」按钮，标签都还在：</p>
 <p><img alt="文件面板收起后" src="images/04-file-panel-closed.png"></p>
-<h2 id="212">2.12 消息编辑重发 / 分支到新会话</h2>
+<h2 id="213">2.13 消息编辑重发 / 分支到新会话</h2>
 <ul>
 <li><strong>点自己的消息</strong> → 编辑文本 → 回车 → 从这条消息重开（<strong>保留之前的附件和上下文</strong>）。</li>
 <li><strong>消息右下角「分支」按钮</strong> → 从该点分叉到新会话，旧会话保留。</li>
@@ -471,145 +496,198 @@
 <p><strong>读完这章你能</strong>：把 Naiba Chat 调成你顺手的样子，知道哪些功能可以替你省 1 小时/天。</p>
 </blockquote>
 <p>每节固定结构：<strong>痛点 → 30 秒试 → 能玩到什么程度 → 注意</strong>。</p>
-<h2 id="31">3.1 一个不够就接一堆模型</h2>
+<h2 id="31-210">3.1 长会话模式：聊一整天也不怕（2.1.0 头牌）</h2>
+<p><strong>痛点</strong>：长对话越聊越长，token 越来越贵；而且前面跑题的几十轮一直在占用上下文，真正有用的进展被淹没了。开新会话吧，前面聊的又全丢了。</p>
+<h3 id="30">30 秒试：手动划一条「新会话」分割线</h3>
+<p>在任意一条 AI 回复的末尾点「<strong>新会话</strong>」（在「复制」右边），就会在那条回复下面画出一条分割线：</p>
+<p><img alt="新会话分割线与刻度轨（示意）" src="images/29-session-divider.png"></p>
+<p><strong>这条线以上</strong>的消息不再进入模型上下文，<strong>这条线以下</strong>的消息仍在上下文里——所以你<strong>只裁掉前面跑题的部分、保留最近的进展</strong>就行。聊天记录<strong>一条不删</strong>，随时点「撤销」把线撤掉。</p>
+<h3 id="_2">能玩到什么程度</h3>
+<ul>
+<li><strong>多条分割线并存</strong>：靠时间和位置区分，最新那条决定当前上下文起点。</li>
+<li><strong>模型也能自己重置</strong>：在 Agent 工具集里勾上 <code>reset_context</code> 后，模型可以先把交接文档写进工作区、再调用它——<strong>文档不存在或为空会被拒绝</strong>，每轮最多成功一次。成功后本轮立即收尾，在该条回复下画出「模型重置」分割线。</li>
+<li><strong>种子消息自动填进输入框</strong>：模型重置后，输入框会自动填好「交接文档路径 + 请先读取再继续 + 仍在运行的后台任务清单」，<strong>你确认后点发送</strong>就开始新一段。模板可以在「设置 → 运行设置 → 新会话种子消息」里改（占位符 <code>{handoff_path}</code> / <code>{task_count}</code> / <code>{task_list}</code>）。</li>
+<li><strong>交接文档快捷键</strong>：快捷消息面板里内置了「写交接报告并 reset_context」预设，点一下插进输入框就行（见 3.2）。</li>
+<li><strong>翻历史不靠翻页</strong>：Agent 工具集里新增「长会话」一组——</li>
+<li><code>find_conversations</code>：按标题列出最近会话（id / 标题 / 时间 / 条数 / 末条预览）</li>
+<li><code>recall_history</code>：按关键词检索（不给会话 id 就全库搜、每个会话最多 3 条片段；给了 id 就只搜那个会话）</li>
+<li><code>read_conversation</code>：按序号区间读历史会话原文，用来复核片段</li>
+<li><code>reset_context</code>：重置上下文</li>
+</ul>
+<p>直接问 AI「上个月我们聊过的那版分镜脚本在哪」即可。检索结果会明示「检索了全部 N 个会话 / M 条消息」，<strong>当前会话的命中会标注「在上下文中」或「已划出上下文」</strong>——被分割线划出去的老消息不会被当成你还记得的内容。
+- <strong>「长会话模式」预设</strong>：Agent 工具集预设里直接选，等于标准模式 + 这四件套。
+- <strong>长会话懒加载</strong>：打开会话只渲染最近 10 轮，向上滚动自动往前补（每次 10 轮，视口不跳动），几万条历史也不卡。
+- <strong>对话刻度轨</strong>：聊天区右侧一列横条，一轮一条，滚动时视口所在轮次会加粗凸起，悬停看概要（第 N 轮 + 用户消息一行 + 回复两行），点一下跳过去。长会话只显示附近 30 条，窄屏自动隐藏。</p>
+<p><strong>注意</strong></p>
+<blockquote>
+<ul>
+<li>分割线<strong>只影响发给模型的内容</strong>，不影响你看到的聊天记录。</li>
+<li>划了线之后如果又想让模型参考上面的内容，点「撤销」即可，或者用 <code>recall_history</code> 把片段捞回来。</li>
+<li>模型自己调 <code>reset_context</code> 前<strong>必须先写出交接文档</strong>，否则会被拒绝——这是故意的，防止上下文凭空消失。</li>
+</ul>
+</blockquote>
+<h2 id="32">3.2 快捷消息：把常用提示词存成一键插入</h2>
+<p><strong>痛点</strong>：有些话你一天要说十遍（「按老规矩整理一下」「写交接报告然后重置」），每次手打很烦。</p>
+<p><strong>30 秒试</strong>：输入框下方点「<strong>快捷消息</strong>」→ 点列表里任意一条 → 正文直接进输入框（还能改）→ 发送。</p>
+<p><img alt="快捷消息面板" src="images/27-quick-messages.png"></p>
+<p><strong>能玩到什么程度</strong></p>
+<ul>
+<li><strong>每条只有正文、不用起标题</strong>：列表拿正文首行当标题，其余折叠成预览。</li>
+<li><strong>自动排序</strong>：按「使用次数 × 2 + 新鲜度加分」排，常用的稳定靠前，新加的 7/30/90 天内有曝光窗口不会永远沉底。</li>
+<li>行内 <code>✎</code> 编辑、<code>✕</code> 删除、<code>＋ 新建</code> 添加（弹窗里只填正文）。</li>
+<li><strong>内置交接报告预设</strong>（带「默认」标签）：点一下就要求模型把交接报告写进工作区，再用 <code>read_file</code> 复核后调 <code>reset_context</code>。它跟你自建的条目<strong>同权</strong>——可以编辑、可以删除，软件更新不会覆盖也不会复活。</li>
+</ul>
+<p><strong>注意</strong>：这是<strong>独立列表</strong>，跟开始页的自定义指令卡片互不影响，各自增删改。</p>
+<h2 id="33">3.3 一个不够就接一堆模型</h2>
 <p><strong>痛点</strong>：单一模型又慢又贵还偏科。能不能 A 写代码 / B 写文案 / C 出图？</p>
-<p><strong>30 秒试</strong>：设置 → API 供应商 → 添加（在线 / 本地 8 种格式任选）→ 选供应商 → 顶栏「模型」切着用。</p>
+<p><strong>30 秒试</strong>：设置 → API 供应商 → 点「添加 API」→ 选请求格式 → 填地址 / Key / 模型名 → 点「检查」秒测连通。</p>
 <p><img alt="API 供应商" src="images/05-settings-models.png"></p>
-<p><strong>能玩到什么程度</strong>：
-- <strong>在线 8 种格式</strong>：OpenAI 兼容（OpenAI / DeepSeek / Grok）、Codex、Claude、Gemini、LM Studio、Ollama、llama.cpp、Unsloth。
-- <strong>本地模型一键连</strong>：LM Studio / Ollama / llama.cpp 都可；连上本地模型后，<strong>顶栏 ⋯ 菜单里出现「卸载模型」按钮</strong>，用完一键把显存腾出来。
-- 「<strong>检查</strong>」按钮秒测连通 + 图片能力 + 工具调用能力。
-- 每个供应商独立设置温度、上下文、max_output。</p>
-<p><strong>注意</strong>：切换模型不影响会话历史，但<strong>切 Agent 会改首条消息的工具集</strong>（首轮注入、不可改）。</p>
-<h2 id="32-skill-ai">3.2 Skill：给 AI 装"行业操作手册"</h2>
+<p><strong>能玩到什么程度</strong></p>
+<ul>
+<li><strong>在线</strong>：OpenAI 兼容（OpenAI / DeepSeek / Grok 等）、Anthropic、Gemini。</li>
+<li><strong>本地</strong>：LM Studio / Ollama / llama.cpp / Unsloth，本地模型卸载在「设置 → API 供应商」里操作。</li>
+<li>每个供应商独立设置温度、上下文长度、最大输出。</li>
+<li><strong>2.1.0 卡片化</strong>：供应商和 Agent 都改成卡片网格，点卡片才弹设置表单，右上角 × 删除。</li>
+<li><strong>5xx 自动重试</strong>：供应商返回 500/502 这类瞬时故障时自动退避重试（1.5s / 3s，最多 3 次），状态栏会提示重试进度，不再直接终止整轮。</li>
+</ul>
+<p><strong>注意</strong>：切换模型不影响会话历史；但<strong>切 Agent 会改首条消息固化下来的工具集</strong>（首轮注入，之后不可改）。</p>
+<h2 id="34-skill-ai">3.4 Skill：给 AI 装"行业操作手册"</h2>
 <p><strong>痛点</strong>：通用 AI 不懂你的行业术语、不熟你常用的工作流。</p>
-<p><strong>30 秒试</strong>：输入 <code>/</code> 弹窗 → 选「cangjie」（拆书 Skill）→ 直接对话「把这段小说拆成 12 集」。</p>
+<p><strong>30 秒试</strong>：输入 <code>/</code> 弹窗 → 选一个 Skill（比如 <code>cangjie</code> 拆书）→ 直接对话「把这段小说拆成 12 集」。</p>
 <p><img alt="Skill 快速引用" src="images/14-skill-refs.png"></p>
-<p><strong>能玩到什么程度</strong>：
-- <strong>输入 <code>/</code> 弹窗</strong>选已装 Skill 注入；<strong><code>↑↓</code> 选、<code>Enter</code> 确认</strong>。
-- <strong>首轮注入</strong>（system prompt）/ <strong>后续追加</strong>（末尾消息）智能切换，保持 DeepSeek 前缀缓存稳定。
-- <strong>安装 Skill</strong>（点空态「安装 Skill」按钮）→ 支持 .zip / .md / 整个文件夹。
-- <strong>编辑 Skill</strong>（点空态「编辑 Skill」按钮）→ AI 会用 <code>inspect_installed_skill</code> 定位并修改。
-- <strong>隐藏 / 恢复</strong>：在「设置 → Skills 管理」里。</p>
+<p><strong>能玩到什么程度</strong></p>
+<ul>
+<li><code>↑↓</code> 选、<code>Enter</code> 确认。</li>
+<li><strong>首轮注入</strong> system / <strong>后续轮追加到末尾</strong>，保持 DeepSeek 前缀缓存稳定。</li>
+<li>安装 Skill 支持 .zip / .md / 整个文件夹：</li>
+</ul>
+<p><img alt="导入 Skill" src="images/16-skill-import.png"></p>
+<ul>
+<li>隐藏 / 恢复在「设置 → Skills 管理」：</li>
+</ul>
 <p><img alt="Skills 管理" src="images/11-settings-skills.png"></p>
-<p><strong>重要概念</strong>：</p>
+<p><strong>重要概念</strong></p>
 <blockquote>
-<p><strong>Skill 只是说明书，不是开关。</strong> 缺 Skill 时，已授权的通用 Tool / MCP 仍可用；Skill 只指导调用方式，<strong>不注册服务、不扩展权限、不决定 NaibaChat 能力</strong>。</p>
+<p><strong>Skill 只是说明书，不是开关。</strong> 缺 Skill 时，已授权的通用 Tool / MCP 仍可用；Skill 只指导调用方式，<strong>不注册服务、不扩展权限</strong>。</p>
+<p><strong>Skill 脚本规范</strong>：脚本统一放 Skill 目录的 <code>scripts/</code> 子目录，读写文件要显式写 <code>encoding='utf-8'</code>。</p>
 </blockquote>
-<h2 id="33-mcp-ai">3.3 MCP：给 AI 插外设</h2>
+<h2 id="35-mcp-ai">3.5 MCP：给 AI 插外设</h2>
 <p><strong>痛点</strong>：AI 不能直接调 ComfyUI、数据库、第三方 API。</p>
-<p><strong>30 秒试</strong>：安装 ComfyUI 的 MCP 服务器（<code>npx -y @comfyorg/comfy-mcp</code>）→ 设置 → 连接状态里看到「comfy-mcp」就绪 → 直接对话「用 comfy 出 6 张封面」。</p>
+<p><strong>30 秒试</strong>：装好 MCP 服务器（比如 <code>npx -y @comfyorg/comfy-mcp</code>）→ 设置 → 连接状态里看到它就绪 → 直接对话「用 comfy 出 6 张封面」。</p>
 <p><img alt="连接状态" src="images/08-settings-connections.png"></p>
-<p><strong>能玩到什么程度</strong>：
-- <strong>自动连接</strong> + <strong>周期重试</strong>，挂了自动重连。
-- <strong>手机/局域网访问地址 + 口令</strong> 也在这一页。
-- 一个 MCP 服务器可挂载多个工具（如 comfy-mcp 提供工作流查询/出图/状态查询/历史等）。</p>
-<p><strong>注意</strong>（<strong>最常见踩坑</strong>）：</p>
+<p><strong>能玩到什么程度</strong></p>
+<ul>
+<li>启动时自动连接已启用的服务，没连上的做周期重试。</li>
+<li>顶栏 MCP 圆点看状态：<strong>绿=已连接、红=未连接/出错、黄=连接中、灰=未配置</strong>，悬停看详情。</li>
+<li>手机/局域网访问地址 + 访问口令也在这一页。</li>
+</ul>
+<p><strong>注意（最常见踩坑）</strong></p>
 <blockquote>
-<p><strong>新加的 MCP 必须重开会话才生效</strong>。改完 MCP 配置 → 关掉当前会话 → 重新开 → MCP 工具才会进可用集。</p>
-<p>看到上图里「comfy-mcp」红色「错误」状态，先看是不是命令路径不对/服务没起。</p>
+<p><strong>新加的 MCP 必须重开会话才生效。</strong> 改完 MCP 配置 → 关掉当前会话 → 重新开 → MCP 工具才进可用集。</p>
 </blockquote>
-<h2 id="34-comfyui">3.4 ComfyUI 自动流水线</h2>
+<h2 id="36-comfyui">3.6 ComfyUI 自动流水线</h2>
 <p><strong>痛点</strong>：跑 ComfyUI 工作流要切窗口、改参数、收图、改名、传图……繁琐。</p>
 <p><strong>30 秒试</strong>（前提：装好 ComfyUI + comfy-mcp）：</p>
 <pre><code>&quot;用当前目录下的 cover_v2.json 出 12 张 1080x1440 封面，seed 1-12&quot;
 </code></pre>
-<p><strong>能玩到什么程度</strong>：
-- <strong>批改本地工作流再引用路径</strong>，别把大 JSON 贴进对话。
-- 产物自动 <code>data/generated/&lt;conversation&gt;/image_NNNNN.webp</code>，自动生成 500KB 缩略图。
-- 聊天里直接预览 → 点开大图 → 右键复制到剪贴板 → ↩ 复用按钮发到下一轮。
-- 后台任务面板实时显示提交 / 排队 / 完成进度。</p>
-<p><strong>注意</strong>：
-- <strong>UI JSON ≠ API JSON</strong>：UI 拖拽的连线图直接保存不能喂 API。导出时选「API 格式」。
-- ComfyUI 自身<strong>不传图</strong>给模型，AI 看的是产物缩略图（必要时调视觉模型）。</p>
-<h2 id="35-runninghub">3.5 RunningHub 云端生成</h2>
+<p><strong>能玩到什么程度</strong></p>
+<ul>
+<li><strong>批改本地工作流再引用路径</strong>，别把大 JSON 贴进对话：用 <code>read_file</code> / <code>comfyui_prepare_workflow</code> 读，用 <code>edit_file</code> 局部改，再用 <code>comfyui_batch</code> 的 <code>workflow_paths</code> 提交文件路径。</li>
+<li>产物自动落到 <code>data/generated</code>，聊天里直接预览、点开大图、↩ 复用。</li>
+<li>后台任务完成后产物<strong>自动挂回发起它的那条消息</strong>，不用再追问模型。</li>
+<li>视频/音频可以在气泡里直接播放（支持拖动进度条）。</li>
+</ul>
+<p><strong>注意</strong></p>
+<ul>
+<li><strong>UI JSON ≠ API JSON</strong>：UI 拖拽的连线图直接保存不能喂 API，导出时要选「API 格式」。</li>
+<li>ComfyUI 自身<strong>不传图</strong>给模型，AI 看的是产物缩略图（必要时调视觉模型）。</li>
+</ul>
+<h2 id="37-runninghub">3.7 RunningHub 云端生成</h2>
 <p><strong>痛点</strong>：本地没显卡，ComfyUI 跑不动。</p>
 <p><strong>30 秒试</strong>：装 <code>runninghub</code> Skill → 对话「用 runninghub 的文生图出 6 张古风封面」。</p>
-<p><strong>能玩到什么程度</strong>：
-- 不用显卡，420+ 端点：文生图、图生视频、TTS、音乐、3D、图片放大、跑任意 AI 应用。
-- 产物在聊天里直接以缩略图网格预览，每张右下角 ↩ 一键发回输入框复用：</p>
+<p><strong>能玩到什么程度</strong></p>
+<ul>
+<li>不用显卡，420+ 端点：文生图、图生视频、TTS、音乐、3D、图片放大、跑任意 AI 应用。</li>
+<li>产物在聊天里直接以缩略图网格预览，每张右下角 ↩ 一键发回输入框复用：</li>
+</ul>
 <p><img alt="产物卡片（示意）" src="images/23-chat-artifacts.png"></p>
 <ul>
 <li>切换站点（国内 / 海外）在「设置 → Skills 管理」里。</li>
 </ul>
 <p><strong>注意</strong>：需要你自己的 RunningHub 账号和额度。</p>
-<h2 id="36">3.6 并行与分身</h2>
+<h2 id="38">3.8 并行与分身</h2>
 <ul>
 <li><strong>后台 Job</strong>：<code>run_in_background</code> 跑长任务，不阻塞主对话。</li>
 <li><strong>子 Agent</strong>：<code>subagent</code> 工具起一个独立 Agent 干另一件事，结束后回报。</li>
 </ul>
 <p>适用：一边跑图、一边写文档；一边跑分析、一边查资料。</p>
-<h2 id="37">3.7 手机/局域网远程访问</h2>
+<h2 id="39">3.9 手机/局域网远程访问</h2>
 <p><strong>痛点</strong>：在沙发上不想开电脑，但想让家里的 Naiba Chat 跑点啥。</p>
-<p><strong>30 秒试</strong>：底部状态栏 / 侧栏底部「手机访问」按钮 → 复制带口令和 IP 的链接 → 同一 WiFi 的手机浏览器打开。</p>
+<p><strong>30 秒试</strong>：设置 → 连接状态 → 复制带口令和 IP 的链接 → 同一 WiFi 的手机浏览器打开。</p>
 <p><img alt="移动端主界面" src="images/25-mobile-main.png"></p>
 <p>设置页在手机上同样完整可用：</p>
 <p><img alt="移动端设置" src="images/26-mobile-settings.png"></p>
-<p><strong>能玩到什么程度</strong>：
-- 手机浏览器完整功能（聊天、设置、产物预览）。
-- 移动端布局自动单列、输入区自适应。
-- 局域网 IP 段（一般是 <code>192.168.x.x</code>）+ 6 位访问口令。</p>
-<p><strong>注意</strong>：外网访问需要内网穿透（参考 <code>lighthouse-frp-tunnel</code> 技能）。</p>
-<h2 id="38">3.8 权限三档与安全</h2>
+<p><strong>注意</strong>：外网访问需要内网穿透；本机访问免口令，<strong>局域网访问必须口令</strong>。</p>
+<h2 id="310">3.10 权限与安全</h2>
 <ul>
 <li>对话、设置、附件、任务状态<strong>全部存本地</strong>，不出你的机器。</li>
 <li>文件预览只允许工作区和受管理数据目录（<code>data/uploads</code>、<code>data/generated</code>）。</li>
-<li>局域网访问必须口令；仅本机访问时不要口令。</li>
 <li><strong>API Key 不出机器</strong>——所有在线模型调用都从你的电脑直接发到供应商，不经中转。</li>
+<li>高风险写入、删除、外部发布和凭据操作仍受权限策略保护。</li>
+<li><strong>缓存管理</strong>：图片/PDF/视频/音频统一统计，设置页打开即刷新；超限自动清理（默认 256MB，可调，填 0 关闭）<strong>只删未被消息引用的最旧文件</strong>——历史消息引用的附件永不自动删除。</li>
 </ul>
-<p><img alt="连接状态" src="images/08-settings-connections.png"></p>
-<h2 id="39">3.9 稳如老狗</h2>
+<h2 id="311">3.11 稳如老狗</h2>
 <ul>
 <li><strong>断线重连</strong>不重复回放：网络抖一下，不会把同一段响应重发两次。</li>
-<li><strong>失败不丢已生成内容</strong>：模型报错，已经写出的部分完整保留。</li>
-<li><strong>3 秒看门狗</strong>：超时自动停，资源不卡。</li>
+<li><strong>失败不丢已生成内容</strong>：模型报错，已经写出的思考/部分回复/工具活动完整保留。</li>
+<li><strong>5xx 自动重试</strong>（2.1.0 新），失败请求体会落盘到 <code>naiba-model-error-payload.json</code> 便于定位。</li>
 <li><strong>停止级联子任务</strong>：父任务停 → 子任务全部 kill。</li>
 <li><strong>更新带 SHA-256 校验</strong>：下载完先校哈希再替换，损坏直接拒绝。</li>
 <li><strong>可版本回退</strong>：更新面板支持「选历史版本 → 一键回退」。</li>
 </ul>
 <p><img alt="软件更新" src="images/13-settings-updates.png"></p>
-<h2 id="310-169">3.10 侧栏折叠与文件面板（1.6.9 新）</h2>
-<h3 id="_2">侧栏折叠</h3>
+<h2 id="312">3.12 侧栏、收藏与折叠</h2>
 <p><img alt="侧栏折叠" src="images/02-sidebar-collapsed.png"></p>
 <ul>
-<li>桌面端：侧栏顶部的 ◀ 按钮折叠 / 聊天区左上角的 ▶ 按钮展开，<strong>状态记忆</strong>。</li>
-<li>移动端：左上角 ☰ 按钮从左侧滑出抽屉。</li>
-<li>折叠后<strong>聊天区显著变宽</strong>，看长正文 / 大代码块舒服很多。</li>
+<li><strong>折叠</strong>：桌面端点侧栏顶部 ◀ 收起（列宽恒定 880px，只是重新居中），聊天区左上 ▶ 展开，<strong>状态会记住</strong>。移动端左上角 ☰ 滑出抽屉。</li>
+<li><strong>收藏</strong>：会话条目的<strong>五角星</strong>点一下即收藏；侧栏底部有跨工作区的「已收藏」分组。收藏<strong>同时保留在原工作区</strong>，两处都显示，而且<strong>不会把会话顶到列表最前</strong>。</li>
+<li><strong>⋯ 菜单</strong>：重命名和删除收在这里；新建工作区也是对话框（选目录 → 填名称）。</li>
+<li>条目整条可点，点击时列表不会强制滚到最上（已可见就保持位置）。</li>
 </ul>
-<h3 id="211">文件面板（在 2.11 详述）</h3>
-<blockquote>
-<p>1.6.9 最值钱的特性：AI 改了什么、改得对不对，<strong>一眼可查、随手可改</strong>。</p>
-</blockquote>
 <hr>
 <h1 id="4">第 4 章　场景实战</h1>
 <blockquote>
 <p><strong>读完这章你能</strong>：把第 3 章的能力翻译成「我今天就用的场景」。</p>
 </blockquote>
 <h2 id="41">4.1 短剧/漫画批量出图</h2>
-<p>两条路：
-- <strong>本地 ComfyUI</strong>（你有显卡）→ 3.4 节
-- <strong>云端 RunningHub</strong>（没显卡）→ 3.5 节</p>
-<p><strong>通用流程</strong>：
-1. 工作区建好，参考图、风格参考放进去。
-2. 提示词模板放 Skill 里（参考 <code>h3-prompt-writing</code>）。
-3. AI 改本地工作流（标记哪些是占位参数）→ 批改 → 提交。
-4. 产物自动进 <code>data/generated</code>，缩略图在聊天里。
-5. 看效果，AI 继续改 prompt，再批跑。</p>
-<p><strong>可直接复制的提示词</strong>：</p>
+<p>两条路：</p>
+<ul>
+<li><strong>本地 ComfyUI</strong>（你有显卡）→ 3.6 节</li>
+<li><strong>云端 RunningHub</strong>（没显卡）→ 3.7 节</li>
+</ul>
+<p><strong>通用流程</strong></p>
+<ol>
+<li>工作区建好，参考图、风格参考放进去。</li>
+<li>提示词模板放 Skill 里（参考 <code>h3-prompt-writing</code>）。</li>
+<li>AI 改本地工作流（标记哪些是占位参数）→ 批改 → 提交。</li>
+<li>产物自动进 <code>data/generated</code>，缩略图在聊天里。</li>
+<li>看效果，AI 继续改 prompt，再批跑。</li>
+</ol>
+<p><strong>可直接复制的提示词</strong></p>
 <blockquote>
-<p>「用当前工作区的 cover_v2.json 出 12 张 1080x1440 古风竖构图封面，seed 1-12，人物参考用 reference_sheet.png。出完用「本轮修改」列表给我看哪些参数改过。」</p>
+<p>「用当前工作区的 cover_v2.json 出 12 张 1080x1440 古风竖构图封面，seed 1-12，人物参考用 <code>reference_sheet.png</code>。出完用「本轮修改」列表给我看哪些参数改过。」</p>
 </blockquote>
 <h2 id="42">4.2 读懂并改造一个代码项目</h2>
 <pre><code>&quot;读 D:\my-project 下 main.py 和 requirements.txt，
 告诉我这个项目在做什么、依赖什么、入口在哪。
 然后把 main.py 里的硬编码路径改成支持环境变量。&quot;
 </code></pre>
-<p>AI 会先 <code>read_file</code> 看 → <code>search_files</code> 查相关引用 → <code>edit_file</code> 改 → 文件面板里你能直接看 diff 改回。</p>
-<h2 id="43">4.3 批量整理资料</h2>
+<p>AI 会先 <code>read_file</code> → <code>search_files</code> 查引用 → <code>edit_file</code> 改 → 文件面板里你能直接看并改回。</p>
+<h2 id="43-pdf">4.3 批量整理资料 / 读 PDF</h2>
 <pre><code>&quot;把 D:\桌面\inbox 下所有 pdf 按年月重命名（YYYYMM_原名.pdf），
 建个 README.md 列出改名清单。&quot;
 </code></pre>
-<p>适合：下载文件夹归类、扫描件整理、合同/发票归档。</p>
+<p>适合：下载文件夹归类、扫描件整理、合同/发票归档。扫描件（没文本层）AI 会自动转页图再用视觉模型认字。</p>
 <h2 id="44">4.4 一句话跑一条流水线</h2>
 <pre><code>&quot;读 E:\reports 下的 50 份 csv，统计每个用户的总消费，
 按消费降序输出到 E:\reports\summary.csv，前 10 名加颜色标红。&quot;
@@ -618,7 +696,7 @@
 <h2 id="45-skill-ai">4.5 用 Skill 把 AI 调教成领域专家</h2>
 <ul>
 <li><strong>cangjie</strong>：拆小说 → 短剧分集</li>
-<li><strong>h3-prompt-writing / h3-text-to-promptv2</strong>：把一段文本/剧情写成 MiniMax H3 视频提示词</li>
+<li><strong>h3-prompt-writing / h3-text-to-promptv2</strong>：把剧情写成 MiniMax H3 视频提示词</li>
 <li><strong>comfyui-shortdrama</strong>：ComfyUI 短剧工作流专精</li>
 <li><strong>shortdramav2-rh</strong>：RunningHub 上的短剧工作流</li>
 </ul>
@@ -626,136 +704,149 @@
 <hr>
 <h1 id="5">第 5 章　设置全解</h1>
 <blockquote>
-<p><strong>每个 tab 一节，按页面顺序排</strong>。</p>
+<p><strong>每个 tab 一节，按页面顺序排。</strong></p>
 </blockquote>
 <h2 id="51-api">5.1 API 供应商</h2>
 <p><img alt="API 供应商" src="images/05-settings-models.png"></p>
-<p><strong>左侧两个子 tab</strong>：在线 API / 本地 API。</p>
 <ul>
-<li><strong>添加</strong>：点「添加」→ 填「供应商名称」「API URL」「API Key」（<strong>留空保留原值</strong>）→ 选「请求格式」。</li>
-<li><strong>请求格式 8 种</strong>：见 3.1 节。</li>
-<li><strong>「检查」按钮</strong>：测连通 + 测图片能力（多模态） + 测工具调用。</li>
+<li><strong>卡片网格</strong>：一行最多三张，末尾固定「添加 API」卡片，卡片右上角 × 删除；点卡片才弹设置表单。</li>
+<li><strong>请求格式</strong>：OpenAI 兼容 / Anthropic / Gemini / Ollama / LM Studio / llama.cpp / Unsloth 等。</li>
+<li><strong>「检查」按钮</strong>：测连通 + 测图片能力 + 测工具调用。</li>
 <li><strong>温度 / 上下文 / 最大输出</strong>：每个供应商独立。</li>
-<li><strong>删除</strong>：红色「删除」按钮（<strong>不可恢复</strong>）。</li>
+<li><strong>API Key 留空 = 保留原值</strong>（不用每次重填）。</li>
 </ul>
 <h2 id="52-agent">5.2 Agent</h2>
 <p><img alt="Agent 设置" src="images/06-settings-agent.png"></p>
 <ul>
-<li><strong>6 个实例</strong>：通用 / 编程 / 短剧 + 自建的几个。</li>
-<li><strong>新建 Agent</strong>：填名 + 系统提示词 + 工具集。</li>
-<li><strong>关键规则</strong>：<strong>工具集在首条消息固化，后续轮不可改</strong>。</li>
-<li>切换 Agent 顶栏会自动追加预设 Skill 的 <code>/ref</code> 引用（去重）。</li>
+<li><strong>卡片网格</strong>：末尾固定「新增 Agent」卡片。卡片上显示固定 Skill 数和<strong>它当前用的工具集名称</strong>（「工具集：标准模式」/「未限制（全部工具）」/「自定义 · N 个工具」）。</li>
+<li><strong>不再标「默认」角标</strong>——默认项由顶栏 Agent 选择器体现。</li>
+<li><strong>点卡片进编辑表单</strong>：</li>
 </ul>
+<p><img alt="Agent 编辑" src="images/20-agent-edit.png"></p>
+<ul>
+<li><strong>ID 自动生成</strong>：新建不用填 ID，保存时后台分配；已有 ID 显示在副标题。</li>
+<li><strong>自定义头像</strong>：上传图片自动中心裁切为 256px WebP；用了这个 Agent 的会话，助手气泡的「AI」圆标会换成这张头像。</li>
+<li><strong>系统提示词（预设与规则）</strong>：标题行右侧就是工具栏——套用快捷提示词 / 存为快捷提示词 / 导入角色卡 PNG / 自定义头像。角色卡是<strong>追加</strong>语义，不覆盖你手写的内容。</li>
+<li><strong>工具集两态</strong>：默认显示 4 张只读预设卡（只读 / 标准 / ComfyUI 联动 / 全能）+ 「我的工具集」+ 虚线「添加自定义工具集」；点任意一张，工具列表从下方滑入，命名栏自动填上卡片名字，勾选就是该卡的工具，可继续增删再存成「我的工具集」。<strong>内置预设只读，自定义可删。</strong></li>
+</ul>
+<p><img alt="Agent 工具集选择" src="images/20b-agent-tools.png"></p>
+<blockquote>
+<p><strong>重要规则</strong>：<strong>工具集在首条消息固化，之后不可改</strong>。要换工具集就开新会话。</p>
+<p>2.1.0 起「我的工具集」存在后端 <code>config.json</code>（不再存 localStorage），重启不会丢。
+想做长会话的话，工具集预设里直接选「<strong>长会话模式</strong>」（标准 + <code>find_conversations</code> / <code>recall_history</code> / <code>read_conversation</code> / <code>reset_context</code>）。</p>
+</blockquote>
 <h2 id="53">5.3 运行设置</h2>
 <p><img alt="运行设置" src="images/07-settings-runtime.png"></p>
 <ul>
-<li><strong>命令超时</strong>（仅管工具/命令，不管模型响应）</li>
-<li><strong>原图上传</strong>（关闭则压缩后传）</li>
-<li><strong>上传最大像素 / 缩略图尺寸 / 缓存清理</strong>（128MB 触发）</li>
+<li><strong>命令超时</strong>（只管工具/命令，不管模型响应）</li>
+<li><strong>上下文提醒阈值</strong>（默认 80%，填 0 关闭）</li>
+<li><strong>新会话种子消息模板</strong>（<code>{handoff_path}</code> / <code>{task_count}</code> / <code>{task_list}</code>）</li>
+<li><strong>原图上传</strong>（关闭则压缩后传）、<strong>上传最大像素 / 缩略图尺寸 / 缓存清理阈值</strong></li>
 </ul>
 <h2 id="54">5.4 连接状态</h2>
 <p><img alt="连接状态" src="images/08-settings-connections.png"></p>
-<p>上半：MCP 列表（绿点已就绪 / 红色错误 / 灰色未启用）。下半：手机访问地址 + 访问口令 + 局域网 URL。</p>
+<p>上半：MCP 列表（绿点已连接 / 红点出错 / 灰点未启用）。下半：手机访问地址 + 访问口令 + 局域网 URL。</p>
 <h2 id="55">5.5 视觉</h2>
 <p><img alt="视觉" src="images/09-settings-vision.png"></p>
 <ul>
-<li><strong>视觉供应商</strong>：留空 = 走 OVH 免费链兜底</li>
-<li><strong>单次视觉请求超时 / 最大图片数</strong>：vision_analyze 工具调用视觉后端的单次超时；单轮占位引用的图片数上限（默认 4）</li>
-<li>视觉调用统一由模型驱动：文本模型发图只拿到路径引用，由模型按需调用 <code>vision_analyze</code>（结果以工具块呈现）；支持视觉的多模态模型直接收到原图。</li>
+<li><strong>视觉供应商</strong>：留空 = 走免费兜底链</li>
+<li><strong>单次视觉请求超时（毫秒）</strong></li>
+<li><strong>最大图片数</strong>：单轮占位引用的图片数上限（默认 4）</li>
 </ul>
 <h2 id="56">5.6 联网搜索</h2>
 <p><img alt="联网搜索" src="images/10-settings-search.png"></p>
 <ul>
-<li>搜索 API profile（多个可配）</li>
+<li>搜索 API profile（可配多个）</li>
 <li>搜索结果当素材引用，<strong>别当真理</strong></li>
 </ul>
 <h2 id="57-skills">5.7 Skills 管理</h2>
 <p><img alt="Skills 管理" src="images/11-settings-skills.png"></p>
 <ul>
-<li>左侧：已装 Skill 列表 + 启用/隐藏切换。</li>
-<li>右侧：「已隐藏 Skill」分区。</li>
+<li>已装 Skill 列表 + 启用/隐藏切换 + 恢复已隐藏。</li>
 <li>装新 Skill → 点「安装 Skill」按钮或拖 .zip / .md。</li>
+<li>RunningHub 站点切换也在这里。</li>
 </ul>
 <p><img alt="导入 Skill" src="images/16-skill-import.png"></p>
 <h2 id="58">5.8 数据与迁移</h2>
 <p><img alt="数据与迁移" src="images/12-settings-datamigration.png"></p>
 <ul>
-<li>数据库版本 / 数据目录 / 当前 Skills 目录 / 健康状态 / 已应用迁移 / 备份位置。</li>
-<li>「备份」一键压缩 <code>data/</code> 到 <code>backups/</code>，迁移前必做。</li>
+<li>数据库版本 / 数据目录 / 当前 Skills 目录 / 健康状态 / 备份位置。</li>
+<li><strong>历史数据管理</strong>：查看数据库占用并一键压缩回收空间（实测 400MB 可压到 ~90MB，继续会话发给模型的历史消息逐字节不变）。</li>
+<li>「备份」一键压缩 <code>data/</code> 到 <code>backups/</code>，<strong>升级前必做</strong>。</li>
 </ul>
 <h2 id="59">5.9 软件更新</h2>
 <p><img alt="软件更新" src="images/13-settings-updates.png"></p>
 <ul>
 <li><strong>EXE 模式</strong>：自动检查 → 下载 → SHA-256 校验 → 提示重启。</li>
-<li><strong>源码模式</strong>（你现在用的）：<strong>不支持一键更新</strong>，需 <code>git pull --ff-only</code> 然后重启服务。</li>
-<li>目标版本下拉可选历史版本 + 回退。</li>
+<li><strong>源码模式</strong>：<strong>不支持一键更新</strong>，需 <code>git pull --ff-only</code> 然后重启服务。</li>
+<li>目标版本下拉可选历史版本 + 回退；检查完成后自动选中新版本。</li>
 </ul>
-<h2 id="510">5.10 对话级设置</h2>
-<p><img alt="对话设置" src="images/20-conversation-settings.png"></p>
-<p>侧栏会话行 hover 出 ⚙ 按钮 → 点开：</p>
-<ul>
-<li><strong>对话名称</strong>（留空自动用首条消息命名）</li>
-<li><strong>系统提示词</strong>（只作用于本对话）</li>
-<li><strong>流式输出</strong>（关了就是一次性返回）</li>
-<li><strong>清空对话</strong>（红按钮，<strong>不可恢复</strong>）</li>
-</ul>
-<h2 id="511">5.11 工作区</h2>
+<h2 id="510">5.10 工作区</h2>
 <p><img alt="工作区选择" src="images/17-workspace-dialog.png"></p>
 <ul>
 <li>工作区 = AI 可读写的根目录（<strong>安全边界</strong>）。</li>
-<li>在设置 → API 供应商下方的「工作区」或底部「未分组」下拉添加。</li>
-<li>支持直接选目录 / 浏览 / 上级跳转。</li>
+<li>在输入框下方的「工作区」下拉或设置页添加，支持直接选目录 / 浏览 / 上级跳转。</li>
+<li><strong>切换分组即切换目录</strong>：把会话移到某个工作区分组，其磁盘工作区同步指向该分组目录；「移至未分组」只改侧栏分类、保留原目录。</li>
 </ul>
 <hr>
 <h1 id="6">第 6 章　常见问题与高手技巧</h1>
 <h2 id="61-500">6.1 模型连不上 / 报 500 / 代理冲突</h2>
 <ul>
 <li>「检查」按钮能告诉你<strong>网络层 vs API Key vs 路径</strong>是哪一层错。</li>
-<li>国内访问海外供应商常需开系统代理；Naiba Chat 不内置代理。</li>
-<li>DeepSeek 报 500 大概率是触发了速率限制，<strong>等 60 秒</strong>再试。</li>
+<li>国内访问海外供应商常需开系统代理；Naiba Chat 不内置代理，但遇到代理进程重启导致的连接拒绝会自动改用直连重试。</li>
+<li>2.1.0 起 <strong>5xx 会自动重试</strong>（1.5s / 3s，最多 3 次）；如果三次都失败，去看进程工作目录下的 <code>naiba-model-error-payload.json</code>（不含 API Key）。</li>
+<li>DeepSeek 触发速率限制的话，<strong>等 60 秒</strong>再试。</li>
 </ul>
 <h2 id="62-comfyui">6.2 ComfyUI 工作流报错</h2>
 <ul>
-<li><strong>UI JSON ≠ API JSON</strong>：UI 拖出来的图，导出时<strong>必须</strong>选「API 格式」再保存。</li>
+<li><strong>UI JSON ≠ API JSON</strong>：导出时<strong>必须</strong>选「API 格式」。</li>
 <li>报错 <code>Prompt outputs failed validation</code>：节点连线断了，重开 UI 检查。</li>
-<li>comfy-mcp 状态红色：见 3.3 节。</li>
+<li>comfy-mcp 圆点红色：见 3.5 节。</li>
 </ul>
 <h2 id="63-mcp">6.3 MCP 工具调不到</h2>
 <p><strong>新加的 MCP 必须重开会话才生效。</strong> 配完 → 关当前会话 → 重新开。</p>
 <h2 id="64">6.4 权限一直弹窗</h2>
 <p>审批档位从「确认」切到「自动」（工作区内免问）。完全不用问就用「完全」档（<strong>慎用</strong>）。</p>
-<h2 id="65">6.5 卡住了怎么办</h2>
+<h2 id="65">6.5 上下文快满了怎么办</h2>
+<ol>
+<li>看输入框下方「上下文 x%」——70% 黄、90% 红。</li>
+<li>到 80% 会弹窗提醒，选「让模型写交接文档 + 开始新会话」。</li>
+<li>或者手动点某条回复下面的「<strong>新会话</strong>」划分割线。</li>
+<li>想更省：勾上 <code>reset_context</code> 工具，让模型自己判断何时重置。</li>
+</ol>
+<h2 id="66">6.6 卡住了怎么办</h2>
 <ol>
 <li>消息下方「暂停」按钮。</li>
 <li>看「任务」面板有没有跑死的后台任务 → 杀掉。</li>
-<li>看上下文用量环是不是 100% → 让 AI 总结压缩。</li>
+<li>看上下文用量环是不是满了 → 划分割线或开新会话。</li>
 <li>实在不行重开会话（<strong>会话内容会保留</strong>）。</li>
 </ol>
-<h2 id="66">6.6 十个高手技巧</h2>
+<h2 id="67">6.7 十个高手技巧</h2>
 <ol>
-<li><strong><code>↑↓</code> 选 Skill</strong>、<strong><code>Enter</code> 发送</strong>、<strong><code>Shift+Enter</code> 换行</strong>。</li>
+<li><strong><code>↑↓</code> 选 Skill</strong> / <strong><code>@</code> 引文件用 <code>Tab</code> 进目录</strong> / <strong><code>Enter</code> 发送</strong> / <strong><code>Shift+Enter</code> 换行</strong>。</li>
 <li><strong>运行中 <code>Enter</code> 插话</strong>（引导合并到当前轮）。</li>
 <li><strong><code>Ctrl+Enter</code> 全部引导</strong>（取消当前轮 + 把引导作为新轮发）。</li>
-<li><strong>大图右键复制到剪贴板</strong>（CF_DIB 失败回退到系统剪贴板）。</li>
+<li><strong>纯附件就能发</strong>：不写字直接点发送，模型会收到明确说明，不会瞎猜。</li>
 <li><strong>消息分支</strong>（点自己消息「分支」按钮）→ 新会话接着干。</li>
 <li><strong>Token 环判断缓存命中</strong>：掉到 0% 提示「可能改了系统提示词」。</li>
-<li><strong>自定义指令卡片</strong>：空态右下角「自定义指令」把你常用的话存成卡片，以后点一下就发。</li>
+<li><strong>快捷消息</strong>：把一天说十遍的话存进去，点一下就进输入框。</li>
 <li><strong>数据目录备份再升级</strong>：设置 → 数据与迁移 → 备份。</li>
-<li><strong>Skill 引用后改输入框</strong>（<code>/ref</code> 在框内）→ 引用会随编辑保留。</li>
-<li><strong>手机扫码直连</strong>：侧栏底部点「手机访问」按钮复制 URL。</li>
+<li><strong>历史太大就压缩</strong>：设置 → 数据与迁移 → 历史数据管理 → 压缩。</li>
+<li><strong>手机扫码直连</strong>：设置 → 连接状态里复制带口令的局域网地址。</li>
 </ol>
 <hr>
 <h1 id="_3">附录</h1>
 <h2 id="a">A 文件都存哪儿</h2>
-<pre><code>D:\naibachatdata\               ← 数据根目录（在 config.json 配）
-├── config.json                 ← 主配置
+<pre><code>D:\naibachatdata\               ← 数据根目录（冻结版固定 %LOCALAPPDATA%\NaibaChat）
+├── config.json                 ← 主配置（含 Agent / 工具集 / 快捷消息）
 ├── conversations.db            ← 会话数据库
-├── uploads\                    ← 你上传的附件
+├── uploads\                    ← 你上传的附件（按日分目录）
 ├── generated\                  ← AI 生成的产物（缩略图 + 原图）
 │   └── &lt;conversation-id&gt;\
 │       ├── image_00000.webp    ← 原图
 │       ├── image_00000_thumb.webp ← 缩略图
 │       └── video_00000.mp4
+├── avatars\                    ← Agent 自定义头像（256px WebP）
 ├── skill_history\              ← Skill 引用历史
 ├── backups\                    ← 备份（zip）
 └── logs\                       ← 运行日志
@@ -765,11 +856,11 @@ D:\naiba-chat\                  ← 项目根（可改）
 D:\skills\                      ← 用户级 Skill（可选）
 </code></pre>
 <h2 id="b">B 速查卡</h2>
-<h3 id="_4">斜杠命令</h3>
+<h3 id="_4">输入快捷键</h3>
 <table>
 <thead>
 <tr>
-<th>命令</th>
+<th>按键</th>
 <th>作用</th>
 </tr>
 </thead>
@@ -783,8 +874,12 @@ D:\skills\                      ← 用户级 Skill（可选）
 <td>引用指定 Skill</td>
 </tr>
 <tr>
+<td><code>@</code></td>
+<td>弹工作区文件/目录列表（<code>Tab</code> 进目录、<code>Shift+Tab</code> 返回）</td>
+</tr>
+<tr>
 <td><code>↑↓ + Enter</code></td>
-<td>选择 Skill</td>
+<td>在弹层里选择</td>
 </tr>
 <tr>
 <td><code>Enter</code></td>
@@ -810,24 +905,24 @@ D:\skills\                      ← 用户级 Skill（可选）
 </thead>
 <tbody>
 <tr>
-<td>文件 N</td>
-<td>重新打开文件面板（有已打开的文件标签时出现）</td>
+<td>文件</td>
+<td>重新打开文件面板（保留已打开的标签）</td>
 </tr>
 <tr>
-<td>任务</td>
+<td>N 任务</td>
 <td>看所有后台 Job</td>
 </tr>
 <tr>
-<td>Skill</td>
-<td>已选 Skill 列表</td>
+<td>N Skill</td>
+<td>看当前会话已选的 Skill</td>
 </tr>
 <tr>
 <td>MCP</td>
-<td>MCP 状态</td>
+<td>圆点看连接状态（绿/红/黄/灰）</td>
 </tr>
 <tr>
-<td>⋯ 更多</td>
-<td>里面是「刷新」（整页 reload）和「卸载模型」（连本地模型时出现）</td>
+<td>刷新</td>
+<td>整页 reload（内嵌窗口用不了 F5 时点它）</td>
 </tr>
 </tbody>
 </table>
@@ -842,6 +937,11 @@ D:\skills\                      ← 用户级 Skill（可选）
 </thead>
 <tbody>
 <tr>
+<td>工作区</td>
+<td>未分组</td>
+<td>AI 能读写的目录根 = 安全边界</td>
+</tr>
+<tr>
 <td>审批 确认</td>
 <td>✓</td>
 <td>每次工具调用都问</td>
@@ -854,12 +954,22 @@ D:\skills\                      ← 用户级 Skill（可选）
 <tr>
 <td>审批 完全</td>
 <td></td>
-<td>工具不确认</td>
+<td>工具不确认（慎用）</td>
 </tr>
 <tr>
-<td>轻量（点开）</td>
-<td>☐ 工具 ☐ Skill</td>
-<td>点「轻量」弹面板，勾选任一即开启轻量对话并关闭对应能力</td>
+<td>快捷消息</td>
+<td></td>
+<td>常用提示词一键插入</td>
+</tr>
+<tr>
+<td>思考 自动</td>
+<td>✓</td>
+<td>当前思考强度（点输入区球形按钮切）</td>
+</tr>
+<tr>
+<td>上下文 --</td>
+<td></td>
+<td>实时百分比，70% 黄 / 90% 红</td>
 </tr>
 </tbody>
 </table>
@@ -874,7 +984,7 @@ D:\skills\                      ← 用户级 Skill（可选）
 <tbody>
 <tr>
 <td><strong>Agent</strong></td>
-<td>角色设定 + 工具集 + 系统提示词。<strong>比喻</strong>：员工岗。</td>
+<td>人设 + 系统提示词 + 工具集。<strong>比喻</strong>：员工岗。</td>
 </tr>
 <tr>
 <td><strong>Skill</strong></td>
@@ -886,7 +996,11 @@ D:\skills\                      ← 用户级 Skill（可选）
 </tr>
 <tr>
 <td><strong>Tool</strong></td>
-<td>NaibaChat 内置的能力（读文件、跑命令等）。<strong>比喻</strong>：员工的手。</td>
+<td>Naiba Chat 内置的能力（读文件、跑命令等）。<strong>比喻</strong>：员工的手。</td>
+</tr>
+<tr>
+<td><strong>工具集</strong></td>
+<td>一个 Agent 被允许使用的工具清单。<strong>比喻</strong>：上岗时发的工具箱。</td>
 </tr>
 <tr>
 <td><strong>Job</strong></td>
@@ -901,20 +1015,28 @@ D:\skills\                      ← 用户级 Skill（可选）
 <td>AI 跑工具要不要你点头的开关。<strong>比喻</strong>：出门要不要老板签字。</td>
 </tr>
 <tr>
+<td><strong>新会话分割线</strong></td>
+<td>在此线以上截断上下文、不删聊天记录。<strong>比喻</strong>：给笔记本换一页，旧页还在。</td>
+</tr>
+<tr>
+<td><strong>交接文档</strong></td>
+<td>重置前让 AI 写的工作小结。<strong>比喻</strong>：换班交接单。</td>
+</tr>
+<tr>
+<td><strong>刻度轨</strong></td>
+<td>聊天区右侧的一轮一条横条。<strong>比喻</strong>：书页侧边的章节标签。</td>
+</tr>
+<tr>
 <td><strong>本轮修改文件</strong></td>
 <td>一轮对话里 AI 写盘的所有文件。<strong>比喻</strong>：本轮会议纪要。</td>
 </tr>
 <tr>
 <td><strong>文件面板</strong></td>
-<td>右侧多标签的文件预览/编辑器。<strong>比喻</strong>：桌上放着的文件。</td>
+<td>右侧多标签的文件预览/编辑器。<strong>比喻</strong>：桌上摊开的文件。</td>
 </tr>
 <tr>
 <td><strong>缓存命中率</strong></td>
 <td>DeepSeek 等模型前缀缓存的命中比例。<strong>比喻</strong>：省钱的程度。</td>
-</tr>
-<tr>
-<td><strong>视觉路由</strong></td>
-<td>根据图片自动挑视觉模型。<strong>比喻</strong>：分诊台。</td>
 </tr>
 <tr>
 <td><strong>上下文固化</strong></td>
@@ -924,9 +1046,9 @@ D:\skills\                      ← 用户级 Skill（可选）
 </table>
 <hr>
 <blockquote>
-<p><strong>版本</strong>：1.6.9 Beta · 截图 2026-09-03
-<strong>项目仓库</strong>：https://github.com/yourname/naiba-chat
-<strong>反馈</strong>：设置 → 数据与迁移页底部「问题反馈」入口</p>
+<p><strong>版本</strong>：2.1.0 Beta · 截图 2026-09-10
+<strong>项目仓库</strong>：https://github.com/yc883123/naiba-chat
+<strong>反馈</strong>：https://github.com/yc883123/naiba-chat/issues</p>
 </blockquote>
   </main>
 </div>

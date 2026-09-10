@@ -15,7 +15,7 @@ from naiba.core.messages import MetadataKeys
 
 
 # 当前数据库 schema 版本（user_version）。每次新增迁移 +1。
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 # 自该版本起存在"数据改写型"迁移（v14 起），执行前自动备份整库。
 FIRST_DATA_WRITING_MIGRATION = 14
@@ -464,6 +464,18 @@ def _migrate_to_v16(db: sqlite3.Connection) -> None:
         db.execute("ALTER TABLE conversations ADD COLUMN first_turn TEXT NOT NULL DEFAULT ''")
 
 
+def _migrate_to_v17(db: sqlite3.Connection) -> None:
+    """会话级模型覆盖名。
+
+    ``model_key`` 继续指向 API profile（地址、密钥、协议与生成参数），``model_name``
+    只覆盖该会话实际请求的模型。空串表示使用 API profile 的默认模型。
+    """
+    try:
+        db.execute("SELECT model_name FROM conversations LIMIT 1")
+    except sqlite3.OperationalError:
+        db.execute("ALTER TABLE conversations ADD COLUMN model_name TEXT NOT NULL DEFAULT ''")
+
+
 # 目标版本 -> 迁移函数。新增版本时在此追加并提升 CURRENT_SCHEMA_VERSION。
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     1: _migrate_to_v1,
@@ -482,6 +494,7 @@ MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {
     14: _migrate_to_v14,
     15: _migrate_to_v15,
     16: _migrate_to_v16,
+    17: _migrate_to_v17,
 }
 
 
@@ -841,6 +854,7 @@ class ChatStorage:
         agent_id: str = "",
         interaction_mode: str = "craft",
         model_key: str = "",
+        model_name: str = "",
         permission_mode: str = "auto",
         web_search_enabled: bool = False,
         deep_reasoning_enabled: bool = False,
@@ -854,12 +868,13 @@ class ChatStorage:
         if permission_mode not in ("confirm", "auto", "full"):
             permission_mode = "auto"
         resolved_model_key = str(model_key or "").strip()
+        resolved_model_name = str(model_name or "").strip()[:256]
         if not resolved_model_key and provider_id:
             resolved_model_key = f"online:{provider_id}"
         with self._connect() as db:
             db.execute(
-                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, agent_id, interaction_mode, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO conversations(id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, provider_id, model_key, model_name, agent_id, interaction_mode, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     conversation_id,
                     title.strip() or "新对话",
@@ -876,6 +891,7 @@ class ChatStorage:
                     "",
                     provider_id or "",
                     resolved_model_key,
+                    resolved_model_name,
                     agent_id or "",
                     interaction_mode,
                     now,
@@ -888,13 +904,13 @@ class ChatStorage:
         with self._connect() as db:
             if mode:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, favorite, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, model_name, agent_id, interaction_mode, favorite, created_at, updated_at "
                     "FROM conversations WHERE mode = ? ORDER BY updated_at DESC",
                     (mode,),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, favorite, created_at, updated_at "
+                    "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, model_name, agent_id, interaction_mode, favorite, created_at, updated_at "
                     "FROM conversations ORDER BY updated_at DESC"
                 ).fetchall()
         return [self._conversation_dict(row) for row in rows]
@@ -1167,7 +1183,7 @@ class ChatStorage:
     def get_conversation(self, conversation_id: str, include_messages: bool = True) -> dict[str, Any] | None:
         with self._connect() as db:
             row = db.execute(
-                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, favorite, created_at, updated_at "
+                "SELECT id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, skill_policy, chat_supports_images, provider_id, model_key, model_name, agent_id, interaction_mode, favorite, created_at, updated_at "
                 "FROM conversations WHERE id = ?",
                 (conversation_id,),
             ).fetchone()
@@ -1257,15 +1273,15 @@ class ChatStorage:
                 "id, title, mode, permission_mode, web_search_enabled, deep_reasoning_enabled, "
                 "lightweight_mode, lightweight_disabled_features, title_customized, system_prompt, "
                 "stream_enabled, workspace_dir, workspace_group, reasoning_effort, enabled_tool_ids, "
-                "skill_policy, chat_supports_images, provider_id, model_key, agent_id, interaction_mode, "
+                "skill_policy, chat_supports_images, provider_id, model_key, model_name, agent_id, interaction_mode, "
                 "first_turn, created_at, updated_at"
-                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     new_id, new_title, src["mode"], src["permission_mode"],
                     src["web_search_enabled"], src["deep_reasoning_enabled"], src["lightweight_mode"],
                     src["lightweight_disabled_features"], 1, src["system_prompt"], src["stream_enabled"],
                     src["workspace_dir"], src["workspace_group"], src["reasoning_effort"],
-                    src["enabled_tool_ids"], inherited_skill_policy, src["chat_supports_images"], src["provider_id"], src["model_key"],
+                    src["enabled_tool_ids"], inherited_skill_policy, src["chat_supports_images"], src["provider_id"], src["model_key"], src["model_name"],
                     src["agent_id"], src["interaction_mode"], inherited_first_turn, now, now,
                 ),
             )
@@ -1297,6 +1313,7 @@ class ChatStorage:
         stream_enabled: bool | None = None,
         provider_id: str | None = None,
         model_key: str | None = None,
+        model_name: str | None = None,
         agent_id: str | None = None,
         interaction_mode: str | None = None,
         permission_mode: str | None = None,
@@ -1337,8 +1354,10 @@ class ChatStorage:
         if provider_id is not None:
             values["provider_id"] = str(provider_id or "")
         if model_key is not None:
-            # 切换模型只更新该会话的 model_key，不影响其他会话与正在运行的 Run。
+            # 切换 API 只更新该会话，不影响其他会话与正在运行的 Run。
             values["model_key"] = str(model_key or "")
+        if model_name is not None:
+            values["model_name"] = str(model_name or "").strip()[:256]
         if agent_id is not None:
             values["agent_id"] = str(agent_id or "")
         if interaction_mode is not None:
@@ -1371,8 +1390,19 @@ class ChatStorage:
         if not values:
             return self.get_conversation(conversation_id, include_messages=False)
         assignments = ", ".join(f"{key} = ?" for key in values)
-        parameters = [*values.values(), int(time.time() * 1000), conversation_id]
         with self._connect() as db:
+            if model_key is not None or model_name is not None:
+                current = db.execute(
+                    "SELECT model_key, model_name FROM conversations WHERE id = ?", (conversation_id,)
+                ).fetchone()
+                if current and (
+                    (model_key is not None and str(current["model_key"] or "") != values.get("model_key"))
+                    or (model_name is not None and str(current["model_name"] or "") != values.get("model_name"))
+                ):
+                    # 图像能力由实际模型决定；API 或模型名变化后必须重新探测。
+                    values["chat_supports_images"] = -1
+                    assignments = ", ".join(f"{key} = ?" for key in values)
+            parameters = [*values.values(), int(time.time() * 1000), conversation_id]
             cursor = db.execute(
                 f"UPDATE conversations SET {assignments}, updated_at = ? WHERE id = ?",
                 parameters,

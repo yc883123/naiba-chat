@@ -2,7 +2,7 @@
 """首轮上下文落盘与查询契约（first_turn 折叠卡数据链路）。
 
 覆盖：run 快照合并/取最早 run（v16 之前的数据形态）；会话级 `conversations.first_turn`
-列（分支对话继承、清空已结束任务后不丢）；`_first_turn_info` 的取数顺序与旧结构归一。
+列（分支对话继承、清空已结束任务后不丢）；v17 会话模型名覆盖；`_first_turn_info` 的取数顺序与旧结构归一。
 """
 
 import sqlite3
@@ -40,6 +40,22 @@ class FirstTurnMigrationTests(unittest.TestCase):
             finally:
                 conn.close()
 
+    def test_model_name_v17_is_present_and_idempotent(self):
+        from naiba.storage.store import CURRENT_SCHEMA_VERSION, MIGRATIONS
+
+        self.assertGreaterEqual(CURRENT_SCHEMA_VERSION, 17)
+        self.assertIn(17, MIGRATIONS)
+        with tempfile.TemporaryDirectory(prefix="naiba_modelname_mig_") as tmp:
+            storage = ChatStorage(Path(tmp) / "chat.db")
+            conn = sqlite3.connect(storage.db_path)
+            try:
+                MIGRATIONS[17](conn)
+                MIGRATIONS[17](conn)
+                columns = {row[1] for row in conn.execute("PRAGMA table_info(conversations)")}
+                self.assertIn("model_name", columns)
+            finally:
+                conn.close()
+
 
 class FirstTurnStoreTests(unittest.TestCase):
     def setUp(self):
@@ -49,6 +65,26 @@ class FirstTurnStoreTests(unittest.TestCase):
 
     def tearDown(self):
         self.tmp.cleanup()
+
+    def test_model_name_roundtrip_resets_capability_and_branches(self):
+        conversation = self.storage.create_conversation(
+            model_key="online:demo", model_name="gpt-4.1-mini"
+        )
+        self.assertEqual(conversation["model_name"], "gpt-4.1-mini")
+        with self.storage._connect() as db:
+            db.execute(
+                "UPDATE conversations SET chat_supports_images = 1 WHERE id = ?",
+                (conversation["id"],),
+            )
+        updated = self.storage.update_conversation_settings(
+            conversation["id"], model_name="custom-model"
+        )
+        self.assertEqual(updated["model_name"], "custom-model")
+        self.assertEqual(updated["chat_supports_images"], -1)
+        branch_point = self.storage.add_message(conversation["id"], "user", "分支点")
+        result = self.storage.branch_conversation(conversation["id"], str(branch_point["id"]))
+        self.assertEqual(result["conversation"]["model_key"], "online:demo")
+        self.assertEqual(result["conversation"]["model_name"], "custom-model")
 
     def _create_chat_run(self, snapshot_extra, finish=True):
         snapshot = {

@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 2.1.0-beta
-  RELEASE_TAG: v2.1.0-beta
-  PACKAGE_NAME: naiba-chat-2.1.0-beta-windows-x64
+  RELEASE_VERSION: 2.1.1-beta
+  RELEASE_TAG: v2.1.1-beta
+  PACKAGE_NAME: naiba-chat-2.1.1-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 2.1.0 Beta release
+      - name: Publish 2.1.1 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 2.1.0 Beta
+          name: Naiba Chat 2.1.1 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,17 +99,12 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 2.1.0 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 2.1.1 Beta Windows build from `${{ github.sha }}`.
 
             本次更新（完整清单见 `release_notes.json` / 应用内「更新说明」）：
-            - 「新会话」分割线：同一窗口内任意位置划线，线上内容不再进入模型上下文、线下保留，可撤销、可多条并存。
-            - 模型可主动重置上下文（reset_context）：先写交接文档再重置，文档缺失或为空会被拒绝；重置后种子消息自动填入输入框，模板可配置。
-            - 长会话工具集：find_conversations / recall_history / read_conversation + reset_context，新增「长会话模式」预设（标准 + 四件套）。
-            - 长会话懒加载：默认只渲染最近 10 轮、向上滚动自动预渲染；窗口以「轮」为边界（分割线不会被拆散），刻度轨覆盖全部轮次。
-            - 「写交接报告」快捷消息预设：内置、可编辑可删除、升级不覆盖也不复活。
-            - 修复 DeepSeek 空思考工具轮 400 再犯；「思考 自动」右侧实时显示上下文用量百分比。
-            - Agent 工具集改为卡片态 / 编辑态两态、弹层固定高度、卡片显示工具集名；「我的工具集」改存 config.json、工具目录短时效缓存、桌面壳持久 WebView2 配置目录。
-            - 稳定性与守门：685 个单元/契约测试 + golden 回放 3 基线 + 真机浏览器冒烟（含本次新增的长会话懒加载、新会话分割线 / 种子消息、快捷消息预设）全通过。
+            - 会话级模型选择：顶栏「模型」下拉改为「API」下拉（只选连接配置）；输入区新增「模型」选择器，自动拉取该 API 的模型目录，也可手动输入模型名称（按会话记忆、分支继承，不影响其它会话）。
+            - 切换 API 或模型名后自动重新探测图像能力（chat_supports_images 重置），换模型不再沿用旧模型的视觉判断；数据库 v17 迁移新增 conversations.model_name 列（幂等）。
+            - 新增测试：v17 迁移幂等、model_name 往返 / 能力重置 / 分支继承、顶栏 API + 输入区模型选择器结构守门。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

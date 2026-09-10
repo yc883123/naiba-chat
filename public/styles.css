@@ -740,6 +740,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .send-button.is-stop:hover { background: var(--brand-700); }
 .composer-meta { min-height: 22px; display: flex; align-items: center; color: var(--muted); font-size: 11px; padding: 4px 2px 0; gap: 12px; white-space: nowrap; }
 .composer-meta-left { min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.composer-model { min-width: 0; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.composer-model > span { flex: none; }
+#composerModelSelect, #composerModelCustom { height: 22px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font-size: 11px; }
+#composerModelSelect { min-width: 100px; max-width: 190px; padding: 0 22px 0 6px; }
+#composerModelCustom { width: 150px; min-width: 0; padding: 0 6px; }
+#composerModelCustom[hidden] { display: none; }
 /* 右侧信息组（思考强度 + 就绪）：整组靠右，两者之间留固定间距 */
 .composer-meta-right { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
 .composer-meta-right #runtimeStatus { margin-left: 0; justify-self: auto; }
@@ -1498,6 +1504,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .tool-group-tag { font-style: normal; font-size: 10.5px; color: var(--muted); }
 
 @media (max-width: 520px) {
+  #composerModelSelect { max-width: min(180px, calc(100vw - 92px)); }
+  #composerModelCustom { width: min(180px, calc(100vw - 92px)); }
   .tool-set-name { flex-basis: 100%; max-width: none; }
   .tool-preset-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agent-tool-group-head { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; gap: 6px; }
