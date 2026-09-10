@@ -777,7 +777,12 @@ export function renderRunTasks() {
       <div class="task-title">${escapeHtml(task.message)}</div>
       <div class="task-meta">${escapeHtml(taskModeLabel(task))} · ${escapeHtml(task.agent_name)} · ${escapeHtml(conversation?.title || '原对话')} · ${escapeHtml(taskElapsed(task))}</div>
       <div class="task-detail">${escapeHtml(detail)}</div>
-      <div class="task-actions"><span class="task-status ${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span></div>
+      <div class="task-actions">
+        <span class="task-status ${escapeHtml(task.status)}">${taskStatusLabel(task.status)}</span>
+        ${activeTaskStatuses.has(task.status)
+          ? `<button type="button" class="task-cancel" data-task-cancel="${escapeHtml(task.id)}">停止</button>`
+          : ''}
+      </div>
     </div>`;
   }).join('');
 }
@@ -1008,6 +1013,29 @@ export async function saveAgentPromptPreset(event) {
   } finally {
     if (button) button.disabled = false;
   }
+}
+
+// 停止单个异步任务：Job（comfyui / shell / check / http_poll / subagent）走 Job Registry 的
+// 取消接口（会真正 set 掉 worker 的 cancel 事件）；chat / plan_execute 这类顶层 Run 走原有接口。
+// 顶层 Run 才会占用对话互斥位，所以这两条路径必须分开，不能统一按任务 ID 处理。
+export async function cancelTask(taskId) {
+  const task = state.tasks.find((item) => item.id === taskId);
+  const kind = String(task?.kind || 'chat');
+  const isJob = kind !== 'chat' && kind !== 'plan_execute';
+  try {
+    if (isJob) {
+      await api(`/api/jobs/${encodeURIComponent(taskId)}/cancel`, {
+        method: 'POST',
+        body: { conversation_id: task?.conversation_id || '' },
+      });
+    } else {
+      await api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'DELETE' });
+    }
+    toast('已请求停止任务');
+  } catch (error) {
+    toast(`停止失败：${error.message}`);
+  }
+  await loadTasks();
 }
 
 export async function clearTerminalTasks() {

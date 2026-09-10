@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from naiba.core.contracts import AppContext
 
+import hashlib
 import json
 import logging
 import subprocess
@@ -339,25 +340,81 @@ class JobRegistry:
             raise ValueError(f"重试失败：{exc}") from exc
 
     def resume_interrupted(self) -> list[str]:
-        """Resume durable, explicitly resumable jobs interrupted by restart."""
+        """Resume durable, explicitly resumable jobs interrupted by restart.
+
+        幂等 + 去重（历史事故防线）：恢复后必须把**源 Job** 标记为「已由某新 Job 接续」，
+        否则它下一轮启动仍是 interrupted、会被再恢复一次，Job 数随重启次数成倍增长
+        （1→2→4→8…，实测曾把同一批 8 段生成放大成每对话 13 份）。
+        另外，checkpoint 完全相同的中断 Job 视为同一批任务的重复副本，只恢复最新的一条。
+        """
         resumed: list[str] = []
+        seen_signatures: set[str] = set()
+        # list_background_tasks 按 created_at DESC 返回（新→旧），每组第一条即最新。
         for job in self.app.storage.list_background_tasks("", active_only=False, limit=200):
             if str(job.get("status") or "") != "interrupted":
                 continue
-            snapshot = self.app.storage.get_run_snapshot(str(job.get("id") or "")) or {}
+            job_id = str(job.get("id") or "")
+            if not job.get("checkpoint"):
+                continue
+            if self._resume_settled(job):
+                continue
+            snapshot = self.app.storage.get_run_snapshot(job_id) or {}
             job_spec = snapshot.get("job_spec") if isinstance(snapshot, dict) else {}
             if not isinstance(job_spec, dict) or not bool(job_spec.get("resumable")):
                 continue
             # Only deterministic workers can safely resume automatically.
             if str(job.get("kind") or "") not in {"comfyui", "check", "http_poll"}:
                 continue
+            signature = self._resume_signature(job)
+            if signature in seen_signatures:
+                self._mark_superseded(job_id, reason="同一批中断任务已由较新的 Job 接续，未重复恢复")
+                continue
+            seen_signatures.add(signature)
             try:
-                new_id = self.resume(str(job["id"]), owner=str(job.get("owner_session_id") or "") or None)
-                if new_id:
-                    resumed.append(new_id)
+                new_id = self.resume(job_id, owner=str(job.get("owner_session_id") or "") or None)
             except Exception:
-                logger.exception("恢复中断 Job 失败：job=%s", job.get("id"))
+                logger.exception("恢复中断 Job 失败：job=%s", job_id)
+                continue
+            if new_id:
+                resumed.append(new_id)
+                self._mark_superseded(job_id, new_id=new_id)
         return resumed
+
+    @staticmethod
+    def _resume_settled(job: dict[str, Any]) -> bool:
+        """该中断 Job 是否已被处理过（接续成新 Job，或被判定为重复副本）。
+
+        两种都要跳过，否则重复副本会在下一轮启动里再挑出一条来恢复，
+        让同一批任务被反复「复活」。显式 retry()/resume() 不受此标记影响。
+        """
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        return bool(str(result.get("resumed_into") or "") or str(result.get("resume_skipped") or ""))
+
+    @staticmethod
+    def _resume_signature(job: dict[str, Any]) -> str:
+        """同一批任务的指纹：checkpoint 相同即视为重复副本。"""
+        checkpoint = job.get("checkpoint") if isinstance(job.get("checkpoint"), dict) else {}
+        payload = json.dumps(checkpoint, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+    def _mark_superseded(self, job_id: str, new_id: str = "", reason: str = "") -> None:
+        """给中断 Job 打上持久标记，使它不再被后续启动重复恢复。
+
+        ``new_id`` 非空 → 记录「已由哪个新 Job 接续」；为空 → 记录「被判定为重复副本」。
+        两种标记都必须非空，否则该 Job 下一轮又会被当成待恢复对象。
+        """
+        job = self.app.storage.get_background_task(job_id)
+        if not job:
+            return
+        result = job.get("result") if isinstance(job.get("result"), dict) else {}
+        result = dict(result)
+        if new_id:
+            result["resumed_into"] = new_id
+        else:
+            result["resume_skipped"] = reason or "同一批中断任务已由较新的 Job 接续"
+        if reason:
+            result["superseded_reason"] = reason
+        self.app.storage.update_job(job_id, result=result)
 
     # ---- 通用 Worker 框架 ----
     def _run_unknown(self, job_id: str, spec: JobSpec, cancel: threading.Event) -> None:
@@ -662,9 +719,14 @@ class JobRegistry:
             )
             self._emit(job_id, {"type": "job_check", "phase": "batch_submitted", "index": index, "prompt_id": prompt_id, "total": total})
 
-        # Poll each prompt independently; completed entries are checkpointed so
+        # Poll each prompt independently; completed/errored entries are checkpointed so
         # interruption does not resubmit or lose already finished segments.
         done_indexes = {int(item.get("index")) for item in completed if isinstance(item, dict) and str(item.get("index", "")).isdigit()}
+        # 已失败的镜头同样算完成：否则恢复后会重新轮询，把同一处错误反复计入 errors。
+        done_indexes.update(int(item.get("index")) for item in errors if isinstance(item, dict) and str(item.get("index", "")).isdigit())
+        # 每个镜头「丢失后重提交」的次数，持久化在 checkpoint，重启不会把预算清零。
+        resubmits = dict(checkpoint.get("resubmits") or {})
+        max_resubmit = max(0, int(spec.params.get("max_resubmit", 1) or 0))
         deadline = time.monotonic() + float(spec.params.get("wait_timeout", 7200) or 7200)
         while len(done_indexes) < total:
             if cancel.is_set():
@@ -675,6 +737,8 @@ class JobRegistry:
                 self._finish(job_id, "failed", error="ComfyUI 批量轮询超时",
                              result={"prompt_ids": submitted, "completed": completed, "errors": errors})
                 return
+            # 每轮取一次全队列：只有「历史里没有、队列里也没有」才算该 prompt 已被 ComfyUI 丢弃。
+            queue_ids = self._comfyui_queue_ids(comfy_url)
             for index, prompt_id in enumerate(submitted):
                 if index in done_indexes:
                     continue
@@ -683,14 +747,43 @@ class JobRegistry:
                     completed.append({"index": index, "prompt_id": prompt_id, "files": files})
                     done_indexes.add(index)
                     self._emit(job_id, {"type": "job_check", "phase": "batch_done", "index": index, "files": files, "total": total})
-                elif reason and reason.startswith("ERROR:"):
+                    continue
+                if reason and reason.startswith("ERROR:"):
                     errors.append({"index": index, "prompt_id": prompt_id, "error": reason[6:]})
                     done_indexes.add(index)
                     self._emit(job_id, {"type": "job_check", "phase": "batch_failed", "index": index, "error": reason[6:]})
+                    continue
+                if queue_ids is None or prompt_id in queue_ids:
+                    # 仍在排队/执行中；队列查询失败时保守处理，不判定丢失。
+                    continue
+                # ComfyUI 重启或队列被清空后，旧 prompt_id 既不在历史也不在队列。
+                # 这种「查不到」以前会被当成「还在跑」，一直空转到 wait_timeout（默认 2 小时），
+                # 任务面板就长期挂着「运行中 · 完成 5/8」且无法推进——这里改为可恢复处理。
+                used = int(resubmits.get(str(index), 0) or 0)
+                if used < max_resubmit and index < len(workflows):
+                    new_prompt_id = self._comfyui_submit(comfy_url, workflows[index], index)
+                    if new_prompt_id:
+                        resubmits[str(index)] = used + 1
+                        submitted[index] = new_prompt_id
+                        self.app.storage.update_job(
+                            job_id,
+                            checkpoint={"submitted": submitted, "completed": completed,
+                                        "errors": errors, "resubmits": resubmits},
+                        )
+                        self._emit(job_id, {"type": "job_check", "phase": "batch_resubmit",
+                                            "index": index, "prompt_id": new_prompt_id, "total": total})
+                        continue
+                errors.append({
+                    "index": index,
+                    "prompt_id": prompt_id,
+                    "error": "ComfyUI 已丢失该任务（服务重启或队列被清空）",
+                })
+                done_indexes.add(index)
+                self._emit(job_id, {"type": "job_check", "phase": "batch_lost", "index": index, "total": total})
             progress = 30 + (len(done_indexes) / max(total, 1) * 70)
             self.app.storage.update_job(
                 job_id, progress=round(progress, 1), current_step=f"完成 {len(done_indexes)}/{total}",
-                checkpoint={"submitted": submitted, "completed": completed, "errors": errors},
+                checkpoint={"submitted": submitted, "completed": completed, "errors": errors, "resubmits": resubmits},
             )
             if len(done_indexes) < total:
                 time.sleep(1.0 if total <= 4 else 3.0)
@@ -721,6 +814,23 @@ class JobRegistry:
             return False, [], f"ERROR:HTTP {exc.code}"
         except Exception:
             return False, [], ""
+
+    def _comfyui_queue_ids(self, base: str) -> set[str] | None:
+        """当前 ComfyUI 队列中 pending/running 的 prompt_id 集合；查询失败返回 None。"""
+        try:
+            with net_io.open(f"{base}/queue", timeout=15) as resp:
+                data = json.loads(resp.read(200000).decode("utf-8", errors="replace"))
+        except Exception:
+            return None
+        if not isinstance(data, dict):
+            return None
+        ids: set[str] = set()
+        for key in ("queue_running", "queue_pending"):
+            for item in data.get(key) or []:
+                # 队列项形如 [number, prompt_id, workflow, extra, outputs]
+                if isinstance(item, (list, tuple)) and len(item) > 1:
+                    ids.add(str(item[1]))
+        return ids
 
     def _comfyui_reachable(self, base: str) -> bool:
         try:

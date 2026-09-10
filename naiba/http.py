@@ -748,6 +748,15 @@ class RequestHandler(BaseHTTPRequestHandler):
                         self._json({"retried": True, "job_id": new_id}, HTTPStatus.OK)
                     else:
                         self._json({"error": "Job 不存在或无权访问"}, HTTPStatus.NOT_FOUND)
+        elif path.startswith("/api/jobs/") and path.endswith("/cancel"):
+            job_id = path.split("/")[-2]
+            if not job_id:
+                self._json({"error": "job_id 不能为空"}, HTTPStatus.BAD_REQUEST)
+            else:
+                job = self.app.jobs.cancel(
+                    job_id, owner=body.get("conversation_id") or None, reason="用户取消"
+                )
+                self._json(job or {"error": "Job 不存在"}, HTTPStatus.OK if job else HTTPStatus.NOT_FOUND)
         elif path == "/api/chat":
             self._chat(body)
         elif path == "/api/tasks":

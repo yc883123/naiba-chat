@@ -1670,6 +1670,11 @@ class ChatStorage:
         )
 
     def active_run(self, conversation_id: str) -> dict[str, Any] | None:
+        """该对话当前的**顶层**运行中 Run（子 Job 不算）。
+
+        与 create_run / create_chat_run 的 ACTIVE_RUN 互斥语义保持一致：只有顶层 Run
+        占用对话，后台子 Job（parent_job_id 非空）不阻塞用户继续对话。
+        """
         with self._connect() as db:
             row = db.execute(
                 "SELECT id, conversation_id, kind, interaction_mode, input_message_id, plan_id, "
@@ -1677,6 +1682,7 @@ class ChatStorage:
                 "created_at, started_at, updated_at, finished_at "
                 "FROM background_tasks WHERE conversation_id = ? "
                 "AND status IN ('queued', 'running', 'waiting', 'cancelling') "
+                "AND (parent_job_id IS NULL OR parent_job_id = '') "
                 "ORDER BY created_at DESC, rowid DESC LIMIT 1",
                 (conversation_id,),
             ).fetchone()
@@ -1717,10 +1723,14 @@ class ChatStorage:
             # global conversation lock rejected those children with
             # ACTIVE_RUN, leaving the parent Agent stuck after it attempted a
             # background operation.
+            # 同一把锁只由**顶层** Run 持有：后台子 Job（parent_job_id 非空）不得占用
+            # 对话的 ACTIVE_RUN 互斥位，否则异步 Job 一旦长时间运行/卡住，用户在该
+            # 对话发新消息会被 409 拒绝（消息不入库）。
             if not parent_job_id:
                 active = db.execute(
                     "SELECT id FROM background_tasks WHERE conversation_id = ? "
-                    "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
+                    "AND status IN ('queued', 'running', 'waiting', 'cancelling') "
+                    "AND (parent_job_id IS NULL OR parent_job_id = '') LIMIT 1",
                     (conversation_id,),
                 ).fetchone()
                 if active:
@@ -1801,7 +1811,8 @@ class ChatStorage:
             if not parent_job_id:
                 active = db.execute(
                     "SELECT id FROM background_tasks WHERE conversation_id = ? "
-                    "AND status IN ('queued', 'running', 'waiting', 'cancelling') LIMIT 1",
+                    "AND status IN ('queued', 'running', 'waiting', 'cancelling') "
+                    "AND (parent_job_id IS NULL OR parent_job_id = '') LIMIT 1",
                     (conversation_id,),
                 ).fetchone()
                 if active:
