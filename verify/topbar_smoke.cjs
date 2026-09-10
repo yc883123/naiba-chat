@@ -10,6 +10,16 @@ function check(label, ok, detail = '') {
   if (!ok) failures.push(label);
 }
 
+// 按钮「单行」的统一判据：核心是文字不换行（white-space: nowrap）+ 标签只占一行（≤20px）；
+// height 仅作为「没被压成两行/竖排」的上限，取 44px —— ≤760px 手机形态要求触控目标 ≥44px
+// （见维护说明 §六 mobile_shell_smoke），与桌面 34px 形态不冲突。
+// 不要再用「高度必须 ≈34px」这种脆弱断言：它把「单行」错误地绑定在一个具体像素值上。
+const SINGLE_LINE_MAX_HEIGHT = 44;
+const LABEL_MAX_HEIGHT = 20;
+// #mcpStatus 是 .mcp-button，内部没有 .button-label（labelHeight 为 0），故不强制标签存在。
+const isSingleLine = (item) =>
+  item.nowrap === 'nowrap' && item.height <= SINGLE_LINE_MAX_HEIGHT && item.labelHeight <= LABEL_MAX_HEIGHT;
+
 (async () => {
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -80,8 +90,8 @@ function check(label, ok, detail = '') {
         };
       });
     });
-    check('顶栏按钮均为单行（高度 34px 且文字不换行）',
-      layout.length > 0 && layout.every((item) => item.height <= 36 && item.labelHeight <= 20 && item.nowrap === 'nowrap'),
+    check('顶栏按钮均为单行（文字不换行、标签单行、高度 ≤44px）',
+      layout.length > 0 && layout.every(isSingleLine),
       JSON.stringify(layout));
 
     // 文件按钮与其它按钮同款：默认底色/描边/hover 与「任务」一致
@@ -123,10 +133,17 @@ function check(label, ok, detail = '') {
       const narrow = await page.evaluate(() => [...document.querySelectorAll('.topbar-actions .control-button, .topbar-actions .mcp-button')]
         .map((button) => {
           const rect = button.getBoundingClientRect();
-          return { id: button.id, height: Math.round(rect.height), width: Math.round(rect.width) };
+          const label = button.querySelector('.button-label');
+          return {
+            id: button.id,
+            height: Math.round(rect.height),
+            width: Math.round(rect.width),
+            labelHeight: label ? Math.round(label.getBoundingClientRect().height) : 0,
+            nowrap: getComputedStyle(button).whiteSpace,
+          };
         }));
-      check(`窗口 ${width}px 下按钮仍为单行（高度 ≤36px）`,
-        narrow.length > 0 && narrow.every((item) => item.height <= 36 && item.width >= 34),
+      check(`窗口 ${width}px 下按钮仍为单行（文字不换行且高度 ≤44px）`,
+        narrow.length > 0 && narrow.every((item) => isSingleLine(item) && item.width >= 34),
         JSON.stringify(narrow));
     }
     await page.setViewportSize({ width: 1280, height: 900 });

@@ -144,7 +144,6 @@ class ProviderCardsMarkupTests(unittest.TestCase):
             'data-provider-delete="${id}"',
             "data-provider-add",
             "provider-card-name",
-            "provider-card-model",
             "provider-card-tag",
             "provider-card-badge",
             "is-default",
@@ -159,6 +158,12 @@ class ProviderCardsMarkupTests(unittest.TestCase):
             source.index("provider-card-add"),
             "「添加 API」卡片必须排在最后一张",
         )
+        # 卡片压成两行（名称 + 脚行），模型名不再上卡片，对应的死样式也要删掉。
+        self.assertNotIn("provider-card-model", source)
+        self.assertNotIn(".provider-card-model", self._css())
+        card = source[source.index("function providerCardMarkup("):]
+        card = card[: card.index("\n}")]
+        self.assertLess(card.index("provider-card-name"), card.index("provider-card-foot"))
 
     def test_render_does_not_auto_open_form(self) -> None:
         """列表渲染不再顺手打开表单（改为点卡片才开）。"""
@@ -203,6 +208,9 @@ class ProviderCardsMarkupTests(unittest.TestCase):
         cards = cards[: cards.index("}")]
         self.assertIn("repeat(3, minmax(0, 1fr))", cards, "一行最多三张卡片")
         self.assertIn("repeat(2, minmax(0, 1fr))", css, "窄屏应降级为两列")
+        card = css[css.index(".provider-card {"):]
+        card = card[: card.index("}")]
+        self.assertIn("min-height: 88px", card, "卡片压成两行后应更矮（原 116px）")
         delete_rule = css[css.index(".provider-card-delete {"):]
         delete_rule = delete_rule[: delete_rule.index("}")]
         self.assertIn("position: absolute", delete_rule, "× 必须固定在卡片右上角")

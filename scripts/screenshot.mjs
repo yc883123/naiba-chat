@@ -53,10 +53,11 @@ const DEMO_MD = `> 这是说明书的**演示文件**，用于展示右侧文件
 `;
 fs.writeFileSync(DEMO_FILE, DEMO_MD, 'utf-8');
 
-const res = await fetch('http://127.0.0.1:9222/json');
-const targets = await res.json();
-const target = targets.find(t => t.type === 'page') || targets[0];
-const ws = new WebSocket(target.webSocketDebuggerUrl);
+// 必须自己新建一个标签页：直接复用已存在的 page target 时，若它不是前台标签，
+// 渲染器会被后台化，captureScreenshot 会超时或返回空白帧（实测：多张图完全一致）。
+const verRes = await fetch('http://127.0.0.1:9222/json/version');
+const verJson = await verRes.json();
+const ws = new WebSocket(verJson.webSocketDebuggerUrl);
 let seq = 0;
 const pending = new Map();
 ws.addEventListener('message', (e) => {
@@ -87,10 +88,17 @@ const send = (method, params = {}, sessionId) =>
   withTimeout(rawSend(method, params, sessionId), 20000, method);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-const { result: { targetInfos } } = await send('Target.getTargets');
-const page = targetInfos.find(t => t.type === 'page');
-const { result: { sessionId } } = await send('Target.attachToTarget', { targetId: page.targetId, flatten: true });
+// 关掉残留的同源标签，避免它们抢前台（新建的标签就是唯一活跃页）
+try {
+  const { result: { targetInfos } } = await send('Target.getTargets');
+  for (const t of targetInfos.filter(x => x.type === 'page')) {
+    await send('Target.closeTarget', { targetId: t.targetId }).catch(() => {});
+  }
+} catch (_) {}
+const { result: { targetId } } = await send('Target.createTarget', { url: 'about:blank' });
+const { result: { sessionId } } = await send('Target.attachToTarget', { targetId, flatten: true });
 const sess = (method, params = {}) => send(method, params, sessionId);
+const closeTab = () => send('Target.closeTarget', { targetId }).catch(() => {});
 
 await sess('Page.enable');
 await sess('Runtime.enable');
@@ -124,6 +132,23 @@ async function ev(expr) {
   }
   if (r.result?.exceptionDetails) console.error('EVAL ERR:', expr.slice(0, 120), r.result.exceptionDetails);
   return r.result?.result?.value;
+}
+// 局部裁剪截图（用于「输入区模型选择器」这类细节特写）
+async function shotClip(file, clip) {
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const r = await withTimeout(
+        sess('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, clip }),
+        15000, 'captureScreenshot ' + file);
+      fs.writeFileSync(path.join(OUT, file), Buffer.from(r.result.data, 'base64'));
+      console.log('  ✓', file, '(裁剪)', (fs.statSync(path.join(OUT, file)).size / 1024).toFixed(0), 'KB');
+      return;
+    } catch (error) {
+      console.log('  !', file, 'attempt', attempt, error.message);
+      await sleep(1200);
+    }
+  }
+  console.log('  ✗', file, '裁剪截图失败');
 }
 async function shot(file) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
@@ -184,6 +209,30 @@ await navigate('http://127.0.0.1:8765');
 await shot('01-main-empty.png');
 
 // 侧栏折叠
+// 2.1.1：输入区「模型」选择器特写（顶栏选 API、输入区选模型，按会话记忆）
+// 等模型目录拉取完，再裁底部输入区（下拉里有真实模型名）
+await sleep(1200);
+const modelOpts = await ev(`(() => {
+  const s = document.querySelector('#composerModelSelect');
+  return s ? Array.from(s.options).map(o => o.textContent.trim()).join(' | ') : 'null';
+})()`);
+console.log('  composer model options ->', modelOpts);
+const composerBox = await ev(`(() => {
+  const m = document.querySelector('.composer-meta');
+  const w = document.querySelector('.composer-wrap');
+  if (!m || !w) return null;
+  const r = w.getBoundingClientRect();
+  return { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(m.getBoundingClientRect().bottom - r.top) };
+})()`);
+console.log('  composer box ->', JSON.stringify(composerBox));
+if (composerBox && composerBox.height > 40) {
+  await shotClip('32-model-selector.png', {
+    x: composerBox.x, y: composerBox.y,
+    width: composerBox.width, height: composerBox.height,
+    scale: 2,
+  });
+}
+
 await ev(`document.querySelector('#collapseSidebar')?.click()`);
 await sleep(700);
 await shot('02-sidebar-collapsed.png');
@@ -637,6 +686,7 @@ if (demoConv) {
   console.log('  delete demo conversation ->', del);
 }
 try { fs.unlinkSync(DEMO_FILE); console.log('  removed demo markdown'); } catch (_) {}
+await closeTab();
 
 console.log('DONE');
 process.exit(0);

@@ -7,11 +7,11 @@ import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarni
 import { branchMessage, cancelSessionStart, fillContextResetSeed, initTurnRail, isNearBottom, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
-import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveComposerModelSelection, saveCustomComposerModel, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
+import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveComposerModelSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
 import { clearTerminalTasks, closeAgentPromptPresetPanel, closeConversationMenu, conversationMenuTargetId, createWorkspace, deleteConversation, handleAgentPromptPresetPanelClick, importAgentCharacterCard, onComposerWorkspaceChange, onSidebarTreeClick, openAgentPromptPresetSaveDialog, openConversation, openRenameConversation, positionAgentPromptPresetPanel, renderSidebar, renderSidebarWindow, saveAgentPromptPreset, saveNewWorkspace, saveRenameConversation, setSidebarScrollRaf, sidebarRowCache, sidebarScrollRaf, toggleAgentPromptPresetPanel } from "./08-conversations.js";
 import { addProvider, addSearchProfile, applyProviderModelCapabilities, cancelProviderEdit, cleanImageCache, closeAgentToolEditor, compactDatabase, deleteAgent, deleteProvider, deleteSearchProfile, deleteVisionProvider, hideAgentForm, handleAgentAvatarFile, handleAgentToolPresetCardsClick, handleAgentToolPresetCardsKeydown, loadMcpServers, loadProviderModels, loadStorageStats, loadWorkspaceTree, openAgentCard, openProviderCard, openVisionProviderForm, persistSearchProfiles, pickAgentAvatar, pickWorkspace, refreshImageCacheSize, renderAgentManager, renderAgentSkillPicker, renderImageCompressRow, renderProviders, renderProxyRows, renderSearchProfileFields, renderSkills, renderToolScopeList, saveAccessToken, saveAgentForm, saveAgentToolSet, saveMcpServer, saveProvider, saveRuntimeSettings, saveSearchSettings, saveVisionSettings, saveWorkspaceSettings, searchProfiles, showAgentForm, switchAgentTab, syncProviderKindOptions, testProvider, testSearchConnection, testVisionConnection, toggleAllToolGroups, toggleCustomModel, toggleProviderKey, updateAgentSkillTabCount, updateProviderContextField, updateProviderFormatGuide, updateProviderVisionHint } from "./09-settings.js";
 import { readAsDataUrl, renderPendingFiles, uploadFiles } from "./10-upload.js";
-import { cancelCurrentRun, closeQuickMessagePanel, closeReasoningMenu, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, positionReasoningMenu, quickPanelState, reloadPage, restoreStarterPresets, saveStarterPrompt, sendMessage, setReasoningEffort, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel } from "./12-chat-input.js";
+import { cancelCurrentRun, closeQuickMessagePanel, closeReasoningMenu, handleQuickMessagePanelClick, handlePasteImage, openStarterPromptDialog, positionQuickMessagePanel, positionReasoningMenu, quickPanelState, reloadPage, restoreStarterPresets, saveStarterPrompt, sendMessage, setReasoningEffort, startSkillEdit, startSkillInstall, toggleDeepReasoning, toggleQuickMessagePanel, togglePermissionModeMenu, positionPermissionModeMenu, closePermissionModeMenu, permissionMenuState } from "./12-chat-input.js";
 import { commitSkillSelection, hideSkillPopup, insertSkillRefAtCursor, moveSkillPopupSelection, popupState, positionSkillPopup, renderInputMirror, resizeTextarea, setSkillPopupSelection, skillList, updateSkillPopup } from "./13-skill-refs.js";
 import { activateFileTab, activeFileTab, applyFilePanelOpenClass, cancelFileEdit, closeFilePanel, closeSidebar, filePanelState, filePanelUsable, openFilePanel, openSidebar, removeFileTab, reopenFilePanel, restoreLeftSidebarCollapse, saveFileTab, setLeftSidebarCollapsed, sidebarDesktop, startFileEdit, updateFileTabsButton } from "./14-file-panel.js";
 import { handleFilePopupClick, handleFilePopupKey, positionFilePopup, updateFilePopup } from "./16-file-refs.js";
@@ -106,8 +106,6 @@ export function bindEvents() {
   });
   $('#modelSelect').addEventListener('change', saveModelSelection);
   $('#composerModelSelect').addEventListener('change', saveComposerModelSelection);
-  $('#composerModelCustom').addEventListener('change', saveCustomComposerModel);
-  $('#composerModelCustom').addEventListener('blur', saveCustomComposerModel);
   $('#agentSelect').addEventListener('change', saveAgentSelection);
   $('#openSkills').addEventListener('click', () => $('#skillsDialog').showModal());
   $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());
@@ -117,9 +115,21 @@ export function bindEvents() {
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
   });
-  $('#permissionModeSwitch').addEventListener('click', (event) => {
-    const button = event.target.closest('[data-permission-mode]');
-    if (button) switchPermissionMode(button.dataset.permissionMode);
+  // 审批模式上拉框：触发按钮负责开合，选项按钮才是选择（点选后由 switchPermissionMode 收起）。
+  $('#permissionModeButton').addEventListener('click', (event) => {
+    event.stopPropagation();
+    togglePermissionModeMenu();
+  });
+  $('#permissionModeMenu').addEventListener('click', (event) => {
+    const option = event.target.closest('[data-permission-mode]');
+    if (option && !option.disabled) switchPermissionMode(option.dataset.permissionMode);
+  });
+  window.addEventListener('resize', positionPermissionModeMenu);
+  window.addEventListener('scroll', positionPermissionModeMenu, true);
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || !permissionMenuState.open) return;
+    closePermissionModeMenu();
+    $('#permissionModeButton').focus();
   });
   $('#taskList').addEventListener('click', (event) => {
     const item = event.target.closest('[data-task-id]');
@@ -288,6 +298,8 @@ export function bindEvents() {
   window.addEventListener('resize', positionQuickMessagePanel);
   window.addEventListener('scroll', positionQuickMessagePanel, true);
   document.addEventListener('click', (event) => {
+    // 审批上拉框：点菜单与触发按钮之外的地方即收起（触发按钮自身已 stopPropagation）。
+    if (permissionMenuState.open && !event.target.closest?.('#permissionModeMenu')) closePermissionModeMenu();
     if (!quickPanelState.open) return;
     if (event.target.closest?.('#quickMessagePanel')) return;
     if (event.target.closest?.('#quickMessageButton')) return;
@@ -557,11 +569,9 @@ export function bindEvents() {
   const openFileTabsButton = $('#openFileTabs');
   if (openFileTabsButton) openFileTabsButton.addEventListener('click', reopenFilePanel);
   window.addEventListener('resize', () => {
-    if (filePanelUsable()) {
-      if (filePanelState.open) applyFilePanelOpenClass();
-    } else if (filePanelState.open) {
-      closeFilePanel(); // 窄屏收起右侧栏；保留标签，回到宽屏可用顶栏「文件 N」重开
-    }
+    // 文件面板在两种形态下都可用（桌面右栏 / 手机全屏抽屉），跨越 760px 时只需重算列宽，
+    // 不再像以前那样把面板关掉——那正是手机端"没有打开文件能力"的来源。
+    if (filePanelState.open) applyFilePanelOpenClass();
     if (!sidebarDesktop()) $('#appShell')?.classList.remove('sidebar-collapsed');
     updateFileTabsButton();
   });
@@ -960,7 +970,7 @@ export async function deleteInstalledSkill(skill) {
   const refs = (state.bootstrap.agents || [])
     .filter((a) => (a.skill_ids || []).map(String).includes(String(skill.id)))
     .map((a) => a.name);
-  const dir = skill.root || skill.path || '';
+  const dir = skill.path || skill.root || '';
   const msg = `删除 Skill「${skill.name}」？\n目录：${dir}\n${refs.length ? `被以下 Agent 引用：${refs.join('、')}（引用将被移除）` : '未被任何 Agent 引用'}`;
   if (!confirm(msg)) return;
   try {

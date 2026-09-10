@@ -275,6 +275,25 @@ class StreamMixins:
         if final_text:
             full_content_parts.append(final_text)
             pending += final_text
+        # codex_responses 中继可能只回聚合事件（response.completed /
+        # response.output_item.done）而不逐段发 output_text.delta。增量正文为空时
+        # 从这里回填正文/思考/reasoning_id/tool action，避免被误判为空流。
+        aggregated_action = ""
+        if (
+            request_format == "codex_responses"
+            and not native_tool_calls
+            and not tool_protocol
+        ):
+            agg_text, agg_reasoning, agg_id, aggregated_action = (
+                ProtocolMixins._codex_responses_aggregated(chunks)
+            )
+            if agg_id and agg_id not in reasoning_ids:
+                reasoning_ids.append(agg_id)
+            if agg_reasoning and not reasoning_parts:
+                reasoning_streamer.feed(agg_reasoning)
+            if not aggregated_action and agg_text and not "".join(full_content_parts).strip():
+                full_content_parts.append(agg_text)
+                pending += agg_text
         if not tool_protocol:
             pending, tool_protocol = StreamMixins._forward_guarded_text(pending, status, final=True)
         reasoning_streamer.finish()
@@ -282,6 +301,9 @@ class StreamMixins:
         if native_tool_calls:
             # Convert to the internal action structure the Agent Loop consumes.
             content = ProtocolMixins._build_action_from_native_tool_calls(native_tool_calls)
+        elif aggregated_action:
+            # 仅聚合事件的 function_call：镜像非流式 _online_response 的 action 优先。
+            content = aggregated_action
         else:
             content = StreamMixins._clean_content("".join(full_content_parts))
         return {

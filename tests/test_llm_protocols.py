@@ -5,6 +5,7 @@
 行为等价（MRO 委派）。全部用例直接以 ProtocolMixins 静态方法调用（不经网络）。
 """
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -172,6 +173,55 @@ class LlmProtocolTests(unittest.TestCase):
     def test_content_helpers(self):
         self.assertEqual(P._content_text([{"type": "text", "text": "A"}, {"type": "text", "text": "B"}]), "A\nB")
         self.assertEqual(P._text_value("x"), "x")
+
+    def test_codex_responses_aggregated_dedup_and_filter(self):
+        """聚合提取：completed 优先、同 id 去重、incomplete 排除、function_call 成 action。"""
+        items = [
+            {"type": "message", "id": "m1", "content": [{"type": "output_text", "text": "正文"}]},
+            {"type": "reasoning", "id": "r1", "content": [{"type": "reasoning_text", "text": "思考"}]},
+            {"type": "function_call", "call_id": "c1", "name": "pwsh",
+             "arguments": json.dumps({"command": "dir"})},
+        ]
+        chunks = [
+            {"type": "response.output_item.done", "item": items[0]},
+            {"type": "response.output_item.done", "item": items[1]},
+            {"type": "response.completed", "response": {"output": items}},
+            {"type": "response.incomplete", "response": {"output": [
+                {"type": "message", "id": "m2",
+                 "content": [{"type": "output_text", "text": "被截断"}]}]}},
+        ]
+        text, reasoning, reasoning_id, action = P._codex_responses_aggregated(chunks)
+        self.assertEqual(text, "正文", "completed 优先且同 id 去重，正文只出现一次")
+        self.assertEqual(reasoning, "思考")
+        self.assertEqual(reasoning_id, "r1")
+        payload = json.loads(action)
+        self.assertEqual(payload["type"], "tool")
+        self.assertEqual(payload["tool"], "pwsh")
+        self.assertEqual(payload["arguments"], {"command": "dir"})
+        self.assertNotIn("被截断", text, "incomplete 不得作为回填来源")
+
+    def test_codex_responses_aggregated_done_only_fallback(self):
+        """completed 缺失时回退 output_item.done。"""
+        chunks = [
+            {"type": "response.output_item.done", "item": {
+                "type": "message", "id": "m1",
+                "content": [{"type": "output_text", "text": "仅 done"}]}},
+        ]
+        text, reasoning, reasoning_id, action = P._codex_responses_aggregated(chunks)
+        self.assertEqual(text, "仅 done")
+        self.assertEqual((reasoning, reasoning_id, action), ("", "", ""))
+
+    def test_codex_responses_aggregated_incomplete_blocks_done_fallback(self):
+        """incomplete 即使在 done 之后到达，也不能把部分 item 当成功结果。"""
+        chunks = [
+            {"type": "response.output_item.done", "item": {
+                "type": "message", "id": "m1",
+                "content": [{"type": "output_text", "text": "截断前内容"}]}},
+            {"type": "response.incomplete", "response": {"output": []}},
+        ]
+        self.assertEqual(
+            P._codex_responses_aggregated(chunks), ("", "", "", ""),
+        )
 
 
 if __name__ == "__main__":

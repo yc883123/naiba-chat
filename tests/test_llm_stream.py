@@ -5,6 +5,7 @@
 缓冲收尾自 ModelRuntime 迁入 StreamMixins 时的行为等价（MRO 委派，纯解析不触网）。
 """
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -16,6 +17,11 @@ from naiba.llm.stream import (  # noqa: E402
     _InlineReasoningParser,
     _ReasoningStreamer,
 )
+
+
+def sse(chunk: dict) -> bytes:
+    """把单个 Responses SSE 事件序列化成一行 bytes。"""
+    return ("data: " + json.dumps(chunk, ensure_ascii=False)).encode("utf-8")
 
 
 class StreamGuardTests(unittest.TestCase):
@@ -122,6 +128,77 @@ class StreamReaderTests(unittest.TestCase):
             'data: {"type": "response.reasoning_text.delta", "item_id": "rs_delta9", "delta": "一下"}'.encode("utf-8"),
         ], "codex_responses", None)
         self.assertEqual(result["reasoning_id"], "rs_delta9")
+
+    def test_read_sse_backfills_aggregated_message_once(self):
+        """无 output_text.delta、仅聚合事件时回填正文；done 与 completed 含同一
+        message 时正文只能下发一次。"""
+        message = {"type": "message", "id": "msg_1",
+                   "content": [{"type": "output_text", "text": "聚合正文"}]}
+        response = [
+            sse({"type": "response.output_item.done", "item": message}),
+            sse({"type": "response.completed", "response": {"output": [message]}}),
+        ]
+        events = []
+        result = StreamMixins._read_sse_response(response, "codex_responses", events.append)
+        self.assertEqual(result["content"], "聚合正文")
+        self.assertEqual(
+            sum(1 for e in events if e.get("type") == "delta" and e.get("content") == "聚合正文"),
+            1,
+            "同一 message 同时出现在 done 与 completed 时正文只能下发一次",
+        )
+
+    def test_read_sse_backfills_aggregated_reasoning_and_id(self):
+        """仅聚合事件时回填思考文本与 reasoning item id（供下一轮回传）。"""
+        reasoning_item = {"type": "reasoning", "id": "rs_agg1",
+                          "content": [{"type": "reasoning_text", "text": "聚合思考"}]}
+        response = [
+            sse({"type": "response.output_item.done", "item": reasoning_item}),
+            sse({"type": "response.completed", "response": {"output": [
+                reasoning_item,
+                {"type": "message", "id": "msg_2",
+                 "content": [{"type": "output_text", "text": "答复"}]},
+            ]}}),
+        ]
+        result = StreamMixins._read_sse_response(response, "codex_responses", None)
+        self.assertEqual(result["content"], "答复")
+        self.assertEqual(result["reasoning"], "聚合思考")
+        self.assertEqual(result["reasoning_id"], "rs_agg1")
+
+    def test_read_sse_backfills_aggregated_function_call(self):
+        """仅聚合事件的 function_call 也要组装为 Agent action，不能被当空流。"""
+        response = [
+            sse({"type": "response.completed", "response": {"output": [
+                {"type": "function_call", "call_id": "call_1", "name": "pwsh",
+                 "arguments": json.dumps({"command": "dir"})},
+            ]}}),
+        ]
+        result = StreamMixins._read_sse_response(response, "codex_responses", None)
+        payload = json.loads(result["content"])
+        self.assertEqual(payload["type"], "tool")
+        self.assertEqual(payload["tool"], "pwsh")
+        self.assertEqual(payload["arguments"], {"command": "dir"})
+
+    def test_read_sse_incomplete_not_backfilled(self):
+        """response.incomplete 属被截断的回答，不得作为成功正文回填。"""
+        response = [
+            sse({"type": "response.incomplete", "response": {"output": [
+                {"type": "message", "id": "msg_x",
+                 "content": [{"type": "output_text", "text": "被截断"}]},
+            ]}}),
+        ]
+        result = StreamMixins._read_sse_response(response, "codex_responses", None)
+        self.assertEqual(result["content"], "")
+
+    def test_read_sse_incomplete_blocks_prior_done_backfill(self):
+        """done 在 incomplete 之前到达时，截断部分也不得进入成功正文。"""
+        response = [
+            sse({"type": "response.output_item.done", "item": {
+                "type": "message", "id": "msg_partial",
+                "content": [{"type": "output_text", "text": "截断前内容"}]}}),
+            sse({"type": "response.incomplete", "response": {"output": []}}),
+        ]
+        result = StreamMixins._read_sse_response(response, "codex_responses", None)
+        self.assertEqual(result["content"], "")
 
 
 if __name__ == "__main__":

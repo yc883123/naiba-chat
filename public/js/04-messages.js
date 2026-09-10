@@ -645,6 +645,8 @@ let turnRailActive = -1;
 let turnRailWindow = { start: -1, end: -1 };
 let turnRailFrame = 0;
 let turnRailBound = false;
+// 手机端顶栏「轮次」下拉：刻度轨的等价出口，共用上面这份 turnRailTurns / turnRailActive。
+let turnJumpSuppressUntil = 0;   // 下拉跳转后的平滑滚动期间，别被"中途轮次"改写选中项
 
 // 消息数据的文本预览（懒加载下未渲染的轮次没有 DOM，刻度轨概要只能从数据取）。
 function messagePreviewText(message, limit) {
@@ -722,10 +724,13 @@ function renderTurnRail() {
     turnRailWindow = { start: -1, end: -1 };
     turnRailActive = -1;
     hideTurnTip();
+    hideTurnJump();
     return;
   }
   const offsets = turnRailOffsets(container);
   const active = turnRailActiveIndex(container, offsets);
+  // 手机端下拉与刻度轨共用同一份轮次模型、同一个 active：不另算一遍，也不会两处漂移。
+  renderTurnJump(turnRailTurns, active);
   const total = turnRailTurns.length;
   const span = Math.min(TURN_RAIL_MAX, total);
   const start = Math.max(0, Math.min(active - Math.floor(span / 2), total - span));
@@ -811,6 +816,69 @@ function hideTurnTip() {
   if (tip) tip.hidden = true;
 }
 
+/* ---------- 手机端顶栏「轮次」下拉（桌面刻度轨的等价形态） ---------- */
+
+function turnJumpSelect() {
+  return $('#turnJumpSelect');
+}
+
+function turnJumpLabel(turn, index) {
+  return `第 ${index + 1} 轮 · ${turn?.user || '（无文字，仅附件）'}`;
+}
+
+function hideTurnJump() {
+  const select = turnJumpSelect();
+  if (!select) return;
+  select.hidden = true;
+  select.replaceChildren();
+}
+
+// 只在「总轮数」变化时重建 <option>：轮数没变只就地刷新文案（流式回复/编辑重渲染都会
+// 反复触发刻度轨重建，每帧重写 DOM 是迟滞主因，教训 §九.37）。
+function renderTurnJump(turns, active) {
+  const select = turnJumpSelect();
+  if (!select || !turns || turns.length < 2) return;
+  select.hidden = false;
+  if (select.options.length !== turns.length) {
+    select.replaceChildren();
+    turns.forEach((turn, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      option.textContent = turnJumpLabel(turn, index);
+      select.append(option);
+    });
+  } else {
+    turns.forEach((turn, index) => {
+      const option = select.options[index];
+      const label = turnJumpLabel(turn, index);
+      if (option && option.textContent !== label) option.textContent = label;
+    });
+  }
+  syncTurnJump(active);
+}
+
+// 只挪选中项，不碰 options；跳转后的平滑滚动期间不回写（否则选中项会被中途轮次抢走）。
+function syncTurnJump(active) {
+  const select = turnJumpSelect();
+  if (!select || select.hidden || Date.now() < turnJumpSuppressUntil) return;
+  const value = String(Math.max(0, Number(active) || 0));
+  if (select.value !== value) select.value = value;
+}
+
+// 用户从下拉里选轮次 → 复用刻度轨的 scrollToTurn（内含懒加载"先扩窗口再重收集锚点"），
+// 不自己算 scrollTop（教训 §九.56）。
+function applyTurnJump(value) {
+  const index = Number(value);
+  if (!Number.isFinite(index)) return;
+  turnJumpSuppressUntil = Date.now() + 700;
+  scrollToTurn(index);
+  // 动画结束后再同步一次：中途被抑制，落点必须与选中项一致。
+  window.setTimeout(() => {
+    turnJumpSuppressUntil = 0;
+    scheduleTurnRail();
+  }, 720);
+}
+
 function scrollToTurn(index) {
   let turn = turnRailTurns[index];
   const container = $('#messages');
@@ -835,6 +903,9 @@ export function initTurnRail() {
   const container = $('#messages');
   if (!rail || !container || turnRailBound) return;
   turnRailBound = true;
+  // 手机端轮次下拉（桌面被 .mobile-only 隐藏）：选中即跳到该轮。
+  const jumpSelect = turnJumpSelect();
+  if (jumpSelect) jumpSelect.addEventListener('change', () => applyTurnJump(jumpSelect.value));
   container.addEventListener('scroll', scheduleTurnRail, { passive: true });
   // 懒加载：滚到接近顶部就往前预渲染一段（窗口按「轮」扩展，分割线不会与锚点分离）。
   container.addEventListener('scroll', () => {

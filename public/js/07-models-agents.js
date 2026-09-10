@@ -30,7 +30,7 @@ export function renderUpdateStatus(status) {
     });
   select.replaceChildren(...options);
   select.disabled = options.length === 0 || ['checking', 'downloading', 'restarting'].includes(status.phase);
-  // 检查完成后优先选中新版本，而不是保留检查前的“当前版本”。否则在不展开
+  // 检查完成后优先选中新版本，而不是保留检查前的"当前版本"。否则在不展开
   // 下拉框时看不出已经有更新。手动选择版本后仍按用户选择保留。
   const newerOption = options.find((option) => {
     const release = releases.find((item) => item.tag === option.value);
@@ -203,8 +203,6 @@ export function selectedProvider() {
 
 export function selectedModelName() {
   const select = $('#composerModelSelect');
-  const custom = $('#composerModelCustom');
-  if (select?.value === '__custom__') return String(custom?.value || '').trim();
   if (select?.value) return String(select.value).trim();
   return String(selectedProvider()?.model || '').trim();
 }
@@ -227,45 +225,48 @@ function composerModelEntries(provider) {
 
 function renderComposerModels(provider, preferredModel = '') {
   const select = $('#composerModelSelect');
-  const custom = $('#composerModelCustom');
-  if (!select || !custom) return;
+  if (!select) return;
   const desired = String(preferredModel || '').trim();
   const entries = composerModelEntries(provider);
+  // 下拉只列「当前 API 的模型目录 + 该 API 的默认模型」，不再提供手动输入。
+  // 历史会话保存的模型可能已不在目录里：置顶为「已保存：X」并默认选中，否则会被
+  // 目录里的第一个悄悄顶掉——发出去的模型与保存的不一致，用户无从察觉。
+  const savedMissing = Boolean(desired) && !entries.some((item) => item.id === desired);
   select.innerHTML = '';
+  if (savedMissing) {
+    const saved = document.createElement('option');
+    saved.value = desired;
+    saved.textContent = `已保存：${desired}`;
+    select.append(saved);
+  }
   entries.forEach((model) => {
     const option = document.createElement('option');
     option.value = model.id;
     option.textContent = model.name;
     select.append(option);
   });
-  const customOption = document.createElement('option');
-  customOption.value = '__custom__';
-  customOption.textContent = '手动输入模型名称…';
-  select.append(customOption);
   const selected = desired || String(provider?.model || '').trim();
-  if (selected && entries.some((item) => item.id === selected)) {
-    select.value = selected;
-    custom.hidden = true;
-    custom.value = '';
-  } else {
-    select.value = '__custom__';
-    custom.hidden = false;
-    custom.value = selected;
-  }
+  if (selected) select.value = selected;
 }
 
 export async function populateComposerModels(preferredModel = '') {
   const provider = selectedProvider();
   const providerKey = String(provider?.model_key || '');
+  // 记下发请求时的会话：目录返回后会话可能已经切走。两个会话共用同一 API 时，
+  // 先返回的旧请求若照旧重绘，会把旧会话的模型顶到新会话的下拉框上。
+  const conversationId = state.conversationId;
   renderComposerModels(provider, preferredModel || selectedModelName());
   if (!providerKey || state.providerModelCatalogs[providerKey]) return;
   try {
     const result = await api('/api/providers/models', { method: 'POST', body: { model_key: providerKey } });
-    if ($('#modelSelect')?.value !== providerKey) return;
     state.providerModelCatalogs[providerKey] = Array.isArray(result.models) ? result.models : [];
-    renderComposerModels(provider, preferredModel || selectedModelName());
+    // 目录本身只写缓存；仅当「API 未变 且 会话未变」时才重绘，且选中项一律按
+    // 当前下拉框的实际值重算，不再回填旧请求的 preferredModel。
+    if ($('#modelSelect')?.value !== providerKey) return;
+    if (state.conversationId !== conversationId) return;
+    renderComposerModels(selectedProvider(), selectedModelName());
   } catch (error) {
-    // 某些 API 不提供 models 目录；保留 API 配置中的默认模型与手动输入入口。
+    // 某些 API 不提供 models 目录；此时只剩该 API 自身配置的默认模型（不再有手动输入入口）。
     console.debug('[naiba] 获取 API 模型目录失败:', error.message);
   }
 }
@@ -281,23 +282,7 @@ async function persistConversationModelName(modelName) {
 
 export async function saveComposerModelSelection() {
   const select = $('#composerModelSelect');
-  const custom = $('#composerModelCustom');
-  if (!select || !custom) return;
-  custom.hidden = select.value !== '__custom__';
-  if (select.value === '__custom__') {
-    custom.focus();
-    return;
-  }
-  custom.value = '';
-  try {
-    await persistConversationModelName(selectedModelName());
-  } catch (error) {
-    toast(`保存模型失败：${error.message}`);
-  }
-}
-
-export async function saveCustomComposerModel() {
-  if ($('#composerModelSelect')?.value !== '__custom__') return;
+  if (!select) return;
   try {
     await persistConversationModelName(selectedModelName());
   } catch (error) {
@@ -335,7 +320,7 @@ export async function unloadProviderModel(provider) {
     toast('请先等待当前对话结束');
     return;
   }
-  if (!confirm(`卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 模型“${provider.model}”？`)) return;
+  if (!confirm(`卸载${kind === 'ollama' ? ' Ollama' : ' LM Studio'} 模型"${provider.model}"？`)) return;
   $('#unloadProviderModel').disabled = true;
   try {
     const result = await api('/api/models/unload', {

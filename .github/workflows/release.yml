@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 2.1.1-beta
-  RELEASE_TAG: v2.1.1-beta
-  PACKAGE_NAME: naiba-chat-2.1.1-beta-windows-x64
+  RELEASE_VERSION: 2.2.0-beta
+  RELEASE_TAG: v2.2.0-beta
+  PACKAGE_NAME: naiba-chat-2.2.0-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 2.1.1 Beta release
+      - name: Publish 2.2.0 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 2.1.1 Beta
+          name: Naiba Chat 2.2.0 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,12 +99,14 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 2.1.1 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 2.2.0 Beta Windows build from `${{ github.sha }}`.
 
             本次更新（完整清单见 `release_notes.json` / 应用内「更新说明」）：
-            - 会话级模型选择：顶栏「模型」下拉改为「API」下拉（只选连接配置）；输入区新增「模型」选择器，自动拉取该 API 的模型目录，也可手动输入模型名称（按会话记忆、分支继承，不影响其它会话）。
-            - 切换 API 或模型名后自动重新探测图像能力（chat_supports_images 重置），换模型不再沿用旧模型的视觉判断；数据库 v17 迁移新增 conversations.model_name 列（幂等）。
-            - 新增测试：v17 迁移幂等、model_name 往返 / 能力重置 / 分支继承、顶栏 API + 输入区模型选择器结构守门。
+            - 手机端「功能对等」：电脑能做的手机都能做，只换形态——文件面板改为全屏抽屉、消息末尾文件条目可点、桌面刻度轨换成顶栏轮次下拉、触摸目标不小于 44px。
+            - 修复 Skill 安装目录归属：散装上传（单文件 .md / 顶层散放 SKILL.md 的 zip）先建独立子目录；删除带归属校验，杜绝「删一个 Skill 全部消失」；升级自动迁移历史裸定义文件并保留引用。
+            - 在线模型稳健性：Codex Responses 聚合事件回填（正文/思考/工具调用）、空流按瞬时故障重试、HTTP 5xx 退避重试并落盘失败请求体取证。
+            - 界面打磨：审批模式改为上拉框；输入区模型只从当前 API 的模型目录里选（历史模型置顶「已保存：X」）；API 供应商卡片更紧凑。
+            - 新增守门测试：手机端对等 / 轮次下拉 / Skill 安装布局 / Codex 聚合回放与重试落盘。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

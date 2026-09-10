@@ -6,7 +6,7 @@ import { $, $$, api, escapeHtml, notifyComposerChanged, state, toast } from "./0
 import { markdown } from "./02-markdown.js";
 import { setContextUsage, toolMediaMarkup, updateContextComposerLock, updateContextUsage, usageMarkup } from "./03-media.js";
 import { fillContextResetSeed, getStreamingProseSegment, messageElement, moveBottomProseInline, refreshFirstTurnCard, replaceWithMessage, scheduleStreamingMarkdown, scrollToBottom } from "./04-messages.js";
-import { loadTasks } from "./06-tasks-plans.js";
+import { loadTasks, renderPermissionModeSwitch } from "./06-tasks-plans.js";
 import { updateUnloadModelButton } from "./07-models-agents.js";
 import { createConversation, openConversation } from "./08-conversations.js";
 import { uploadFiles } from "./10-upload.js";
@@ -430,6 +430,53 @@ export function closeReasoningMenu() {
   if (!menu || menu.hidden) return;
   menu.hidden = true;
   $('#deepReasoningButton')?.setAttribute('aria-expanded', 'false');
+}
+
+// ---- 审批模式上拉框（与思考强度列表同套路：挂 body + fixed 定位 + 夹在视口内）----
+// 收起态只有一个触发按钮；点开才在按钮上方弹出选项列表（原为平铺四段，占位又拥挤）。
+export const permissionMenuState = { open: false };
+
+export function togglePermissionModeMenu() {
+  const menu = $('#permissionModeMenu');
+  const button = $('#permissionModeButton');
+  if (!menu) return;
+  if (permissionMenuState.open) { closePermissionModeMenu(); return; }
+  if (button?.disabled) return;
+  // 弹层挂到 body 并 fixed 定位：避免被 .composer-wrap 的 overflow 裁剪（教训 §九.27）。
+  if (menu.parentElement !== document.body) document.body.appendChild(menu);
+  permissionMenuState.open = true;
+  menu.hidden = false;
+  button?.setAttribute('aria-expanded', 'true');
+  // 打开前按会话数据刷新一次当前档高亮，避免沿用上一轮的旧高亮。
+  renderPermissionModeSwitch();
+  positionPermissionModeMenu();
+}
+
+// 审批列表定位（fixed + 右对齐按钮、夹在视口内；优先向上展开，贴顶则下翻）。
+export function positionPermissionModeMenu() {
+  const menu = $('#permissionModeMenu');
+  const button = $('#permissionModeButton');
+  if (!menu || !button || menu.hidden) return;
+  const rect = button.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const edge = 12;
+  const left = Math.min(
+    Math.max(edge, rect.right - menuRect.width),
+    Math.max(edge, window.innerWidth - menuRect.width - edge),
+  );
+  let top = rect.top - menuRect.height - 8;
+  if (top < edge) {
+    top = Math.min(rect.bottom + 8, Math.max(edge, window.innerHeight - menuRect.height - edge));
+  }
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.round(top)}px`;
+}
+
+export function closePermissionModeMenu() {
+  permissionMenuState.open = false;
+  const menu = $('#permissionModeMenu');
+  if (menu) menu.hidden = true;
+  $('#permissionModeButton')?.setAttribute('aria-expanded', 'false');
 }
 
 // 选择一档思考强度（菜单项点击）。思考强度是**会话级**设置：没有会话时先建会话再保存。

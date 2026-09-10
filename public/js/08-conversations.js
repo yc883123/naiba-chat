@@ -8,7 +8,7 @@ import { activeTaskStatuses, loadTasks, renderPermissionModeSwitch, taskStatusLa
 import { applyConversationAgent, applyConversationModel, selectedModelName } from "./07-models-agents.js";
 import { readAsDataUrl } from "./10-upload.js";
 import { detachRunSubscription, resumeConversationRun } from "./11-run-stream.js";
-import { closeQuickMessagePanel, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
+import { closePermissionModeMenu, closeQuickMessagePanel, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
 import { prefillPresetSkillsInComposer } from "./13-skill-refs.js";
 import { clearFileRefCache, hideFilePopup } from "./16-file-refs.js";
 import { closeFilePanel, closeSidebar } from "./14-file-panel.js";
@@ -639,6 +639,8 @@ export async function openConversation(id) {
     hideFilePopup();
     clearFileRefCache();
     closeQuickMessagePanel();
+    // 审批模式上拉框挂在 body 上，切换会话同样要收起，避免浮层残留
+    closePermissionModeMenu();
   }
   const conversation = await api(`/api/conversations/${id}`);
   state.conversationId = id;

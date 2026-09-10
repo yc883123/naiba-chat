@@ -122,20 +122,31 @@ class TopbarStyleTests(unittest.TestCase):
         self.assertIn("stroke: currentColor", rule)
 
     def test_api_stays_in_topbar_and_model_selector_stays_by_composer(self) -> None:
-        """API 负责选连接配置，实际模型在输入区紧凑选择或手动填写。"""
+        """API 负责选连接配置，实际模型在输入区从「当前 API 的模型目录」里选，不再手动填写。"""
         index = self._index()
         topbar = index[index.index('<header class="topbar">'):index.index('</header>')]
         self.assertIn('<span>API</span>', topbar)
         self.assertIn('id="modelSelect"', topbar)
         composer = index[index.index('<div class="composer-meta">'):index.index('</section>', index.index('<div class="composer-meta">'))]
         self.assertIn('id="composerModelSelect"', composer)
-        self.assertIn('id="composerModelCustom"', composer)
-        self.assertIn('手动输入模型名称', composer)
+        self.assertNotIn('id="composerModelCustom"', index, "手动输入模型名称已移除")
+        self.assertNotIn("手动输入模型名称", index)
         bind = self._bind()
         self.assertIn("$('#composerModelSelect').addEventListener('change', saveComposerModelSelection)", bind)
-        self.assertIn("$('#composerModelCustom').addEventListener('blur', saveCustomComposerModel)", bind)
+        self.assertNotIn("saveCustomComposerModel", bind, "手动输入的绑定未清理")
+        models = (ROOT / "public/js/07-models-agents.js").read_text(encoding="utf-8")
+        self.assertNotIn("saveCustomComposerModel", models)
+        self.assertNotIn("__custom__", models, "下拉里不应再有「手动输入」分支")
+        self.assertIn("已保存：", models, "历史模型不在目录时置顶「已保存：X」，不能被静默换掉")
         stream = (ROOT / "public/js/11-run-stream.js").read_text(encoding="utf-8")
         self.assertIn("model_name: selectedModelName()", stream)
+
+    def test_turn_jump_select_lives_in_topbar_actions(self) -> None:
+        """手机端轮次下拉在顶栏操作区（桌面由 .mobile-only 隐藏），细节见 test_turn_jump.py。"""
+        index = self._index()
+        actions = index[index.index('class="topbar-actions"'):]
+        actions = actions[: actions.index("</header>")]
+        self.assertIn('id="turnJumpSelect"', actions, "轮次下拉不在顶栏操作区")
 
 
 if __name__ == "__main__":

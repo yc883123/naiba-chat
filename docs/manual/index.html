@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Naiba Chat 应用说明书 · 2.1.0 Beta</title>
+<title>Naiba Chat 应用说明书 · 2.1.1 Beta</title>
 <style>
   :root {
     --bg: #fbfaf7;
@@ -108,18 +108,18 @@
 <div class="layout">
   <nav class="toc-nav">
     <div class="brand">Naiba Chat<br>应用说明书</div>
-    <div class="sub">2.1.0 Beta · Windows</div>
+    <div class="sub">2.1.1 Beta · Windows</div>
     <input class="search" type="search" placeholder="搜索标题（Ctrl+F）" onfocus="this.select()">
     <ul class="toc">
 </ul><ul class="toc toc-l1">
-<li><a href="#naiba-chat-210-beta">Naiba Chat 应用说明书（2.1.0 Beta）</a></li>
+<li><a href="#naiba-chat-211-beta">Naiba Chat 应用说明书（2.1.1 Beta）</a></li>
 <li><a href="#_1">阅读路径</a></li>
-<li><a href="#30-naiba-chat">十大亮点（用 30 秒了解 Naiba Chat 能干什么）</a></li>
+<li><a href="#30-naiba-chat">亮点速览（用 30 秒了解 Naiba Chat 能干什么）</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#1">第 1 章　三分钟跑起来</a></li>
 <li><a href="#11">1.1 它到底是什么</a></li>
 <li><a href="#12">1.2 下载、解压、双击</a></li>
-<li><a href="#13">1.3 第一次打开要做的三件事</a></li>
+<li><a href="#13">1.3 第一次打开要做的四件事</a></li>
 <li><a href="#14-30">1.4 界面 30 秒认识</a></li>
 <li><a href="#15">1.5 你必须知道的三个开关</a></li>
 <li><a href="#1_1">① 审批三档</a></li>
@@ -142,20 +142,21 @@
 <li><a href="#213">2.13 消息编辑重发 / 分支到新会话</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#3_1">第 3 章　特色功能（重点章）</a></li>
-<li><a href="#31-210">3.1 长会话模式：聊一整天也不怕（2.1.0 头牌）</a></li>
+<li><a href="#31-211-api">3.1 每个会话单独选模型（2.1.1 新：API 与模型分离）</a></li>
+<li><a href="#32-210">3.2 长会话模式：聊一整天也不怕（2.1.0 头牌）</a></li>
 <li><a href="#30">30 秒试：手动划一条「新会话」分割线</a></li>
 <li><a href="#_2">能玩到什么程度</a></li>
-<li><a href="#32">3.2 快捷消息：把常用提示词存成一键插入</a></li>
-<li><a href="#33">3.3 一个不够就接一堆模型</a></li>
-<li><a href="#34-skill-ai">3.4 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
-<li><a href="#35-mcp-ai">3.5 MCP：给 AI 插外设</a></li>
-<li><a href="#36-comfyui">3.6 ComfyUI 自动流水线</a></li>
-<li><a href="#37-runninghub">3.7 RunningHub 云端生成</a></li>
-<li><a href="#38">3.8 并行与分身</a></li>
-<li><a href="#39">3.9 手机/局域网远程访问</a></li>
-<li><a href="#310">3.10 权限与安全</a></li>
-<li><a href="#311">3.11 稳如老狗</a></li>
-<li><a href="#312">3.12 侧栏、收藏与折叠</a></li>
+<li><a href="#33">3.3 快捷消息：把常用提示词存成一键插入</a></li>
+<li><a href="#34">3.4 一个不够就接一堆模型</a></li>
+<li><a href="#35-skill-ai">3.5 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
+<li><a href="#36-mcp-ai">3.6 MCP：给 AI 插外设</a></li>
+<li><a href="#37-comfyui">3.7 ComfyUI 自动流水线</a></li>
+<li><a href="#38-runninghub">3.8 RunningHub 云端生成</a></li>
+<li><a href="#39">3.9 并行与分身</a></li>
+<li><a href="#310">3.10 手机/局域网远程访问</a></li>
+<li><a href="#311">3.11 权限与安全</a></li>
+<li><a href="#312">3.12 稳如老狗</a></li>
+<li><a href="#313">3.13 侧栏、收藏与折叠</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#4">第 4 章　场景实战</a></li>
 <li><a href="#41">4.1 短剧/漫画批量出图</a></li>
@@ -180,25 +181,27 @@
 <li><a href="#61-500">6.1 模型连不上 / 报 500 / 代理冲突</a></li>
 <li><a href="#62-comfyui">6.2 ComfyUI 工作流报错</a></li>
 <li><a href="#63-mcp">6.3 MCP 工具调不到</a></li>
-<li><a href="#64">6.4 权限一直弹窗</a></li>
-<li><a href="#65">6.5 上下文快满了怎么办</a></li>
-<li><a href="#66">6.6 卡住了怎么办</a></li>
-<li><a href="#67">6.7 十个高手技巧</a></li>
+<li><a href="#64">6.4 换了模型却不生效 / 图片发不出去</a></li>
+<li><a href="#65">6.5 权限一直弹窗</a></li>
+<li><a href="#66">6.6 上下文快满了怎么办</a></li>
+<li><a href="#67">6.7 卡住了怎么办</a></li>
+<li><a href="#68">6.8 高手技巧</a></li>
 </ul><ul class="toc toc-l1">
 <li><a href="#_3">附录</a></li>
 <li><a href="#a">A 文件都存哪儿</a></li>
 <li><a href="#b">B 速查卡</a></li>
 <li><a href="#_4">输入快捷键</a></li>
-<li><a href="#_5">顶栏按钮</a></li>
-<li><a href="#_6">底部状态栏</a></li>
+<li><a href="#_5">顶栏左侧下拉</a></li>
+<li><a href="#_6">顶栏按钮</a></li>
+<li><a href="#_7">底部状态栏</a></li>
 <li><a href="#c">C 术语表</a></li>
 </ul>
-    <a class="dl-pdf" href="Naiba-Chat-手册-2.1.0.pdf" download>下载 PDF</a>
+    <a class="dl-pdf" href="Naiba-Chat-手册-2.1.1.pdf" download>下载 PDF</a>
   </nav>
   <main class="doc">
-    <h1 id="naiba-chat-210-beta">Naiba Chat 应用说明书（2.1.0 Beta）</h1>
+    <h1 id="naiba-chat-211-beta">Naiba Chat 应用说明书（2.1.1 Beta）</h1>
 <blockquote>
-<p>本说明书面向「第一次打开 Naiba Chat」的小白读者，配图全部来自真实运行界面（2.1.0 Beta · 源码模式 · 截图 2026-09-10）。</p>
+<p>本说明书面向「第一次打开 Naiba Chat」的小白读者，配图全部来自真实运行界面（2.1.1 Beta · 源码模式 · 截图 2026-09-10）。</p>
 </blockquote>
 <hr>
 <h2 id="_1">阅读路径</h2>
@@ -209,8 +212,9 @@
 <li><strong>出问题</strong> → 第 6 章</li>
 </ul>
 <hr>
-<h2 id="30-naiba-chat">十大亮点（用 30 秒了解 Naiba Chat 能干什么）</h2>
+<h2 id="30-naiba-chat">亮点速览（用 30 秒了解 Naiba Chat 能干什么）</h2>
 <ol>
+<li><strong>🆕 2.1.1 每个会话单独选模型</strong>：顶栏选「API」（去哪儿），输入区选「模型」（派谁干），<strong>按会话记忆、分支继承</strong>，换完还自动重新探测图片能力。</li>
 <li><strong>长会话不会越聊越贵（2.1.0 头牌）</strong>：聊到上下文快满时划一条「新会话」分割线，线以上的老消息不再发给模型，<strong>聊天记录一条不删</strong>，还能让模型自己写交接文档再重置。</li>
 <li><strong>一个不够就接一堆模型</strong>：OpenAI 兼容 / Anthropic / Gemini / Ollama / LM Studio / llama.cpp / Unsloth……在线本地都能接。</li>
 <li><strong>Skill：给 AI 装"行业操作手册"</strong>：写小说、跑 ComfyUI、写视频提示词……用 <code>/</code> 一键把领域知识塞进对话。</li>
@@ -232,7 +236,7 @@
 <p>一句话比喻：<strong>你雇了一个员工（Agent），给他配了工位（工作区）、工具箱（Tools）、行业手册（Skill）和外线电话（MCP），他干完活会把改过的文件摊在你桌上（文件面板）让你验收。</strong></p>
 <h2 id="12">1.2 下载、解压、双击</h2>
 <ol>
-<li>去 GitHub Releases 页面下载 <code>naiba-chat-2.1.0-beta-windows-x64.zip</code>。</li>
+<li>去 GitHub Releases 页面下载 <code>naiba-chat-2.1.1-beta-windows-x64.zip</code>。</li>
 <li><strong>解压到可写目录</strong>（桌面 / D 盘 / 工作盘都行，<strong>不要放 <code>C:\Program Files</code></strong>，需要写权限）。</li>
 <li>双击 <code>naiba-chat.exe</code>（或源码模式直接 <code>python server.py</code>）。</li>
 <li>浏览器自动打开 <code>http://127.0.0.1:8765</code>，看到主界面就成功了。</li>
@@ -240,12 +244,12 @@
 <blockquote>
 <p>从源码跑：<code>python -m pip install pywebview pystray pillow "mcp==2.1.1" pymupdf python-multipart</code>，然后 <code>python server.py</code>。</p>
 </blockquote>
-<h2 id="13">1.3 第一次打开要做的三件事</h2>
+<h2 id="13">1.3 第一次打开要做的四件事</h2>
 <blockquote>
 <p><strong>本机访问免口令</strong>；手机/局域网访问要口令（在「设置 → 连接状态」页查看）。</p>
 </blockquote>
 <ol>
-<li><strong>填一个模型</strong> → 顶栏 ⚙ 设置 → 「API 供应商」→ 点「添加 API」卡片 → 填地址 / Key / 模型名 → 点「检查」测连通。</li>
+<li><strong>添加一个 API</strong> → 顶栏 ⚙ 设置 → 「API 供应商」→ 点「添加 API」卡片 → 填地址 / Key / 模型名 → 点「检查」测连通。</li>
 </ol>
 <p><img alt="API 供应商" src="images/05-settings-models.png"></p>
 <ol start="2">
@@ -253,8 +257,12 @@
 <p><strong>选一个 Agent</strong> → 顶栏「Agent」下拉里选一个（Agent = 人设 + 系统提示词 + 工具集）。</p>
 </li>
 <li>
-<p><strong>发第一句话</strong> → 底部输入框打字 → 按 <code>Enter</code> 或点 ↑ 发送。</p>
+<p><strong>选这个会话要用的模型</strong> → 顶栏「API」下拉选刚才加的连接，<strong>输入框下方左边「模型」下拉选具体模型</strong>（想用列表里没有的就选「手动输入模型名称…」自己填）。</p>
 </li>
+</ol>
+<p><img alt="会话级模型选择" src="images/32-model-selector.png"></p>
+<ol start="4">
+<li><strong>发第一句话</strong> → 底部输入框打字 → 按 <code>Enter</code> 或点 ↑ 发送。</li>
 </ol>
 <blockquote>
 <p><strong>没配过模型？</strong> 主界面空态里已经放了常用指令卡片（点一下就发），新手按顺序点「列出可用工具」试试水。</p>
@@ -276,7 +284,7 @@
 </tr>
 <tr>
 <td><strong>顶栏中</strong></td>
-<td>切模型、切 Agent（两个下拉）</td>
+<td>切 <strong>API</strong>（连接配置）、切 Agent（两个下拉）</td>
 </tr>
 <tr>
 <td><strong>顶栏右</strong></td>
@@ -304,7 +312,7 @@
 </tr>
 <tr>
 <td><strong>底部状态栏</strong></td>
-<td>工作区下拉、审批档位、快捷消息 ｜ 右侧：思考强度、上下文百分比、就绪状态</td>
+<td><strong>模型下拉</strong>（本会话用哪个模型）、工作区下拉、审批档位、快捷消息 ｜ 右侧：思考强度、上下文百分比、就绪状态</td>
 </tr>
 </tbody>
 </table>
@@ -489,6 +497,7 @@
 <ul>
 <li><strong>点自己的消息</strong> → 编辑文本 → 回车 → 从这条消息重开（<strong>保留之前的附件和上下文</strong>）。</li>
 <li><strong>消息右下角「分支」按钮</strong> → 从该点分叉到新会话，旧会话保留。</li>
+<li><strong>分支会继承同一个 API 和模型名</strong>（2.1.1），分出去的新会话不用重新选模型。</li>
 </ul>
 <hr>
 <h1 id="3_1">第 3 章　特色功能（重点章）</h1>
@@ -496,7 +505,32 @@
 <p><strong>读完这章你能</strong>：把 Naiba Chat 调成你顺手的样子，知道哪些功能可以替你省 1 小时/天。</p>
 </blockquote>
 <p>每节固定结构：<strong>痛点 → 30 秒试 → 能玩到什么程度 → 注意</strong>。</p>
-<h2 id="31-210">3.1 长会话模式：聊一整天也不怕（2.1.0 头牌）</h2>
+<h2 id="31-211-api">3.1 每个会话单独选模型（2.1.1 新：API 与模型分离）</h2>
+<p><strong>痛点</strong>：以前顶栏「模型」下拉里塞的是「API 名称 · 模型名」的拼串——切一下既换供应商又换模型，同一个会话里想只换模型（比如从便宜的换到强的）就得去设置里改；而且换完模型，图片能力还是按上一个模型记的，容易误判。</p>
+<p><strong>30 秒试</strong></p>
+<ol>
+<li>看<strong>顶栏</strong>：现在叫「<strong>API</strong>」，只负责选连接配置（哪个供应商、哪个地址、哪个 Key），选项直接显示 API 名称。</li>
+<li>看<strong>输入框下方最左边</strong>：新增「<strong>模型</strong>」下拉，打开会话时会自动拉取当前 API 的模型目录，选一个就<strong>存到这个会话</strong>。</li>
+<li>想用下拉里没有的模型 → 选「<strong>手动输入模型名称…</strong>」，直接填（最长 256 字符，失焦或回车自动保存）。</li>
+</ol>
+<p><img alt="会话级模型选择" src="images/32-model-selector.png"></p>
+<p><strong>能玩到什么程度</strong></p>
+<ul>
+<li><strong>按会话记忆</strong>：新建会话、继续会话都按<strong>这个会话自己选的模型</strong>发送。A 会话用 DeepSeek 写稿、B 会话用本地模型跑批，互不干扰。</li>
+<li><strong>分支继承</strong>：从某条消息「分支」出来的新会话，会继承同一个 API 和模型名。</li>
+<li><strong>切 API 会清空模型名</strong>：顶栏换 API 后，模型名一并清空让你重新选（不同供应商的模型名不一样，留着没意义）。</li>
+<li><strong>自动重新探测图像能力</strong>：换 API 或换模型名后，<code>chat_supports_images</code> 重置为「待探测」，发送时按新模型的<strong>真实能力</strong>判断——换到纯文本模型不会再误发图片，换到多模态模型也不会再被当成纯文本。</li>
+<li>模型目录拉取失败时，回退用 API 配置里填的默认模型，不会卡住。</li>
+</ul>
+<p><strong>注意</strong></p>
+<blockquote>
+<ul>
+<li><strong>顶栏 = 选「去哪儿」（连接），输入区 = 选「派谁干」（模型）</strong>，这两个现在是两个独立开关。</li>
+<li>升级到 2.1.1 会自动完成数据库 v17 迁移（给 <code>conversations</code> 表加 <code>model_name</code> 列），幂等、不会重复执行。</li>
+<li>老会话首次打开时模型名为空，会用它所属 API 的默认模型，确认一下再发比较稳。</li>
+</ul>
+</blockquote>
+<h2 id="32-210">3.2 长会话模式：聊一整天也不怕（2.1.0 头牌）</h2>
 <p><strong>痛点</strong>：长对话越聊越长，token 越来越贵；而且前面跑题的几十轮一直在占用上下文，真正有用的进展被淹没了。开新会话吧，前面聊的又全丢了。</p>
 <h3 id="30">30 秒试：手动划一条「新会话」分割线</h3>
 <p>在任意一条 AI 回复的末尾点「<strong>新会话</strong>」（在「复制」右边），就会在那条回复下面画出一条分割线：</p>
@@ -507,7 +541,7 @@
 <li><strong>多条分割线并存</strong>：靠时间和位置区分，最新那条决定当前上下文起点。</li>
 <li><strong>模型也能自己重置</strong>：在 Agent 工具集里勾上 <code>reset_context</code> 后，模型可以先把交接文档写进工作区、再调用它——<strong>文档不存在或为空会被拒绝</strong>，每轮最多成功一次。成功后本轮立即收尾，在该条回复下画出「模型重置」分割线。</li>
 <li><strong>种子消息自动填进输入框</strong>：模型重置后，输入框会自动填好「交接文档路径 + 请先读取再继续 + 仍在运行的后台任务清单」，<strong>你确认后点发送</strong>就开始新一段。模板可以在「设置 → 运行设置 → 新会话种子消息」里改（占位符 <code>{handoff_path}</code> / <code>{task_count}</code> / <code>{task_list}</code>）。</li>
-<li><strong>交接文档快捷键</strong>：快捷消息面板里内置了「写交接报告并 reset_context」预设，点一下插进输入框就行（见 3.2）。</li>
+<li><strong>交接文档快捷键</strong>：快捷消息面板里内置了「写交接报告并 reset_context」预设，点一下插进输入框就行（见 3.3）。</li>
 <li><strong>翻历史不靠翻页</strong>：Agent 工具集里新增「长会话」一组——</li>
 <li><code>find_conversations</code>：按标题列出最近会话（id / 标题 / 时间 / 条数 / 末条预览）</li>
 <li><code>recall_history</code>：按关键词检索（不给会话 id 就全库搜、每个会话最多 3 条片段；给了 id 就只搜那个会话）</li>
@@ -526,7 +560,7 @@
 <li>模型自己调 <code>reset_context</code> 前<strong>必须先写出交接文档</strong>，否则会被拒绝——这是故意的，防止上下文凭空消失。</li>
 </ul>
 </blockquote>
-<h2 id="32">3.2 快捷消息：把常用提示词存成一键插入</h2>
+<h2 id="33">3.3 快捷消息：把常用提示词存成一键插入</h2>
 <p><strong>痛点</strong>：有些话你一天要说十遍（「按老规矩整理一下」「写交接报告然后重置」），每次手打很烦。</p>
 <p><strong>30 秒试</strong>：输入框下方点「<strong>快捷消息</strong>」→ 点列表里任意一条 → 正文直接进输入框（还能改）→ 发送。</p>
 <p><img alt="快捷消息面板" src="images/27-quick-messages.png"></p>
@@ -538,7 +572,7 @@
 <li><strong>内置交接报告预设</strong>（带「默认」标签）：点一下就要求模型把交接报告写进工作区，再用 <code>read_file</code> 复核后调 <code>reset_context</code>。它跟你自建的条目<strong>同权</strong>——可以编辑、可以删除，软件更新不会覆盖也不会复活。</li>
 </ul>
 <p><strong>注意</strong>：这是<strong>独立列表</strong>，跟开始页的自定义指令卡片互不影响，各自增删改。</p>
-<h2 id="33">3.3 一个不够就接一堆模型</h2>
+<h2 id="34">3.4 一个不够就接一堆模型</h2>
 <p><strong>痛点</strong>：单一模型又慢又贵还偏科。能不能 A 写代码 / B 写文案 / C 出图？</p>
 <p><strong>30 秒试</strong>：设置 → API 供应商 → 点「添加 API」→ 选请求格式 → 填地址 / Key / 模型名 → 点「检查」秒测连通。</p>
 <p><img alt="API 供应商" src="images/05-settings-models.png"></p>
@@ -550,8 +584,15 @@
 <li><strong>2.1.0 卡片化</strong>：供应商和 Agent 都改成卡片网格，点卡片才弹设置表单，右上角 × 删除。</li>
 <li><strong>5xx 自动重试</strong>：供应商返回 500/502 这类瞬时故障时自动退避重试（1.5s / 3s，最多 3 次），状态栏会提示重试进度，不再直接终止整轮。</li>
 </ul>
-<p><strong>注意</strong>：切换模型不影响会话历史；但<strong>切 Agent 会改首条消息固化下来的工具集</strong>（首轮注入，之后不可改）。</p>
-<h2 id="34-skill-ai">3.4 Skill：给 AI 装"行业操作手册"</h2>
+<p><strong>注意</strong></p>
+<blockquote>
+<ul>
+<li><strong>怎么切模型</strong>：先顶栏「API」选连接，再在输入框下方「模型」下拉选具体模型（见 3.1 节）。</li>
+<li>切换模型不影响会话历史，但会<strong>重新探测图像能力</strong>——换到纯文本模型后图片就不会再被发出去。</li>
+<li><strong>切 Agent 会改首条消息固化下来的工具集</strong>（首轮注入，之后不可改）。</li>
+</ul>
+</blockquote>
+<h2 id="35-skill-ai">3.5 Skill：给 AI 装"行业操作手册"</h2>
 <p><strong>痛点</strong>：通用 AI 不懂你的行业术语、不熟你常用的工作流。</p>
 <p><strong>30 秒试</strong>：输入 <code>/</code> 弹窗 → 选一个 Skill（比如 <code>cangjie</code> 拆书）→ 直接对话「把这段小说拆成 12 集」。</p>
 <p><img alt="Skill 快速引用" src="images/14-skill-refs.png"></p>
@@ -571,7 +612,7 @@
 <p><strong>Skill 只是说明书，不是开关。</strong> 缺 Skill 时，已授权的通用 Tool / MCP 仍可用；Skill 只指导调用方式，<strong>不注册服务、不扩展权限</strong>。</p>
 <p><strong>Skill 脚本规范</strong>：脚本统一放 Skill 目录的 <code>scripts/</code> 子目录，读写文件要显式写 <code>encoding='utf-8'</code>。</p>
 </blockquote>
-<h2 id="35-mcp-ai">3.5 MCP：给 AI 插外设</h2>
+<h2 id="36-mcp-ai">3.6 MCP：给 AI 插外设</h2>
 <p><strong>痛点</strong>：AI 不能直接调 ComfyUI、数据库、第三方 API。</p>
 <p><strong>30 秒试</strong>：装好 MCP 服务器（比如 <code>npx -y @comfyorg/comfy-mcp</code>）→ 设置 → 连接状态里看到它就绪 → 直接对话「用 comfy 出 6 张封面」。</p>
 <p><img alt="连接状态" src="images/08-settings-connections.png"></p>
@@ -585,7 +626,7 @@
 <blockquote>
 <p><strong>新加的 MCP 必须重开会话才生效。</strong> 改完 MCP 配置 → 关掉当前会话 → 重新开 → MCP 工具才进可用集。</p>
 </blockquote>
-<h2 id="36-comfyui">3.6 ComfyUI 自动流水线</h2>
+<h2 id="37-comfyui">3.7 ComfyUI 自动流水线</h2>
 <p><strong>痛点</strong>：跑 ComfyUI 工作流要切窗口、改参数、收图、改名、传图……繁琐。</p>
 <p><strong>30 秒试</strong>（前提：装好 ComfyUI + comfy-mcp）：</p>
 <pre><code>&quot;用当前目录下的 cover_v2.json 出 12 张 1080x1440 封面，seed 1-12&quot;
@@ -602,7 +643,7 @@
 <li><strong>UI JSON ≠ API JSON</strong>：UI 拖拽的连线图直接保存不能喂 API，导出时要选「API 格式」。</li>
 <li>ComfyUI 自身<strong>不传图</strong>给模型，AI 看的是产物缩略图（必要时调视觉模型）。</li>
 </ul>
-<h2 id="37-runninghub">3.7 RunningHub 云端生成</h2>
+<h2 id="38-runninghub">3.8 RunningHub 云端生成</h2>
 <p><strong>痛点</strong>：本地没显卡，ComfyUI 跑不动。</p>
 <p><strong>30 秒试</strong>：装 <code>runninghub</code> Skill → 对话「用 runninghub 的文生图出 6 张古风封面」。</p>
 <p><strong>能玩到什么程度</strong></p>
@@ -615,20 +656,20 @@
 <li>切换站点（国内 / 海外）在「设置 → Skills 管理」里。</li>
 </ul>
 <p><strong>注意</strong>：需要你自己的 RunningHub 账号和额度。</p>
-<h2 id="38">3.8 并行与分身</h2>
+<h2 id="39">3.9 并行与分身</h2>
 <ul>
 <li><strong>后台 Job</strong>：<code>run_in_background</code> 跑长任务，不阻塞主对话。</li>
 <li><strong>子 Agent</strong>：<code>subagent</code> 工具起一个独立 Agent 干另一件事，结束后回报。</li>
 </ul>
 <p>适用：一边跑图、一边写文档；一边跑分析、一边查资料。</p>
-<h2 id="39">3.9 手机/局域网远程访问</h2>
+<h2 id="310">3.10 手机/局域网远程访问</h2>
 <p><strong>痛点</strong>：在沙发上不想开电脑，但想让家里的 Naiba Chat 跑点啥。</p>
 <p><strong>30 秒试</strong>：设置 → 连接状态 → 复制带口令和 IP 的链接 → 同一 WiFi 的手机浏览器打开。</p>
 <p><img alt="移动端主界面" src="images/25-mobile-main.png"></p>
 <p>设置页在手机上同样完整可用：</p>
 <p><img alt="移动端设置" src="images/26-mobile-settings.png"></p>
 <p><strong>注意</strong>：外网访问需要内网穿透；本机访问免口令，<strong>局域网访问必须口令</strong>。</p>
-<h2 id="310">3.10 权限与安全</h2>
+<h2 id="311">3.11 权限与安全</h2>
 <ul>
 <li>对话、设置、附件、任务状态<strong>全部存本地</strong>，不出你的机器。</li>
 <li>文件预览只允许工作区和受管理数据目录（<code>data/uploads</code>、<code>data/generated</code>）。</li>
@@ -636,7 +677,7 @@
 <li>高风险写入、删除、外部发布和凭据操作仍受权限策略保护。</li>
 <li><strong>缓存管理</strong>：图片/PDF/视频/音频统一统计，设置页打开即刷新；超限自动清理（默认 256MB，可调，填 0 关闭）<strong>只删未被消息引用的最旧文件</strong>——历史消息引用的附件永不自动删除。</li>
 </ul>
-<h2 id="311">3.11 稳如老狗</h2>
+<h2 id="312">3.12 稳如老狗</h2>
 <ul>
 <li><strong>断线重连</strong>不重复回放：网络抖一下，不会把同一段响应重发两次。</li>
 <li><strong>失败不丢已生成内容</strong>：模型报错，已经写出的思考/部分回复/工具活动完整保留。</li>
@@ -646,7 +687,7 @@
 <li><strong>可版本回退</strong>：更新面板支持「选历史版本 → 一键回退」。</li>
 </ul>
 <p><img alt="软件更新" src="images/13-settings-updates.png"></p>
-<h2 id="312">3.12 侧栏、收藏与折叠</h2>
+<h2 id="313">3.13 侧栏、收藏与折叠</h2>
 <p><img alt="侧栏折叠" src="images/02-sidebar-collapsed.png"></p>
 <ul>
 <li><strong>折叠</strong>：桌面端点侧栏顶部 ◀ 收起（列宽恒定 880px，只是重新居中），聊天区左上 ▶ 展开，<strong>状态会记住</strong>。移动端左上角 ☰ 滑出抽屉。</li>
@@ -662,8 +703,8 @@
 <h2 id="41">4.1 短剧/漫画批量出图</h2>
 <p>两条路：</p>
 <ul>
-<li><strong>本地 ComfyUI</strong>（你有显卡）→ 3.6 节</li>
-<li><strong>云端 RunningHub</strong>（没显卡）→ 3.7 节</li>
+<li><strong>本地 ComfyUI</strong>（你有显卡）→ 3.7 节</li>
+<li><strong>云端 RunningHub</strong>（没显卡）→ 3.8 节</li>
 </ul>
 <p><strong>通用流程</strong></p>
 <ol>
@@ -715,6 +756,9 @@
 <li><strong>温度 / 上下文 / 最大输出</strong>：每个供应商独立。</li>
 <li><strong>API Key 留空 = 保留原值</strong>（不用每次重填）。</li>
 </ul>
+<blockquote>
+<p><strong>2.1.1 起「API」和「模型」分开了</strong>：这一页配的是<strong>连接</strong>（去哪儿）。具体用哪个模型，在<strong>输入框下方左边的「模型」下拉</strong>里选，按会话记忆；下拉里没有就选「手动输入模型名称…」自己填。详见 3.1 节。</p>
+</blockquote>
 <h2 id="52-agent">5.2 Agent</h2>
 <p><img alt="Agent 设置" src="images/06-settings-agent.png"></p>
 <ul>
@@ -801,27 +845,33 @@
 <ul>
 <li><strong>UI JSON ≠ API JSON</strong>：导出时<strong>必须</strong>选「API 格式」。</li>
 <li>报错 <code>Prompt outputs failed validation</code>：节点连线断了，重开 UI 检查。</li>
-<li>comfy-mcp 圆点红色：见 3.5 节。</li>
+<li>comfy-mcp 圆点红色：见 3.6 节。</li>
 </ul>
 <h2 id="63-mcp">6.3 MCP 工具调不到</h2>
 <p><strong>新加的 MCP 必须重开会话才生效。</strong> 配完 → 关当前会话 → 重新开。</p>
-<h2 id="64">6.4 权限一直弹窗</h2>
+<h2 id="64">6.4 换了模型却不生效 / 图片发不出去</h2>
+<ul>
+<li><strong>确认两处都选了</strong>：顶栏「API」是连接，输入框下方「模型」才是真正干活的那一个，两个都要对。</li>
+<li><strong>换了模型仍按旧能力走</strong>：2.1.1 起切 API 或模型名会自动把图像能力重置为「待探测」，下一次发送时按新模型的真实能力判断；如果还是不对，重开一次会话让它重新探测。</li>
+<li><strong>想让 A 会话用便宜模型、B 会话用强模型</strong>：直接在各自的会话里选就行，模型名按会话记忆，互不干扰。</li>
+</ul>
+<h2 id="65">6.5 权限一直弹窗</h2>
 <p>审批档位从「确认」切到「自动」（工作区内免问）。完全不用问就用「完全」档（<strong>慎用</strong>）。</p>
-<h2 id="65">6.5 上下文快满了怎么办</h2>
+<h2 id="66">6.6 上下文快满了怎么办</h2>
 <ol>
 <li>看输入框下方「上下文 x%」——70% 黄、90% 红。</li>
 <li>到 80% 会弹窗提醒，选「让模型写交接文档 + 开始新会话」。</li>
 <li>或者手动点某条回复下面的「<strong>新会话</strong>」划分割线。</li>
 <li>想更省：勾上 <code>reset_context</code> 工具，让模型自己判断何时重置。</li>
 </ol>
-<h2 id="66">6.6 卡住了怎么办</h2>
+<h2 id="67">6.7 卡住了怎么办</h2>
 <ol>
 <li>消息下方「暂停」按钮。</li>
 <li>看「任务」面板有没有跑死的后台任务 → 杀掉。</li>
 <li>看上下文用量环是不是满了 → 划分割线或开新会话。</li>
 <li>实在不行重开会话（<strong>会话内容会保留</strong>）。</li>
 </ol>
-<h2 id="67">6.7 十个高手技巧</h2>
+<h2 id="68">6.8 高手技巧</h2>
 <ol>
 <li><strong><code>↑↓</code> 选 Skill</strong> / <strong><code>@</code> 引文件用 <code>Tab</code> 进目录</strong> / <strong><code>Enter</code> 发送</strong> / <strong><code>Shift+Enter</code> 换行</strong>。</li>
 <li><strong>运行中 <code>Enter</code> 插话</strong>（引导合并到当前轮）。</li>
@@ -833,6 +883,7 @@
 <li><strong>数据目录备份再升级</strong>：设置 → 数据与迁移 → 备份。</li>
 <li><strong>历史太大就压缩</strong>：设置 → 数据与迁移 → 历史数据管理 → 压缩。</li>
 <li><strong>手机扫码直连</strong>：设置 → 连接状态里复制带口令的局域网地址。</li>
+<li><strong>按会话换模型</strong>：A 会话用便宜模型跑批、B 会话用强模型写稿，各自在输入框下方「模型」下拉里选，互不干扰。</li>
 </ol>
 <hr>
 <h1 id="_3">附录</h1>
@@ -895,7 +946,26 @@ D:\skills\                      ← 用户级 Skill（可选）
 </tr>
 </tbody>
 </table>
-<h3 id="_5">顶栏按钮</h3>
+<h3 id="_5">顶栏左侧下拉</h3>
+<table>
+<thead>
+<tr>
+<th>下拉</th>
+<th>作用</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>API</strong></td>
+<td>选连接配置（哪个供应商 / 地址 / Key），切换后该会话的模型名清空重选</td>
+</tr>
+<tr>
+<td><strong>Agent</strong></td>
+<td>选人设 + 系统提示词 + 工具集（首条消息后工具集固化）</td>
+</tr>
+</tbody>
+</table>
+<h3 id="_6">顶栏按钮</h3>
 <table>
 <thead>
 <tr>
@@ -926,7 +996,7 @@ D:\skills\                      ← 用户级 Skill（可选）
 </tr>
 </tbody>
 </table>
-<h3 id="_6">底部状态栏</h3>
+<h3 id="_7">底部状态栏</h3>
 <table>
 <thead>
 <tr>
@@ -936,6 +1006,11 @@ D:\skills\                      ← 用户级 Skill（可选）
 </tr>
 </thead>
 <tbody>
+<tr>
+<td><strong>模型</strong></td>
+<td>跟随 API 默认</td>
+<td>本会话用哪个模型，按会话记忆；可选「手动输入模型名称…」</td>
+</tr>
 <tr>
 <td>工作区</td>
 <td>未分组</td>
@@ -1007,6 +1082,14 @@ D:\skills\                      ← 用户级 Skill（可选）
 <td>后台跑着的任务。<strong>比喻</strong>：员工出去跑外勤。</td>
 </tr>
 <tr>
+<td><strong>API（连接）</strong></td>
+<td>一个供应商的地址 + Key 配置。<strong>比喻</strong>：你要打哪条外线。</td>
+</tr>
+<tr>
+<td><strong>模型</strong></td>
+<td>具体干活的那个 AI 大脑，按会话选。<strong>比喻</strong>：这一单派哪位专家。</td>
+</tr>
+<tr>
 <td><strong>工作区</strong></td>
 <td>AI 能读写的目录根，安全边界。<strong>比喻</strong>：员工能进的办公室。</td>
 </tr>
@@ -1046,7 +1129,7 @@ D:\skills\                      ← 用户级 Skill（可选）
 </table>
 <hr>
 <blockquote>
-<p><strong>版本</strong>：2.1.0 Beta · 截图 2026-09-10
+<p><strong>版本</strong>：2.1.1 Beta · 截图 2026-09-10
 <strong>项目仓库</strong>：https://github.com/yc883123/naiba-chat
 <strong>反馈</strong>：https://github.com/yc883123/naiba-chat/issues</p>
 </blockquote>

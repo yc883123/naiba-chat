@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import shutil
 import sqlite3
 import sys
@@ -42,8 +43,10 @@ from naiba.paths import PathContext, default_path_context
 from naiba.plans import PlanManager
 from naiba.run.manager import ConversationRunManager
 from naiba.search import WebSearchRuntime
-from naiba.skills.catalog import SkillCatalog
-from naiba.skills.install import _zip_has_skill_md, delete_skill, remove_skill_references
+from naiba.skills.catalog import SkillCatalog, _frontmatter_value
+from naiba.skills.install import (
+    _unique_dir, _zip_has_skill_md, delete_skill, remove_skill_references,
+)
 from naiba.storage.media import (
     _clean_uploads_cache, _process_uploaded_image, _uploads_total_bytes, auto_clean_uploads,
     is_uploads_path, remove_uploaded_file, store_uploaded_file,
@@ -133,6 +136,9 @@ class NaibaChatApp:
                 _sync_bundled_skills(bundled_skills, managed_skills)
             except OSError as exc:
                 print(f"Persisting bundled Skills failed: {exc}")
+        # 兼容旧版单文件导入：它把 SKILL.md 直接写在托管目录根下，导致该 Skill 的
+        # root 等于整个托管目录。启动时将定义迁入自己的目录，并同步稳定 ID 的配置引用。
+        self._migrate_bare_managed_skill(managed_skills)
 
         skills_dirs: list[str] = []
         if bundled_skills.is_dir():
@@ -852,7 +858,9 @@ class NaibaChatApp:
         if not root.exists():
             return self._reply({"error": "Skill 目录不存在"}, HTTPStatus.NOT_FOUND)
             return
-        managed_dir = root.parent
+        # 传真实托管目录（而非 root.parent）：托管 Skill 的 root 应位于其下；若 root 恰等于
+        # 托管目录本身（历史遗留的散装 SKILL.md），底层会退化为只回收定义文件，绝不整目录搬走。
+        managed_dir = self.config.resolve_managed_skills_dir()
         recycle_dir = self.paths.data_dir / "skills_recycle"
         agents = self.config.public_agents()
         try:
@@ -1250,14 +1258,13 @@ class NaibaChatApp:
         if dest_err is not None:
             return dest_err
         dest_raw, dest = dest_resolved
-        pending: list[tuple[Path, bytes]] = []
+        entries: list[tuple[list[str], bytes]] = []
         total = 0
         for item in files:
             if not isinstance(item, dict):
                 return self._reply({"error": "文件条目格式不正确"}, HTTPStatus.BAD_REQUEST)
                 return
-            rel = str(item.get("path") or "").replace("\\", "/").lstrip("/")
-            parts = [part for part in rel.split("/") if part not in {"", "."}]
+            parts = self._skill_relative_parts(item.get("path"))
             if not parts or any(part == ".." or ":" in part for part in parts):
                 return self._reply(
                     {"error": f"文件夹包含非法路径：{item.get('path')}"},
@@ -1270,7 +1277,7 @@ class NaibaChatApp:
             try:
                 data = base64.b64decode(encoded, validate=True)
             except ValueError:
-                return self._reply({"error": f"文件内容不是有效 Base64：{rel}"}, HTTPStatus.BAD_REQUEST)
+                return self._reply({"error": f"文件内容不是有效 Base64：{'/'.join(parts)}"}, HTTPStatus.BAD_REQUEST)
                 return
             total += len(data)
             if total > 300 * 1024 * 1024:
@@ -1279,16 +1286,26 @@ class NaibaChatApp:
                     HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
                 )
                 return
-            target = (dest / Path(*parts)).resolve()
-            if target != dest and not path_within(target, dest):
-                return self._reply({"error": f"文件夹包含越界路径：{rel}"}, HTTPStatus.BAD_REQUEST)
-                return
-            pending.append((target, data))
+            entries.append((parts, data))
+        if not any(parts[-1] == "SKILL.md" and len(parts) <= 2 for parts, _ in entries):
+            return self._reply(
+                {"error": "文件夹必须包含 SKILL.md（需位于顶层或下一级目录）"},
+                HTTPStatus.BAD_REQUEST,
+            )
+        prefix = self._skill_subdir_prefix(
+            [parts for parts, _ in entries],
+            dest,
+            self._preferred_skill_dir_name(entries, str(body.get("name") or "").strip()),
+        )
         dest.mkdir(parents=True, exist_ok=True)
-        for target, data in pending:
+        for parts, data in entries:
+            target = (dest / Path(*prefix, *parts)).resolve()
+            if not path_within(target, dest):
+                return self._reply({"error": f"文件夹包含越界路径：{'/'.join(parts)}"}, HTTPStatus.BAD_REQUEST)
+                return
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
-        return self._finish_install(dest_raw, dest, {"files": len(pending)})
+        return self._finish_install(dest_raw, dest, {"files": len(entries)})
 
     def _install_skill(self, body: dict[str, Any]) -> None:
         name = Path(str(body.get("name") or "skill.zip")).name
@@ -1307,7 +1324,6 @@ class NaibaChatApp:
         if dest_err is not None:
             return dest_err
         dest_raw, dest = dest_resolved
-        dest.mkdir(parents=True, exist_ok=True)
         tmp_dir = Path(tempfile.mkdtemp(prefix="naiba_skill_"))
         try:
             zip_path = tmp_dir / name
@@ -1330,15 +1346,24 @@ class NaibaChatApp:
                 if sum(member.file_size for member in members) > 500 * 1024 * 1024:
                     return self._reply({"error": "压缩包解压后体积过大（超过 500 MB）"}, HTTPStatus.BAD_REQUEST)
                     return
+                # 顶层直接散放 SKILL.md 的压缩包同样必须先收进独立子目录，否则该 Skill 的
+                # root 就等于托管目录本身，删除时会连带移走整个目录下的所有 Skill。
+                prefix = self._skill_subdir_prefix(
+                    [Path(member.filename).parts for member in members if not member.is_dir()],
+                    dest,
+                    self._zip_skill_dir_name(archive, members, Path(name).stem),
+                )
+                extract_root = dest / Path(*prefix) if prefix else dest
+                extract_root.mkdir(parents=True, exist_ok=True)
                 for member in members:
-                    target = (dest / member.filename).resolve()
-                    if target != dest and not path_within(target, dest):
+                    target = (extract_root / member.filename).resolve()
+                    if target != extract_root and not path_within(target, extract_root):
                         return self._reply(
                             {"error": f"压缩包包含越界路径：{member.filename}"},
                             HTTPStatus.BAD_REQUEST,
                         )
                         return
-                archive.extractall(dest)
+                archive.extractall(extract_root)
             return self._finish_install(dest_raw, dest)
         except zipfile.BadZipFile:
             return self._reply({"error": "不是有效的 zip 压缩包"}, HTTPStatus.BAD_REQUEST)
@@ -1376,6 +1401,110 @@ class NaibaChatApp:
             )
             return None
         return (dest_raw, dest), None
+
+    # ------------------------------------------------------------------
+    # Skill 安装布局：散装上传必须先建立独立子目录
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _skill_relative_parts(raw: Any) -> list[str]:
+        """把前端提交的相对路径规范化为安全的路径片段列表。"""
+        relative = str(raw or "").replace("\\", "/").lstrip("/")
+        return [part for part in relative.split("/") if part not in {"", "."}]
+
+    @staticmethod
+    def _clean_skill_dir_name(value: str) -> str:
+        """清洗出可作为目录名的 Skill 标识，拒绝纯点号/空串等越界名字。"""
+        cleaned = re.sub(r"[^\w.\-]+", "_", str(value or "").strip()).strip(" .-")
+        return cleaned or "skill"
+
+    def _skill_subdir_prefix(self, layouts: list[list[str]], dest: Path, preferred_name: str) -> list[str]:
+        """上传内容直接散放在导入根时，返回一个独立 Skill 子目录前缀，否则返回空列表。
+
+        单文件 ``.md`` 导入会被提交为 ``path="SKILL.md"``。若直接写到扫描目录根下，该
+        Skill 的 ``root`` 会等于扫描目录本身，删除时 ``delete_skill`` 会 ``shutil.move``
+        整个目录，把该目录下的所有 Skill 一并搬走。因此凡是有文件直接落在导入根的上传，
+        都先为它建立独立子目录。ZIP 顶层直接散放 ``SKILL.md`` 同理。
+        """
+        if not any(len(parts) == 1 for parts in layouts):
+            return []
+        return [_unique_dir(dest, self._clean_skill_dir_name(preferred_name)).name]
+
+    def _migrate_bare_managed_skill(self, managed: Path) -> None:
+        """将旧版托管目录根下的 SKILL.md 迁入独立目录，并保留其配置引用。"""
+        skill_file = managed / "SKILL.md"
+        if not skill_file.is_file():
+            return
+        try:
+            before = next(
+                item for item in SkillCatalog([managed]).scan()
+                if Path(str(item.get("path") or "")).resolve() == skill_file.resolve()
+            )
+            text = skill_file.read_text(encoding="utf-8", errors="replace")
+            directory = _unique_dir(
+                managed,
+                self._clean_skill_dir_name(_frontmatter_value(text, "name") or "skill"),
+            )
+            directory.mkdir(parents=True, exist_ok=False)
+            shutil.move(str(skill_file), str(directory / skill_file.name))
+            after_file = directory / skill_file.name
+            after = next(
+                item for item in SkillCatalog([managed]).scan()
+                if Path(str(item.get("path") or "")).resolve() == after_file.resolve()
+            )
+        except (OSError, StopIteration) as exc:
+            logger.warning("迁移裸 SKILL.md 失败：%s", exc)
+            return
+
+        old_id = str(before["id"])
+        new_id = str(after["id"])
+        if old_id == new_id:
+            return
+        changed = False
+        with self.config.lock:
+            for agent in self.config.data.get("agents", []):
+                skill_ids = agent.get("skill_ids")
+                if not isinstance(skill_ids, list) or old_id not in skill_ids:
+                    continue
+                agent["skill_ids"] = [new_id if item == old_id else item for item in skill_ids]
+                changed = True
+            hidden = self.config.data.get("hidden_skill_ids")
+            if isinstance(hidden, list) and old_id in hidden:
+                self.config.data["hidden_skill_ids"] = list(dict.fromkeys(
+                    new_id if item == old_id else item for item in hidden
+                ))
+                changed = True
+            if changed:
+                self.config.save()
+        logger.info("已迁移旧版裸 Skill：%s -> %s", skill_file, directory)
+
+    @staticmethod
+    def _preferred_skill_dir_name(entries: list[tuple[list[str], bytes]], fallback: str) -> str:
+        """散装文件夹上传时推导子目录名：body.name → SKILL.md 的 frontmatter name → 文件名。"""
+        for parts, data in entries:
+            if parts[-1] == "SKILL.md" and len(parts) == 1:
+                text = data.decode("utf-8", errors="replace")
+                return _frontmatter_value(text, "name") or fallback or Path(parts[0]).stem
+        return fallback or "skill"
+
+    @staticmethod
+    def _zip_skill_dir_name(archive: zipfile.ZipFile, members: list[Any], fallback: str) -> str:
+        """散装压缩包上传时推导子目录名：顶层 SKILL.md 的 frontmatter name → 压缩包文件名。"""
+        root_md = next(
+            (
+                member for member in members
+                if not member.is_dir()
+                and Path(member.filename).name == "SKILL.md"
+                and len(Path(member.filename).parts) == 1
+            ),
+            None,
+        )
+        if root_md is None:
+            return fallback
+        try:
+            text = archive.read(root_md).decode("utf-8", errors="replace")
+        except Exception:  # noqa: BLE001 - 目录名推导失败不应阻断安装
+            return fallback
+        return _frontmatter_value(text, "name") or fallback
 
 
 

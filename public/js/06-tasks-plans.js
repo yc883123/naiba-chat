@@ -7,7 +7,7 @@ import { markdown } from "./02-markdown.js";
 import { fileUrl } from "./03-media.js";
 import { renderRunTasks, syncCurrentConversation } from "./08-conversations.js";
 import { RUN_RECONNECT_COOLDOWN, clearElapsedStatus, resumeRun, setConnectionState, stopRunWatchdog } from "./11-run-stream.js";
-import { cancelCurrentRun, setBusy } from "./12-chat-input.js";
+import { cancelCurrentRun, closePermissionModeMenu, setBusy } from "./12-chat-input.js";
 export const activeTaskStatuses = new Set(['queued', 'running', 'waiting', 'cancelling']);
 
 export async function loadTasks() {
@@ -107,6 +107,10 @@ export function taskStatusLabel(status) {
   return ({ queued: '排队中', running: '运行中', waiting: '等待确认', cancelling: '取消中', completed: '已完成', failed: '失败', cancelled: '已取消', interrupted: '已中断' })[status] || status;
 }
 
+// 审批模式上拉框：收起态只有触发按钮（显示当前档），点开才在按钮上方弹出列表。
+export const PERMISSION_MODE_LABELS = { confirm: '确认', auto: '自动', full: '完全' };
+const PERMISSION_MODE_TITLES = { confirm: '敏感操作逐次确认', auto: '自动批准工作区内操作', full: '工具无需逐次确认' };
+
 export function currentPermissionMode() {
   const conversation = state.conversations.find((item) => item.id === state.conversationId);
   const mode = conversation?.permission_mode || 'auto';
@@ -115,15 +119,30 @@ export function currentPermissionMode() {
 
 export function renderPermissionModeSwitch() {
   const mode = currentPermissionMode();
-  $$('#permissionModeSwitch [data-permission-mode]').forEach((button) => {
+  const enabled = Boolean(state.conversationId);
+  // 选项按钮挂在菜单里，而菜单打开时会被移到 body 下（fixed 定位，避免被 composer 的
+  // overflow 裁剪）。因此这里必须按菜单 id 查找：用 #permissionModeSwitch 的后代选择器，
+  // 菜单一旦挂到 body 就再也选不到按钮，高亮与禁用态会一直停在上一轮的旧值。
+  $$('#permissionModeMenu [data-permission-mode]').forEach((button) => {
     const active = button.dataset.permissionMode === mode;
-    button.classList.toggle('active', active);
-    button.setAttribute('aria-checked', String(active));
-    button.disabled = !state.conversationId;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-selected', String(active));
+    button.disabled = !enabled;
   });
+  // 触发按钮同步当前档：文字、风险配色（data-mode）、悬停提示、禁用态。
+  const trigger = $('#permissionModeButton');
+  if (trigger) {
+    trigger.disabled = !enabled;
+    trigger.dataset.mode = mode;
+    trigger.title = `当前对话审批模式：${PERMISSION_MODE_TITLES[mode] || ''}`;
+  }
+  const value = $('#permissionModeValue');
+  if (value) value.textContent = PERMISSION_MODE_LABELS[mode] || '';
 }
 
 export async function switchPermissionMode(mode) {
+  // 上拉框点选即收起：无论后续成败，浮层都不留在屏幕上。
+  closePermissionModeMenu();
   if (!state.conversationId || !['confirm', 'auto', 'full'].includes(mode) || mode === currentPermissionMode()) return;
   if (mode === 'full' && !confirm('完全访问会允许此对话的 Agent 无需逐次确认即可操作本机文件、命令、网络和 MCP。确认启用？')) {
     renderPermissionModeSwitch();

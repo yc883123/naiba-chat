@@ -49,11 +49,13 @@ async function cardSnapshot(page) {
       providers: cards.filter((card) => card.dataset.providerCard).map((card) => ({
         id: card.dataset.providerCard,
         name: card.querySelector('.provider-card-name')?.textContent.trim() || '',
-        model: card.querySelector('.provider-card-model')?.textContent.trim() || '',
+        // 卡片已压成两行（名称 + 脚行），不再展示模型名：模型名改由设置弹层核对。
+        hasModelText: Boolean(card.querySelector('.provider-card-model')),
         tag: card.querySelector('.provider-card-tag')?.textContent.trim() || '',
         badge: card.querySelector('.provider-card-badge')?.textContent.trim() || '',
         hasDelete: Boolean(card.querySelector('[data-provider-delete]')),
         cursor: getComputedStyle(card).cursor,
+        minHeight: getComputedStyle(card).minHeight,
       })),
     };
   });
@@ -122,8 +124,14 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     check('播种 3 个供应商成功', seededIds.length === 3, JSON.stringify(seededIds));
 
     const bootstrap = await apiJson('/api/bootstrap');
-    const onlineCount = (bootstrap.model_profiles || []).filter((p) => seeded(p.name) && (p.kind || 'online') === 'online').length;
-    const localCount = (bootstrap.model_profiles || []).filter((p) => seeded(p.name) && p.kind === 'local').length;
+    const profiles = bootstrap.model_profiles || [];
+    // 口径：tab 上的卡片数与「该类供应商总数」比较。
+    // 只统计播种项等于假设库里本来没有别人，用户一旦存过自定义供应商就必然误报。
+    const onlineCount = profiles.filter((p) => (p.kind || 'online') === 'online').length;
+    const localCount = profiles.filter((p) => p.kind === 'local').length;
+    const kindOf = (id) => profiles.find((p) => p.id === id)?.kind || 'online';
+    // 卡片不再展示模型名：弹层核对改用播种数据里的模型名。
+    const providerById = new Map((bootstrap.model_profiles || []).map((p) => [p.id, p]));
 
     // ---- 打开设置 → API 供应商 ----
     await page.goto(`${BASE}/`, { waitUntil: 'load', timeout: 20000 });
@@ -140,9 +148,15 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     check('一行最多三张卡片（grid 三列）', online?.columns === 3, String(online?.columns));
     check('在线卡片数量与数据一致',
       online?.providers.length === onlineCount, JSON.stringify({ cards: online?.providers.length, onlineCount }));
-    check('每张卡片都有名称/模型/类型标签/右上角 ×',
-      online.providers.every((card) => card.name && card.model && card.tag && card.hasDelete),
+    check('每张卡片都有名称/类型标签/右上角 ×',
+      online.providers.every((card) => card.name && card.tag && card.hasDelete),
       JSON.stringify(online.providers));
+    check('卡片已压成两行（名称 + 脚行），不再展示模型名',
+      online.providers.every((card) => card.hasModelText === false),
+      JSON.stringify(online.providers.map((card) => card.hasModelText)));
+    check('卡片高度按新的 min-height: 88px 收口',
+      online.providers.every((card) => card.minHeight === '88px'),
+      JSON.stringify(online.providers.map((card) => card.minHeight)));
     check('卡片整张可点（手型光标）',
       online.providers.every((card) => card.cursor === 'pointer'),
       JSON.stringify(online.providers.map((card) => card.cursor)));
@@ -152,13 +166,14 @@ async function waitForCardCount(page, expected, timeout = 15000) {
 
     // ---- 点卡片 → 弹出设置并加载该供应商的预设 ----
     const targetCard = online.providers[0];
+    const targetModel = providerById.get(targetCard.id)?.model || '';
     await page.click(`[data-provider-card="${targetCard.id}"] .provider-card-name`);
     await page.waitForTimeout(400);
     let dialog = await dialogSnapshot(page);
     check('点卡片弹出供应商设置弹层', dialog.open === true, JSON.stringify(dialog));
     check('弹层已加载该供应商的预设内容',
-      dialog.name === targetCard.name && dialog.model === targetCard.model && dialog.baseUrl.startsWith('http'),
-      JSON.stringify({ dialog, targetCard }));
+      dialog.name === targetCard.name && dialog.model === targetModel && dialog.baseUrl.startsWith('http'),
+      JSON.stringify({ dialog, targetCard, targetModel }));
     check('点开即可编辑（字段未禁用）',
       dialog.nameDisabled === false && dialog.formatDisabled === false, JSON.stringify(dialog));
     check('标题为供应商名 + 类型副标题',
@@ -216,7 +231,7 @@ async function waitForCardCount(page, expected, timeout = 15000) {
     await page.waitForTimeout(400);
     const local = await cardSnapshot(page);
     check('切到本地 API 后只显示本地供应商',
-      local?.providers.length === localCount && local.providers.every((card) => card.tag === 'LM Studio'),
+      local?.providers.length === localCount && local.providers.every((card) => kindOf(card.id) === 'local'),
       JSON.stringify({ cards: local?.providers.length, localCount, tags: local?.providers.map((c) => c.tag) }));
     check('本地 tab 仍是一行最多三张', local?.columns === 3, String(local?.columns));
     await page.click('[data-provider-kind="online"]');

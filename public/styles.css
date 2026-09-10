@@ -742,10 +742,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .composer-meta-left { min-width: 0; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .composer-model { min-width: 0; display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
 .composer-model > span { flex: none; }
-#composerModelSelect, #composerModelCustom { height: 22px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font-size: 11px; }
-#composerModelSelect { min-width: 100px; max-width: 190px; padding: 0 22px 0 6px; }
-#composerModelCustom { width: 150px; min-width: 0; padding: 0 6px; }
-#composerModelCustom[hidden] { display: none; }
+/* 输入区模型下拉：只列当前 API 的模型目录（已移除手动输入框 #composerModelCustom） */
+#composerModelSelect { height: 22px; min-width: 100px; max-width: 190px; padding: 0 22px 0 6px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font-size: 11px; }
 /* 右侧信息组（思考强度 + 就绪）：整组靠右，两者之间留固定间距 */
 .composer-meta-right { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; flex: none; }
 .composer-meta-right #runtimeStatus { margin-left: 0; justify-self: auto; }
@@ -795,13 +793,28 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .plan-toggle input:checked + span { color: var(--accent); font-weight: 700; }
 .plan-toggle input:disabled { cursor: not-allowed; }
 .mode-select select:focus-visible { box-shadow: 0 0 0 2px rgba(var(--brand-500-rgb), .18); }
-.permission-mode-switch { display: inline-flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface-2); }
-.permission-mode-switch > span { padding: 0 4px; color: var(--muted); white-space: nowrap; }
-.permission-mode-switch button { border: 0; background: transparent; color: var(--muted); font-size: 11px; padding: 2px 7px; border-radius: 4px; min-height: 20px; white-space: nowrap; }
-.permission-mode-switch button:hover:not(:disabled) { color: var(--text); }
-.permission-mode-switch button.active { background: var(--surface); color: var(--accent); box-shadow: 0 1px 3px rgba(30,33,56,.15); }
-.permission-mode-switch button[data-permission-mode="full"].active { color: var(--red); }
-.permission-mode-switch button:disabled { opacity: .5; cursor: not-allowed; }
+.permission-mode-switch { display: inline-flex; align-items: center; flex: none; }
+.permission-mode-button { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 2px 8px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--muted); font-size: 11px; white-space: nowrap; cursor: pointer; }
+.permission-mode-button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--surface-2); color: var(--text); }
+.permission-mode-button[aria-expanded="true"] { border-color: var(--line-strong); background: var(--surface-2); color: var(--text); }
+.permission-mode-button:disabled { opacity: .5; cursor: not-allowed; }
+.permission-mode-prefix { color: var(--muted); }
+.permission-mode-value { color: var(--accent); font-weight: 600; }
+/* 「完全访问」用红色提示风险（与旧的红色高亮同源） */
+.permission-mode-button[data-mode="full"] .permission-mode-value { color: var(--red); }
+.permission-mode-caret { width: 12px; height: 12px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* 审批模式上拉列表：fixed + JS 定位（打开时挂到 body），避免被 .composer-wrap 的 overflow 裁剪（教训 §九.27） */
+.permission-mode-menu { position: fixed; z-index: 45; min-width: 176px; padding: 4px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--shadow-2); }
+.permission-mode-menu[hidden] { display: none; }
+.permission-mode-menu button { display: flex; flex-direction: column; gap: 2px; width: 100%; border: 0; border-radius: var(--r-xs); background: transparent; color: var(--text); padding: 6px 10px; text-align: left; cursor: pointer; }
+.permission-mode-menu button:hover:not(:disabled) { background: var(--surface-2); }
+.permission-mode-menu button:disabled { opacity: .5; cursor: not-allowed; }
+/* 当前档高亮（点开即可看出现在用的是哪一档） */
+.permission-mode-menu button.is-active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.permission-mode-option-title { font-weight: inherit; }
+.permission-mode-option-hint { color: var(--muted); font-size: 11px; font-weight: 400; }
+.permission-mode-menu button.is-active .permission-mode-option-hint { color: inherit; opacity: .75; }
+.permission-mode-menu button[data-permission-mode="full"] .permission-mode-option-title { color: var(--red); }
 .plan-bar { margin: 0 0 7px; padding: 7px 9px; border-left: 2px solid var(--amber); background: var(--amber-soft); color: var(--text); font-size: 12px; line-height: 1.4; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .plan-bar[hidden] { display: none; }
 .plan-bar-text { flex: 1; min-width: 200px; }
@@ -988,11 +1001,10 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .provider-dialog { width: min(620px, calc(100vw - 30px)); height: auto; max-height: min(760px, calc(100dvh - 30px)); }
 /* API 供应商卡片：一行最多三张，最后一张固定是「添加 API」卡片 */
 .provider-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.provider-card { position: relative; display: grid; align-content: start; gap: 6px; min-height: 116px; padding: 14px 14px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
+.provider-card { position: relative; display: grid; align-content: start; gap: 5px; min-height: 88px; padding: 13px 13px 11px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; transition: border-color .15s ease, box-shadow .15s ease; }
 .provider-card:hover, .provider-card:focus-visible { border-color: var(--accent); box-shadow: var(--shadow-1); outline: none; }
 .provider-card.is-default { border-color: var(--accent); background: var(--accent-soft); }
 .provider-card-name { padding-right: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 600; }
-.provider-card-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
 .provider-card-foot { display: flex; align-items: center; gap: 6px; margin-top: auto; }
 .provider-card-tag { padding: 2px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font-size: 11px; }
 .provider-card-badge { padding: 2px 7px; border-radius: 999px; background: var(--accent-solid); color: #fff; font-size: 11px; }
@@ -1302,7 +1314,11 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .model-control, .agent-control { position: static; width: auto; min-width: 0; max-width: none; overflow: hidden; z-index: auto; }
   .model-control { grid-column: 2; grid-row: 1; }
   .agent-control { grid-column: 3; grid-row: 1; }
-  .model-control select, .agent-control select { max-width: 100%; width: 100%; min-width: 0; padding: 0 24px 0 8px; text-overflow: ellipsis; }
+  .model-control select, .agent-control select { max-width: 100%; width: 100%; min-width: 0; min-height: 44px; padding: 0 24px 0 8px; text-overflow: ellipsis; }
+  /* 手机端第二行左侧是「轮次」下拉：桌面刻度轨的等价形态（桌面由 .mobile-only 隐藏）。
+     选项自带「第 N 轮 · 摘要」文字，因此不再另加标签；margin-right:auto 把它顶到行首。 */
+  .turn-jump-select { display: inline-block; margin-right: auto; min-width: 0; max-width: min(42vw, 200px); min-height: 44px; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 12px; text-overflow: ellipsis; }
+  .turn-jump-select[hidden] { display: none; }
   /* MCP 文字标签在手机上也保留（只有圆点会看不出这是什么）。 */
   .topbar-actions {
     position: static;
@@ -1316,7 +1332,8 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
     gap: 4px;
     z-index: auto;
   }
-  .mcp-button, .control-button { min-width: 34px; max-width: 100%; padding: 0 8px; }
+  .mcp-button, .control-button { min-width: 34px; min-height: 44px; max-width: 100%; padding: 0 8px; }
+  #openSidebar { min-width: 44px; min-height: 44px; }
   /* 手机上也保留「任务 / Skill / MCP」文字标签（按钮整行换行即可，裸数字/裸圆点无法理解）。 */
   #skillCount { min-width: 0; height: auto; background: transparent; color: inherit; font-size: 12px; }
   .messages { min-height: 0; padding: 22px 14px 18px; overflow-x: hidden; }
@@ -1328,14 +1345,15 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .composer-wrap { padding: 7px 10px max(8px, env(safe-area-inset-bottom)); overflow-x: hidden; }
   .composer { min-width: 0; width: 100%; }
   .composer-input { min-width: 0; }
-  .composer .icon-button, .composer .send-button { flex: none; }
+  .composer .icon-button, .composer .send-button { flex: none; min-width: 44px; min-height: 44px; }
   .composer-meta { display: flex; flex-wrap: nowrap; gap: 8px; }
   .composer-meta-left { min-width: 0; flex: 1 1 auto; }
   #runtimeStatus { flex: none; margin-left: auto; }
   .choice-buttons { max-height: min(38dvh, 310px); overflow-y: auto; overscroll-behavior: contain; padding: 8px 2px; animation: none; }
   .choice-options { display: grid; grid-template-columns: 1fr; gap: 7px; }
   .choice-btn { width: 100%; min-height: 42px; text-align: left; padding: 9px 12px; border-radius: var(--radius); }
-  .settings-layout { display: grid; grid-template-rows: auto minmax(0, 1fr); }
+  /* 桌面端是 170px + 1fr 两列；手机端必须显式改成单列，否则导航与内容继续横排。 */
+  .settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
   .settings-nav { display: flex; gap: 4px; overflow-x: auto; overscroll-behavior-x: contain; padding: 6px; border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
   .settings-nav::-webkit-scrollbar { display: none; }
   .settings-nav button { width: auto; min-width: max-content; flex: none; text-align: center; padding: 0 10px; white-space: nowrap; }
@@ -1348,11 +1366,23 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   .rename-conversation-dialog { width: 100vw; max-width: none; }
   .settings-dialog, .panel-dialog, .provider-dialog, .agent-dialog { width: 100vw; max-width: none; height: 100dvh; max-height: none; border: 0; border-radius: 0; }
   .provider-cards, .agent-cards { grid-template-columns: 1fr; }
-  /* 移动端隐藏文件面板 */
-  .file-panel, .app-shell.file-panel-open .file-panel { display: none !important; }
+  /* 手机端文件面板：改为全屏抽屉形态（此前被整体隐藏 → 手机直接丢失「打开文件」能力）。
+     与桌面共用同一个 #filePanel 与 openFilePanel/closeFilePanel 链路，只换呈现形态，不开第二条路径。 */
+  .file-panel, .app-shell.file-panel-open .file-panel {
+    display: none;
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-width: 100%;
+    z-index: 40;
+    border-left: 0;
+  }
+  .app-shell.file-panel-open .file-panel { display: flex; }
+  .file-panel-resizer { display: none; }
+  .file-panel-close { width: 44px; height: 44px; margin: 0 6px 0 2px; }
+  /* 消息末尾「本轮修改的文件」在手机上必须可点（点开上面的文件抽屉），不再被 pointer-events 关掉。 */
   .file-changes { border-top-color: var(--line); }
-  .file-change-chip { pointer-events: none; border: 0; background: transparent; padding: 0 4px 0 0; color: var(--text); }
-  .file-change-chip:hover { border: 0; color: var(--text); background: transparent; }
+  .file-change-chip { min-height: 40px; padding: 0 12px 0 6px; }
   .file-change-op { color: var(--muted); background: transparent; font-weight: 600; }
   .file-change-chip[data-file-op="edit"] .file-change-op { color: var(--accent); background: transparent; }
 }
@@ -1505,7 +1535,6 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 
 @media (max-width: 520px) {
   #composerModelSelect { max-width: min(180px, calc(100vw - 92px)); }
-  #composerModelCustom { width: min(180px, calc(100vw - 92px)); }
   .tool-set-name { flex-basis: 100%; max-width: none; }
   .tool-preset-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .agent-tool-group-head { grid-template-columns: auto auto max-content minmax(0, 1fr) auto; gap: 6px; }

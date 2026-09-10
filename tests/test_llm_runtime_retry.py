@@ -15,7 +15,7 @@ import unittest
 import urllib.error
 from unittest import mock
 
-from naiba.llm.runtime import ERROR_DUMP_FILENAME, ModelRuntime
+from naiba.llm.runtime import ERROR_DUMP_FILENAME, EmptyModelStreamError, ModelRuntime
 
 PROFILE = {
     "kind": "online",
@@ -26,6 +26,18 @@ PROFILE = {
     "api_key": "sk-should-never-be-dumped",
 }
 MESSAGES = [{"role": "user", "content": "ping"}]
+PROFILE_OPENAI = {**PROFILE, "request_format": "openai_chat"}
+
+
+def sse(chunk: dict) -> bytes:
+    """把单个 SSE 事件序列化成一行 bytes。"""
+    return ("data: " + json.dumps(chunk, ensure_ascii=False)).encode("utf-8")
+
+
+# 空流：completed 事件但 output 为空 → 正文/思考/action 皆空。
+EMPTY_CODEX_STREAM = [sse({"type": "response.completed", "response": {"output": []}})]
+DELTA_CODEX_STREAM = [sse({"type": "response.output_text.delta", "delta": "答复"})]
+EMPTY_OPENAI_STREAM = [sse({"choices": [{"delta": {}}]})]
 
 
 def http_error(code: int, body: str = "", reason: str = "Internal Server Error") -> urllib.error.HTTPError:
@@ -58,6 +70,29 @@ class FakeResponse:
         return False
 
 
+class FakeStreamResponse:
+    """可迭代 SSE 响应替身：流式路径按行迭代 bytes（不再用 read()）。"""
+
+    def __init__(self, lines: list[bytes]) -> None:
+        self._lines = lines
+        self.headers = {"Content-Type": "text/event-stream"}
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def read(self) -> bytes:
+        return b""
+
+    def close(self) -> None:
+        return None
+
+    def __enter__(self) -> "FakeStreamResponse":
+        return self
+
+    def __exit__(self, *args: object) -> bool:
+        return False
+
+
 class OnlineRetryTests(unittest.TestCase):
     def _run(
         self,
@@ -65,10 +100,13 @@ class OnlineRetryTests(unittest.TestCase):
         status=None,
         messages: list | None = None,
         dump_dir: str | None = None,
+        options: dict | None = None,
+        profile: dict | None = None,
     ) -> tuple[list, str, BaseException | None]:
-        """outcomes：按调用顺序生效，异常实例→抛出，dict→返回该响应（末项重复）。
+        """outcomes：按调用顺序生效，异常实例→抛出，dict→非流式响应，list[bytes]→流式响应（末项重复）。
 
         dump_dir 缺省用独立临时目录，避免把取证文件写进仓库工作区。
+        options 缺省非流式（{"stream": False}）；profile 缺省 codex_responses。
         """
         calls: list = []
         if dump_dir is None:
@@ -80,6 +118,8 @@ class OnlineRetryTests(unittest.TestCase):
             outcome = outcomes[min(len(calls) - 1, len(outcomes) - 1)]
             if isinstance(outcome, BaseException):
                 raise outcome
+            if isinstance(outcome, list):
+                return FakeStreamResponse(outcome)
             return FakeResponse(outcome)
 
         with mock.patch.object(ModelRuntime, "_urlopen_cancelable", fake_open), \
@@ -87,7 +127,11 @@ class OnlineRetryTests(unittest.TestCase):
                 mock.patch.dict(os.environ, {"NAIBA_ERROR_DUMP_DIR": dump_dir}, clear=False):
             try:
                 content = ModelRuntime().complete(
-                    PROFILE, messages or MESSAGES, {"stream": False}, status)
+                    profile or PROFILE,
+                    messages or MESSAGES,
+                    options if options is not None else {"stream": False},
+                    status,
+                )
                 error = None
             except RuntimeError as exc:
                 content, error = "", exc
@@ -164,6 +208,34 @@ class OnlineRetryTests(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 parsed = json.loads(handle.read())
             self.assertEqual(parsed["reason"], "reasoning-passback")
+
+    def test_codex_empty_stream_is_retried_then_raises(self) -> None:
+        events: list[dict] = []
+        calls, _content, error = self._run(
+            [EMPTY_CODEX_STREAM], status=events.append, options={"stream": True})
+        self.assertEqual(len(calls), 3, "codex 空流必须重试到次数上限")
+        self.assertIsInstance(error, EmptyModelStreamError)
+        self.assertIn("没有文本内容", str(error))
+        retry_notes = [
+            str(event.get("message") or "")
+            for event in events
+            if event.get("type") == "status" and "空响应" in str(event.get("message") or "")
+        ]
+        self.assertTrue(retry_notes, f"空流重试必须带状态提示，实际：{retry_notes}")
+
+    def test_codex_empty_then_delta_returns_content(self) -> None:
+        calls, content, error = self._run(
+            [EMPTY_CODEX_STREAM, DELTA_CODEX_STREAM], options={"stream": True})
+        self.assertIsNone(error)
+        self.assertEqual(content, "答复", "空流重试成功后应返回正文")
+        self.assertEqual(len(calls), 2)
+
+    def test_openai_chat_empty_stream_is_not_retried(self) -> None:
+        calls, _content, error = self._run(
+            [EMPTY_OPENAI_STREAM], options={"stream": True}, profile=PROFILE_OPENAI)
+        self.assertEqual(len(calls), 1, "其它在线格式的空流不得纳入重试")
+        self.assertIsNotNone(error)
+        self.assertNotIsInstance(error, EmptyModelStreamError)
 
 
 if __name__ == "__main__":

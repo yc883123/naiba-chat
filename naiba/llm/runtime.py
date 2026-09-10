@@ -49,6 +49,15 @@ ERROR_DUMP_MAX_BYTES = 512 * 1024
 LOCAL_REQUEST_FORMATS = {"ollama", "lm_studio", "llama_cpp", "unsloth"}
 _AGENT_BUFFER_LIMIT = 1024
 
+
+class EmptyModelStreamError(RuntimeError):
+    """在线模型（仅 codex_responses）流式响应消费完毕但既无正文也无有效 Agent action。
+
+    按瞬时故障处理：在既有重试预算内退避重发；次数用尽后原样抛出（消息文本与
+    用户可见错误保持不变）。仅 codex_responses 会抛出该类型，其它在线协议不受影响。
+    """
+
+
 class _ErrorHTMLParser(HTMLParser):
     """Extract readable text from an upstream HTML error page."""
 
@@ -982,6 +991,10 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                             content = ModelRuntime._reasoning_action(reasoning)
                             if content:
                                 reasoning = ""
+                            elif response_format == "codex_responses":
+                                # 仅 codex_responses 归入可重试的空流（EmptyModelStreamError）：
+                                # 中继可能只回聚合事件；其它在线格式保留原 RuntimeError、不重试。
+                                raise EmptyModelStreamError("在线模型流式响应中没有文本内容")
                             else:
                                 raise RuntimeError("在线模型流式响应中没有文本内容")
                         return content, reasoning, str(streamed.get("reasoning_id") or ""), streamed["usage"]
@@ -1222,6 +1235,26 @@ class ModelRuntime(StreamMixins, ProtocolMixins):
                 elif is_http_exception:
                     hint = "；响应读取不完整（连接中断），请检查网络/代理后重试"
                 raise RuntimeError(f"无法连接{target_detail}：{reason}{hint}") from exc
+            except EmptyModelStreamError:
+                # 仅在线 codex_responses 的流式空响应走此分支（本地/连接测试不重试）；
+                # 与 HTTP 重试同策略：退避 + 可取消等待 + 带次数的状态提示。
+                if not is_local and not connection_test and attempt + 1 < attempts:
+                    delay = min(1.5 * (attempt + 1), 5.0)
+                    if status:
+                        status({
+                            "type": "status",
+                            "message": (
+                                f"在线模型返回空响应，{delay:g} 秒后重试"
+                                f"（{attempt + 1}/{attempts - 1}）"
+                            ),
+                        })
+                    if cancel_event:
+                        if cancel_event.wait(delay):
+                            raise RuntimeError("任务已取消")
+                    else:
+                        time.sleep(delay)
+                    continue
+                raise
 
             finally:
                 if diagnostics is not None:

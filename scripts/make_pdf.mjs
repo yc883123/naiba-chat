@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HTML = path.join(ROOT, 'docs', 'manual', 'index.html');
-const OUT = path.join(ROOT, 'docs', 'manual', 'Naiba-Chat-手册-2.1.0.pdf');
+const OUT = path.join(ROOT, 'docs', 'manual', 'Naiba-Chat-手册-2.1.1.pdf');
 
 const res = await fetch('http://127.0.0.1:9222/json/version');
 const ver = await res.json();

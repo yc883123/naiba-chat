@@ -348,9 +348,31 @@ def delete_skill(
             "error": None,
         }
 
+    managed = Path(managed_dir).expanduser().resolve()
     root = Path(str(skill.get("root") or skill.get("path") or "")).expanduser().resolve()
     recycle = Path(recycle_dir).expanduser().resolve()
     recycle.mkdir(parents=True, exist_ok=True)
+    if root == managed or not _path_within(root, managed):
+        # 散装 Skill：定义文件直接放在扫描目录根下（例如单文件导入的 <managed>/SKILL.md），
+        # 此时 root 就是扫描目录本身。绝不能整目录移动，否则会把该目录下所有 Skill 一起
+        # 搬走；这里退化为只回收这一个定义文件（同样是可恢复删除）。
+        skill_file = Path(str(skill.get("path") or "")).expanduser().resolve()
+        if skill_file == managed or not _path_within(skill_file, managed) or not skill_file.is_file():
+            return {"success": False, "error": "拒绝删除：Skill 定义不在托管目录内，请手动处理"}
+        dest = _unique_dir(recycle, str(skill.get("name") or skill_file.stem))
+        dest.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.move(str(skill_file), str(dest / skill_file.name))
+        except OSError as exc:
+            return {"success": False, "error": f"移动失败：{exc}"}
+        return {
+            "success": True,
+            "skill_id": skill_id,
+            "name": str(skill.get("name", skill_file.stem)),
+            "recycled_to": str(dest),
+            "cleaned_agent_refs": cleaned,
+            "error": None,
+        }
     dest = _unique_dir(recycle, root.name)
     try:
         shutil.move(str(root), str(dest))

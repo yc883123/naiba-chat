@@ -50,15 +50,15 @@ function providerProfiles() {
 function providerCardMarkup(provider) {
   const id = escapeHtml(provider.id || '');
   const name = escapeHtml(provider.name || '未命名供应商');
-  const model = escapeHtml(provider.model || '未选择模型');
   const format = PROVIDER_FORMAT_LABELS[provider.request_format] || escapeHtml(provider.request_format || '未指定格式');
+  // 卡片压成两行：名称 + 脚行（格式标签 + 当前角标）。模型名不再上卡片（在弹层里看），
+  // 卡片更矮、一行能放下的信息更整齐。
   return `
     <div class="provider-card${provider.is_default ? ' is-default' : ''}" data-provider-card="${id}" role="button" tabindex="0" aria-label="编辑 ${name}">
       <button class="provider-card-delete" type="button" data-provider-delete="${id}" title="删除 ${name}" aria-label="删除 ${name}">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
       </button>
       <span class="provider-card-name" title="${name}">${name}</span>
-      <span class="provider-card-model" title="${model}">${model}</span>
       <span class="provider-card-foot">
         <span class="provider-card-tag">${format}</span>
         ${provider.is_default ? '<span class="provider-card-badge">当前</span>' : ''}

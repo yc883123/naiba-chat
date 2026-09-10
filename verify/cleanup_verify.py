@@ -36,7 +36,7 @@ KEEP = {
     "provider_cards_smoke.cjs", "agent_cards_smoke.cjs", "agent_avatar_smoke.cjs",
     "context_menu_smoke.cjs", "_check_turn_rail.cjs", "_check_tool_cards_compact.cjs",
     "sidebar_favorites_smoke.cjs", "agent_prompt_smoke.cjs", "quick_msg_smoke.cjs",
-    "starter_reasoning_smoke.cjs",
+    "starter_reasoning_smoke.cjs", "mobile_shell_smoke.cjs",
     # 播种器
     "seed_usage_message.py", "seed_media_message.py", "seed_favorites.py",
     "seed_turn_rail_chat.py", "seed_agent_avatar_chat.py",

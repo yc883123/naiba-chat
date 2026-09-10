@@ -12,8 +12,13 @@ export function filePanelTabKey(raw) {
   return String(raw || '').replace(/\\/g, '/').toLowerCase();
 }
 
+// 视口边界的唯一来源：CSS 的 @media (max-width: 760px) 与下面这个常量必须一致。
+export const NARROW_VIEWPORT_MAX = 760;
+
+// 文件面板能不能用，只看面板是否存在：手机上它是全屏抽屉形态，不再是「不可用」。
+// （此前按视口宽度大于 760 直接判死，手机端因此整体丢失「打开文件」能力。）
 export function filePanelUsable() {
-  return window.innerWidth > 760 && !!$('#filePanel');
+  return !!$('#filePanel');
 }
 
 export function filePanelWidthPx() {
@@ -29,7 +34,7 @@ export function applyFilePanelOpenClass() {
 }
 
 export function openFilePanel(rawPath) {
-  if (!filePanelUsable()) return false; // 手机端仅展示总结，不打开面板
+  if (!filePanelUsable()) return false; // 面板不存在（理论上不会）：交给消息里的文件摘要兜底
   if (!rawPath) return false;
   if (!state.conversationId) {
     toast('请先打开一个会话');
@@ -288,7 +293,7 @@ export function closeSidebar() {
 
 // ---- 左右侧栏折叠 / 展开（桌面端；手机端侧栏保持抽屉式开关）----
 export function sidebarDesktop() {
-  return window.innerWidth > 760;
+  return window.innerWidth > NARROW_VIEWPORT_MAX;
 }
 
 export function setLeftSidebarCollapsed(collapsed) {

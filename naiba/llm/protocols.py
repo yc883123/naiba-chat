@@ -927,6 +927,88 @@ class ProtocolMixins:
 
 
     @staticmethod
+    def _codex_responses_aggregated(
+        chunks: list[dict[str, Any]],
+    ) -> tuple[str, str, str, str]:
+        """从 ``codex_responses`` 流式聚合事件提取 (正文, 思考, 最后一个 reasoning item id, tool_calls action)。
+
+        中继/代理可能只回聚合事件而不逐段发 ``output_text.delta``，此时逐段解析拿不到
+        正文。这里从已缓存的 chunk 里补回：仅认 ``response.completed``
+        （``chunk["response"]["output"]``）与 ``response.output_item.done``
+        （``chunk["item"]``）；优先采用前者（一次给全），仅当其缺失时回退后者，
+        再按 item id 去重，避免两种事件同时出现时正文被拼接两次。
+        显式忽略 ``response.incomplete``——被 token 上限/服务端中断截断的回答不得当作
+        成功正文返回。只取 ``message`` 正文、``reasoning`` 思考（含服务端 id，供下一轮
+        回传）与 ``function_call``（复用 ``_responses_tool_calls_action`` 组装为 Agent action）。
+        """
+        # ``response.output_item.done`` 可以在 ``response.incomplete`` 之前到达。
+        # 后者表示整次 Responses 调用未完成，不能因为已有部分 item 结束就把截断内容
+        # 回填为成功结果；但 ``response.completed`` 仍是优先且完整的成功终态。
+        incomplete = any(
+            isinstance(chunk, dict)
+            and str(chunk.get("type") or "") == "response.incomplete"
+            for chunk in chunks
+        )
+        items: list[dict[str, Any]] = []
+        for chunk in chunks:
+            if not isinstance(chunk, dict):
+                continue
+            if str(chunk.get("type") or "") != "response.completed":
+                continue
+            response = chunk.get("response")
+            if isinstance(response, dict):
+                for item in response.get("output") or []:
+                    if isinstance(item, dict):
+                        items.append(item)
+        if not items and not incomplete:
+            for chunk in chunks:
+                if not isinstance(chunk, dict):
+                    continue
+                if str(chunk.get("type") or "") != "response.output_item.done":
+                    continue
+                item = chunk.get("item")
+                if isinstance(item, dict):
+                    items.append(item)
+
+        deduped: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for item in items:
+            key = str(item.get("id") or "")
+            if not key:
+                key = "|".join([
+                    str(item.get("type") or ""),
+                    str(item.get("call_id") or ""),
+                    str(item.get("name") or ""),
+                    str(item.get("content") or item.get("arguments") or "")[:128],
+                ])
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+
+        texts: list[str] = []
+        reasonings: list[str] = []
+        reasoning_id = ""
+        for item in deduped:
+            item_type = str(item.get("type") or "")
+            if item_type == "message":
+                text = ProtocolMixins._text_value(item.get("content"))
+                if text:
+                    texts.append(text)
+            elif item_type == "reasoning":
+                text = ProtocolMixins._text_value(item.get("content") or item.get("summary"))
+                if text:
+                    reasonings.append(text)
+                item_id = str(item.get("id") or "")
+                if item_id:
+                    reasoning_id = item_id
+        action = ProtocolMixins._responses_tool_calls_action(
+            {"output": deduped}, "codex_responses"
+        ) or ""
+        return "\n".join(texts), "\n".join(reasonings), reasoning_id, action
+
+
+    @staticmethod
     def _text_value(value: Any) -> str:
         if isinstance(value, str):
             return value

@@ -63,6 +63,8 @@
           <select id="agentSelect" aria-label="当前 Agent"></select>
         </label>
         <div class="topbar-actions">
+          <!-- 手机端：桌面刻度轨的等价形态（轮次下拉）；桌面由 .mobile-only 隐藏 -->
+          <select class="mobile-only turn-jump-select" id="turnJumpSelect" aria-label="跳转到对话轮次" title="跳转到对话轮次" hidden></select>
           <button class="control-button file-reopen-button" id="openFileTabs" type="button" hidden title="重新打开文件面板（保留已打开的文件标签）">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h8.5L19 7.5V21H6z"></path><path d="M14.5 3v4.5H19"></path></svg>
             <span id="fileTabsCount">0</span>
@@ -156,13 +158,28 @@
             <label class="composer-model" for="composerModelSelect">
               <span>模型</span>
               <select id="composerModelSelect" aria-label="当前模型"></select>
-              <input id="composerModelCustom" type="text" maxlength="256" placeholder="输入模型名称" aria-label="手动输入模型名称" hidden>
             </label>
-            <div class="permission-mode-switch" id="permissionModeSwitch" role="radiogroup" aria-label="当前对话审批模式">
-              <span>审批</span>
-              <button type="button" data-permission-mode="confirm" class="active" role="radio" title="敏感操作逐次确认">确认</button>
-              <button type="button" data-permission-mode="auto" role="radio" title="自动批准工作区内操作">自动</button>
-              <button type="button" data-permission-mode="full" role="radio" title="工具无需逐次确认">完全</button>
+            <!-- 审批模式：收起为一个上拉框（触发按钮显示当前档 + 点击在按钮上方弹出列表），不再平铺四段 -->
+            <div class="permission-mode-switch" id="permissionModeSwitch">
+              <button type="button" class="permission-mode-button" id="permissionModeButton" aria-haspopup="listbox" aria-expanded="false" title="当前对话审批模式">
+                <span class="permission-mode-prefix">审批</span>
+                <b class="permission-mode-value" id="permissionModeValue">确认</b>
+                <svg class="permission-mode-caret" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 15l6-6 6 6"></path></svg>
+              </button>
+              <div class="permission-mode-menu" id="permissionModeMenu" role="listbox" aria-label="当前对话审批模式" hidden>
+                <button type="button" data-permission-mode="confirm" role="option" title="敏感操作逐次确认">
+                  <span class="permission-mode-option-title">确认</span>
+                  <span class="permission-mode-option-hint">敏感操作逐次确认</span>
+                </button>
+                <button type="button" data-permission-mode="auto" role="option" title="自动批准工作区内操作">
+                  <span class="permission-mode-option-title">自动</span>
+                  <span class="permission-mode-option-hint">自动批准工作区内操作</span>
+                </button>
+                <button type="button" data-permission-mode="full" role="option" title="工具无需逐次确认">
+                  <span class="permission-mode-option-title">完全</span>
+                  <span class="permission-mode-option-hint">工具无需逐次确认</span>
+                </button>
+              </div>
             </div>
             <div class="composer-meta-more">
               <button type="button" class="composer-meta-more-button" id="quickMessageButton" aria-haspopup="menu" aria-expanded="false" title="快捷消息：点击插入常用提示词">快捷消息</button>

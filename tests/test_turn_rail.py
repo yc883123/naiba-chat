@@ -71,6 +71,14 @@ class TurnRailTests(unittest.TestCase):
         self.assertIn("--turn-rail-w: 0px", mobile)
         self.assertIn(".turn-rail { display: none; }", mobile)
 
+    def test_mobile_dropdown_takes_over_the_rail(self) -> None:
+        """窄屏藏掉刻度轨后，能力由顶栏轮次下拉承接：不删能力，只换形态（细节见 test_turn_jump.py）。"""
+        index = self._index()
+        self.assertIn('id="turnJumpSelect"', index)
+        source = self._messages()
+        self.assertIn("renderTurnJump(turnRailTurns, active)", source, "下拉必须复用刻度轨同一份轮次模型")
+        self.assertIn("turnRailTurns.length < 2", source, "不足 2 轮时不显示（与刻度轨口径一致）")
+
     def test_tick_has_fixed_block_and_inner_line(self) -> None:
         """判定区 = 固定尺寸的透明块；悬停/高亮只改内层线 → 所有条位置不抖。"""
         css = self._css()
