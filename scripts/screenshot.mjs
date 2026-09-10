@@ -1,5 +1,5 @@
 // Naiba Chat 说明书配图一键生成（2.1.0）
-// 依赖：本地服务 http://127.0.0.1:8765 已启动；Chrome --remote-debugging-port=9222 已启动。
+// 依赖：本地服务已启动（默认 http://127.0.0.1:8765，可用 NAIBA_PORT 覆盖）；Chrome --remote-debugging-port=9222 已启动。
 // 用法：node scripts/screenshot.mjs
 // 说明：标注「示意」的几张是新特性（分割线 / 刻度轨 / 附件 / 上下文提醒）用真实 CSS 类注入渲染，
 //       其余全部是真实界面 + 真实交互 + 真实文件渲染。
@@ -12,6 +12,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'docs', 'manual', 'images');
 const DEMO_DIR = path.join(ROOT, 'docs', 'manual');
 const DEMO_TITLE = '说明书演示';
+// 端口可能被占用而漂移（实测服务会自己换端口），用 NAIBA_PORT 覆盖
+const APP = `http://127.0.0.1:${process.env.NAIBA_PORT || 8765}`;
 const DEMO_FILE = path.join(OUT, '..', '_demo-产品说明.md');
 fs.mkdirSync(OUT, { recursive: true });
 
@@ -150,6 +152,12 @@ async function shotClip(file, clip) {
   }
   console.log('  ✗', file, '裁剪截图失败');
 }
+// 按给定矩形裁剪（矩形由页面 JS 现算，滚不到就退整张）
+async function shotClip2(file, box) {
+  if (!box || box.width < 40 || box.height < 30) { await shot(file); return; }
+  if (box.y < 0) box = { ...box, y: 0 };
+  await shotClip(file, { x: box.x, y: box.y, width: box.width, height: box.height, scale: 2 });
+}
 async function shot(file) {
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
@@ -194,7 +202,7 @@ async function settingsTab(name) {
 // ---------- 0. 准备演示会话（用于文件面板 / @ 引用 / 消息渲染截图） ----------
 console.log('[0] 准备演示会话');
 await metrics(1600, 1000);
-await navigate('http://127.0.0.1:8765');
+await navigate(APP);
 const demoConv = await ev(`(async () => {
   const r = await fetch('/api/conversations', { method: 'POST', headers: {'Content-Type':'application/json'},
     body: JSON.stringify({ title: '${DEMO_TITLE}', workspace_dir: ${JSON.stringify(DEMO_DIR)} }) });
@@ -205,7 +213,7 @@ console.log('  demo conversation:', demoConv || '(创建失败，文件面板截
 
 // ---------- 1. 主界面 ----------
 console.log('[1] 主界面');
-await navigate('http://127.0.0.1:8765');
+await navigate(APP);
 await shot('01-main-empty.png');
 
 // 侧栏折叠
@@ -241,7 +249,7 @@ await sleep(700);
 
 // ---------- 2. 文件面板 ----------
 console.log('[2] 文件面板');
-await navigate('http://127.0.0.1:8765');
+await navigate(APP);
 const opened = await ev(`(() => {
   const items = [...document.querySelectorAll('.conversation-item')];
   const hit = items.find(i => (i.textContent || '').includes('${DEMO_TITLE}'));
@@ -391,7 +399,7 @@ await clean();
 
 // ---------- 6. 输入区：思考强度 / 上下文 / 快捷消息 / @ 引用 / 附件 ----------
 console.log('[6] 输入区');
-await navigate('http://127.0.0.1:8765');
+await navigate(APP);
 await ev(`(() => {
   const items = [...document.querySelectorAll('.conversation-item')];
   const hit = items.find(i => (i.textContent || '').includes('${DEMO_TITLE}'));
@@ -409,6 +417,26 @@ await clean();
 await ev(`document.querySelector('#contextUsageButton')?.click()`);
 await sleep(700);
 await shot('19-context-usage.png');
+await clean();
+
+// 审批模式上拉框（2.2.0：平铺四段 → 按钮 + 上方弹出列表）
+await ev(`document.querySelector('#permissionModeButton')?.click()`);
+await sleep(600);
+const permOpen = await ev(`(() => {
+  const m = document.querySelector('#permissionModeMenu');
+  return m ? { hidden: m.hidden, items: m.querySelectorAll('[data-permission-mode]').length } : null;
+})()`);
+console.log('  permission menu ->', JSON.stringify(permOpen));
+await shotClip2('33-permission-menu.png', await ev(`(() => {
+  const w = document.querySelector('.composer-wrap');
+  const m = document.querySelector('#permissionModeMenu');
+  if (!w || !m) return null;
+  const wr = w.getBoundingClientRect();
+  const mr = m.getBoundingClientRect();
+  const top = Math.min(wr.top, mr.top) - 12;
+  return { x: Math.round(wr.left), y: Math.max(0, Math.round(top)),
+           width: Math.round(wr.width), height: Math.round(wr.bottom - top + 12) };
+})()`));
 await clean();
 
 // 快捷消息面板（2.1.0：内置交接报告预设）
@@ -671,8 +699,40 @@ await shot('24-tool-approval.png');
 // ---------- 9. 移动端 ----------
 console.log('[9] 移动端');
 await metrics(430, 932, true);
-await navigate('http://127.0.0.1:8765');
+await navigate(APP);
 await shot('25-mobile-main.png');
+
+// 手机端文件面板「全屏抽屉」（2.2.0 功能对等：此前整体隐藏）
+await ev(`(() => {
+  const items = [...document.querySelectorAll('.conversation-item')];
+  const hit = items.find(i => (i.textContent || '').includes('${DEMO_TITLE}'));
+  if (hit) hit.click();
+})()`);
+await sleep(1500);
+await ev(`(() => {
+  const es = document.querySelector('#emptyState'); if (es) es.hidden = true;
+  const chip = '<button type="button" class="file-change-chip" data-file-op="edit" data-open-file="${path.join(DEMO_DIR, 'build_html.py').replace(/\\/g, '\\\\')}" title="编辑：build_html.py"><span class="file-change-op">改</span><span class="file-change-name">build_html.py</span></button>';
+  document.querySelector('#messages').innerHTML = \`
+  <article class="message-row user">
+    <div class="message-body"><p>手机上也能看改了哪些文件吗？</p></div>
+  </article>
+  <article class="message-row assistant">
+    <div class="message-body">
+      <div class="answer-content"><p>能。点下面的文件名，右侧文件面板会以<strong>全屏抽屉</strong>打开。</p></div>
+      <div class="file-changes">
+        <div class="file-changes-label">本轮修改文件（编辑 1）</div>
+        <div class="file-changes-list">\${chip}</div>
+      </div>
+    </div>
+  </article>\`;
+})()`);
+await sleep(500);
+await ev(`document.querySelector('.file-change-chip[data-file-op="edit"]')?.click()`);
+await sleep(1500);
+await shot('34-mobile-file-drawer.png');
+await ev(`document.querySelector('#closeFilePanel')?.click()`);
+await sleep(700);
+
 await openDialog('#settingsDialog');
 await settingsTab('models');
 await shot('26-mobile-settings.png');

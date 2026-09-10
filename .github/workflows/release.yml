@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 2.2.0-beta
-  RELEASE_TAG: v2.2.0-beta
-  PACKAGE_NAME: naiba-chat-2.2.0-beta-windows-x64
+  RELEASE_VERSION: 2.2.1-beta
+  RELEASE_TAG: v2.2.1-beta
+  PACKAGE_NAME: naiba-chat-2.2.1-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 2.2.0 Beta release
+      - name: Publish 2.2.1 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 2.2.0 Beta
+          name: Naiba Chat 2.2.1 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,14 +99,14 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 2.2.0 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 2.2.1 Beta Windows build from `${{ github.sha }}`.
 
-            本次更新（完整清单见 `release_notes.json` / 应用内「更新说明」）：
-            - 手机端「功能对等」：电脑能做的手机都能做，只换形态——文件面板改为全屏抽屉、消息末尾文件条目可点、桌面刻度轨换成顶栏轮次下拉、触摸目标不小于 44px。
-            - 修复 Skill 安装目录归属：散装上传（单文件 .md / 顶层散放 SKILL.md 的 zip）先建独立子目录；删除带归属校验，杜绝「删一个 Skill 全部消失」；升级自动迁移历史裸定义文件并保留引用。
-            - 在线模型稳健性：Codex Responses 聚合事件回填（正文/思考/工具调用）、空流按瞬时故障重试、HTTP 5xx 退避重试并落盘失败请求体取证。
-            - 界面打磨：审批模式改为上拉框；输入区模型只从当前 API 的模型目录里选（历史模型置顶「已保存：X」）；API 供应商卡片更紧凑。
-            - 新增守门测试：手机端对等 / 轮次下拉 / Skill 安装布局 / Codex 聚合回放与重试落盘。
+            本次修复（完整清单见 `release_notes.json` / 应用内「更新说明」）：
+            - 异步任务不再卡死：ComfyUI 重启/清空队列后，已提交但已不在 `/history` 与 `/queue` 的镜头不再被当成「还在跑」而空转到 2 小时上限——按预算自动重新提交同一工作流，预算用尽则明确记为失败收尾。
+            - 重启不再复制任务：中断恢复改为幂等标记（`resumed_into` / `resume_skipped`），checkpoint 相同的中断记录只恢复最新一条，杜绝「重启一次任务翻一倍」。
+            - 后台任务不再锁死对话：只有顶层 Run 占用会话互斥位，长跑/卡住的异步任务不会再让该会话发不出新消息。
+            - 任务面板恢复「停止」按钮（新增 `POST /api/jobs/{id}/cancel`，可真正中止运行中的任务）。
+            - 新增 8 例守门测试覆盖上述四条不变量。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

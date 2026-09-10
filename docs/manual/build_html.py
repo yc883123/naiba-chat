@@ -60,7 +60,7 @@ TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Naiba Chat 应用说明书 · 2.1.1 Beta</title>
+<title>Naiba Chat 应用说明书 · 2.2.0 Beta</title>
 <style>
   :root {
     --bg: #fbfaf7;
@@ -165,7 +165,7 @@ TEMPLATE = """<!doctype html>
 <div class="layout">
   <nav class="toc-nav">
     <div class="brand">Naiba Chat<br>应用说明书</div>
-    <div class="sub">2.1.1 Beta · Windows</div>
+    <div class="sub">2.2.0 Beta · Windows</div>
     <input class="search" type="search" placeholder="搜索标题（Ctrl+F）" onfocus="this.select()">
     __TOC__
     <a class="dl-pdf" href="__PDFNAME__" download>下载 PDF</a>
@@ -196,7 +196,7 @@ TEMPLATE = """<!doctype html>
 
 # 找出 README 里的 h1（应该是主标题）和它的 id，前置页要排除在 toc l1 之外
 # 实际上 toc 第一个 h1（"Naiba Chat 应用说明书"）保留也没坏，作为回到顶部
-PDF_NAME = 'Naiba-Chat-手册-2.1.1.pdf'
+PDF_NAME = 'Naiba-Chat-手册-2.2.0.pdf'
 html = (TEMPLATE
         .replace('__TOC__', toc_html)
         .replace('__BODY__', body_html)

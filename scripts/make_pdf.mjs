@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const HTML = path.join(ROOT, 'docs', 'manual', 'index.html');
-const OUT = path.join(ROOT, 'docs', 'manual', 'Naiba-Chat-手册-2.1.1.pdf');
+const OUT = path.join(ROOT, 'docs', 'manual', 'Naiba-Chat-手册-2.2.0.pdf');
 
 const res = await fetch('http://127.0.0.1:9222/json/version');
 const ver = await res.json();
@@ -15,16 +15,20 @@ ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.
 await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
 const rawSend = (method, params = {}, sessionId) => { seq++; const msg = { id: seq, method, params }; if (sessionId) msg.sessionId = sessionId; const p = new Promise((resolve) => pending.set(seq, resolve)); ws.send(JSON.stringify(msg)); return p; };
 const withTimeout = (p, ms, label) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej(new Error('TIMEOUT ' + label)), ms))]);
-const send = (m, p = {}, s) => withTimeout(rawSend(m, p, s), 90000, m);
+const send = (m, p = {}, s) => withTimeout(rawSend(m, p, s), 300000, m);
 // 新开一个标签页做打印，不干扰已有页面；打完关闭
 const { result: { targetId } } = await send('Target.createTarget', { url: 'about:blank' });
 const { result: { sessionId } } = await send('Target.attachToTarget', { targetId, flatten: true });
 const sess = (m, p = {}) => send(m, p, sessionId);
 try {
   await sess('Page.enable');
+  await sess('Page.bringToFront').catch(() => {});
   await sess('Emulation.setDeviceMetricsOverride', { width: 1200, height: 1600, deviceScaleFactor: 1, mobile: false });
   await sess('Page.navigate', { url: 'file:///' + HTML.replace(/\\/g, '/') });
-  await new Promise((r) => setTimeout(r, 5000));
+  await new Promise((r) => setTimeout(r, 8000));
+  const imgs = await sess('Runtime.evaluate', { expression: `Array.from(document.images).filter(i=>!i.complete).length + '/' + document.images.length`, returnByValue: true });
+  console.log('images pending:', imgs.result?.result?.value);
+  console.time('printToPDF');
   const { result } = await sess('Page.printToPDF', {
     printBackground: true,
     paperWidth: 8.27, paperHeight: 11.69,   // A4
