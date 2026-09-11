@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 2.2.2-beta
-  RELEASE_TAG: v2.2.2-beta
-  PACKAGE_NAME: naiba-chat-2.2.2-beta-windows-x64
+  RELEASE_VERSION: 2.2.3-beta
+  RELEASE_TAG: v2.2.3-beta
+  PACKAGE_NAME: naiba-chat-2.2.3-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 2.2.2 Beta release
+      - name: Publish 2.2.3 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 2.2.2 Beta
+          name: Naiba Chat 2.2.3 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,15 +99,13 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 2.2.2 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 2.2.3 Beta Windows build from `${{ github.sha }}`.
 
             本次更新（完整清单见 `release_notes.json` / 应用内「更新说明」）：
-            - Skill 删除重构：删除改为确认对话框，可选「移至回收目录（可恢复）」或「彻底删除」；设置页新增回收目录列表，可一键恢复或清空。
-            - 修掉「点了删除却删不掉」：同一 Skill 在多个目录（或打包内置 + 托管副本）各有一份时不再只搬走一份、让另一份立刻复活——这类 Skill 统一按 ID 隐藏（可在「已隐藏 Skill」恢复），重启不会回来；已删除的内置 Skill 也不再被启动同步写回。
-            - 会话模型只从「检测到的模型目录」里选：移除供应商默认模型兜底与手动输入，未检查模型或选中项不在目录里时拦下发送并给出提示。
-            - 修复供应商更换默认模型后，隐式跟随旧默认模型的会话仍发送旧模型名的问题。
-            - 冻结版打包补齐 multipart 解析器（修复安装版上传附件失败）。
-            - 单文件 Skill 导入不再强制 YAML frontmatter（自动从标题与首段补最小元数据）；清理冗余旧版内置技能包。
+            - 会话底部「模型」下拉末尾新增「↻ 重新检测模型」：选中即强制重新拉取当前 API 的模型目录并还原原选择，供应商新上架的模型立刻可选，不必再进设置页编辑供应商、点「检查模型」；该入口失败会明确提示原因，且它只是动作、不会被写进会话或发给服务端。
+            - 修复模型目录缓存判据：空目录不再被当作「已查过」，模型后上架（如本地模型刚加载完）能重新刷出来。
+            - 行为变更：会话未明确选择过模型时不再自动选中检测目录第一项，改为显示占位项「请选择模型…」；尚未选过模型的会话（含历史会话）需先显式选一次才能发送。
+            - 已保存的模型仍优先展示，不在检测目录里时依旧置顶「已保存：X（请重新检查模型）」。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

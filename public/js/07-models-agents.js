@@ -201,9 +201,17 @@ export function selectedProvider() {
   return profiles.find((p) => p.model_key === value) || null;
 }
 
+// 「重新检测模型」伪选项：它只是下拉框里的一个触发器，**绝不落库、绝不发给模型**。
+const COMPOSER_MODEL_REFRESH = '__refresh_composer_models__';
+// 下拉框最后一次有效选择（'' = 未选择）：刷新前记下，强制重拉目录后还原。
+let composerModelLastChoice = '';
+let composerModelRefreshBusy = false;
+
 export function composerModelChoice() {
   const select = $('#composerModelSelect');
-  return select ? String(select.value || '').trim() : '';
+  if (!select) return '';
+  const value = String(select.value || '').trim();
+  return value === COMPOSER_MODEL_REFRESH ? '' : value;
 }
 
 function composerModelEntries(provider) {
@@ -228,11 +236,19 @@ function renderComposerModels(provider, preferredModel = '') {
   const entries = composerModelEntries(provider);
   select.replaceChildren();
   const savedMissing = Boolean(desired) && !entries.some((item) => item.id === desired);
+  // 会话没有明确选择时给一个占位项，**不再默认选中目录第一项**——目录顺序由供应商
+  // `/v1/models` 的返回顺序决定，没有任何语义（teynex 实测把最弱那个排第一）。
   if (savedMissing) {
     const saved = document.createElement('option');
     saved.value = desired;
     saved.textContent = `已保存：${desired}（请重新检查模型）`;
     select.append(saved);
+  } else if (!desired) {
+    const placeholder = document.createElement('option');
+    placeholder.value = '';
+    placeholder.textContent = entries.length ? '请选择模型…' : '请先在设置中检查模型';
+    placeholder.disabled = true;
+    select.append(placeholder);
   }
   entries.forEach((model) => {
     const option = document.createElement('option');
@@ -240,21 +256,14 @@ function renderComposerModels(provider, preferredModel = '') {
     option.textContent = model.name;
     select.append(option);
   });
-  if (!entries.length && !savedMissing) {
-    const empty = document.createElement('option');
-    empty.value = '';
-    empty.textContent = '请先在设置中检查模型';
-    empty.disabled = true;
-    select.append(empty);
-  }
-  if ([...select.options].some((option) => option.value === desired)) {
-    select.value = desired;
-  } else if (entries.length) {
-    // 新会话没有历史选择时，默认选中检测目录的第一项；它仍是会话下拉的实际选择。
-    select.value = entries[0].id;
-  } else {
-    select.value = '';
-  }
+  // 会话内直接重拉目录的入口：供应商新上架的模型不必再进设置页点「检查模型」。
+  const refresh = document.createElement('option');
+  refresh.value = COMPOSER_MODEL_REFRESH;
+  refresh.textContent = '↻ 重新检测模型';
+  select.append(refresh);
+  const matched = Boolean(desired) && [...select.options].some((option) => option.value === desired);
+  select.value = matched ? desired : '';
+  composerModelLastChoice = select.value;
 }
 
 export function composerModelIsValidated() {
@@ -265,7 +274,7 @@ export function composerModelIsValidated() {
     && catalog.some((model) => String(model?.id || '').trim() === choice));
 }
 
-export async function populateComposerModels(preferredModel = null) {
+export async function populateComposerModels(preferredModel = null, { force = false } = {}) {
   const provider = selectedProvider();
   const providerKey = String(provider?.model_key || '');
   // 记下发请求时的会话：目录返回后会话可能已经切走。两个会话共用同一 API 时，
@@ -276,7 +285,14 @@ export async function populateComposerModels(preferredModel = null) {
     ? composerModelChoice()
     : String(preferredModel || '').trim();
   renderComposerModels(provider, desired);
-  if (!providerKey || state.providerModelCatalogs[providerKey]) return;
+  if (!providerKey) {
+    if (force) toast('请先在设置页配置 API 供应商，再重新检测模型');
+    return;
+  }
+  // 目录缓存判据是「**有没有模型**」而不是「有没有查过」：供应商返回 200 但列表为空
+  // （本地模型还没 pull/加载）时不能被当成已缓存，否则本页会永久卡在「请先在设置中
+  // 检查模型」，模型后来上架了也刷不出来。force = 用户点了「↻ 重新检测模型」。
+  if (!force && (state.providerModelCatalogs[providerKey] || []).length) return;
   try {
     const result = await api('/api/providers/models', { method: 'POST', body: { model_key: providerKey } });
     state.providerModelCatalogs[providerKey] = Array.isArray(result.models) ? result.models : [];
@@ -285,9 +301,14 @@ export async function populateComposerModels(preferredModel = null) {
     if ($('#modelSelect')?.value !== providerKey) return;
     if (state.conversationId !== conversationId) return;
     renderComposerModels(selectedProvider(), composerModelChoice());
+    if (force) {
+      const count = state.providerModelCatalogs[providerKey].length;
+      toast(count ? `已重新检测到 ${count} 个模型` : '该 API 当前没有可用模型');
+    }
   } catch (error) {
-    // 某些 API 不提供 models 目录时保持空列表；发送前会明确提示先检查模型。
-    console.debug('[naiba] 获取 API 模型目录失败:', error.message);
+    // 用户主动点「重新检测模型」时必须出声，不能只藏在控制台里。
+    if (force) toast(`无法获取模型目录：${error.message}`);
+    else console.debug('[naiba] 获取 API 模型目录失败:', error.message);
   }
 }
 
@@ -300,9 +321,30 @@ async function persistConversationModelName(modelName) {
   if (index >= 0) state.conversations[index] = { ...state.conversations[index], ...updated };
 }
 
+// 「↻ 重新检测模型」：强制重拉目录（绕过缓存），完成后还原刷新前的选择。
+async function refreshComposerModels() {
+  const select = $('#composerModelSelect');
+  if (!select || composerModelRefreshBusy) return;
+  const keep = composerModelLastChoice;
+  composerModelRefreshBusy = true;
+  select.disabled = true;
+  try {
+    await populateComposerModels(keep, { force: true });
+  } finally {
+    composerModelRefreshBusy = false;
+    select.disabled = false;
+  }
+}
+
 export async function saveComposerModelSelection() {
   const select = $('#composerModelSelect');
   if (!select) return;
+  // 刷新项是动作不是选择：不进「已保存的会话模型」。
+  if (select.value === COMPOSER_MODEL_REFRESH) {
+    await refreshComposerModels();
+    return;
+  }
+  composerModelLastChoice = composerModelChoice();
   try {
     await persistConversationModelName(composerModelChoice());
   } catch (error) {

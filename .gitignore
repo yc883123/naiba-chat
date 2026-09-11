@@ -204,6 +204,8 @@ verify/*
 !verify/branch_first_turn_smoke.py
 !verify/browser_smoke.cjs
 !verify/cleanup_verify.py
+!verify/composer_model_smoke.cjs
+!verify/composer_model_smoke.py
 !verify/context_menu_smoke.cjs
 !verify/dup_ids.py
 !verify/esm_cross_assign.py

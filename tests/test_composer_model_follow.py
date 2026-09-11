@@ -46,6 +46,26 @@ class ComposerModelFollowMarkupTests(unittest.TestCase):
         conversations = (ROOT / "public/js/08-conversations.js").read_text(encoding="utf-8")
         self.assertIn("model_name: composerModelChoice()", conversations)
 
+    def test_catalog_cache_needs_models_not_a_lookup(self) -> None:
+        """空目录（供应商 200 但没模型）不算已缓存，否则本页会永久卡在「请先在设置中检查模型」。"""
+        models = self._models()
+        self.assertIn("(state.providerModelCatalogs[providerKey] || []).length", models)
+
+    def test_dropdown_offers_refresh_without_persisting_it(self) -> None:
+        """会话内可直接重拉目录，但「↻ 重新检测模型」只是动作，绝不落库、绝不发给模型。"""
+        models = self._models()
+        self.assertIn("const COMPOSER_MODEL_REFRESH = '__refresh_composer_models__'", models)
+        self.assertIn("↻ 重新检测模型", models)
+        self.assertIn("if (select.value === COMPOSER_MODEL_REFRESH)", models)
+        self.assertIn("return value === COMPOSER_MODEL_REFRESH ? '' : value;", models)
+        self.assertIn("{ force = false } = {}", models, "必须保留「强制重拉」通道")
+
+    def test_new_conversation_never_auto_picks_first_entry(self) -> None:
+        """目录顺序由供应商返回顺序决定、没有任何语义，不得静默替用户选第一项。"""
+        models = self._models()
+        self.assertNotIn("select.value = entries[0].id", models)
+        self.assertIn("请选择模型…", models)
+
     def test_provider_save_routes_through_app(self) -> None:
         http = (ROOT / "naiba/http.py").read_text(encoding="utf-8")
         self.assertIn("self.app.api_upsert_model_profile(body)", http)

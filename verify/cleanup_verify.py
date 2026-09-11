@@ -57,6 +57,8 @@ KEEP = {
     "session_start_smoke.py", "session_start_smoke.cjs",
     # 消息列表懒加载冒烟（§六 已登记；Python 自编排 + Node 检查）
     "lazy_messages_smoke.py", "lazy_messages_smoke.cjs",
+    # 会话模型下拉冒烟（§六 已登记；Python 自编排 + Node 检查）
+    "composer_model_smoke.py", "composer_model_smoke.cjs",
     # 发布清单同步自检（只读）
     "_release_check.py",
     # 本脚本自身
