@@ -482,4 +482,40 @@ export function normalizeLanguage(language) {
   return '';
 }
 
+// ---- 手机端顶栏折叠：收起操作区，把被顶栏吃掉的高度还给会话区 ----
+// 形态定义全在 CSS 的 ≤760px 块里（桌面上按钮根本不渲染、规则也不命中），JS 只负责切类与记忆选择：
+// 收起 = 隐藏整条 .topbar-actions（轮次 / 文件 / 任务 / Skill / MCP / 刷新临时让位，点细条即回），
+// 并把模型与 Agent 两个下拉并回第 1 行。与 setLeftSidebarCollapsed 同一套路（localStorage 记状态）。
+const TOPBAR_COMPACT_KEY = 'naibaChatTopbarCompact';
+
+export function setTopbarCompact(compact) {
+  const topbar = $('.topbar');
+  if (!topbar) return;
+  const collapsed = Boolean(compact);
+  topbar.classList.toggle('compact', collapsed);
+  try {
+    if (collapsed) localStorage.setItem(TOPBAR_COMPACT_KEY, '1');
+    else localStorage.removeItem(TOPBAR_COMPACT_KEY);
+  } catch (_error) {
+    // 隐私模式 / 存储被禁：折叠本身仍要生效，只是不跨刷新保留。
+  }
+  const toggle = $('#toggleTopbarCompact');
+  if (toggle) {
+    const label = collapsed ? '展开顶栏' : '收起顶栏';
+    toggle.title = label;
+    toggle.setAttribute('aria-label', label);
+    toggle.setAttribute('aria-expanded', String(!collapsed));
+  }
+}
+
+export function restoreTopbarCompact() {
+  let collapsed = false;
+  try {
+    collapsed = localStorage.getItem(TOPBAR_COMPACT_KEY) === '1';
+  } catch (_error) {
+    collapsed = false;
+  }
+  setTopbarCompact(collapsed);
+}
+
 // 单条组合正则 + 线性扫描：token 先 escape 再包 span，输出安全的 HTML。

@@ -305,6 +305,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .topbar-actions > * { flex: none; }
 .topbar-actions .control-button { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .topbar-actions .control-button svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+/* 顶栏折叠条：只在手机形态（≤760px 块）里出现，桌面端彻底不渲染。 */
+.topbar-collapse-toggle { display: none; }
 /* 图标按钮内的线性 SVG 统一样式 */
 .icon-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .send-button svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
@@ -876,6 +878,14 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 
 dialog { border: 1px solid var(--line); border-radius: var(--r-xl); color: var(--text); padding: 0; box-shadow: 0 18px 70px rgba(30, 33, 56, .24); }
 dialog::backdrop { background: rgba(20, 22, 40, .45); }
+/* 关闭态的弹层必须真的消失。UA 样式表里的 `dialog:not([open]) { display: none; }` 会被**任何作者级
+   `display` 规则**盖掉（级联按 origin 判，先于特异性）：`.agent-dialog` 为了纵向 flex 布局写了
+   `display: flex`，于是它在关闭态照样被渲染成一个挂在页面底部的"幽灵面板"——非模态 dialog 走 UA 的
+   `position: absolute`，静态位置落在 `.app-shell`（100dvh、overflow:hidden）之后，手机端实测会在
+   浏览器底栏上方露出一条只有「Agent 设置」标题栏的白条，且因此让 body 多出约一个屏幕的可滚动高度
+   （点过 Agent 卡片后 showAgentForm 的 focus() 把文档滚下去，幽灵就"偶发"露出来）。
+   作者级 (0,1,1) 高于 `.agent-dialog` (0,1,0)，此处无需 `!important`。 */
+dialog:not([open]) { display: none; }
 .auth-dialog { width: min(390px, calc(100vw - 32px)); }
 .auth-dialog form { padding: 24px; }
 .dialog-heading { display: flex; gap: 13px; align-items: center; margin-bottom: 22px; }
@@ -1339,6 +1349,36 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
     gap: 4px;
     z-index: auto;
   }
+  /* 顶栏折叠条：一条 ~24px 的细条，整行可点（横向命中面积远大于图标本身）。
+     刻意不写死 grid-row —— 用 grid-column: 1/-1 + 自动行排布，760 块（3 列 2 行）与
+     380 块（2 列 3 行）都能自然落到操作区之后；收起后 .topbar-actions 是 display:none 不占行，
+     细条自动上移一行，不会留下空行。 */
+  .topbar-collapse-toggle {
+    grid-column: 1 / -1;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    min-height: 24px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-md);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .topbar-collapse-toggle:active { background: var(--surface-2); color: var(--text); }
+  .topbar-collapse-toggle svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform var(--t-fast); }
+  /* 收起态：整条操作区（轮次 / 文件 / 任务 / Skill / MCP / 刷新）让给会话区，只留第 1 行下拉；
+     点细条即恢复。能力只被临时收起、没有被删除（不得靠隐藏按钮文字来省空间，见 §九.44）。 */
+  .topbar.compact .topbar-actions { display: none; }
+  /* 收起后模型 / Agent 并回同一行：≤380px 原本各占一行，不收拢就省不下高度。
+     必须写在高特异性的 .topbar.compact 下，才不受文件更后面的 380 块影响。 */
+  .topbar.compact { grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto; }
+  .topbar.compact .model-control { grid-column: 2; grid-row: 1; }
+  .topbar.compact .agent-control { grid-column: 3; grid-row: 1; }
+  .topbar.compact .topbar-collapse-toggle svg { transform: rotate(180deg); }
   .mcp-button, .control-button { min-width: 34px; min-height: 44px; max-width: 100%; padding: 0 8px; }
   #openSidebar { min-width: 44px; min-height: 44px; }
   /* 手机上也保留「任务 / Skill / MCP」文字标签（按钮整行换行即可，裸数字/裸圆点无法理解）。 */

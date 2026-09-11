@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from naiba import pdf as pdf_svc
-from naiba.tools.providers.core import ToolContext, _make_read_policy
+from naiba.tools.providers.core import ToolContext, _make_read_policy, ctx_for_run
 from naiba.tools.registry import ToolSpec, build_document_tool_specs
 
 
@@ -128,10 +128,12 @@ class DocumentToolProvider:
         def _execute(
             arguments: dict[str, Any],
             active_skills: list[dict[str, Any]],
-            _run_context: dict[str, Any] | None = None,
+            run_context: dict[str, Any] | None = None,
         ) -> tuple[bool, str]:
             try:
-                result = impl(self._context, arguments, active_skills, self._data_dir())
+                # 执行侧与判定侧同源：按当前运行工作区派生 ctx（read_pdf 的相对路径不再按启动期
+                # 工作区解析——只修 policy 侧会让"判定用 Run 工作区、执行读旧工作区"继续分叉）。
+                result = impl(ctx_for_run(self._context, run_context), arguments, active_skills, self._data_dir())
                 return True, result
             except ValueError as exc:
                 return False, str(exc)

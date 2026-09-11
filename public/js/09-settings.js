@@ -972,7 +972,9 @@ export function showAgentForm(agent = null) {
     : `Agent ID：${agent?.id || ''}`;
   const dialog = $('#agentDialog');
   if (dialog && !dialog.open) dialog.showModal();
-  $('#agentName').focus();
+  // 弹层确实打开后才聚焦：往关闭的弹层里 focus() 会让浏览器把文档滚到弹层所在位置（幽灵面板/整页
+  // 偏移都由它触发），也避免将来弹层取消失败时把页面滚走。
+  if (!dialog || dialog.open) $('#agentName').focus();
 }
 
 // 「自定义头像」：选图后只做本地预览，保存 Agent 时才真正上传（新建时还没有 id）。

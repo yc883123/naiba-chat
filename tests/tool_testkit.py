@@ -20,6 +20,13 @@ from naiba.tools.providers.core import CoreToolProvider, ToolContext
 from naiba.tools.registry import build_tool_registry
 
 
+def run_context_for(workspace: Path, **extra: Any) -> dict[str, Any]:
+    """构造只带工作区的运行上下文（回归"判定/执行必须按 Run 快照工作区"用）。"""
+    context: dict[str, Any] = {"workspace_dir": str(Path(workspace).expanduser().resolve())}
+    context.update(extra)
+    return context
+
+
 def assembled_registry(workspace: Path, mcp_registry: Any = None) -> Any:
     mcp = mcp_registry if mcp_registry is not None else MCPRegistry([])
     registry = build_tool_registry()

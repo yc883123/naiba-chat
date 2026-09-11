@@ -11,16 +11,20 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from naiba.core.diagnostics import _permission_debug_enabled
 from naiba.core.exceptions import TaskCancelled
 from naiba.core.paths import path_within
 from naiba.mcp import MCPRegistry
-from naiba.tools.providers.core import ToolContext, _resolve_tool_path
+from naiba.tools.providers.core import ToolContext, _resolve_tool_path, run_workspace
+
+logger = logging.getLogger("naiba.tools.executor")
 
 
 class ToolExecutor:
@@ -47,6 +51,8 @@ class ToolExecutor:
         self._confirmation_lock = threading.RLock()
         self._def_resolver: Callable[[str], Any] | None = None
         self._alias_resolver: Callable[[str], str] | None = None
+        # 诊断标签（如 "run:<id>" / "app"）：仅在权限诊断开启时写日志，判定逻辑不读它
+        self.debug_label: str = ""
 
     # ---- 注入 ----
     def set_def_resolver(self, resolver: Callable[[str], Any] | None) -> None:
@@ -72,8 +78,17 @@ class ToolExecutor:
         )
 
     # ---- 公开路径助手（供 ReadOnly/Craft 包装器使用） ----
-    def resolve_tool_path(self, raw: Any, default_workspace: bool = False) -> Path:
-        return _resolve_tool_path(self._tool_context(), raw, default_workspace)
+    def resolve_tool_path(
+        self, raw: Any, default_workspace: bool = False, workspace: Path | None = None
+    ) -> Path:
+        return _resolve_tool_path(self._tool_context(), raw, default_workspace, workspace)
+
+    def workspace_for_run(self, run_context: dict[str, Any] | None = None) -> Path:
+        """当前运行（会话级）工作区：run_context 携带值优先，其次本 executor 的工作区。
+
+        包装器（Craft/ReadOnly）与引擎判定必须共用这一个来源，避免判定与执行分叉。
+        """
+        return run_workspace(run_context) or Path(self.workspace)
 
     def path_within(self, path: Path, root: Path) -> bool:
         return path_within(path, root)
@@ -94,10 +109,32 @@ class ToolExecutor:
         )
         clone._def_resolver = self._def_resolver
         clone._alias_resolver = self._alias_resolver
+        clone.debug_label = self.debug_label
         return clone
 
     # ---- 权限确认 ----
     def _confirmation_reason(
+        self,
+        tool: str,
+        arguments: dict[str, Any],
+        active_skills: list[dict[str, Any]],
+        run_context: dict[str, Any] | None = None,
+    ) -> str:
+        """确认理由评估入口：只做诊断日志出口，判定逻辑见 _evaluate_confirmation_reason。"""
+        reason = self._evaluate_confirmation_reason(tool, arguments, active_skills, run_context)
+        if _permission_debug_enabled():
+            # warning 级：仓库不配置 logging，info 级不会输出（诊断开关打开时才记录）
+            logger.warning(
+                "[PERM] executor=%s mode=%s tool=%s workspace=%s reason=%s",
+                self.debug_label or "<app>",
+                self.permission_mode,
+                self._resolve_tool_name(tool),
+                self.workspace,
+                reason or "<免确认>",
+            )
+        return reason
+
+    def _evaluate_confirmation_reason(
         self,
         tool: str,
         arguments: dict[str, Any],
@@ -142,10 +179,13 @@ class ToolExecutor:
                 return False, f"权限被拒绝：{reason}（工具：{tool}）"
             confirm_id = str(uuid.uuid4())
             with self._confirmation_lock:
+                # run_context 一并暂存：批准执行时必须复用原 Run 的工作区/取消信号/权限模式，
+                # 以及依赖 run_context 的工具行为（产物目录、job 归属、reset_context 等）。
                 self.pending_confirmation[confirm_id] = {
                     "tool": tool,
                     "arguments": arguments,
                     "active_skills": active_skills,
+                    "run_context": run_context,
                     "processing": False,
                 }
             # NEED_CONFIRM 协议以半角冒号分三段解析（agent.py split(":", 3)）；确认理由中
@@ -197,7 +237,7 @@ class ToolExecutor:
                 return False, "该操作正在执行"
             pending["processing"] = True
         result = self.execute_unchecked(
-            pending["tool"], pending["arguments"], pending["active_skills"]
+            pending["tool"], pending["arguments"], pending["active_skills"], pending.get("run_context")
         )
         with self._confirmation_lock:
             self.pending_confirmation.pop(confirm_id, None)
@@ -216,7 +256,7 @@ class ToolExecutor:
 
         def worker() -> None:
             result = self.execute_unchecked(
-                pending["tool"], pending["arguments"], pending["active_skills"]
+                pending["tool"], pending["arguments"], pending["active_skills"], pending.get("run_context")
             )
             with self._confirmation_lock:
                 self.pending_confirmation.pop(confirm_id, None)

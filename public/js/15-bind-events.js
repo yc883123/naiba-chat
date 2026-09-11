@@ -2,7 +2,7 @@
 // 15-bind-events.js —— 拆分自 public/app.js 第 6658-7653 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, runTextContextAction, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
+import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, restoreTopbarCompact, runTextContextAction, setTopbarCompact, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarning, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, resetContextWarningResume, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
 import { branchMessage, cancelSessionStart, fillContextResetSeed, initTurnRail, isNearBottom, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
@@ -111,6 +111,11 @@ export function bindEvents() {
   $('#openTasks').addEventListener('click', () => $('#tasksDialog').showModal());
   // 显式刷新按钮：适配 EXE 内嵌 pywebview 无法使用 F5 的场景，EXE 与浏览器通用。
   $('#reloadPage')?.addEventListener('click', () => reloadPage());
+  // 手机端顶栏折叠条（桌面不渲染）：按当前状态取反，收起/展开操作区。
+  $('#toggleTopbarCompact')?.addEventListener('click', () => {
+    const topbar = $('.topbar');
+    setTopbarCompact(!(topbar && topbar.classList.contains('compact')));
+  });
   $('#clearTerminalTasks').addEventListener('click', clearTerminalTasks);
   $('#activeTaskBar').addEventListener('click', (event) => {
     if (event.target.closest('[data-open-tasks]')) $('#tasksDialog').showModal();
@@ -1246,4 +1251,5 @@ initialize();
 // 首屏输入框为空：发送按钮从加载起就是灰暗的不可发送态。
 updateSendButtonState();
 restoreLeftSidebarCollapse();
+restoreTopbarCompact();
 updateFileTabsButton();

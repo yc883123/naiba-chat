@@ -301,8 +301,28 @@ class ConversationRunManager(ConversationRunMixin):
             else base
         )
         workspace = str(frozen.get("workspace_dir") or "").strip()
+        if not workspace:
+            # 快照缺失（老数据/异常）时按"该会话自己的工作区"回退，绝不落回启动期默认工作区
+            # ——否则会话在工作区 A、引擎却按启动工作区 B 判定与执行（界内路径被判越界）。
+            conversation_id = str(frozen.get("conversation_id") or "").strip()
+            if not conversation_id:
+                run = self.app.storage.get_background_task(run_id) or {}
+                conversation_id = str(run.get("conversation_id") or "").strip()
+            conversation = (
+                self.app.storage.get_conversation(conversation_id, include_messages=False)
+                if conversation_id
+                else None
+            )
+            raw = str((conversation or {}).get("workspace_dir") or "").strip()
+            try:
+                workspace = str(self.app.config.resolve_workspace_dir(raw or None))
+            except (OSError, ValueError):
+                workspace = ""
         if workspace and hasattr(executor, "workspace"):
             executor.workspace = Path(workspace).resolve()
+        # 诊断标签：权限判定日志据此区分"哪个 executor 判的"（run 级 / app 级）
+        if hasattr(executor, "debug_label"):
+            executor.debug_label = f"run:{run_id}"
         with self._lock:
             return self._executors.setdefault(run_id, executor)
 

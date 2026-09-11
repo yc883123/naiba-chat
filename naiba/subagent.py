@@ -14,6 +14,7 @@ from __future__ import annotations
 from naiba.core.contracts import AppContext, RunContext
 
 import traceback
+from pathlib import Path
 from typing import Any, Callable
 
 from naiba.jobs import JobRegistry, JobSpec
@@ -97,9 +98,28 @@ def run_subagent_agent(
     skill_policy = params.get("skill_policy") or {"mode": "auto", "skill_ids": []}
 
     emit({"type": "job_status", "status": "running", "current_step": "子 Agent 推理中"})
+    # 子 Agent 继承"该会话的工作区 + 审批档位"（不得扩大权限）：
+    # 直接用 app.executor 会让判定/执行落到启动期默认工作区——会话工作区内的路径被判越界，
+    # 且 run_context 缺 executor 时 unpack_skill_archive 等工具取不到工作区（必然失败）。
+    try:
+        session_workspace = app.config.resolve_workspace_dir(
+            str(conversation.get("workspace_dir") or "").strip() or None
+        )
+    except (OSError, ValueError):
+        session_workspace = app.config.resolve_workspace_dir()
+    base_executor = app.executor
+    sub_executor = (
+        base_executor.clone_for_permission(str(conversation.get("permission_mode") or "auto"))
+        if callable(getattr(base_executor, "clone_for_permission", None))
+        else base_executor
+    )
+    if hasattr(sub_executor, "workspace"):
+        sub_executor.workspace = Path(session_workspace).expanduser().resolve()
+    if hasattr(sub_executor, "debug_label"):
+        sub_executor.debug_label = f"subagent:{job_id}"
     worker = SkillAgent(
         app.catalog,
-        CraftToolExecutor(app.executor),
+        CraftToolExecutor(sub_executor),
         app.models.complete,
         getattr(app, "media_collector", None),
     )
@@ -131,7 +151,10 @@ def run_subagent_agent(
         "job_registry": app.jobs,
         "model_has_vision": brain_has_vision,
         "tool_defs": session_defs,
-        "workspace_dir": str(app.config.resolve_workspace_dir() or ""),
+        # 工作区/执行器/取消信号随会话传入（与主会话同源）：判定、执行、产物目录一致
+        "workspace_dir": str(session_workspace),
+        "executor": sub_executor,
+        "cancel_event": cancel,
     }
     try:
         content, runs, reasonings, usage = worker.run(

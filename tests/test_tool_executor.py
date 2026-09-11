@@ -8,6 +8,7 @@ NEED_CONFIRM 协议路径——确认流必经 uuid——且不真正写盘。
 
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -59,6 +60,72 @@ class ToolExecutorConfirmTests(unittest.TestCase):
         normalized_desc = parts[2].replace("：", ":")
         # 执行器构造时对 workspace 做过 resolve()（executor.py:38），比较前同样解析
         self.assertIn(str(target.resolve()), normalized_desc, "确认描述被盘符冒号截断（描述应含完整路径）")
+
+
+class ConfirmRunContextTests(unittest.TestCase):
+    """回归：NEED_CONFIRM 暂存完整 run_context，批准执行时原样复用。
+
+    旧实现 pending 只存 tool/arguments/active_skills，批准后 run_context 变成 None——
+    依赖它的行为（产物目录、job 归属、reset_context、work dir）在"允许执行"后全部丢失。
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.seen = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _executor(self):
+        from naiba.mcp import MCPRegistry
+        from naiba.tools.executor import ToolExecutor
+        from naiba.tools.registry import ToolSpec
+
+        def _execute(arguments, active_skills, run_context=None):
+            self.seen.append(run_context)
+            return True, "done"
+
+        spec = ToolSpec(
+            name="recorder_tool",
+            description="测试桩：记录执行时收到的 run_context",
+            parameters={"type": "object", "properties": {}},
+            side_effect=True,
+            policy=lambda tool, args, skills, mode, run_context, workspace=None: "测试确认",
+            execute=_execute,
+        )
+        executor = ToolExecutor(
+            self.root, sys.executable, 60, MCPRegistry([]), permission_mode="confirm"
+        )
+        executor.set_def_resolver(lambda name: spec if name == "recorder_tool" else None)
+        executor.set_alias_resolver(lambda name: name)
+        return executor
+
+    def _run_context(self):
+        return {"run_id": "R1", "workspace_dir": str(self.root), "cancel_event": threading.Event()}
+
+    def test_confirm_execute_reuses_run_context(self):
+        executor = self._executor()
+        context = self._run_context()
+        ok, out = executor.execute("recorder_tool", {}, [], context)
+        self.assertFalse(ok)
+        self.assertTrue(out.startswith("NEED_CONFIRM:"), out)
+        confirm_id = out.split(":", 3)[1]
+        ok2, out2 = executor.confirm_execute(confirm_id)
+        self.assertTrue(ok2, out2)
+        self.assertEqual([context], self.seen)
+
+    def test_async_confirm_reuses_run_context(self):
+        executor = self._executor()
+        context = self._run_context()
+        ok, out = executor.execute("recorder_tool", {}, [], context)
+        self.assertFalse(ok)
+        self.assertTrue(out.startswith("NEED_CONFIRM:"), out)
+        confirm_id = out.split(":", 3)[1]
+        executor.confirm_execute_async(confirm_id)
+        ok2, out2 = executor.wait_for_confirmation(confirm_id, timeout=5)
+        self.assertTrue(ok2, out2)
+        self.assertEqual([context], self.seen)
 
 
 if __name__ == "__main__":

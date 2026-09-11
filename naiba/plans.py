@@ -138,8 +138,11 @@ class CraftToolExecutor:
         run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
         if tool in {"write_file", "edit_file"} and getattr(self._inner, "permission_mode", "confirm") != "deny":
-            path = self._inner.resolve_tool_path((arguments or {}).get("path"))
-            if self._inner.path_within(path, self._inner.workspace):
+            # 与引擎判定同源：工作区取当前 Run（run_context.workspace_dir → executor.workspace），
+            # 包装层不得自行使用装配期工作区，否则同一路径在两层会得到不同结论。
+            workspace = self._inner.workspace_for_run(run_context)
+            path = self._inner.resolve_tool_path((arguments or {}).get("path"), workspace=workspace)
+            if self._inner.path_within(path, workspace):
                 return self._inner.execute_unchecked(tool, arguments, active_skills, run_context)
         return self._inner.execute(tool, arguments, active_skills, run_context)
 
@@ -765,6 +768,9 @@ class PlanManager:
                 "skill_policy": dict(skill_policy),
                 "job_registry": getattr(self.app, "jobs", None),
                 "executor": executor,
+                "cancel_event": cancel_event,
+                # 工作区随 Run 快照冻结（与主会话同源：判定/执行/产物目录都用它）
+                "workspace_dir": str(frozen.get("workspace_dir") or ""),
             },
         )
         self.app.storage.add_message(

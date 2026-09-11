@@ -78,6 +78,13 @@
             <span class="button-label">刷新</span>
           </button>
         </div>
+        <!-- 手机端顶栏折叠条（桌面由 CSS 隐藏）：收起操作区、把高度让给会话区，再点展开。
+             刻意不用 .control-button / .mcp-button，也不放进 .topbar-actions —— 收起后那个容器
+             是 display:none，触控目标测量（verify/topbar_smoke.cjs）会直接报红。 -->
+        <button class="topbar-collapse-toggle" id="toggleTopbarCompact" type="button"
+                title="收起顶栏" aria-label="收起顶栏" aria-expanded="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"></path></svg>
+        </button>
       </header>
 
       <section class="messages" id="messages" aria-live="polite">
@@ -171,13 +178,13 @@
                   <span class="permission-mode-option-title">确认</span>
                   <span class="permission-mode-option-hint">敏感操作逐次确认</span>
                 </button>
-                <button type="button" data-permission-mode="auto" role="option" title="自动批准工作区内操作">
+                <button type="button" data-permission-mode="auto" role="option" title="工作区内自动放行，越界仍确认">
                   <span class="permission-mode-option-title">自动</span>
-                  <span class="permission-mode-option-hint">自动批准工作区内操作</span>
+                  <span class="permission-mode-option-hint">工作区内自动放行，越界仍确认</span>
                 </button>
-                <button type="button" data-permission-mode="full" role="option" title="工具无需逐次确认">
+                <button type="button" data-permission-mode="full" role="option" title="不再询问，可访问工作区外">
                   <span class="permission-mode-option-title">完全</span>
-                  <span class="permission-mode-option-hint">工具无需逐次确认</span>
+                  <span class="permission-mode-option-hint">不再询问，可访问工作区外</span>
                 </button>
               </div>
             </div>

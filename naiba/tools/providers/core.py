@@ -24,7 +24,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from naiba import net as net_io
-from naiba.core.paths import path_within
+from naiba.core.diagnostics import _permission_debug_enabled
+from naiba.core.paths import path_within, path_within_any, within_detail
 from naiba.tools.registry import ToolSpec, build_core_tool_specs, build_harness_alias_specs
 
 logger = logging.getLogger("naiba.tools.core")
@@ -127,6 +128,91 @@ def _resolve_read_path(
         choices = "、".join(str(item) for item in unique[:4])
         raise ValueError(f"相对路径在多个 active Skill 中存在，请改用绝对路径：{choices}")
     return workspace_candidate
+
+
+# ---- 当前运行工作区（唯一根：Run 快照 workspace_dir → run_context.executor.workspace → 装配期 ctx） ----
+
+def run_workspace(run_context: dict[str, Any] | None) -> Path | None:
+    """取当前运行（会话级）工作区：``run_context.workspace_dir`` 优先，其次其 executor.workspace。
+
+    返回 None 表示运行上下文未携带工作区（调用方再回退引擎传入值/装配期值）。
+    路径一律显式传递，不闭包捕获装配期可变状态——否则会话切换工作区后判定与执行都会漂移。
+    """
+    if not isinstance(run_context, dict):
+        return None
+    raw = str(run_context.get("workspace_dir") or "").strip()
+    if not raw:
+        raw = str(getattr(run_context.get("executor"), "workspace", "") or "").strip()
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser().resolve()
+    except (OSError, ValueError):
+        return None
+
+
+def policy_workspace(
+    ctx: ToolContext, workspace: Path | None, run_context: dict[str, Any] | None,
+) -> Path:
+    """权限判定用的工作区根：Run 快照 workspace_dir → 引擎传入 workspace → 装配期 ctx.workspace。"""
+    resolved = run_workspace(run_context)
+    if resolved is not None:
+        return resolved
+    if workspace is not None:
+        try:
+            return Path(workspace).expanduser().resolve()
+        except (OSError, ValueError):
+            pass
+    try:
+        return Path(ctx.workspace).expanduser().resolve()
+    except (OSError, ValueError):
+        return Path(ctx.workspace)
+
+
+def ctx_for_run(ctx: ToolContext, run_context: dict[str, Any] | None) -> ToolContext:
+    """按当前运行工作区派生执行上下文（执行侧与判定侧同源）。
+
+    核心工具的 execute 闭包捕获的是装配期 ctx；不派生就会"判定用 Run 工作区、执行读启动期
+    工作区"——切换工作区后相对路径读错文件正是由此而来。
+    """
+    workspace = run_workspace(run_context)
+    if workspace is None:
+        return ctx
+    return dataclasses.replace(ctx, workspace=workspace)
+
+
+def _log_permission_decision(
+    tool: str,
+    raw: Any,
+    path: Path,
+    workspace: Path,
+    roots: list[Path],
+    run_context: dict[str, Any] | None,
+    permission_mode: str,
+    reason: str,
+) -> None:
+    """权限判定诊断（默认关闭，见 core.diagnostics.NAIBA_DEBUG_PERMISSION）。
+
+    输出「当前工作区 / 请求路径（原始与解析后）/ 允许根 / 命中结果 / 理由」，用于确认
+    工作区内路径为何被判越界；不改变任何判定结果。
+    """
+    if not _permission_debug_enabled():
+        return
+    detail = within_detail(path, roots, raw=raw, workspace=workspace)
+    run_id = str((run_context or {}).get("run_id") or "") if isinstance(run_context, dict) else ""
+    # 用 warning 级：仓库不配置 logging，info 在任何宿主下都不会输出（诊断开关打开时才走到这里）
+    logger.warning(
+        "[PERM] tool=%s mode=%s run=%s raw=%s 解析后=%s 当前工作区=%s 允许根=%s 判定=%s 理由=%s",
+        tool,
+        permission_mode,
+        run_id,
+        detail["raw"],
+        detail["request_resolved"],
+        detail["workspace_resolved"],
+        [row["resolved"] for row in detail["roots"]],
+        f"命中#{detail['hit']}" if detail["inside"] else "未命中",
+        reason or "<免确认>",
+    )
 
 
 # ---- 实现函数（自 ToolExecutor._tool_* 原样抽取） ----
@@ -742,7 +828,9 @@ def _make_reset_context_execute(ctx: ToolContext) -> Any:
         active_skills: list[dict[str, Any]],
         run_context: dict[str, Any] | None = None,
     ) -> tuple[bool, str]:
-        result = _tool_reset_context(ctx, arguments or {}, active_skills, run_context)
+        result = _tool_reset_context(
+            ctx_for_run(ctx, run_context), arguments or {}, active_skills, run_context
+        )
         return _reset_context_ok(result), result
     return execute
 
@@ -786,12 +874,18 @@ def _make_read_policy(ctx: ToolContext) -> Any:
     ) -> str:
         # 只读检查非破坏性：工作区内/宿主托管缓存（用户上传附件与产物）免确认（任意模式），
         # 其余越界必确认（不因 auto 放行）。
-        # 工作区必须是"当前运行（会话级）工作区"（引擎传入），不得用装配期配置。
-        ws = workspace if workspace is not None else ctx.workspace
+        # 工作区必须是"当前运行（会话级）工作区"：Run 快照 workspace_dir 优先，其次引擎传入值
+        # （引擎在该 Run 的 executor 上持有快照工作区），最后才回退装配期 ctx（不得用启动配置）。
+        ws = policy_workspace(ctx, workspace, run_context)
         data_dir = ctx.data_dir_getter() if ctx.data_dir_getter is not None else None
-        path = _resolve_read_path(ctx, arguments.get("path"), active_skills, tool != "read_file", ws)
-        if not any(path_within(path, root) for root in _read_roots(ws, active_skills, data_dir)):
-            return "读取工作区外路径：" + str(path)
+        raw = arguments.get("path")
+        path = _resolve_read_path(ctx, raw, active_skills, tool != "read_file", ws)
+        roots = _read_roots(ws, active_skills, data_dir)
+        if not path_within_any(path, roots):
+            reason = f"读取工作区外路径：{path}（当前工作区：{ws}）"
+            _log_permission_decision(tool, raw, path, ws, roots, run_context, permission_mode, reason)
+            return reason
+        _log_permission_decision(tool, raw, path, ws, roots, run_context, permission_mode, "")
         return ""
     return policy
 
@@ -805,13 +899,20 @@ def _make_write_policy(ctx: ToolContext) -> Any:
         run_context: dict[str, Any] | None,
         workspace: Path | None = None,
     ) -> str:
-        ws = workspace if workspace is not None else ctx.workspace
-        # 与 _read_roots 同理：path_within 是词法比较，工作区必须先 resolve()（见 _read_roots 注释）
-        ws = Path(ws).resolve()
-        path = _resolve_tool_path(ctx, arguments.get("path"), workspace=ws)
-        if permission_mode == "auto" and path_within(path, ws):
-            return ""
-        return f"写入文件：{path}"
+        # 与 _read_roots 同理：path_within 按 resolve 后语义比较，工作区必须先 resolve()
+        ws = policy_workspace(ctx, workspace, run_context)
+        raw = arguments.get("path")
+        path = _resolve_tool_path(ctx, raw, workspace=ws)
+        if path_within(path, ws):
+            if permission_mode == "auto":
+                _log_permission_decision(tool, raw, path, ws, [ws], run_context, permission_mode, "")
+                return ""
+            reason = f"写入文件：{path}"
+            _log_permission_decision(tool, raw, path, ws, [ws], run_context, permission_mode, reason)
+            return reason
+        reason = f"写入工作区外路径：{path}（当前工作区：{ws}）"
+        _log_permission_decision(tool, raw, path, ws, [ws], run_context, permission_mode, reason)
+        return reason
     return policy
 
 
@@ -875,7 +976,8 @@ _ALIAS_CANONICAL: dict[str, str] = {
 
 def _make_str_execute(ctx: ToolContext, fn: Callable[..., Any], name: str = "") -> Any:
     def execute(arguments: dict[str, Any], active_skills: list[dict[str, Any]], run_context: dict[str, Any] | None = None) -> tuple[bool, str]:
-        result = fn(ctx, arguments, active_skills)
+        # 每次调用按当前运行工作区派生 ctx：执行侧与判定侧同源（相对路径不再按启动期工作区解析）
+        result = fn(ctx_for_run(ctx, run_context), arguments, active_skills)
         return _result_success(name, result), result
     return execute
 

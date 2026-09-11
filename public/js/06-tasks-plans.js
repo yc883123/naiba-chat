@@ -109,7 +109,7 @@ export function taskStatusLabel(status) {
 
 // 审批模式上拉框：收起态只有触发按钮（显示当前档），点开才在按钮上方弹出列表。
 export const PERMISSION_MODE_LABELS = { confirm: '确认', auto: '自动', full: '完全' };
-const PERMISSION_MODE_TITLES = { confirm: '敏感操作逐次确认', auto: '自动批准工作区内操作', full: '工具无需逐次确认' };
+const PERMISSION_MODE_TITLES = { confirm: '敏感操作逐次确认', auto: '工作区内自动放行，越界仍确认', full: '不再询问，可访问工作区外' };
 
 export function currentPermissionMode() {
   const conversation = state.conversations.find((item) => item.id === state.conversationId);

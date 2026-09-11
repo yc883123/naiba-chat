@@ -1,4 +1,4 @@
-"""前缀缓存诊断开关与调试辅助（唯一实现）。
+"""诊断开关与调试辅助（唯一实现）。
 
 来源：原 server.py:2488-2494（CACHE_DEBUG_ON/_cache_debug_enabled）、
 model_runtime.py:21-87（_debug_wire_digest/_debug_complete_marker/_sanitize_payload/_debug_payload_dump）、
@@ -7,6 +7,9 @@ False/True 相反），已于阶段 0 统一，本模块为合并后的唯一实
 
 开关语义：默认关闭；CACHE_DEBUG_ON=True 或环境变量 NAIBA_DEBUG_CACHE=1 时开启。
 各 debug_* 函数在未开启或回调缺失时直接返回，不产生任何副作用。
+
+权限判定诊断（PERMISSION_DEBUG_ON / NAIBA_DEBUG_PERMISSION=1）同构：用于排查
+"工作区内路径被判越界"这类问题，输出当前执行器身份、当前工作区、请求路径与允许根。
 """
 
 from __future__ import annotations
@@ -20,12 +23,23 @@ from typing import Any, Callable
 # 前缀缓存诊断总开关：默认关闭。需要调试时改为 True（或设 NAIBA_DEBUG_CACHE=1）。
 CACHE_DEBUG_ON = False
 
+# 权限判定诊断总开关：默认关闭。需要调试时改为 True（或设 NAIBA_DEBUG_PERMISSION=1）。
+PERMISSION_DEBUG_ON = False
+
 StatusCallback = Callable[[dict[str, Any]], None] | None
 
 
 def _cache_debug_enabled() -> bool:
     """诊断总开关：默认关闭；设 CACHE_DEBUG_ON=True 或 NAIBA_DEBUG_CACHE=1 开启。"""
     return bool(CACHE_DEBUG_ON) or os.environ.get("NAIBA_DEBUG_CACHE") == "1"
+
+
+def _permission_debug_enabled() -> bool:
+    """权限判定诊断开关：默认关闭；设 PERMISSION_DEBUG_ON=True 或 NAIBA_DEBUG_PERMISSION=1 开启。
+
+    开启后只写日志（``naiba.tools.*`` logger），不改变任何判定结果。
+    """
+    return bool(PERMISSION_DEBUG_ON) or os.environ.get("NAIBA_DEBUG_PERMISSION") == "1"
 
 
 def ensure_utf8_stdio(
