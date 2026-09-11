@@ -49,7 +49,7 @@
       "steps": 22,
       "denoise": 1,
       "model": [
-        "377",
+        "393",
         0
       ]
     },
@@ -194,7 +194,7 @@
   },
   "303": {
     "inputs": {
-      "seed": 484799350375457
+      "seed": 697923914189944
     },
     "class_type": "Seed (rgthree)",
     "_meta": {
@@ -219,7 +219,7 @@
   },
   "305": {
     "inputs": {
-      "unet_name": "minimax\\minimax_h3_fl2va_int8_convrot.safetensors",
+      "unet_name": "minimax\\Minimax-h3_Singularity_ref2va_v1.3_int8.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -229,7 +229,7 @@
   },
   "306": {
     "inputs": {
-      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      "vae_name": "minimax_h3_video_vae_int8_convrot.safetensors"
     },
     "class_type": "VAELoader",
     "_meta": {
@@ -247,7 +247,7 @@
   },
   "316": {
     "inputs": {
-      "prompt": "subject_definitions:\n<Subject 1> 是秦西西，在 <Picture 1>，淡紫裙装、白色手环。\n<Subject 2> 是于闻闻，在 <Picture 2>，黑色机车装、波浪卷发、白色手环。\n<Subject 3> 是哥特式离婚登记处大厅，在 <Picture 3>。\n<Subject 4> 是王婉，在 <Picture 4>，面容憔悴的女性 NPC，黑雾消散后露出违和笑容。\n<Audio 1> 是 <Subject 4>（S1）王婉的声线参考。\n<Audio 2> 是 <Subject 2>（S2）于闻闻的声线参考。\nsummary:\n[reference generation + audio reference] 保安拉开家暴男，王婉恢复人形并邀请玩家去家里；于闻闻提醒秦西西必须接邀请卡，秦西西接卡后王婉笑容隐约咧开。\nretention_analysis:\n<Subject 1>（出现在 [Shot 1]、[Shot 2]、[Shot 3]）：fully_preserved——身份、服装、听劝并接卡保留。\n<Subject 2>（出现在 [Shot 2]、[Shot 3]）：fully_preserved——身份、担忧和悄声警告保留。\n<Subject 3>（全程出现）：fully_preserved——大厅环境保留。\n<Subject 4>（出现在 [Shot 1]、[Shot 2]、[Shot 3]）：fully_preserved——黑雾消散、违和笑容、邀请和递卡保留。\n<Audio 1>：reference——引导王婉冰冷声线，不复制原始信号。\n<Audio 2>：reference——引导于闻闻悄声，不复制原始信号。\ndetailed_description:\n本片段采用压迫感哥特恐怖风格，缓慢推近王婉，并用邀请卡特写制造规则威胁。\n[Shot 1] 镜头看着保安把家暴男拖过 <Subject 3>。<Subject 4> 身上的黑雾消散，她恢复站姿并露出过宽的笑，用 <Audio 1> 参考声线说：<d>[中文] 感谢各位恩人出手相救，我叫王婉，天要黑了，能邀请各位去我家里做客吗？</d>\n[Shot 2] At 00:04.000，<Subject 2> 靠近 <Subject 1> 悄声警告，使用 <Audio 2>：<d>[中文] 西西，等会她递的邀请卡一定要接，不然会变身把你吃掉的。</d> 背景中的 <Subject 4> 保持不自然笑容。\n[Shot 3] At 00:08.000，<Subject 4> 逐一递出米白色邀请卡。<Subject 1> 伸手接住自己的卡，纸张在掌心发出干涩轻响；王婉嘴角继续上扬，<Subject 2> 紧张注视。镜头切在卡片合入手掌的瞬间。\noverall_soundscape:\n拖拽脚步、保安束缚声、黑雾消散嘶声、大厅风声、纸卡摩擦和细薄诡异底噪。\nnon_diegetic_music:\nN/A",
+      "prompt": "subject_definitions:\n<Subject 1> is Qin Xixi in <Picture 1>, a young woman in a lilac sleeveless ruffled halter dress with a black bow-tie collar and a tiered ruffle hem, with long black wavy hair and a white round wristband.\n<Subject 2> is Yu Wenwen in <Picture 2>, a woman with long black wavy hair, wearing an open black leather jacket over a white cropped tank, black leather shorts, black patent knee-high boots and a black choker.\n<Subject 3> is the divorce registration hall in <Picture 3>, a dim hall with grey-white walls, a flickering ceiling lamp and a display screen showing five blood-red characters.\n<Audio 1> is the voice-timbre reference for <Subject 2> (S1).\n\nsummary:\n[reference generation + audio reference] The target video shows <Subject 1> opening her eyes inside <Subject 3>, where <Subject 2> hurries toward her and exclaims that she must be a new player in an S-rank instance.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1], [Shot 2]): fully_preserved - her identity, lilac dress and wristband are retained.\n<Subject 2> (appears in [Shot 1], [Shot 2]): fully_preserved - her long wavy hair, black leather jacket and warm tone are retained.\n<Subject 3> (appears in [Shot 1], [Shot 2]): fully_preserved - the grey-white walls, flickering lamp and blood-red screen are retained.\n<Audio 1>: reference - guides <Subject 2>'s voice timbre without copying the source signal.\n\ndetailed_description:\nThe target video uses a dark gothic live-action style with cold blue-grey lighting and a low-angle oppressive framing.\n[Shot 1] In the same dim gothic divorce registration hall under cold blue-grey lighting, <Subject 1> has just opened her eyes, carrying over from where the previous segment left her. A wide shot reveals the dim hall with grey-white walls, a ceiling lamp flickering on and off, and a wall-mounted display glowing with five blood-red characters reading \"离婚登记处\". Around <Subject 1> stand four people, two men and two women, their faces half in shadow.\n[Shot 2] At 00:06.000, the camera tracks as <Subject 2> notices <Subject 1> and hurries toward her. <Subject 2> (S1) says in a warm, sweet, slightly hurried voice, <d>[中文] 你该不会是新来的玩家吧？S级副本啊！</d> Her eyes widen with a mix of surprise and concern.\n\noverall_soundscape:\nA low, resonant hall ambience with a faint electric hum, the distant buzz of the flickering ceiling lamp, soft hurried footsteps and the rustle of fabric.\n\nnon_diegetic_music:\nN/A",
       "width": [
         "290",
         0
@@ -289,6 +289,26 @@
         "367",
         0
       ],
+      "ref_images.ref_image_4": [
+        "368",
+        0
+      ],
+      "ref_images.ref_image_5": [
+        "369",
+        0
+      ],
+      "ref_images.ref_image_6": [
+        "370",
+        0
+      ],
+      "ref_images.ref_image_7": [
+        "371",
+        0
+      ],
+      "ref_images.ref_image_8": [
+        "372",
+        0
+      ],
       "ref_audios.ref_audio_0": [
         "373",
         0
@@ -297,34 +317,14 @@
         "374",
         0
       ],
-      "ref_images.ref_image_4": [
-        "390",
-        0
-      ],
-      "ref_images.ref_image_5": [
-        "391",
-        0
-      ],
-      "ref_images.ref_image_6": [
-        "392",
-        0
-      ],
-      "ref_images.ref_image_7": [
-        "393",
-        0
-      ],
-      "ref_images.ref_image_8": [
-        "394",
-        0
-      ],
       "ref_audios.ref_audio_2": [
-        "395",
+        "375",
         0
       ]
     },
     "class_type": "MiniMaxH3ReferenceToVideo",
     "_meta": {
-      "title": "MiniMax H3 Reference to Video"
+      "title": "MiniMax H3 參考轉影片"
     }
   },
   "366": {
@@ -338,7 +338,52 @@
   },
   "367": {
     "inputs": {
+      "image": "S2_哥特式城堡（夜）.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "368": {
+    "inputs": {
       "image": "王婉（第一章BOSS）.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "369": {
+    "inputs": {
+      "image": "krea2_identity_edit_00003_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "370": {
+    "inputs": {
+      "image": "krea2_identity_edit_00003_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "371": {
+    "inputs": {
+      "image": "krea2_identity_edit_00003_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "載入圖片"
+    }
+  },
+  "372": {
+    "inputs": {
+      "image": "krea2_identity_edit_00003_.png"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -347,7 +392,7 @@
   },
   "373": {
     "inputs": {
-      "audio": "王婉.wav"
+      "audio": "于闻闻.flac"
     },
     "class_type": "LoadAudio",
     "_meta": {
@@ -357,6 +402,15 @@
   "374": {
     "inputs": {
       "audio": "于闻闻.flac"
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "載入音訊"
+    }
+  },
+  "375": {
+    "inputs": {
+      "audio": "17miao.mp4"
     },
     "class_type": "LoadAudio",
     "_meta": {
@@ -385,37 +439,13 @@
       "device": "auto",
       "mode": "standard",
       "model": [
-        "380",
+        "376",
         0
       ]
     },
     "class_type": "TESpeedMiniMaxH3",
     "_meta": {
       "title": "TE-Speed-MiniMaxH3"
-    }
-  },
-  "380": {
-    "inputs": {
-      "tau": 1.3,
-      "start_percent": 0.2,
-      "end_percent": 0.9,
-      "min_tokens": 4096,
-      "int8_qk": true,
-      "sink_conditioning": "exact_kv",
-      "morton": false,
-      "morton_curve": "2d_frame",
-      "int8_pv": true,
-      "verbose": false,
-      "use_tma": false,
-      "dense_blocks": "0-5",
-      "model": [
-        "376",
-        0
-      ]
-    },
-    "class_type": "SolAttnPatch",
-    "_meta": {
-      "title": "Patch Sol-Attn"
     }
   },
   "383": {
@@ -430,7 +460,7 @@
       "preview_fps": 10,
       "tiny_vae": "taeh3.safetensors",
       "model": [
-        "377",
+        "393",
         0
       ]
     },
@@ -439,58 +469,25 @@
       "title": "Model Preview Override"
     }
   },
-  "390": {
-    "inputs": {
-      "image": "占位图5.png"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "載入圖片"
-    }
-  },
-  "391": {
-    "inputs": {
-      "image": "占位图6.png"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "載入圖片"
-    }
-  },
-  "392": {
-    "inputs": {
-      "image": "占位图7.png"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "載入圖片"
-    }
-  },
   "393": {
     "inputs": {
-      "image": "占位图8.png"
+      "selection": "Sol-Attn (adaptive tau)",
+      "selection.tau": 1.3,
+      "start_percent": 0.2,
+      "end_percent": 1,
+      "dense_blocks": "",
+      "min_tokens": 12288,
+      "extra_tokens": 256,
+      "sink_conditioning": "exact_kv_and_rows",
+      "verbose": false,
+      "model": [
+        "377",
+        0
+      ]
     },
-    "class_type": "LoadImage",
+    "class_type": "BlockSparseAttention",
     "_meta": {
-      "title": "載入圖片"
-    }
-  },
-  "394": {
-    "inputs": {
-      "image": "占位图9.png"
-    },
-    "class_type": "LoadImage",
-    "_meta": {
-      "title": "載入圖片"
-    }
-  },
-  "395": {
-    "inputs": {
-      "audio": "占位音3.wav"
-    },
-    "class_type": "LoadAudio",
-    "_meta": {
-      "title": "載入音訊"
+      "title": "Block Sparse Attention"
     }
   }
 }

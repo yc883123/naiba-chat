@@ -45,7 +45,8 @@ from naiba.run.manager import ConversationRunManager
 from naiba.search import WebSearchRuntime
 from naiba.skills.catalog import SkillCatalog, _frontmatter_value
 from naiba.skills.install import (
-    _unique_dir, _zip_has_skill_md, delete_skill, remove_skill_references,
+    _unique_dir, _zip_has_skill_md, clear_skill_recycle, delete_skill, list_skill_recycle,
+    remove_skill_references, restore_skill_recycle_entry,
 )
 from naiba.storage.media import (
     _clean_uploads_cache, _process_uploaded_image, _uploads_total_bytes, auto_clean_uploads,
@@ -128,12 +129,14 @@ class NaibaChatApp:
         ):
             if legacy_src.is_dir() and legacy_src != managed_skills:
                 try:
-                    _merge_data_tree(legacy_src, managed_skills)
+                    _merge_data_tree(legacy_src, managed_skills, self._hidden_relative_roots(legacy_src))
                 except OSError as exc:
                     print(f"Merging legacy Skills failed: {exc}")
         if bundled_skills.is_dir() and bundled_skills != managed_skills:
             try:
-                _sync_bundled_skills(bundled_skills, managed_skills)
+                _sync_bundled_skills(
+                    bundled_skills, managed_skills, self._hidden_relative_roots(bundled_skills)
+                )
             except OSError as exc:
                 print(f"Persisting bundled Skills failed: {exc}")
         # 兼容旧版单文件导入：它把 SKILL.md 直接写在托管目录根下，导致该 Skill 的
@@ -141,10 +144,13 @@ class NaibaChatApp:
         self._migrate_bare_managed_skill(managed_skills)
 
         skills_dirs: list[str] = []
+        skills_sources: list[str] = []
         if bundled_skills.is_dir():
             skills_dirs.append(str(bundled_skills))
+            skills_sources.append("builtin")
         if managed_skills.is_dir() and managed_skills != bundled_skills:
             skills_dirs.append(str(managed_skills))
+            skills_sources.append("managed")
         # 旧配置默认 `skills_dirs: ["skills"]` 解析为 self._paths.app_dir/skills；重定向到新托管目录，
         # 保证旧配置/旧 Skill 不丢且不再写回 C 盘。
         legacy_managed = (self._paths.app_dir / "skills").resolve()
@@ -156,12 +162,15 @@ class NaibaChatApp:
                 validate_skills_dir(resolved, app_dir=self._paths.app_dir, public_dir=self._paths.public_dir, data_dir=self._paths.data_dir)
                 if str(resolved) not in skills_dirs:
                     skills_dirs.append(str(resolved))
+                    skills_sources.append("external")
             except ValueError:
                 logger.warning("已忽略不安全的 Skill 目录：%s", raw)
         self.catalog = SkillCatalog(
             [Path(path) for path in skills_dirs],
             base_dir=self._paths.app_dir,
             hidden_ids=self.config.get_hidden_skill_ids(),
+            package_dir=bundled_skills,
+            sources=skills_sources,
         )
         self.mcp = MCPRegistry(self.config.data.get("mcp_servers", []))
         self.executor = ToolExecutor(
@@ -733,6 +742,14 @@ class NaibaChatApp:
             updated = favorited if updated is None else {**updated, **favorited}
         return updated or {"error": "对话不存在"}, HTTPStatus.OK if updated else HTTPStatus.NOT_FOUND
 
+    def api_upsert_model_profile(self, body: dict[str, Any]) -> dict[str, Any]:
+        """保存 API / 本地模型连接配置。
+
+        ``provider.model`` 只属于供应商设置和连接测试；普通会话最终使用的模型始终来自
+        会话模型下拉框，因此修改这里不会改写任何已有会话的模型选择。
+        """
+        return self.config.upsert_provider(body)
+
     def api_upsert_workspace(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
         name = str(body.get("name") or "").strip()
         raw_dir = str(body.get("dir") or "").strip()
@@ -844,42 +861,99 @@ class NaibaChatApp:
         skill_id = str(body.get("skill_id") or "").strip()
         if not skill_id:
             return self._reply({"error": "skill_id 不能为空"}, HTTPStatus.BAD_REQUEST)
-            return
-        self._delete_skill_by_id(skill_id)
+        mode = str(body.get("mode") or "recycle").strip().lower()
+        if mode not in {"recycle", "permanent"}:
+            return self._reply({"error": "删除方式无效"}, HTTPStatus.BAD_REQUEST)
+        return self._delete_skill_by_id(skill_id, permanently=mode == "permanent")
 
-    def _delete_skill_by_id(self, skill_id: str) -> None:
-        """可恢复删除：移动到应用托管的回收目录，并从 Agent 固定 Skill 中清理引用。"""
+    def _skill_delete_must_hide(self, skill: dict[str, Any]) -> bool:
+        """同一 Skill 是否由多个目录（或打包内置目录）同时提供。
+
+        这种 Skill 不能只搬走其中一个副本：另一个副本会让它在列表里立刻"复活"，
+        表现为「点了删除却没删掉」。此时统一按 id 隐藏（可在「已隐藏」里恢复），
+        一次点击即从列表消失，且重启后不会回来。
+        """
+        if skill.get("duplicate_dirs"):
+            return True
+        return str(skill.get("id") or "") in self.catalog.bundled_skill_ids()
+
+    def _remove_bundled_managed_copy(self, skill_id: str, permanently: bool) -> dict[str, Any] | None:
+        """Remove the managed copy of a bundled Skill while leaving the package source intact."""
+        managed_dir = self.config.resolve_managed_skills_dir()
+        managed_catalog = SkillCatalog([managed_dir], sources=["managed"])
+        managed_skill = managed_catalog.by_id().get(skill_id)
+        if not managed_skill:
+            return None
+        return delete_skill(
+            skill_id,
+            str(self.paths.data_dir / "skills_recycle"),
+            [],
+            str(managed_dir),
+            skills_by_id={skill_id: managed_skill},
+            permanently=permanently,
+        )
+
+    def _delete_skill_by_id(self, skill_id: str, permanently: bool = False) -> None:
+        """Delete a managed Skill, or persistently hide a bundled/external/shared Skill.
+
+        Physical deletion is restricted to application-managed files. Bundled and external
+        sources remain hidden by id; bundled Skills also discard their managed copy.
+        """
         skills = self.catalog.by_id()
         skill = skills.get(skill_id)
         if not skill:
             return self._reply({"error": "Skill 不存在"}, HTTPStatus.NOT_FOUND)
-            return
         root = Path(str(skill.get("root") or skill.get("path") or "")).expanduser().resolve()
         if not root.exists():
             return self._reply({"error": "Skill 目录不存在"}, HTTPStatus.NOT_FOUND)
-            return
-        # 传真实托管目录（而非 root.parent）：托管 Skill 的 root 应位于其下；若 root 恰等于
-        # 托管目录本身（历史遗留的散装 SKILL.md），底层会退化为只回收定义文件，绝不整目录搬走。
-        managed_dir = self.config.resolve_managed_skills_dir()
-        recycle_dir = self.paths.data_dir / "skills_recycle"
         agents = self.config.public_agents()
-        try:
-            result = delete_skill(
-                skill_id,
-                str(recycle_dir),
-                agents,
-                str(managed_dir),
-                skills_by_id=skills,
-            )
-        except Exception as exc:  # noqa: BLE001
-            return self._reply({"error": f"删除失败：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
-            return
-        if not result.get("success"):
-            return self._reply({"error": result.get("error", "删除失败")}, HTTPStatus.BAD_REQUEST)
-            return
-        if result.get("hidden"):
+        must_hide = skill.get("source") != "managed" or self._skill_delete_must_hide(skill)
+        if must_hide:
+            managed_copy = None
+            if skill_id in self.catalog.bundled_skill_ids():
+                try:
+                    managed_copy = self._remove_bundled_managed_copy(skill_id, permanently)
+                except Exception as exc:  # noqa: BLE001
+                    return self._reply({"error": f"处理内置 Skill 的托管副本失败：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+                if managed_copy and not managed_copy.get("success"):
+                    return self._reply({"error": managed_copy.get("error", "处理托管副本失败")}, HTTPStatus.BAD_REQUEST)
             self.config.hide_skill(skill_id)
             self.catalog.hidden_ids.add(skill_id)
+            result = {
+                "success": True,
+                "skill_id": skill_id,
+                "name": str(skill.get("name") or ""),
+                "hidden": True,
+                "recycled_to": managed_copy.get("recycled_to") if managed_copy else None,
+                "permanently_deleted": bool(managed_copy and managed_copy.get("permanently_deleted")),
+                "managed_copy_removed": bool(managed_copy),
+                "cleaned_agent_refs": [
+                    str(agent.get("id"))
+                    for agent in agents
+                    if skill_id in agent.get("skill_ids", [])
+                ],
+            }
+        else:
+            # 传真实托管目录（而非 root.parent）：托管 Skill 的 root 应位于其下；若 root 恰等于
+            # 托管目录本身（历史遗留的散装 SKILL.md），底层会退化为只回收定义文件，绝不整目录搬走。
+            managed_dir = self.config.resolve_managed_skills_dir()
+            recycle_dir = self.paths.data_dir / "skills_recycle"
+            try:
+                result = delete_skill(
+                    skill_id,
+                    str(recycle_dir),
+                    agents,
+                    str(managed_dir),
+                    skills_by_id=skills,
+                    permanently=permanently,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return self._reply({"error": f"删除失败：{exc}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            if not result.get("success"):
+                return self._reply({"error": result.get("error", "删除失败")}, HTTPStatus.BAD_REQUEST)
+            if result.get("hidden"):
+                self.config.hide_skill(skill_id)
+                self.catalog.hidden_ids.add(skill_id)
         updated_agents = remove_skill_references(skill_id, agents)
         for agent in updated_agents:
             if agent.get("id") in built_in_agent_ids():
@@ -893,12 +967,45 @@ class NaibaChatApp:
                 "ok": True,
                 "recycled_to": result.get("recycled_to"),
                 "hidden": bool(result.get("hidden")),
+                "permanently_deleted": bool(result.get("permanently_deleted")),
+                "managed_copy_removed": bool(result.get("managed_copy_removed")),
                 "cleaned_agent_refs": result.get("cleaned_agent_refs", []),
                 "skills": self.catalog.scan(),
                 "agents": self.config.public_agents(),
                 "hidden_skills": self._hidden_skill_entries(),
+                "recycled_skills": self._recycled_skill_entries(),
             }
         )
+
+    def _clear_skill_recycle(self, _body: dict[str, Any]) -> None:
+        result = clear_skill_recycle(self.paths.data_dir / "skills_recycle")
+        if not result.get("success"):
+            return self._reply({"error": result.get("error", "清空回收目录失败")}, HTTPStatus.BAD_REQUEST)
+        return self._reply({"ok": True, "deleted": result.get("deleted", 0)})
+
+    def _recycled_skill_entries(self) -> list[dict[str, str]]:
+        return list_skill_recycle(self.paths.data_dir / "skills_recycle")
+
+    def _restore_skill_recycle(self, body: dict[str, Any]) -> None:
+        result = restore_skill_recycle_entry(
+            str(body.get("entry") or ""),
+            self.paths.data_dir / "skills_recycle",
+            self.config.resolve_managed_skills_dir(),
+        )
+        if not result.get("success"):
+            return self._reply({"error": result.get("error", "恢复 Skill 失败")}, HTTPStatus.BAD_REQUEST)
+        restored = Path(str(result["restored_to"])).resolve()
+        for skill in SkillCatalog([restored], sources=["managed"]).scan():
+            skill_id = str(skill.get("id") or "")
+            if skill_id:
+                self.config.unhide_skill(skill_id)
+                self.catalog.hidden_ids.discard(skill_id)
+        return self._reply({
+            "ok": True,
+            "skills": self.catalog.scan(),
+            "hidden_skills": self._hidden_skill_entries(),
+            "recycled_skills": self._recycled_skill_entries(),
+        })
 
     def _edit_message(self, body: dict[str, Any]) -> None:
         """删除指定消息及其之后所有消息，供"从该处重新编辑对话"使用。
@@ -930,7 +1037,12 @@ class NaibaChatApp:
         if not hidden_ids:
             return []
         try:
-            all_skills = SkillCatalog(list(self.catalog.directories)).scan()
+            all_skills = SkillCatalog(
+                list(self.catalog.directories),
+                hidden_ids=[],
+                package_dir=self.catalog.package_dir,
+                sources=list(self.catalog.sources or []),
+            ).scan()
         except Exception:  # noqa: BLE001 - 隐藏列表只是展示信息，不应让扫描失败
             return []
         return [
@@ -1227,7 +1339,7 @@ class NaibaChatApp:
     def _finish_install(self, dest_raw: str, dest: Path, extra: dict[str, Any] | None = None) -> None:
         self.config.add_skills_dir(dest_raw)
         self.catalog.add_directory(dest_raw)
-        # “导入即启用”：若本次安装目录里的 Skill 命中过 hidden_skill_ids（此前被隐藏/删除），
+        # "导入即启用"：若本次安装目录里的 Skill 命中过 hidden_skill_ids（此前被隐藏/删除），
         # 自动取消隐藏，避免 scan() 静默过滤导致 UI 导入成功却不显示。
         installed_ids = {str(item.get("id") or "") for item in SkillCatalog([dest]).scan()}
         hidden_ids = set(self.config.get_hidden_skill_ids())
@@ -1240,6 +1352,7 @@ class NaibaChatApp:
             "configured": self.config.get_skills_dirs(),
             "skills": self.catalog.scan(),
             "hidden_skills": self._hidden_skill_entries(),
+            "recycled_skills": self._recycled_skill_entries(),
             "unhidden": unhidden,
         }
         if extra:
@@ -1292,6 +1405,35 @@ class NaibaChatApp:
                 {"error": "文件夹必须包含 SKILL.md（需位于顶层或下一级目录）"},
                 HTTPStatus.BAD_REQUEST,
             )
+        # 单个裸 SKILL.md 也允许导入：补齐最小 frontmatter，避免它只能显示为笼统的“skill”。
+        if len(entries) == 1 and entries[0][0] == ["SKILL.md"]:
+            try:
+                text = entries[0][1].decode("utf-8")
+            except UnicodeDecodeError:
+                text = ""
+            if text and not (_frontmatter_value(text, "name") and _frontmatter_value(text, "description")):
+                lines = [line.strip() for line in text.splitlines() if line.strip()]
+                heading_index = next((index for index, line in enumerate(lines) if line.startswith("#")), -1)
+                heading = (
+                    re.sub(r"^#{1,6}\s*", "", lines[heading_index]).strip()
+                    if heading_index >= 0 else ""
+                )
+                derived_name = heading or str(body.get("name") or "skill")
+                description_lines = lines[heading_index + 1:] if heading_index >= 0 else lines
+                derived_desc = next(
+                    (
+                        line.lstrip("#>*- ").strip()
+                        for line in description_lines
+                        if line not in {"---", "..."}
+                        and not re.match(r"^(name|description):\s*", line, re.I)
+                        and not line.startswith("#")
+                    ),
+                    "未提供描述",
+                )
+                derived_name = derived_name.replace("\n", " ").strip()[:120] or "skill"
+                derived_desc = derived_desc.replace("\n", " ").strip()[:240] or "未提供描述"
+                text = f"---\nname: {derived_name}\ndescription: {derived_desc}\n---\n\n{text.lstrip()}"
+                entries[0] = (entries[0][0], text.encode("utf-8"))
         prefix = self._skill_subdir_prefix(
             [parts for parts, _ in entries],
             dest,
@@ -1416,6 +1558,33 @@ class NaibaChatApp:
         """清洗出可作为目录名的 Skill 标识，拒绝纯点号/空串等越界名字。"""
         cleaned = re.sub(r"[^\w.\-]+", "_", str(value or "").strip()).strip(" .-")
         return cleaned or "skill"
+
+    def _hidden_relative_roots(self, directory: Path) -> set[str]:
+        """返回 ``directory`` 中「已被用户删除（隐藏）」的 Skill 相对目录集合。
+
+        启动时的内置同步与旧目录合并都会往托管目录补文件；如果不跳过这些目录，
+        用户删掉的内置 Skill 会在下次启动被重新写回，表现为「删不掉」。
+        """
+        hidden = set(self.config.get_hidden_skill_ids())
+        directory = Path(directory).expanduser().resolve()
+        if not hidden or not directory.is_dir():
+            return set()
+        try:
+            probe = SkillCatalog([directory], hidden_ids=[])
+        except OSError:
+            return set()
+        roots: set[str] = set()
+        for item in probe.scan():
+            if str(item.get("id") or "") not in hidden:
+                continue
+            try:
+                relative = Path(str(item.get("root") or "")).resolve().relative_to(directory)
+            except (OSError, ValueError):
+                continue
+            posix = relative.as_posix().strip("/")
+            if posix and posix != ".":
+                roots.add(posix)
+        return roots
 
     def _skill_subdir_prefix(self, layouts: list[list[str]], dest: Path, preferred_name: str) -> list[str]:
         """上传内容直接散放在导入根时，返回一个独立 Skill 子目录前缀，否则返回空列表。

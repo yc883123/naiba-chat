@@ -118,7 +118,7 @@ class SubmitChatAttachmentOnlyTests(unittest.TestCase):
             web_search=_SearchStub(),
         )
         self.manager = ConversationRunManager(app)
-        self.conversation = self.storage.create_conversation()
+        self.conversation = self.storage.create_conversation(model_name="test-model")
 
     def tearDown(self):
         self.tmp.cleanup()

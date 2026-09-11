@@ -892,6 +892,13 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
 .form-error { color: var(--red); font-size: 12px; min-height: 18px; }
 .panel-dialog { width: min(700px, calc(100vw - 30px)); height: min(760px, calc(100dvh - 30px)); }
 .settings-dialog { width: min(920px, calc(100vw - 30px)); height: min(700px, calc(100dvh - 30px)); }
+.skill-delete-dialog { width: min(560px, calc(100vw - 30px)); height: auto; max-height: min(400px, calc(100dvh - 30px)); }
+.skill-delete-body { padding: 4px 18px 18px; }
+.skill-delete-body p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; white-space: pre-line; }
+.skill-delete-body .form-actions { flex-wrap: wrap; }
+.subheading-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.subheading-row .subheading { margin-right: 0; }
+.skill-recycle-clear { min-height: 32px; white-space: nowrap; }
 .rename-conversation-dialog { width: min(460px, calc(100vw - 30px)); height: auto; max-height: min(360px, calc(100dvh - 30px)); }
 .rename-conversation-dialog form { padding-bottom: 18px; }
 .rename-conversation-dialog .field-wide { display: grid; gap: 7px; padding: 18px; }

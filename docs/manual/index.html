@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Naiba Chat 应用说明书 · 2.1.1 Beta</title>
+<html lang="zh-CN" data-page-node-id="FhAdXLwZFFMHkUCcru1yYC">
+<head data-page-node-id="6RVA7KDxXuHpUqlBiJXgHr">
+<meta charset="utf-8" data-page-node-id="hrKBD6KIpCDMw0anm6G6H5">
+<meta name="viewport" content="width=device-width, initial-scale=1" data-page-node-id="NWWGhblHrltrMOSY0DlJko">
+<title>Naiba Chat 应用说明书 · 2.2.0 Beta</title>
 <style>
   :root {
     --bg: #fbfaf7;
@@ -67,6 +67,14 @@
   nav.toc-nav .search input { width: 100%; padding: 5px 8px; font-size: 12px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
 
+  /* 打印专用目录：屏幕上隐藏，打印时顶到正文最前面（见 @media print） */
+  .print-toc { display: none; }
+  .print-toc .pt-title { font-size: 16px; border: 0; margin: 0 0 10px; padding: 0; }
+  .print-toc ul { list-style: none; padding-left: 0; margin: 0 0 8px; }
+  .print-toc li { margin: 1px 0; break-inside: avoid; }
+  .print-toc a { color: var(--text); }
+  .print-toc .toc-l1 a { font-weight: 700; color: var(--accent); }
+
   /* 主区 */
   main { flex: 1; padding: 32px 48px 80px; max-width: 980px; }
   main h1 { font-size: 30px; border-bottom: 2px solid var(--line); padding-bottom: 12px; margin-top: 0; }
@@ -102,793 +110,945 @@
     nav.toc-nav { width: 100%; height: auto; max-height: 50vh; position: relative; }
     main { padding: 20px; }
   }
+
+  /* 打印（务必放在 @media (max-width:900px) 之后，否则会被它覆盖——A4 宽约 794px < 900px）：
+     侧边目录是 position:sticky + height:100vh + overflow 的容器，Chrome 打印时会与正文
+     重叠（前两页糊成一团），且 CDP printToPDF 在本页会无限挂起。打印态直接隐藏侧栏，
+     改用正文顶部的 .print-toc 普通块级目录（两栏），既不会重叠也能正常分页。 */
+  @media print {
+    .layout { display: block; }
+    nav.toc-nav, a.dl-pdf, .lightbox { display: none !important; }
+    main { max-width: none; padding: 0; }
+    .print-toc { display: block; columns: 2; column-gap: 28px; font-size: 11.5px;
+      margin-bottom: 24px; break-after: page; }
+    .print-toc .pt-title { break-after: avoid; }
+    img { break-inside: avoid; max-height: 85vh; }
+    pre, table { break-inside: avoid; }
+    h1, h2, h3 { break-after: avoid; }
+  }
 </style>
 </head>
-<body>
-<div class="layout">
-  <nav class="toc-nav">
-    <div class="brand">Naiba Chat<br>应用说明书</div>
-    <div class="sub">2.1.1 Beta · Windows</div>
-    <input class="search" type="search" placeholder="搜索标题（Ctrl+F）" onfocus="this.select()">
-    <ul class="toc">
-</ul><ul class="toc toc-l1">
-<li><a href="#naiba-chat-211-beta">Naiba Chat 应用说明书（2.1.1 Beta）</a></li>
-<li><a href="#_1">阅读路径</a></li>
-<li><a href="#30-naiba-chat">亮点速览（用 30 秒了解 Naiba Chat 能干什么）</a></li>
-</ul><ul class="toc toc-l1">
-<li><a href="#1">第 1 章　三分钟跑起来</a></li>
-<li><a href="#11">1.1 它到底是什么</a></li>
-<li><a href="#12">1.2 下载、解压、双击</a></li>
-<li><a href="#13">1.3 第一次打开要做的四件事</a></li>
-<li><a href="#14-30">1.4 界面 30 秒认识</a></li>
-<li><a href="#15">1.5 你必须知道的三个开关</a></li>
-<li><a href="#1_1">① 审批三档</a></li>
-<li><a href="#2">② 深度思考</a></li>
-<li><a href="#3">③ 上下文提醒</a></li>
-</ul><ul class="toc toc-l1">
-<li><a href="#2_1">第 2 章　一次对话能干什么</a></li>
-<li><a href="#21">2.1 普通问答</a></li>
-<li><a href="#22">2.2 让它读 / 写 / 搜文件</a></li>
-<li><a href="#23-210">2.3 发附件给它（2.1.0 新：可以只发附件）</a></li>
-<li><a href="#24-210">2.4 用 @ 引用工作区文件（2.1.0 新）</a></li>
-<li><a href="#25-pdf">2.5 让它看图、看 PDF</a></li>
-<li><a href="#26">2.6 让它执行命令</a></li>
-<li><a href="#27-http">2.7 让它发 HTTP 请求 / 联网搜</a></li>
-<li><a href="#28">2.8 长任务放后台</a></li>
-<li><a href="#29">2.9 中途插话、暂停、取消</a></li>
-<li><a href="#210-token">2.10 上下文用量 &amp;amp; Token</a></li>
-<li><a href="#211">2.11 本轮修改文件</a></li>
-<li><a href="#212">2.12 右侧文件面板</a></li>
-<li><a href="#213">2.13 消息编辑重发 / 分支到新会话</a></li>
-</ul><ul class="toc toc-l1">
-<li><a href="#3_1">第 3 章　特色功能（重点章）</a></li>
-<li><a href="#31-211-api">3.1 每个会话单独选模型（2.1.1 新：API 与模型分离）</a></li>
-<li><a href="#32-210">3.2 长会话模式：聊一整天也不怕（2.1.0 头牌）</a></li>
-<li><a href="#30">30 秒试：手动划一条「新会话」分割线</a></li>
-<li><a href="#_2">能玩到什么程度</a></li>
-<li><a href="#33">3.3 快捷消息：把常用提示词存成一键插入</a></li>
-<li><a href="#34">3.4 一个不够就接一堆模型</a></li>
-<li><a href="#35-skill-ai">3.5 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
-<li><a href="#36-mcp-ai">3.6 MCP：给 AI 插外设</a></li>
-<li><a href="#37-comfyui">3.7 ComfyUI 自动流水线</a></li>
-<li><a href="#38-runninghub">3.8 RunningHub 云端生成</a></li>
-<li><a href="#39">3.9 并行与分身</a></li>
-<li><a href="#310">3.10 手机/局域网远程访问</a></li>
-<li><a href="#311">3.11 权限与安全</a></li>
-<li><a href="#312">3.12 稳如老狗</a></li>
-<li><a href="#313">3.13 侧栏、收藏与折叠</a></li>
-</ul><ul class="toc toc-l1">
-<li><a href="#4">第 4 章　场景实战</a></li>
-<li><a href="#41">4.1 短剧/漫画批量出图</a></li>
-<li><a href="#42">4.2 读懂并改造一个代码项目</a></li>
-<li><a href="#43-pdf">4.3 批量整理资料 / 读 PDF</a></li>
-<li><a href="#44">4.4 一句话跑一条流水线</a></li>
-<li><a href="#45-skill-ai">4.5 用 Skill 把 AI 调教成领域专家</a></li>
-</ul><ul class="toc toc-l1">
-<li><a href="#5">第 5 章　设置全解</a></li>
-<li><a href="#51-api">5.1 API 供应商</a></li>
-<li><a href="#52-agent">5.2 Agent</a></li>
-<li><a href="#53">5.3 运行设置</a></li>
-<li><a href="#54">5.4 连接状态</a></li>
-<li><a href="#55">5.5 视觉</a></li>
-<li><a href="#56">5.6 联网搜索</a></li>
-<li><a href="#57-skills">5.7 Skills 管理</a></li>
-<li><a href="#58">5.8 数据与迁移</a></li>
-<li><a href="#59">5.9 软件更新</a></li>
-<li><a href="#510">5.10 工作区</a></li>
-</ul><ul class="toc toc-l1">
-<li><a href="#6">第 6 章　常见问题与高手技巧</a></li>
-<li><a href="#61-500">6.1 模型连不上 / 报 500 / 代理冲突</a></li>
-<li><a href="#62-comfyui">6.2 ComfyUI 工作流报错</a></li>
-<li><a href="#63-mcp">6.3 MCP 工具调不到</a></li>
-<li><a href="#64">6.4 换了模型却不生效 / 图片发不出去</a></li>
-<li><a href="#65">6.5 权限一直弹窗</a></li>
-<li><a href="#66">6.6 上下文快满了怎么办</a></li>
-<li><a href="#67">6.7 卡住了怎么办</a></li>
-<li><a href="#68">6.8 高手技巧</a></li>
-</ul><ul class="toc toc-l1">
-<li><a href="#_3">附录</a></li>
-<li><a href="#a">A 文件都存哪儿</a></li>
-<li><a href="#b">B 速查卡</a></li>
-<li><a href="#_4">输入快捷键</a></li>
-<li><a href="#_5">顶栏左侧下拉</a></li>
-<li><a href="#_6">顶栏按钮</a></li>
-<li><a href="#_7">底部状态栏</a></li>
-<li><a href="#c">C 术语表</a></li>
+<body data-page-node-id="GmtD0EJ3K8ONNvnjwMgmoB">
+<div class="layout" data-page-node-id="0ihpMCns1IOi53jPYmT9Xn">
+  <nav class="toc-nav" data-page-node-id="u7DwvC5Olphtd8eVL4tRm2">
+    <div class="brand" data-page-node-id="Crk9zDHT3FEcjJeffng56Z">Naiba Chat<br data-page-node-id="vuQcTN4JuSzvH0hp7ppCx3">应用说明书</div>
+    <div class="sub" data-page-node-id="MUsCXBEXR3Am1VGD4psdmo">2.2.0 Beta · Windows</div>
+    <input class="search" type="search" placeholder="搜索标题（Ctrl+F）" onfocus="this.select()" data-page-node-id="Snky9K02dlzT0STsjXtERD">
+    <ul class="toc" data-page-node-id="yrTp2LQfD0CUYTF8hsGL0t">
+</ul><ul class="toc toc-l1" data-page-node-id="eISlBEcb6IYFlRCG4ErGZo">
+<li data-page-node-id="ZsLQqpBcqGTTOg3UWUdczC"><a href="#naiba-chat-220-beta" data-page-node-id="7NIUx9QfXmfg9R5NUbVmIG">Naiba Chat 应用说明书（2.2.0 Beta）</a></li>
+<li data-page-node-id="IBk0FOClEhYanVbJ684ncc"><a href="#_1" data-page-node-id="kGbQBJe7RXZ9Sv0dNwNmZi">阅读路径</a></li>
+<li data-page-node-id="QsSZuvRD1eA0HkNeuyWqt6"><a href="#30-naiba-chat" data-page-node-id="eaavwKKg00GqRCnZl0ftWW">亮点速览（用 30 秒了解 Naiba Chat 能干什么）</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="dJctzooPj5cG9JsiVlZyiK">
+<li data-page-node-id="HXFqP7eo9fgVJ9kVwjlG9E"><a href="#1" data-page-node-id="HQQQ2RndxOQBMRCZtxcuS8">第 1 章　三分钟跑起来</a></li>
+<li data-page-node-id="POTOVCj2giP09xUrjRdCK7"><a href="#11" data-page-node-id="CWkaqISTpCjzfcLBBMv6WM">1.1 它到底是什么</a></li>
+<li data-page-node-id="QnQGUhMoroOCbheg0wvxFe"><a href="#12" data-page-node-id="e94e9pVsClA49pJ4qMkeYD">1.2 下载、解压、双击</a></li>
+<li data-page-node-id="HvL6MFNVqjAnMkBmwhxdsH"><a href="#13" data-page-node-id="Z4ONIvqm4amhCdOgGvHgI2">1.3 第一次打开要做的四件事</a></li>
+<li data-page-node-id="ktzAAFTzEx3IsXS4Kh3yoW"><a href="#14-30" data-page-node-id="CvxLtoC7mIcyfmKuBksEXv">1.4 界面 30 秒认识</a></li>
+<li data-page-node-id="Rg6o104ZqU8GElkvJYoPNz"><a href="#15" data-page-node-id="tyoTUGdwFbtTvDkF89Ny3p">1.5 你必须知道的三个开关</a></li>
+<li data-page-node-id="ciQXf8a1Nf7ArdEf5H56Et"><a href="#1-220" data-page-node-id="LvHCWdxZzWS7Y8VSqPO4UR">① 审批档位（2.2.0 改为上拉框）</a></li>
+<li data-page-node-id="swpKrt6FnsZbEERrDB6xff"><a href="#2" data-page-node-id="PlmwMrY0wv4PwX2tANGttk">② 深度思考</a></li>
+<li data-page-node-id="dRB1WtyGDEOCh85WPhNzWG"><a href="#3" data-page-node-id="DkNC7COUptuMgL8CLuHVFL">③ 上下文提醒</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="lBSJpBg2lj24zmnEUJQ8GA">
+<li data-page-node-id="CDm5aT3gI7ktRWXn86CgOY"><a href="#2_1" data-page-node-id="tR11d6yGzIIxpXGc4ErFyx">第 2 章　一次对话能干什么</a></li>
+<li data-page-node-id="btOvShMumvtIDx28sErslN"><a href="#21" data-page-node-id="poQYNBBHw1tBm6mqGX7rdd">2.1 普通问答</a></li>
+<li data-page-node-id="BqKzHmtDAnvZOChmn0w1Yb"><a href="#22" data-page-node-id="JAkgr8diHshnUvf5yH6Cx1">2.2 让它读 / 写 / 搜文件</a></li>
+<li data-page-node-id="DRnyu2iNwL3TuY7hKG0nal"><a href="#23-210" data-page-node-id="XUVCpF76IeeoUl3uIuOAaN">2.3 发附件给它（2.1.0 新：可以只发附件）</a></li>
+<li data-page-node-id="byMIZlEEfcITuXTC6a2QA8"><a href="#24-210" data-page-node-id="XqCTCFcO4GBpRKzRO0sc5D">2.4 用 @ 引用工作区文件（2.1.0 新）</a></li>
+<li data-page-node-id="ukWMSk7xdwNBocXGwmdwh2"><a href="#25-pdf" data-page-node-id="8TNLffdsyiM2zVH5mQAHrJ">2.5 让它看图、看 PDF</a></li>
+<li data-page-node-id="pKdufbCFFOHrVdDZBCSd1Q"><a href="#26" data-page-node-id="pMwx4LMGDXKd6luDpEjzAZ">2.6 让它执行命令</a></li>
+<li data-page-node-id="9D6FD71Ar1gILAQEzs8gyS"><a href="#27-http" data-page-node-id="6wCcKDWl7uxCdyTeysCHFB">2.7 让它发 HTTP 请求 / 联网搜</a></li>
+<li data-page-node-id="Bk4Bu3nifX2yYaqVtvxX6X"><a href="#28" data-page-node-id="9bbmEEkV7UgBWujglDfXBL">2.8 长任务放后台</a></li>
+<li data-page-node-id="z9mi0rp7aSvQA0Kg7S2ejZ"><a href="#29" data-page-node-id="3W0AIL0ekOTa6gJpJimYGk">2.9 中途插话、暂停、取消</a></li>
+<li data-page-node-id="LucZB4323MF5fCt0O893yv"><a href="#210-token" data-page-node-id="BRpEkU9N9P3jeAEWEmHEeJ">2.10 上下文用量 &amp;amp; Token</a></li>
+<li data-page-node-id="J2dJGuqX3mfPQLbC2eAZkp"><a href="#211" data-page-node-id="epPA5nWPL4UJpmiF0dKPwS">2.11 本轮修改文件</a></li>
+<li data-page-node-id="OJoyDLlbkqHx2L63a1AVfX"><a href="#212" data-page-node-id="yZPrr4mhPDjFWxSvhBsSM7">2.12 右侧文件面板</a></li>
+<li data-page-node-id="4uaMqD6BNmYHemYuNuviRJ"><a href="#213" data-page-node-id="XjaNuB9atZykp6GQTwqjut">2.13 消息编辑重发 / 分支到新会话</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="svGuldFLW6VqCwtoEnK2zP">
+<li data-page-node-id="wFUb36vk5XvIGZChL8U5JK"><a href="#3_1" data-page-node-id="SF6kOjF7Slqzn9aPUNfUeo">第 3 章　特色功能（重点章）</a></li>
+<li data-page-node-id="lxfFYHUPJ6Uzq78hHGIrfb"><a href="#31-211-api" data-page-node-id="FybuK8yXDseMlB4CfbpU2c">3.1 每个会话单独选模型（2.1.1 新：API 与模型分离）</a></li>
+<li data-page-node-id="3NbEzVZWUFXSde1p2bDZZQ"><a href="#32-210" data-page-node-id="encp6Q1xLxXQiA3BdJmDfc">3.2 长会话模式：聊一整天也不怕（2.1.0 头牌）</a></li>
+<li data-page-node-id="xPoslphSthjfPwVh11u1fV"><a href="#30" data-page-node-id="tuNkKD0h25ESL8TCLNSLKW">30 秒试：手动划一条「新会话」分割线</a></li>
+<li data-page-node-id="oDxdMMfC0XMUwnhZF371tO"><a href="#_2" data-page-node-id="LBQnVOgPdxBRXVeDBek3IL">能玩到什么程度</a></li>
+<li data-page-node-id="hlPb1FePml2IcuubekcGNZ"><a href="#33" data-page-node-id="qTYv3sXWD2QQcKiJyRvvOx">3.3 快捷消息：把常用提示词存成一键插入</a></li>
+<li data-page-node-id="ayVQNTHyqbaOCc3wAg9JHL"><a href="#34" data-page-node-id="IitGxCt3kJN67LHXt7KX5u">3.4 一个不够就接一堆模型</a></li>
+<li data-page-node-id="8gvqccLyunpLyUWm7DaVLo"><a href="#35-skill-ai" data-page-node-id="JEiUREnlMuVn74nAhu1RUD">3.5 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
+<li data-page-node-id="pYwUBquJ8ReG6jc7rCd6O4"><a href="#36-mcp-ai" data-page-node-id="dOsvpUWtw2wE7kMWZ7r6RT">3.6 MCP：给 AI 插外设</a></li>
+<li data-page-node-id="FHbBmpZpxi5WsFb6xuNxoi"><a href="#37-comfyui" data-page-node-id="2ijHHuG5hAGlcZdapN6gFl">3.7 ComfyUI 自动流水线</a></li>
+<li data-page-node-id="rscr2EFFBJP3CjcfYg9FVW"><a href="#38-runninghub" data-page-node-id="OeykWZfMQalzLOdU8r2LRL">3.8 RunningHub 云端生成</a></li>
+<li data-page-node-id="tRawIi25yGHrSnMlGCR1jW"><a href="#39" data-page-node-id="rHVQmiMpMJbVapAA46RV6A">3.9 并行与分身</a></li>
+<li data-page-node-id="kYoxyMZNXsMyO5JgnW5IGI"><a href="#310-220" data-page-node-id="8STKkAF5cI9EobjtlQ5Nr2">3.10 手机/局域网远程访问（2.2.0：功能对等）</a></li>
+<li data-page-node-id="4iKCLmxGUEKpU6g4iATiZD"><a href="#311" data-page-node-id="tzEKcsdxFeuu2peGH75D3J">3.11 权限与安全</a></li>
+<li data-page-node-id="6p1PJ0YZoeBOTTSHtMUpZl"><a href="#312" data-page-node-id="EJqrRtWGuLynf7GkVd8uu8">3.12 稳如老狗</a></li>
+<li data-page-node-id="Wyh5DOaBXUDMqJc3cUQ15I"><a href="#313" data-page-node-id="qCiDQC5vuIFXezZCtSf3Sm">3.13 侧栏、收藏与折叠</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="Za2jylfM9dYZarMrnvJGPe">
+<li data-page-node-id="8vbyGez376m4G9b3LbAaST"><a href="#4" data-page-node-id="2BGUBIlup0NI67T0e4KsFj">第 4 章　场景实战</a></li>
+<li data-page-node-id="qIT5godnTrP1E6S5xd0rTl"><a href="#41" data-page-node-id="PoNafe9G8LTDNHBcdGdcBK">4.1 短剧/漫画批量出图</a></li>
+<li data-page-node-id="vyeAHMJOZEtzyHHFg02Wul"><a href="#42" data-page-node-id="5OVgalA5Z4HDmqBjoPsNqi">4.2 读懂并改造一个代码项目</a></li>
+<li data-page-node-id="DPEQIZVOjdPxqupyGWaLqu"><a href="#43-pdf" data-page-node-id="cdGCdCb0zPvrbK64amfH4y">4.3 批量整理资料 / 读 PDF</a></li>
+<li data-page-node-id="ny0OR7TsSWpdAwZ6LnllDQ"><a href="#44" data-page-node-id="yxYoUDHQ1TZmsTFlDlrcJc">4.4 一句话跑一条流水线</a></li>
+<li data-page-node-id="QDcTgmOSCv4Su77TRFokEl"><a href="#45-skill-ai" data-page-node-id="LWPI4P50M3KiA7N7KqKzdC">4.5 用 Skill 把 AI 调教成领域专家</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="oppsVTzbF7nPA8NGC2JbEb">
+<li data-page-node-id="Zvj2kv2XDDSwUuPjLSwjU8"><a href="#5" data-page-node-id="VdtHAlUEPFiECjgNThkfBS">第 5 章　设置全解</a></li>
+<li data-page-node-id="yo9pV0JdaYv89vHQ4VkNpS"><a href="#51-api" data-page-node-id="9rqb4J2gtVy91uvlFIEWIs">5.1 API 供应商</a></li>
+<li data-page-node-id="fAoRGFYpEiAseY0fbgq1PA"><a href="#52-agent" data-page-node-id="g9uJIUd8F7LzCBn6B8ppv6">5.2 Agent</a></li>
+<li data-page-node-id="ITMURxPqBujxXup2Czozrj"><a href="#53" data-page-node-id="csu6k9GkCTNCPoMURGZEW0">5.3 运行设置</a></li>
+<li data-page-node-id="p8X9qgxgvTnZCV3BNu6uO6"><a href="#54" data-page-node-id="PPauoiHk0wAa1C75uHgCn9">5.4 连接状态</a></li>
+<li data-page-node-id="eYtBSmBixQ7aNjUUOqkCtw"><a href="#55" data-page-node-id="Zfz2iFwGFkFbLqUtYR4AJ7">5.5 视觉</a></li>
+<li data-page-node-id="jGFDrTxHTVPBaG3nnlGkEA"><a href="#56" data-page-node-id="RxVHMI76ONKjCBrrmLCasD">5.6 联网搜索</a></li>
+<li data-page-node-id="cHZDbybFQi5EdZdSLBJpTm"><a href="#57-skills" data-page-node-id="IfOp4QwOsFQMXygczhVgs4">5.7 Skills 管理</a></li>
+<li data-page-node-id="BIoE2YiKRNfyrRaVMHyUa7"><a href="#58" data-page-node-id="mxfeWcjUjAF5RwU5Ebf9bX">5.8 数据与迁移</a></li>
+<li data-page-node-id="7HhCTbXMz3rsy00wRUfq6B"><a href="#59" data-page-node-id="d1CbRKGH8o2iavIFHSsjTD">5.9 软件更新</a></li>
+<li data-page-node-id="7anTGBgDDII9VjC2mkw8Yu"><a href="#510" data-page-node-id="AAWK4vXA0QrjM7abVUXXdI">5.10 工作区</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="lYZbRxLhbbQgBsluX9BZko">
+<li data-page-node-id="bf3qfYP0j6udW48u8gPES6"><a href="#6" data-page-node-id="DtsAPIKxQOVWNdHF39jUrU">第 6 章　常见问题与高手技巧</a></li>
+<li data-page-node-id="b4kXfsjlWMUuCfEDrD4eox"><a href="#61-500" data-page-node-id="trVpV1csaoffQDC056KFNQ">6.1 模型连不上 / 报 500 / 代理冲突</a></li>
+<li data-page-node-id="PrbOTPzkobatoykO1nDO1g"><a href="#62-comfyui" data-page-node-id="SGXdnRuYFJrObDfRT1go8i">6.2 ComfyUI 工作流报错</a></li>
+<li data-page-node-id="zT1eREdQGVxrx5KBh14Kn4"><a href="#63-mcp" data-page-node-id="1ozzDwZfvCvHX8kDCGA6T6">6.3 MCP 工具调不到</a></li>
+<li data-page-node-id="sKPokfBwyZuDfL4N8sw7Lv"><a href="#64" data-page-node-id="yOUsvKW13jGgpp47OgpMtI">6.4 换了模型却不生效 / 图片发不出去</a></li>
+<li data-page-node-id="hCdOThr9b29a4da12KKQe7"><a href="#65" data-page-node-id="0oG88sofZ7Hes6qGnB017Z">6.5 权限一直弹窗</a></li>
+<li data-page-node-id="QrWEb8P9SEnO5kwMLl8tyJ"><a href="#66" data-page-node-id="j8F9L9u3S7hAdRQndiJxUQ">6.6 上下文快满了怎么办</a></li>
+<li data-page-node-id="B0lJeGimJXEB1Z9JpknWS8"><a href="#67" data-page-node-id="g686nbbHlznDE936FqyQWZ">6.7 卡住了怎么办</a></li>
+<li data-page-node-id="zYoyilkCBEweaVA0ti6rWB"><a href="#68" data-page-node-id="F90CaLYAb6JF1VtmoRvMsn">6.8 高手技巧</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="AOfkL2PVb1YrU6Mx4sVcQS">
+<li data-page-node-id="Tm43mR7WNX6uZzsnr1xVmD"><a href="#_3" data-page-node-id="mIsVrMG3nPZFeBQO6EtlOt">附录</a></li>
+<li data-page-node-id="Rho6xsowqAqWT3jPtzuQ4Q"><a href="#a" data-page-node-id="xQSF6v6DVNfbqDRAJCJHO7">A 文件都存哪儿</a></li>
+<li data-page-node-id="aAoum4D2l0FjiQOEHhIS0F"><a href="#b" data-page-node-id="qLE0BcNPT6PtTknW068W86">B 速查卡</a></li>
+<li data-page-node-id="TOD2KiNmtC522vhxtK8Grf"><a href="#_4" data-page-node-id="rHfmZvcg46g6Ipsp3mfTXo">输入快捷键</a></li>
+<li data-page-node-id="538qNGYAMjxI4lR5OTx4FS"><a href="#_5" data-page-node-id="G8vdfAW9WbbBF50EDl3vEh">顶栏左侧下拉</a></li>
+<li data-page-node-id="2vJKrnzXC3CufLi3Dw5Ulo"><a href="#_6" data-page-node-id="1DabAzUSKAcFY2jGtEzRpG">顶栏按钮</a></li>
+<li data-page-node-id="GwFIBo44koaqM9ISKCF1T6"><a href="#_7" data-page-node-id="X7CdMkKY1aHFkZEZLZ1uFk">底部状态栏</a></li>
+<li data-page-node-id="4wS5X12vuZToxydiYLcWbX"><a href="#c" data-page-node-id="xmVjXSZUJMAGXh9KECkYUZ">C 术语表</a></li>
 </ul>
-    <a class="dl-pdf" href="Naiba-Chat-手册-2.1.1.pdf" download>下载 PDF</a>
+    <a class="dl-pdf" href="Naiba-Chat-手册-2.2.0.pdf" download data-page-node-id="wygYIae2PcrC330eXrUIX9">下载 PDF</a>
   </nav>
-  <main class="doc">
-    <h1 id="naiba-chat-211-beta">Naiba Chat 应用说明书（2.1.1 Beta）</h1>
-<blockquote>
-<p>本说明书面向「第一次打开 Naiba Chat」的小白读者，配图全部来自真实运行界面（2.1.1 Beta · 源码模式 · 截图 2026-09-10）。</p>
-</blockquote>
-<hr>
-<h2 id="_1">阅读路径</h2>
-<ul>
-<li><strong>只想聊天</strong> → 看第 1～2 章</li>
-<li><strong>想玩花的</strong> → 重点看第 3 章</li>
-<li><strong>想查设置</strong> → 直接翻第 5 章</li>
-<li><strong>出问题</strong> → 第 6 章</li>
+  <main class="doc" data-page-node-id="VDolRf44uxtC9LllmGiWgR">
+    <div class="print-toc" aria-hidden="true" data-page-node-id="s224pOUb4alfR2BmAQd36a">
+      <div class="pt-title" data-page-node-id="03sbYsFK6IZwgSSlscE9xT">Naiba Chat 应用说明书 · 2.2.0 Beta · 目录</div>
+      <ul class="toc" data-page-node-id="EAhNmOy2gJKCaMBhKlTHt6">
+</ul><ul class="toc toc-l1" data-page-node-id="77gRGWn0TqfrxrXK4tVvVK">
+<li data-page-node-id="ktMDCowsIv6OWhWpL5mVAe"><a href="#naiba-chat-220-beta" data-page-node-id="wS1ochT191qa7F370L2Mou">Naiba Chat 应用说明书（2.2.0 Beta）</a></li>
+<li data-page-node-id="7jSCZ7WXAJf3JRjtoVp3zw"><a href="#_1" data-page-node-id="8SjoiSp7rBx6ASjwCmJAQ9">阅读路径</a></li>
+<li data-page-node-id="So9iTeOkMyGWkCxAVEDFZF"><a href="#30-naiba-chat" data-page-node-id="zzA3hjodWbUwK9Mw3fp3Vn">亮点速览（用 30 秒了解 Naiba Chat 能干什么）</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="WCxFuXbR30S4T3zf8sWrLX">
+<li data-page-node-id="f24vIPnrWkfbQismMTwZ3e"><a href="#1" data-page-node-id="yArTO2kImDK4ixBszUGun4">第 1 章　三分钟跑起来</a></li>
+<li data-page-node-id="3BL3IUFYykSSh49vWr5QdY"><a href="#11" data-page-node-id="p0unIrFRViI9HnbX22F3ml">1.1 它到底是什么</a></li>
+<li data-page-node-id="L2ONzs0dcw2IG0X9jQjAwi"><a href="#12" data-page-node-id="Cn5yUUrUUL4k1chgJ1foIo">1.2 下载、解压、双击</a></li>
+<li data-page-node-id="oNB8JEoT4I0PDAQuJyTIrB"><a href="#13" data-page-node-id="EqQQmC3qXjqwMiVcCg5kTJ">1.3 第一次打开要做的四件事</a></li>
+<li data-page-node-id="OTQEn0bevMK4nh3WpoYeqS"><a href="#14-30" data-page-node-id="Klc7WSCyCz4WBZh1oXfeD4">1.4 界面 30 秒认识</a></li>
+<li data-page-node-id="62CEfaasdXInd9ROgrOpKq"><a href="#15" data-page-node-id="2ybEcJc3ZecQAkCZTa7wr7">1.5 你必须知道的三个开关</a></li>
+<li data-page-node-id="rjzxXK9uuFEEsY7Aj6CGLZ"><a href="#1-220" data-page-node-id="4xKw0U5Spo7R0vH3XrAlat">① 审批档位（2.2.0 改为上拉框）</a></li>
+<li data-page-node-id="ittA0ZecKCycMasVSHzF6y"><a href="#2" data-page-node-id="LRXASd0jjdoGMuHKQz7pxA">② 深度思考</a></li>
+<li data-page-node-id="JXpjzTMn573hzP5NAQ1oqQ"><a href="#3" data-page-node-id="lzQ714batHiCF07qT8mPpg">③ 上下文提醒</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="WFIwWHi0kbriyHzeAUn0L1">
+<li data-page-node-id="wC1VzJoawpEvlgncy0HRnc"><a href="#2_1" data-page-node-id="NV6leoxnMf39aUy1XqTUVY">第 2 章　一次对话能干什么</a></li>
+<li data-page-node-id="CMLf4zgjr0SFM7N2bxI90Z"><a href="#21" data-page-node-id="5Kx8xcH1o0N6wC8DcUnXhc">2.1 普通问答</a></li>
+<li data-page-node-id="R9BrqMLkSd4hZX7xYhLm33"><a href="#22" data-page-node-id="2WYv4xw3uSKkZ8im1gLxRa">2.2 让它读 / 写 / 搜文件</a></li>
+<li data-page-node-id="eAVPLCHxhDqTnmmWH9QqGj"><a href="#23-210" data-page-node-id="7fCByPSBAsk9UbFKamnHNU">2.3 发附件给它（2.1.0 新：可以只发附件）</a></li>
+<li data-page-node-id="ZtiJABN3uk5ivctsxO6Emx"><a href="#24-210" data-page-node-id="4cTxNkKkQfJ0gn9DO3PYs6">2.4 用 @ 引用工作区文件（2.1.0 新）</a></li>
+<li data-page-node-id="sqt7d0Q1mVwNstNwAtFrS9"><a href="#25-pdf" data-page-node-id="mltrHDG9DtRzlOhl4pFRii">2.5 让它看图、看 PDF</a></li>
+<li data-page-node-id="QYUdotcv9kPdaClPkNzmnY"><a href="#26" data-page-node-id="TXrWkPY29uWNMMUaa5tiAy">2.6 让它执行命令</a></li>
+<li data-page-node-id="Fut3xOTXkN9MJE6gTERjEU"><a href="#27-http" data-page-node-id="AAHBi6s7qDUF3WTyyBQurm">2.7 让它发 HTTP 请求 / 联网搜</a></li>
+<li data-page-node-id="0ntwfGkhV6sYyhBzcSqymd"><a href="#28" data-page-node-id="HATHewph2jp75DHUjBBbwD">2.8 长任务放后台</a></li>
+<li data-page-node-id="FDmVjQObO0SOFC1EzRD7Su"><a href="#29" data-page-node-id="SPePAOs9EMAci7AbiUgY6R">2.9 中途插话、暂停、取消</a></li>
+<li data-page-node-id="Czb702NbTamBTbHlKRj8aa"><a href="#210-token" data-page-node-id="0Ld3d0NyL2iz8tgiGsYF4d">2.10 上下文用量 &amp;amp; Token</a></li>
+<li data-page-node-id="7BhcabVbImzErPmAGbwWQX"><a href="#211" data-page-node-id="Yms6NQDgtJGRWiRgD0Loil">2.11 本轮修改文件</a></li>
+<li data-page-node-id="AMQDqHB8raOz37AZ4wO5lC"><a href="#212" data-page-node-id="ANbC2BnAIXm40tP9FCCiam">2.12 右侧文件面板</a></li>
+<li data-page-node-id="vjPDQGLHI2hviXfCzo5UX0"><a href="#213" data-page-node-id="3eGbJeI3MRV36ac10gk5vd">2.13 消息编辑重发 / 分支到新会话</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="eKMbmVFVv4y77KxAqVWkPH">
+<li data-page-node-id="QSmbe9NgXrF96EB2uXz7CM"><a href="#3_1" data-page-node-id="QphHDoeplBXsDi9LYTDbMB">第 3 章　特色功能（重点章）</a></li>
+<li data-page-node-id="m4TCXv3toSgWHwuj0vFp1k"><a href="#31-211-api" data-page-node-id="6YNAOIRs4fHmDMEJnE40ui">3.1 每个会话单独选模型（2.1.1 新：API 与模型分离）</a></li>
+<li data-page-node-id="cE3o3E4gU2guqZIWal9JR7"><a href="#32-210" data-page-node-id="0rDUQDPeQEv9TPCO2RaDsz">3.2 长会话模式：聊一整天也不怕（2.1.0 头牌）</a></li>
+<li data-page-node-id="A8hv5G0zM8y9L8AWBiNpnI"><a href="#30" data-page-node-id="kqOwMfgAGMEUltMiWEMGTH">30 秒试：手动划一条「新会话」分割线</a></li>
+<li data-page-node-id="9pjEXwdWt8eUNv4tzikREx"><a href="#_2" data-page-node-id="6SXzkz7VPfExNLVtAkIj6B">能玩到什么程度</a></li>
+<li data-page-node-id="nJjNG5WnkPkZJMA2lRg5w7"><a href="#33" data-page-node-id="xPFPPItbbdFSm6GyP2hBHp">3.3 快捷消息：把常用提示词存成一键插入</a></li>
+<li data-page-node-id="pAKIDa17dIbhF7xMc9pGrP"><a href="#34" data-page-node-id="iqO9QPVfBkbp5Ars65XRdg">3.4 一个不够就接一堆模型</a></li>
+<li data-page-node-id="KGKvqvkAwRIlDhwOTbUUrz"><a href="#35-skill-ai" data-page-node-id="wjAD4nEqKVewnIqYkpL0sr">3.5 Skill：给 AI 装&quot;行业操作手册&quot;</a></li>
+<li data-page-node-id="hMo9CyfhMNhkSbEam39CQr"><a href="#36-mcp-ai" data-page-node-id="E5m3lCkAPAeicH4g0EDgeQ">3.6 MCP：给 AI 插外设</a></li>
+<li data-page-node-id="bT7wl9YYfaU5D5CsHsAAwU"><a href="#37-comfyui" data-page-node-id="3IbY9YBL4ZXtZhqkcs1cUQ">3.7 ComfyUI 自动流水线</a></li>
+<li data-page-node-id="PHp0cIz9EUPIAWI4UONck7"><a href="#38-runninghub" data-page-node-id="rfFlmFJHOlyCbWmwHjruhY">3.8 RunningHub 云端生成</a></li>
+<li data-page-node-id="bnUbNBMRhzKoyk8W7RVP4E"><a href="#39" data-page-node-id="C3heOXDnFCgA1nMVe8qPmZ">3.9 并行与分身</a></li>
+<li data-page-node-id="V58DQt08WmBs69c9X6uVBF"><a href="#310-220" data-page-node-id="TzHU3BY0ZAgwt23pp21Y0x">3.10 手机/局域网远程访问（2.2.0：功能对等）</a></li>
+<li data-page-node-id="5tKLZKgXN10yiMobVC4QKi"><a href="#311" data-page-node-id="kK71L8Fe0QExgJUFsjQgbo">3.11 权限与安全</a></li>
+<li data-page-node-id="zPQZ4GscGT44FYegBgNria"><a href="#312" data-page-node-id="vPC0pT3KL07MkkSwCE2Hkt">3.12 稳如老狗</a></li>
+<li data-page-node-id="Z8VODh8bNTFtJXCyU1wydg"><a href="#313" data-page-node-id="Is86gLwdTKpKO1rIqEBbk8">3.13 侧栏、收藏与折叠</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="3BwV7FEr0opSTHoIL8svSq">
+<li data-page-node-id="M0Vjyag7NPHCBzFSznd9Wt"><a href="#4" data-page-node-id="lVCvBUYYZX25p2NwQAJB3d">第 4 章　场景实战</a></li>
+<li data-page-node-id="FCaZnS8RpJComALfH1UkWS"><a href="#41" data-page-node-id="X7iwg61MpUEoZ8q0r9CeXw">4.1 短剧/漫画批量出图</a></li>
+<li data-page-node-id="UDCefnoqnqVsGum4kwCOC6"><a href="#42" data-page-node-id="1hxkrDrLgCYJiruT7OziP0">4.2 读懂并改造一个代码项目</a></li>
+<li data-page-node-id="vuRD7WGCYvrxE9JImeJUcr"><a href="#43-pdf" data-page-node-id="j0dVNajQ0hK7QhJOwd8MDW">4.3 批量整理资料 / 读 PDF</a></li>
+<li data-page-node-id="IWuQhsD9yi2oa4suMnlY3y"><a href="#44" data-page-node-id="GI02xd2d8tiZrY3Oh65Z2H">4.4 一句话跑一条流水线</a></li>
+<li data-page-node-id="AHiMOOPgmRTYsbqjTOVP4Z"><a href="#45-skill-ai" data-page-node-id="SEU7183dtyA5fBrQ3S1Lkd">4.5 用 Skill 把 AI 调教成领域专家</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="8VwGZfBfdJ5DUvr5hnOM2f">
+<li data-page-node-id="8gHURhgiRwM758CNN5I6uF"><a href="#5" data-page-node-id="5ginykQdPztUNnHMsAhwoo">第 5 章　设置全解</a></li>
+<li data-page-node-id="pqUlb8gagCuTmPcsqhoBJB"><a href="#51-api" data-page-node-id="x7hdDHBsXidLUPhKEkMlFI">5.1 API 供应商</a></li>
+<li data-page-node-id="WPAQx9dDcWIkB4LdubWzwg"><a href="#52-agent" data-page-node-id="fkFyFaVfLHiLtlloFs4H5l">5.2 Agent</a></li>
+<li data-page-node-id="n52KDrkj640658IwPfe8do"><a href="#53" data-page-node-id="IRYpHqBwYvMSQVSfnatHWP">5.3 运行设置</a></li>
+<li data-page-node-id="xjB2xbssHdrxXIFA74mBIZ"><a href="#54" data-page-node-id="FvAuYzJthHRRlZqAebkA2E">5.4 连接状态</a></li>
+<li data-page-node-id="JUhIOf9inbnQBfDuXne3Gj"><a href="#55" data-page-node-id="UAFERBOVihUO85uG2eXZWJ">5.5 视觉</a></li>
+<li data-page-node-id="UfW37ZJpDd1enJYvjbfU7g"><a href="#56" data-page-node-id="EEg59CBaAH4HMUPuuYQpkG">5.6 联网搜索</a></li>
+<li data-page-node-id="0e1EdhxXIBYxYGX5XjjwSy"><a href="#57-skills" data-page-node-id="GXjTZeR6OWOGr48SlsFlUF">5.7 Skills 管理</a></li>
+<li data-page-node-id="4BiIE3l9UjrJ1tpG79SuJF"><a href="#58" data-page-node-id="vyGjjtxBmce5H0hdv7GjqT">5.8 数据与迁移</a></li>
+<li data-page-node-id="uTXBvZx4DOc2KZ4jwRwWA8"><a href="#59" data-page-node-id="1frx6LbQ8ApMqUHmTLvWJA">5.9 软件更新</a></li>
+<li data-page-node-id="5Hn5k9orvxztmpjtwwrcc9"><a href="#510" data-page-node-id="U7C3LB8OldQwPB2wUK8TFE">5.10 工作区</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="cQg6RJgeYZ4fjDsIBFN9AC">
+<li data-page-node-id="JNkUcyyfYLewzZbf8EPxxI"><a href="#6" data-page-node-id="0tgPAp3ysdXPKrE4VSWubw">第 6 章　常见问题与高手技巧</a></li>
+<li data-page-node-id="YOrKt1uAeWDZeTXmamYoe8"><a href="#61-500" data-page-node-id="sTy5k8geKnwkKKcP8Z92Ll">6.1 模型连不上 / 报 500 / 代理冲突</a></li>
+<li data-page-node-id="DcN2Oj8lTiqAuWS8FVNrtk"><a href="#62-comfyui" data-page-node-id="LCCrZKN4m7GPccphMrH8AJ">6.2 ComfyUI 工作流报错</a></li>
+<li data-page-node-id="HLnVoSIdlo0LWFVEX2IFW7"><a href="#63-mcp" data-page-node-id="Dn8mrnHopWqBeNLYoYSxRM">6.3 MCP 工具调不到</a></li>
+<li data-page-node-id="pMLh4oOtDDNFA9IKklVDhO"><a href="#64" data-page-node-id="uMZU4GaAjRwCkLN9G7PVjM">6.4 换了模型却不生效 / 图片发不出去</a></li>
+<li data-page-node-id="nJ00EkK7T6Du312XP9QUGY"><a href="#65" data-page-node-id="D5e0VXLlMiBxH3Fsn1eNvy">6.5 权限一直弹窗</a></li>
+<li data-page-node-id="6XolPkcJNR2p1XgYmtil26"><a href="#66" data-page-node-id="bDCNggCsY4cClaN5jPIJfp">6.6 上下文快满了怎么办</a></li>
+<li data-page-node-id="TFF8mCal2nFKBit5i0mzWD"><a href="#67" data-page-node-id="Cyyo7nXIXzm9JEGPFGTBs9">6.7 卡住了怎么办</a></li>
+<li data-page-node-id="FM48YUwyX4BM9xfB9T5Bhp"><a href="#68" data-page-node-id="UqNJ8SG33Ym98IW7yt4EAd">6.8 高手技巧</a></li>
+</ul><ul class="toc toc-l1" data-page-node-id="056PDDRFD9jzo9VCbC7AJH">
+<li data-page-node-id="bGcG4x4W6gYtxITlydU23Y"><a href="#_3" data-page-node-id="QfZklSQgcsE5ZtEL4eh2Kn">附录</a></li>
+<li data-page-node-id="rPOQPYGTciG3SBD0CCqeeY"><a href="#a" data-page-node-id="WbZ0PpE8MyZ04QKtVzQ3MH">A 文件都存哪儿</a></li>
+<li data-page-node-id="POxCRto75nDXqHBbE4VbBC"><a href="#b" data-page-node-id="4IX8n2UtBG0NBbA5grLsse">B 速查卡</a></li>
+<li data-page-node-id="ujXmpuYlM15N4TrM1PBqBb"><a href="#_4" data-page-node-id="XoOqu1BTFLIrhNTyQNKFRT">输入快捷键</a></li>
+<li data-page-node-id="Y8qRErC7qAFyK11Be4fc8E"><a href="#_5" data-page-node-id="u8ku2k0iK1Ac3BZOMUrVgz">顶栏左侧下拉</a></li>
+<li data-page-node-id="O7qqS1acG9rP6leVX8YDA2"><a href="#_6" data-page-node-id="9Lxoa1AoILHFgFGMu7E9UU">顶栏按钮</a></li>
+<li data-page-node-id="y54YD6jFGFMZQVv6QHRJ9l"><a href="#_7" data-page-node-id="Ow5KCkXBVRt9sXmjhkFmqt">底部状态栏</a></li>
+<li data-page-node-id="F88h4VSkI3hsEsXQMXPfUH"><a href="#c" data-page-node-id="J3F1UlBM13Qi04xWO8osZ7">C 术语表</a></li>
 </ul>
-<hr>
-<h2 id="30-naiba-chat">亮点速览（用 30 秒了解 Naiba Chat 能干什么）</h2>
-<ol>
-<li><strong>🆕 2.1.1 每个会话单独选模型</strong>：顶栏选「API」（去哪儿），输入区选「模型」（派谁干），<strong>按会话记忆、分支继承</strong>，换完还自动重新探测图片能力。</li>
-<li><strong>长会话不会越聊越贵（2.1.0 头牌）</strong>：聊到上下文快满时划一条「新会话」分割线，线以上的老消息不再发给模型，<strong>聊天记录一条不删</strong>，还能让模型自己写交接文档再重置。</li>
-<li><strong>一个不够就接一堆模型</strong>：OpenAI 兼容 / Anthropic / Gemini / Ollama / LM Studio / llama.cpp / Unsloth……在线本地都能接。</li>
-<li><strong>Skill：给 AI 装"行业操作手册"</strong>：写小说、跑 ComfyUI、写视频提示词……用 <code>/</code> 一键把领域知识塞进对话。</li>
-<li><strong>MCP：给 AI 插外设</strong>：ComfyUI、文件、网页……只要 MCP 服务器在跑，AI 就能直接调用。</li>
-<li><strong>ComfyUI 自动流水线</strong>：批改工作流 → 批量提交 → 自动收图 → 缩略图预览 → 一句话复用到下一轮。</li>
-<li><strong>RunningHub 云端生成</strong>：没显卡也能出 420+ 类型的图、视频、音频、3D。</li>
-<li><strong>并行与分身</strong>：后台 Job + 子 Agent，任务互不阻塞，跑图的时候还能写稿。</li>
-<li><strong>手机/局域网远程访问</strong>：同 WiFi 扫码，躺床上也能用家里电脑。</li>
-<li><strong>稳如老狗</strong>：断线重连不重放、失败不丢已生成内容、5xx 自动重试、SHA-256 校验更新、可版本回退。</li>
-<li><strong>文件面板 + 本轮修改文件</strong>：AI 改过的文件直接在右侧看、可编辑、可存回磁盘，<strong>改了什么一目了然</strong>。</li>
-</ol>
-<hr>
-<h1 id="1">第 1 章　三分钟跑起来</h1>
-<blockquote>
-<p><strong>读完这章你能</strong>：自己装好 Naiba Chat、配上一个能跑的模型、发第一句对话。</p>
+    </div>
+    <h1 id="naiba-chat-220-beta" data-page-node-id="wLZt8f2I0u1ygqRGN3Qb6u">Naiba Chat 应用说明书（2.2.0 Beta）</h1>
+<blockquote data-page-node-id="5xt4zvdnjINUoDPU9r0e4N">
+<p data-page-node-id="7rBY5Qo2UOTd1fFHpSP9PG">本说明书面向「第一次打开 Naiba Chat」的小白读者，配图全部来自真实运行界面（2.2.0 Beta · 源码模式 · 截图 2026-09-10）。</p>
 </blockquote>
-<h2 id="11">1.1 它到底是什么</h2>
-<p>Naiba Chat 不是聊天框，是装在你电脑上的 <strong>AI 工作台</strong>——它能跟你对话，更能直接动手：读你的文件、改你的代码、跑你的命令、上网搜资料、出图出视频。<strong>所有数据留在本地</strong>，API Key 不出机器。</p>
-<p>一句话比喻：<strong>你雇了一个员工（Agent），给他配了工位（工作区）、工具箱（Tools）、行业手册（Skill）和外线电话（MCP），他干完活会把改过的文件摊在你桌上（文件面板）让你验收。</strong></p>
-<h2 id="12">1.2 下载、解压、双击</h2>
-<ol>
-<li>去 GitHub Releases 页面下载 <code>naiba-chat-2.1.1-beta-windows-x64.zip</code>。</li>
-<li><strong>解压到可写目录</strong>（桌面 / D 盘 / 工作盘都行，<strong>不要放 <code>C:\Program Files</code></strong>，需要写权限）。</li>
-<li>双击 <code>naiba-chat.exe</code>（或源码模式直接 <code>python server.py</code>）。</li>
-<li>浏览器自动打开 <code>http://127.0.0.1:8765</code>，看到主界面就成功了。</li>
+<hr data-page-node-id="4CJgYoJNspxyl1pZtYOuWZ">
+<h2 id="_1" data-page-node-id="WqXv8LuRCiPFC3nenVqiJ3">阅读路径</h2>
+<ul data-page-node-id="rbkRCoWD98gcB5eMtyhbBH">
+<li data-page-node-id="nDbwQPdZXXARzzAz7HE7Ud"><strong data-page-node-id="TcQENkDmzmdDFKVuHGaKGf">只想聊天</strong> → 看第 1～2 章</li>
+<li data-page-node-id="CjHmt2kLAEnJ7jALvN9aHq"><strong data-page-node-id="mia1hQePmFAcUzmCatNfAB">想玩花的</strong> → 重点看第 3 章</li>
+<li data-page-node-id="tXeHomHYL0WASy2toZwEqW"><strong data-page-node-id="yC02gdwqnWtxBgRiEYzLkb">想查设置</strong> → 直接翻第 5 章</li>
+<li data-page-node-id="BpJ5dFqVUX7XArSj1gi0o9"><strong data-page-node-id="n1W5znp0atXsTbbR1gTBZH">出问题</strong> → 第 6 章</li>
+</ul>
+<hr data-page-node-id="gAbweQNzIXATbn9DSW90Ji">
+<h2 id="30-naiba-chat" data-page-node-id="wgjHPdIF8jdhDhZiDcBDZ6">亮点速览（用 30 秒了解 Naiba Chat 能干什么）</h2>
+<ol data-page-node-id="AzYVVoUrlzU2DOSeYRwfuD">
+<li data-page-node-id="ipKaMm0pg4tXXnU1KB9JYT"><strong data-page-node-id="xU0zlrlZGluWAQCWeiunxF">🆕 2.2.0 手机端功能对等</strong>：手机不再少半截——文件面板变<strong data-page-node-id="0K5LIxLSFsZFPlZlHfAGq3">全屏抽屉</strong>、「本轮修改的文件」恢复可点、桌面刻度轨换成顶栏<strong data-page-node-id="mAVIJ6l6rRfPJR4UOYDz7C">「轮次」下拉</strong>，触摸目标统一 ≥44px。</li>
+<li data-page-node-id="t9r4XyokrgximVEho5odFk"><strong data-page-node-id="sUsnuJCzg4B4mNTRBWhRHq">🆕 2.1.1 每个会话单独选模型</strong>：顶栏选「API」（去哪儿），输入区选「模型」（派谁干），<strong data-page-node-id="Jh2HSGYBn6ybRoQo7hDn6U">按会话记忆、分支继承</strong>，换完还自动重新探测图片能力。</li>
+<li data-page-node-id="CFEoqQTOJP2Dk5dhRkyitj"><strong data-page-node-id="jxcZaRKjYhoCMHit1LCZtB">长会话不会越聊越贵（2.1.0 头牌）</strong>：聊到上下文快满时划一条「新会话」分割线，线以上的老消息不再发给模型，<strong data-page-node-id="LrFFPSpTAWJxkwcMfuK16L">聊天记录一条不删</strong>，还能让模型自己写交接文档再重置。</li>
+<li data-page-node-id="MrqH69dP4HCCH9CXa5kDGh"><strong data-page-node-id="xwv52in7tMxFd1u5pZiuOo">一个不够就接一堆模型</strong>：OpenAI 兼容 / Anthropic / Gemini / Ollama / LM Studio / llama.cpp / Unsloth……在线本地都能接。</li>
+<li data-page-node-id="ei50FB9yGIl4ff86tBg4Wr"><strong data-page-node-id="MCj7QBJsXtuaUeQ3EIkaq5">Skill：给 AI 装"行业操作手册"</strong>：写小说、跑 ComfyUI、写视频提示词……用 <code data-page-node-id="AhU1gS8rjc7sFQKO6MaDmb">/</code> 一键把领域知识塞进对话。</li>
+<li data-page-node-id="EUDQX105KkWijAgsFqZBvn"><strong data-page-node-id="NFK40zeFEcfnrNPOT7Za4F">MCP：给 AI 插外设</strong>：ComfyUI、文件、网页……只要 MCP 服务器在跑，AI 就能直接调用。</li>
+<li data-page-node-id="FxiFJZR72VZD7NdqBjtdoj"><strong data-page-node-id="i6SuPpHdeyK3VLBmLwDHID">ComfyUI 自动流水线</strong>：批改工作流 → 批量提交 → 自动收图 → 缩略图预览 → 一句话复用到下一轮。</li>
+<li data-page-node-id="CHjSVsmrn6h6MWjEyiFSJW"><strong data-page-node-id="fQ29FlceUfI6Wa4yMC7Ova">RunningHub 云端生成</strong>：没显卡也能出 420+ 类型的图、视频、音频、3D。</li>
+<li data-page-node-id="pvpwLvdAPCcIIvr27D0BaM"><strong data-page-node-id="8drVPUihLMfhtKYpHQhaOs">并行与分身</strong>：后台 Job + 子 Agent，任务互不阻塞，跑图的时候还能写稿。</li>
+<li data-page-node-id="H7JQ6pdlYivB6bdJSEgRMU"><strong data-page-node-id="GmIpNLEKRAfr1e8KgwTbVS">手机/局域网远程访问</strong>：同 WiFi 打开链接，躺床上也能用家里电脑。</li>
+<li data-page-node-id="7qnV4jE98BscZHCBLyrcxG"><strong data-page-node-id="Phn9PiIFA53ro0Cd9QHyGh">稳如老狗</strong>：断线重连不重放、失败不丢已生成内容、5xx/429 自动重试、SHA-256 校验更新、可版本回退。</li>
+<li data-page-node-id="yTLPwz70DqEfULx6VbuElK"><strong data-page-node-id="GNkJLCFGhiwcIYCywCtAAz">文件面板 + 本轮修改文件</strong>：AI 改过的文件直接在右侧看、可编辑、可存回磁盘，<strong data-page-node-id="XvmyISC3oudiZX5AlqF5nO">改了什么一目了然</strong>。</li>
 </ol>
-<blockquote>
-<p>从源码跑：<code>python -m pip install pywebview pystray pillow "mcp==2.1.1" pymupdf python-multipart</code>，然后 <code>python server.py</code>。</p>
+<hr data-page-node-id="1RCUXQ46700gaHqrCxiDFF">
+<h1 id="1" data-page-node-id="8vKZPv2LKA1DTdgbVkazZ5">第 1 章　三分钟跑起来</h1>
+<blockquote data-page-node-id="hNsT6v1KWrJbwBj7992rx4">
+<p data-page-node-id="o0QPaQk19QJLluxteglPf4"><strong data-page-node-id="t1eg6Ru5ZryDI2EWMKUAO2">读完这章你能</strong>：自己装好 Naiba Chat、配上一个能跑的模型、发第一句对话。</p>
 </blockquote>
-<h2 id="13">1.3 第一次打开要做的四件事</h2>
-<blockquote>
-<p><strong>本机访问免口令</strong>；手机/局域网访问要口令（在「设置 → 连接状态」页查看）。</p>
-</blockquote>
-<ol>
-<li><strong>添加一个 API</strong> → 顶栏 ⚙ 设置 → 「API 供应商」→ 点「添加 API」卡片 → 填地址 / Key / 模型名 → 点「检查」测连通。</li>
+<h2 id="11" data-page-node-id="APr07pr0ofqOQJ7vrcq70C">1.1 它到底是什么</h2>
+<p data-page-node-id="7MgULedQFJByqZT7T5BUWh">Naiba Chat 不是聊天框，是装在你电脑上的 <strong data-page-node-id="B3PyRexZvXQFLssfOCCfnG">AI 工作台</strong>——它能跟你对话，更能直接动手：读你的文件、改你的代码、跑你的命令、上网搜资料、出图出视频。<strong data-page-node-id="VLjbRXC6CmWjahrueGN2jE">所有数据留在本地</strong>，API Key 不出机器。</p>
+<p data-page-node-id="svRCHs8a5JRPv57lEqfAFd">一句话比喻：<strong data-page-node-id="CEs6sXthB5rodJjJMUj44q">你雇了一个员工（Agent），给他配了工位（工作区）、工具箱（Tools）、行业手册（Skill）和外线电话（MCP），他干完活会把改过的文件摊在你桌上（文件面板）让你验收。</strong></p>
+<h2 id="12" data-page-node-id="R1XcaI5YxcJNNclKYkz2e4">1.2 下载、解压、双击</h2>
+<ol data-page-node-id="HVqBXGPGVvZUi1TLNolTDE">
+<li data-page-node-id="FqZimjKn5epEv8x6z3jCz0">去 GitHub Releases 页面下载 <code data-page-node-id="NUkyMrspC6OAmwhVulEsZ5">naiba-chat-2.2.0-beta-windows-x64.zip</code>。</li>
+<li data-page-node-id="wBpJ25jIlIrbP1KgIirF9V"><strong data-page-node-id="dgjQiu3ey62OWcje5mjmDX">解压到可写目录</strong>（桌面 / D 盘 / 工作盘都行，<strong data-page-node-id="TT82iMwauUFcn3FFedN7ms">不要放 <code data-page-node-id="2YPwf5z1REkFDHOEBolnE9">C:\Program Files</code></strong>，需要写权限）。</li>
+<li data-page-node-id="04L482yqqma5VVzYRLCtei">双击 <code data-page-node-id="fUj1LvHhPbdwRuT4AJCUWo">naiba-chat.exe</code>（或源码模式直接 <code data-page-node-id="OfBIdy47AwttQcUhHLWPU6">python server.py</code>）。</li>
+<li data-page-node-id="i5odwuJrl1CwljQbzHxJAw">浏览器自动打开 <code data-page-node-id="1x2QtQ9EFM1FyeA1YRSpMq">http://127.0.0.1:8765</code>，看到主界面就成功了。</li>
 </ol>
-<p><img alt="API 供应商" src="images/05-settings-models.png"></p>
-<ol start="2">
-<li>
-<p><strong>选一个 Agent</strong> → 顶栏「Agent」下拉里选一个（Agent = 人设 + 系统提示词 + 工具集）。</p>
+<blockquote data-page-node-id="qIXHxgujTuwt5YyklLZArl">
+<p data-page-node-id="G8r3mAozEaZBwNOlK9eLEn">从源码跑：<code data-page-node-id="1EkumHlTFUiWDnzCk0RU5f">python -m pip install pywebview pystray pillow "mcp==2.1.1" pymupdf python-multipart</code>，然后 <code data-page-node-id="MGbdVvcU4VDQ43OVeet4pH">python server.py</code>。</p>
+</blockquote>
+<h2 id="13" data-page-node-id="Y4eqUFgYFgepGFcQhQWZsG">1.3 第一次打开要做的四件事</h2>
+<blockquote data-page-node-id="1FU8uEy84DrOhazNbh1YOc">
+<p data-page-node-id="ZJR9UPbbTOKMLnTgd11cUH"><strong data-page-node-id="Y8t3YS6E3EFQCVqb94cLlO">本机访问免口令</strong>；手机/局域网访问要口令（在「设置 → 连接状态」页查看）。</p>
+</blockquote>
+<ol data-page-node-id="zC3sLEbRfbNi9UC5HEBiuh">
+<li data-page-node-id="xH45ByPDl2UYSWvX3yYnkb"><strong data-page-node-id="Y3hjCxFoIWUXID3gQsgb5s">添加一个 API</strong> → 顶栏 ⚙ 设置 → 「API 供应商」→ 点「添加 API」卡片 → 填地址 / Key / 模型名 → 点「检查」测连通。</li>
+</ol>
+<p data-page-node-id="GBshHIM70ZHHned3uAkjnp"><img alt="API 供应商" src="images/05-settings-models.png" data-page-node-id="uANCBsvi4hJMFDBpvXQbFE"></p>
+<ol start="2" data-page-node-id="qey3zNDJr6SSNe9DBpSzPc">
+<li data-page-node-id="pEH3aA4cXo0G2c2z9rweOg">
+<p data-page-node-id="3lwqh7CBBqjPFecK0hs53D"><strong data-page-node-id="Cc7bxWfzE6DFN1bUXV4MCC">选一个 Agent</strong> → 顶栏「Agent」下拉里选一个（Agent = 人设 + 系统提示词 + 工具集）。</p>
 </li>
-<li>
-<p><strong>选这个会话要用的模型</strong> → 顶栏「API」下拉选刚才加的连接，<strong>输入框下方左边「模型」下拉选具体模型</strong>（想用列表里没有的就选「手动输入模型名称…」自己填）。</p>
+<li data-page-node-id="rWHOV2DgNj7EKvcvzZY850">
+<p data-page-node-id="06EHq0q6DpMDQgiOWL6sMq"><strong data-page-node-id="U2gGNairUQ20lWK4uomgKt">选这个会话要用的模型</strong> → 顶栏「API」下拉选刚才加的连接，<strong data-page-node-id="l3QZ15vpbQ25X55F01oDpe">输入框下方左边「模型」下拉</strong>（列表就是该 API 的模型目录）选一个。</p>
 </li>
 </ol>
-<p><img alt="会话级模型选择" src="images/32-model-selector.png"></p>
-<ol start="4">
-<li><strong>发第一句话</strong> → 底部输入框打字 → 按 <code>Enter</code> 或点 ↑ 发送。</li>
+<p data-page-node-id="8G2MtaYoGBpCNip5O0C4Y8"><img alt="会话级模型选择" src="images/32-model-selector.png" data-page-node-id="Ihg0gBlOhL6MgJ5t16m3iF"></p>
+<ol start="4" data-page-node-id="q49HUDQPe0CzMvOzxUmY6a">
+<li data-page-node-id="BxME9sI7nakhW7ogWe1WFb"><strong data-page-node-id="Ze8n7snuraYsUvIDbmdmde">发第一句话</strong> → 底部输入框打字 → 按 <code data-page-node-id="nF14XArKZE1gylJOidURQk">Enter</code> 或点 ↑ 发送。</li>
 </ol>
-<blockquote>
-<p><strong>没配过模型？</strong> 主界面空态里已经放了常用指令卡片（点一下就发），新手按顺序点「列出可用工具」试试水。</p>
+<blockquote data-page-node-id="DtfCIkuG8gR9EpW8FgKZKg">
+<p data-page-node-id="SwxLr9DL3LKtCLA70DR3hg"><strong data-page-node-id="qu9uet20Vb4osGs3cW5kxe">没配过模型？</strong> 主界面空态里已经放了常用指令卡片（点一下就发），新手按顺序点「列出可用工具」试试水。</p>
 </blockquote>
-<p>主界面长这样：</p>
-<p><img alt="主界面" src="images/01-main-empty.png"></p>
-<h2 id="14-30">1.4 界面 30 秒认识</h2>
-<table>
-<thead>
-<tr>
-<th>区域</th>
-<th>你能干什么</th>
+<p data-page-node-id="QIdy88EzqJwK9NzE5auBmc">主界面长这样：</p>
+<p data-page-node-id="kHgxIViH5qqNaKLmCuVAOT"><img alt="主界面" src="images/01-main-empty.png" data-page-node-id="QsABP0E6NwF4YmH4yiIN2B"></p>
+<h2 id="14-30" data-page-node-id="pas6GjhBYG7Z45MjNcPcf0">1.4 界面 30 秒认识</h2>
+<table data-page-node-id="i2DOIqM9NCVPUNyNQYWJpp">
+<thead data-page-node-id="KogGqXTMJjjHHo17U5KvyU">
+<tr data-page-node-id="yPm48xURXgR2PDtwyuUYA6">
+<th data-page-node-id="wqo3SZsHcxDuLGCO6GsZaS">区域</th>
+<th data-page-node-id="uOSga6uPaEcNFRDJKhrZBX">你能干什么</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td><strong>顶栏左</strong></td>
-<td>展开/收起侧栏（状态会记住）</td>
+<tbody data-page-node-id="fxqKkXJbgAocanEZ2oCLAa">
+<tr data-page-node-id="YC50DcGB2YtveTMkvYSkVy">
+<td data-page-node-id="OO6ncvD1OJWHmm3HkeW5AS"><strong data-page-node-id="gGeGA9rl7duYf5pKTvupFz">顶栏左</strong></td>
+<td data-page-node-id="feV9iGxhJL9ckXNVV7Shir">展开/收起侧栏（状态会记住）</td>
 </tr>
-<tr>
-<td><strong>顶栏中</strong></td>
-<td>切 <strong>API</strong>（连接配置）、切 Agent（两个下拉）</td>
+<tr data-page-node-id="sA0jVfDumqde0kPQvb3Kef">
+<td data-page-node-id="VMdBZNweuI3uZX2gE5C3yJ"><strong data-page-node-id="vrYHF5ApIeSUDLoiiRrlGM">顶栏中</strong></td>
+<td data-page-node-id="KojvdAd7yjLf2Oyqh8f9ge">切 <strong data-page-node-id="VFOkmEV4EWeJRXe7cmcBuh">API</strong>（连接配置）、切 Agent（两个下拉）</td>
 </tr>
-<tr>
-<td><strong>顶栏右</strong></td>
-<td>文件 / 任务 / Skill / MCP 状态 / 刷新</td>
+<tr data-page-node-id="yIB9hydQV7CgRxJ4cOuaiu">
+<td data-page-node-id="kwLX8hHgExEyeBM3Gatqm6"><strong data-page-node-id="eaHNvj9IqEJ4FhBe8c6oL7">顶栏右</strong></td>
+<td data-page-node-id="BPd8sJOEzIcn0DeCA37N3C">文件 / 任务 / Skill / MCP 状态 / 刷新</td>
 </tr>
-<tr>
-<td><strong>左侧栏</strong></td>
-<td>工作区分组、会话列表、底部「已收藏」分组</td>
+<tr data-page-node-id="mjfj47eFDR3s78n5bSfzLB">
+<td data-page-node-id="0vhQJnLIb18FpqGag5GImy"><strong data-page-node-id="B7uCx501PhfXFgYYneDiqY">左侧栏</strong></td>
+<td data-page-node-id="p7YR7PkArW0zyXr1UENw1n">工作区分组、会话列表、底部「已收藏」分组</td>
 </tr>
-<tr>
-<td><strong>中间聊天区</strong></td>
-<td>对话、思考块、工具块、产物、本轮修改文件、<strong>新会话分割线</strong></td>
+<tr data-page-node-id="BxEjC5LWehkGRseHsuSAvC">
+<td data-page-node-id="cFl7mfeXEIKAU4dyqdiUA1"><strong data-page-node-id="aDcjJFZKuRtNRmGwkjpcof">中间聊天区</strong></td>
+<td data-page-node-id="r4DBiJYxz4esKV4K4hU15T">对话、思考块、工具块、产物、本轮修改文件、<strong data-page-node-id="xU204D11oermB04RpImz6g">新会话分割线</strong></td>
 </tr>
-<tr>
-<td><strong>聊天区右侧</strong></td>
-<td><strong>对话刻度轨</strong>：一轮一条横条，点一下跳到那一轮</td>
+<tr data-page-node-id="7snvyiXiBlp64N4u13dR5V">
+<td data-page-node-id="bSfUu3ZKJPFENPPiAZZbvZ"><strong data-page-node-id="uJ3r0HBovFODgsZtuCQA4H">聊天区右侧</strong></td>
+<td data-page-node-id="wcZU4pdAx6YSvedffRfgRW"><strong data-page-node-id="1SLwHay0pA2ObBuC18LT8B">对话刻度轨</strong>：一轮一条横条，点一下跳到那一轮</td>
 </tr>
-<tr>
-<td><strong>右侧文件面板</strong></td>
-<td>AI 改过的文件在这里多标签预览/编辑</td>
+<tr data-page-node-id="orczpOmkYH18HFqZspXfxg">
+<td data-page-node-id="PjAlurIzOYBoZlFmrljqaX"><strong data-page-node-id="5gBGAl1gamCFnyGfaRCTBH">右侧文件面板</strong></td>
+<td data-page-node-id="JEgX9Mw75rgTvUBeCGoKqw">AI 改过的文件在这里多标签预览/编辑</td>
 </tr>
-<tr>
-<td><strong>底部输入区</strong></td>
-<td>附件列表 / 添加文件 / 思考强度 / 上下文圆环 / 发送</td>
+<tr data-page-node-id="9YlJwX6GMJgArCc548QX22">
+<td data-page-node-id="yDJg1vmTzhSTIGQIvNN3ff"><strong data-page-node-id="ABTRLHNc73ei38jifjBw6w">底部输入区</strong></td>
+<td data-page-node-id="JBYFKrpkmq8de1ihX3uKFz">附件列表 / 添加文件 / 思考强度 / 上下文圆环 / 发送</td>
 </tr>
-<tr>
-<td><strong>底部状态栏</strong></td>
-<td><strong>模型下拉</strong>（本会话用哪个模型）、工作区下拉、审批档位、快捷消息 ｜ 右侧：思考强度、上下文百分比、就绪状态</td>
+<tr data-page-node-id="yChoXw6PJdikWE8X6zXHwz">
+<td data-page-node-id="LkFfzic0bmHBVQSlEWbL11"><strong data-page-node-id="xq4YSXnXSV5JDDMF5W6zNY">底部状态栏</strong></td>
+<td data-page-node-id="AHDlC8DfuEw4HTVxGV2M8f"><strong data-page-node-id="LsvLEpMjXf5pmCInuYKHgY">模型下拉</strong>（本会话用哪个模型）、工作区下拉、<strong data-page-node-id="UZmfWB8tHSAy4jZbyB5Kw0">审批按钮</strong>（点开是三档上拉框）、快捷消息 ｜ 右侧：思考强度、上下文百分比、就绪状态</td>
 </tr>
 </tbody>
 </table>
-<h2 id="15">1.5 你必须知道的三个开关</h2>
-<h3 id="1_1">① 审批三档</h3>
-<p>底部「审批」切到哪一档，决定 AI 跑工具要不要你点头。工作区外写操作时，AI 会停下弹出确认卡：</p>
-<p><img alt="工具审批确认卡（示意）" src="images/24-tool-approval.png"></p>
-<ul>
-<li><strong>确认</strong>（默认）：每次工具调用都弹「需要确认」卡片 → 你点「允许执行」才跑（<strong>最安全</strong>）。</li>
-<li><strong>自动</strong>：工作区内的操作不用问；工作区外的写操作才问。</li>
-<li><strong>完全</strong>：工具无需逐次确认（<strong>最省事，但写错可能毁文件</strong>）。</li>
+<h2 id="15" data-page-node-id="JAXDuIKQH4CF5VnMwi4VJ8">1.5 你必须知道的三个开关</h2>
+<h3 id="1-220" data-page-node-id="1zZ7NZpV3GbVhm1baPtufV">① 审批档位（2.2.0 改为上拉框）</h3>
+<p data-page-node-id="qrDY4UxpDhMlzKVr5fTvBG">底部左侧的「<strong data-page-node-id="hGU4nyW1vRlmBqQWnjgaBe">审批</strong>」按钮，决定 AI 跑工具要不要你点头。<strong data-page-node-id="ZIxBa58dcL0TWcfbZXMVTq">收起时它只是一个按钮</strong>（显示当前档位，风险越高颜色越醒目），<strong data-page-node-id="VNcM62DF7ONq0euCLaQjbS">点一下</strong>才在按钮上方弹出三档列表：</p>
+<p data-page-node-id="NEF9OwG8tOiGtXMGB7PMWE"><img alt="审批模式上拉框" src="images/33-permission-menu.png" data-page-node-id="YvuXwPgGJjkHWDkAWj8BEw"></p>
+<ul data-page-node-id="d9KCbkh1ir7VDDR1RKTc8w">
+<li data-page-node-id="Fl4FxPyUjmtnJRv57lRpR9"><strong data-page-node-id="Y3MY9vhAA2Jqyivux0V741">确认</strong>（默认）：每次工具调用都弹「需要确认」卡片 → 你点「允许执行」才跑（<strong data-page-node-id="skQ4uw1cPb86dbjwClos29">最安全</strong>）。</li>
+<li data-page-node-id="bYk65TNupTwDIZy6L7kusz"><strong data-page-node-id="4RaE6PKDeQDhvvuCuEA68L">自动</strong>：工作区内的操作不用问；工作区外的写操作才问。</li>
+<li data-page-node-id="LDcTZDsMHIbxYkGeOygdMf"><strong data-page-node-id="G1KD4JVMXqQBBahFxb7QS9">完全</strong>：工具无需逐次确认（<strong data-page-node-id="Gg4jj2VldS5RrgUfFKSX2w">最省事，但写错可能毁文件</strong>）。</li>
 </ul>
-<blockquote>
-<p>2.1.0 起没有「轻量 / 富文本」开关了——<strong>AI 能用哪些工具完全由 Agent 的工具集决定</strong>，不再有会话级开关。想收窄能力，去「设置 → Agent」里改工具集。</p>
+<p data-page-node-id="ad55kpZkgdBG6MRIFzT1qJ">选完、切换会话、打开别的浮层、按 <code data-page-node-id="QJzfbn0cwOnc4gBhBcAksC">Esc</code>、点外面，列表都会收起。工作区外写操作时会停下弹确认卡：</p>
+<p data-page-node-id="db2zADKTUzynvPHMdtJ8nP"><img alt="工具审批确认卡（示意）" src="images/24-tool-approval.png" data-page-node-id="l7oPOAUff79KO9mGtVfkJ5"></p>
+<blockquote data-page-node-id="Wuuei0pM45PzeUFPpEWsYM">
+<p data-page-node-id="s8fCicCLCCLIEbYKuXxwfW">2.1.0 起没有「轻量 / 富文本」开关了——<strong data-page-node-id="JPSmI5DFgqOcZrJPkkjhPw">AI 能用哪些工具完全由 Agent 的工具集决定</strong>，不再有会话级开关。想收窄能力，去「设置 → Agent」里改工具集。</p>
+<p data-page-node-id="6s2an5YfM1nlBxcmHG9aGq">2.2.0 把这个控件从「平铺四段」改成上拉框，省出的横向空间留给工作区和模型选择器；窄屏也不会被挤变形。</p>
 </blockquote>
-<h3 id="2">② 深度思考</h3>
-<p><img alt="深度思考菜单" src="images/18-reasoning-menu.png"></p>
-<p>输入区右侧的球形按钮，点开有 5 档：</p>
-<ul>
-<li><strong>跟随 API（自动）</strong>——按模型自身行为</li>
-<li><strong>关闭</strong>——直接答，不思考</li>
-<li><strong>低 / 中 / 高</strong>——强制思考强度</li>
+<h3 id="2" data-page-node-id="Nk9xUE9jR8DgDTDEmK82MJ">② 深度思考</h3>
+<p data-page-node-id="ESLETsFyVFyirLrbGowciX"><img alt="深度思考菜单" src="images/18-reasoning-menu.png" data-page-node-id="IWzuf6f9IhvVGXWQBrML26"></p>
+<p data-page-node-id="2l1lez0n2rZvbNjaBRcByj">输入区右侧的球形按钮，点开有 5 档：</p>
+<ul data-page-node-id="pndpyd7Xxp0HMOrRzep3TG">
+<li data-page-node-id="CuBxmdHEtt6y7uACGqedDK"><strong data-page-node-id="zhCdaAhYAFgSDlb9KP2Z1u">跟随 API（自动）</strong>——按模型自身行为</li>
+<li data-page-node-id="4uz3z67RrI5eb5UrWRP2zc"><strong data-page-node-id="tEmJ2zEXUjyCGPVfuZ3xRS">关闭</strong>——直接答，不思考</li>
+<li data-page-node-id="a7l2OUvBALpzTD9xojomVr"><strong data-page-node-id="3XdD61cajSJonn5xt5yX3Y">低 / 中 / 高</strong>——强制思考强度</li>
 </ul>
-<p>当前档位常显在输入框下方（「思考 自动」）。模型支持时（DeepSeek-R1、Claude、o 系列）才有效，否则忽略。</p>
-<blockquote>
-<p>2.1.0 改动：点这个按钮<strong>只展开/收起列表</strong>，不会再顺手帮你切档。</p>
+<p data-page-node-id="aFX73k1gH9srKfF68DG8EL">当前档位常显在输入框下方（「思考 自动」）。模型支持时（DeepSeek-R1、Claude、o 系列）才有效，否则忽略。</p>
+<blockquote data-page-node-id="pdHULkORohidbgfmS2qNXv">
+<p data-page-node-id="tKFoWKChDqM0ILQEm67eOk">2.1.0 改动：点这个按钮<strong data-page-node-id="Mmo4HtoCnAjt9rpEAgq95n">只展开/收起列表</strong>，不会再顺手帮你切档。</p>
 </blockquote>
-<h3 id="3">③ 上下文提醒</h3>
-<p><img alt="上下文提醒" src="images/31-context-warning.png"></p>
-<p>输入框右侧的彩色圆环 + 下方常驻的「上下文 x.x%」就是上下文用量：</p>
-<ul>
-<li>每次模型请求后刷新，70% 转黄、90% 转红，鼠标悬停看 <code>已用 / 上限</code>。</li>
-<li>超过阈值（默认 80%，在「设置 → 运行设置」改，填 0 关闭）会弹窗提醒，建议让模型写交接文档并开始新会话。</li>
-<li>隔 5 个百分点才提醒第二次，不会一直弹。</li>
+<h3 id="3" data-page-node-id="PcZLt9pVamG06sVXnDLGaE">③ 上下文提醒</h3>
+<p data-page-node-id="uwjtXimxOKLmDqKzJCPk5c"><img alt="上下文提醒" src="images/31-context-warning.png" data-page-node-id="KDu7shgX4IWlwBniqX9eyJ"></p>
+<p data-page-node-id="itVKGaSHjEIvLXtO2vVykM">输入框右侧的彩色圆环 + 下方常驻的「上下文 x.x%」就是上下文用量：</p>
+<ul data-page-node-id="9n14p26GeAETHyd8gKxn8Z">
+<li data-page-node-id="8RXwlkaCyEdqDDKEK8giHK">每次模型请求后刷新，70% 转黄、90% 转红，鼠标悬停看 <code data-page-node-id="6Z4jk4E9wvxjPnNUbhT6Ef">已用 / 上限</code>。</li>
+<li data-page-node-id="cN1CD13mmf0PXiNAosG6tj">超过阈值（默认 80%，在「设置 → 运行设置」改，填 0 关闭）会弹窗提醒，建议让模型写交接文档并开始新会话。</li>
+<li data-page-node-id="vsPwAIYOrSwifnKuSeHDzX">隔 5 个百分点才提醒第二次，不会一直弹。</li>
 </ul>
-<hr>
-<h1 id="2_1">第 2 章　一次对话能干什么</h1>
-<blockquote>
-<p><strong>读完这章你能</strong>：让 AI 读你的文件、改你的代码、跑你的命令、出你的图，而且知道每一步在背后发生了什么。</p>
+<hr data-page-node-id="15xwb8FLUJsElMXdc47BBE">
+<h1 id="2_1" data-page-node-id="E2gJo3RSAC7ydE0ezlRMOG">第 2 章　一次对话能干什么</h1>
+<blockquote data-page-node-id="70SDvSGer6TeBafYeuCEwx">
+<p data-page-node-id="eWwwNQZOjFCOPBZ8mjuh1T"><strong data-page-node-id="NFOypFknG1OyVYA5zRRN9E">读完这章你能</strong>：让 AI 读你的文件、改你的代码、跑你的命令、出你的图，而且知道每一步在背后发生了什么。</p>
 </blockquote>
-<h2 id="21">2.1 普通问答</h2>
-<p>直接在输入框打字发就行。AI 拿到的是你<strong>当前会话的上下文</strong>（Agent 系统提示词 + 历史消息 + Skill + 工具结果）。一条典型的「思考 → 工具 → 正文」交错长这样：</p>
-<p><img alt="流式渲染（示意）" src="images/22-chat-streaming.png"></p>
-<h2 id="22">2.2 让它读 / 写 / 搜文件</h2>
-<table>
-<thead>
-<tr>
-<th>你说的话</th>
-<th>AI 用什么</th>
+<h2 id="21" data-page-node-id="RkIegPsv0M5laABItRUU9v">2.1 普通问答</h2>
+<p data-page-node-id="AvoeLLhGV5e7dDiFn3HE21">直接在输入框打字发就行。AI 拿到的是你<strong data-page-node-id="gzQWWg9VjVcGP7nTBFJZLt">当前会话的上下文</strong>（Agent 系统提示词 + 历史消息 + Skill + 工具结果）。一条典型的「思考 → 工具 → 正文」交错长这样：</p>
+<p data-page-node-id="tQzP5owsP469qZLbEdIF13"><img alt="流式渲染（示意）" src="images/22-chat-streaming.png" data-page-node-id="0wM6Tp3VBhHay09bEvceIu"></p>
+<h2 id="22" data-page-node-id="4bEl2H7DpHXzjjGmV0oCeE">2.2 让它读 / 写 / 搜文件</h2>
+<table data-page-node-id="d8dw9zCKnml4QnbEbhxCIE">
+<thead data-page-node-id="EsDAufKy85EIOx6qag7b9O">
+<tr data-page-node-id="AzGDcyuTMiEreQrVmiIPKd">
+<th data-page-node-id="HE7efX3xctCi8lVRVcUZqf">你说的话</th>
+<th data-page-node-id="7HnPyYgAYtUAAmvDKVKFN1">AI 用什么</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td>「读一下 README.md 头三行」</td>
-<td><code>read_file</code></td>
+<tbody data-page-node-id="k0HnWMTpA3BMcYRr4lBzib">
+<tr data-page-node-id="gcW2XgXyVorlf6pC0ue8n4">
+<td data-page-node-id="uuRK4zYxNS4EvermmmFoOd">「读一下 README.md 头三行」</td>
+<td data-page-node-id="ee9AKDQJ84YaaHbB60mo2f"><code data-page-node-id="3ZcCFvozLnIBddalkN6k5t">read_file</code></td>
 </tr>
-<tr>
-<td>「把 build_info.json 的 version 改成 2.1.1」</td>
-<td><code>read_file</code> + <code>edit_file</code></td>
+<tr data-page-node-id="GirAIcAY4PEgoaHmrB5eYG">
+<td data-page-node-id="F5tBGZnrbyYqkaJP3EnYF6">「把 build_info.json 的 version 改成 2.1.1」</td>
+<td data-page-node-id="X1iJRUBB37TqlHLCd9oziM"><code data-page-node-id="gFxeozAThl4xNJTMlqrn4L">read_file</code> + <code data-page-node-id="1ZvzrRW1jKJ8hAKUrxS8LP">edit_file</code></td>
 </tr>
-<tr>
-<td>「在 docs/ 下搜包含 'TODO' 的 md」</td>
-<td><code>search_files</code></td>
+<tr data-page-node-id="zPWWshxfwITisxVNzCgPO2">
+<td data-page-node-id="YGiFUyHWXbSYVtGqI8oNRT">「在 docs/ 下搜包含 'TODO' 的 md」</td>
+<td data-page-node-id="P4YuEuJhy0QICcI0MnR0ul"><code data-page-node-id="CvA5VkUuKC0SQHSMF4H4OP">search_files</code></td>
 </tr>
-<tr>
-<td>「列出工作区所有 png」</td>
-<td><code>list_directory</code></td>
+<tr data-page-node-id="QpMrFLNFbBhkB9HGzJddYU">
+<td data-page-node-id="qC9W70VTsa2Dgxc2tcigeu">「列出工作区所有 png」</td>
+<td data-page-node-id="ZxpnQYrB6MpYeq2cMU8R8b"><code data-page-node-id="fC0H92FAemg2A1zRYkLdKf">list_directory</code></td>
 </tr>
-<tr>
-<td>「在 assets/ 下创建 cover.jpg 占位」</td>
-<td><code>write_file</code></td>
+<tr data-page-node-id="pjDOIUotwUrZCQF4VXsBKC">
+<td data-page-node-id="gxXKmiURfaK5tZdeiRzbYo">「在 assets/ 下创建 cover.jpg 占位」</td>
+<td data-page-node-id="4DWN0QX8XgnMtRm3jBnLhC"><code data-page-node-id="vNBaTN4kGAYUoFCSn2JLEi">write_file</code></td>
 </tr>
-<tr>
-<td>「把这两个文件合成一个」</td>
-<td><code>read_file</code> + <code>write_file</code></td>
+<tr data-page-node-id="RS8UX1Xh7gklPzLrGFvoBL">
+<td data-page-node-id="YDstiTARO5N69KZPnliBLl">「把这两个文件合成一个」</td>
+<td data-page-node-id="1fbDEfFM7CTJ3XGC3z6Fqz"><code data-page-node-id="I02Ke9KL9dSs41EdDhdA4P">read_file</code> + <code data-page-node-id="YmtGeOEENSUj43VHNUuC9K">write_file</code></td>
 </tr>
 </tbody>
 </table>
-<p>所有写操作默认是「<strong>工作区内允许、工作区外询问</strong>」（取决于审批档位）。</p>
-<h2 id="23-210">2.3 发附件给它（2.1.0 新：可以只发附件）</h2>
-<p>拖文件进输入框、粘贴、或点左侧回形针都能加附件。待发送附件在<strong>输入框上方竖排显示</strong>：一行一个，图片有缩略图，每行右侧 ✕ 可单独移除。</p>
-<p><img alt="待发送附件（示意）" src="images/30-attachments.png"></p>
-<ul>
-<li><strong>纯附件也能发</strong>：输入框一个字不写，直接点发送。模型会明确收到「用户未输入文字，只发送了以下附件」+ 附件路径，不会自己脑补你的诉求。</li>
-<li>上传是流式直传，有真实进度，单文件可取消，多文件最多 3 个并行，单文件上限 80MB。</li>
-<li>重复文件自动去重，移除未发送的附件会自动清理文件。</li>
+<p data-page-node-id="2IsVUz9zFits82vzOBxM3x">所有写操作默认是「<strong data-page-node-id="4OCOHT0k2uOPCsxYkcwJWM">工作区内允许、工作区外询问</strong>」（取决于审批档位）。</p>
+<h2 id="23-210" data-page-node-id="porcX6eqoahfxkL00ZfQ4W">2.3 发附件给它（2.1.0 新：可以只发附件）</h2>
+<p data-page-node-id="JGAtLp0QqLcknGmh9hLtJX">拖文件进输入框、粘贴、或点左侧回形针都能加附件。待发送附件在<strong data-page-node-id="tYlMdFl0GGedUufBX9wZk9">输入框上方竖排显示</strong>：一行一个，图片有缩略图，每行右侧 ✕ 可单独移除。</p>
+<p data-page-node-id="1DfVDOFV4FxoJxaSvw1TM0"><img alt="待发送附件（示意）" src="images/30-attachments.png" data-page-node-id="G2xq8yH0HKnikw3Av2M8CV"></p>
+<ul data-page-node-id="A0RcMCTYjzdJbLJk62sbNS">
+<li data-page-node-id="XAr3k6CMgzDTbqO0mgTBKN"><strong data-page-node-id="DzlX0LBfbFJR9K6SnfDKoY">纯附件也能发</strong>：输入框一个字不写，直接点发送。模型会明确收到「用户未输入文字，只发送了以下附件」+ 附件路径，不会自己脑补你的诉求。</li>
+<li data-page-node-id="3g3pMvCUIQIF89svmeRQPL">上传是流式直传，有真实进度，单文件可取消，多文件最多 3 个并行，单文件上限 80MB。</li>
+<li data-page-node-id="BUV80MrnVAr4j8EIh0ZNDj">重复文件自动去重，移除未发送的附件会自动清理文件。</li>
 </ul>
-<h2 id="24-210">2.4 用 <code>@</code> 引用工作区文件（2.1.0 新）</h2>
-<p>输入空格 + <code>@</code> 就弹出当前工作区的目录列表：</p>
-<p><img alt="@ 引用工作区文件" src="images/28-file-ref-popup.png"></p>
-<ul>
-<li><code>↑↓</code> 选择、<strong><code>Tab</code> 进入子目录</strong>、<strong><code>Shift+Tab</code> 返回上级</strong>、<code>Enter</code> 或点击即引用。</li>
-<li>手机没 Tab 键：点目录行右侧的 <code>›</code> 箭头进入，列表首项「返回上一级」逐级退出。</li>
-<li>引用后输入框里保留 <code>@相对路径</code> 高亮，<strong>发送时自动替换成绝对路径</strong>；目录保留尾部的 <code>/</code>，模型就知道要处理整个目录。</li>
-<li>只有工作区里真实存在的路径才会被替换，所以 <code>@gmail.com</code> 这种普通文本不受影响。</li>
+<h2 id="24-210" data-page-node-id="D3C7fLy9gRCPBjHBVkKQh1">2.4 用 <code data-page-node-id="oq49hgymsbOSV9I0YZAGiO">@</code> 引用工作区文件（2.1.0 新）</h2>
+<p data-page-node-id="CUSnWk5eFl6C0iuBXdZEZw">输入空格 + <code data-page-node-id="wsfayAOm38AdZEIyAxOqly">@</code> 就弹出当前工作区的目录列表：</p>
+<p data-page-node-id="rJbJYtyB2dKde0AmLL69ps"><img alt="@ 引用工作区文件" src="images/28-file-ref-popup.png" data-page-node-id="3Pkch2gws2vCvzJDt8YqwP"></p>
+<ul data-page-node-id="M2XGEHHRuh9SAGtipySCrN">
+<li data-page-node-id="AliSMro9Ycl2rjwHbVyoZV"><code data-page-node-id="NRT4tljw5OZkTGqDVvISPW">↑↓</code> 选择、<strong data-page-node-id="sEXV1Vyq5hfk8EHGmuwBcI"><code data-page-node-id="AAiTeu9J2mHd3YTkHT4yRg">Tab</code> 进入子目录</strong>、<strong data-page-node-id="5psknWrvOEh6haFL1DEM4N"><code data-page-node-id="n1nXY19B48l5eFatYfMlGf">Shift+Tab</code> 返回上级</strong>、<code data-page-node-id="TQtO6SwoUrd1ew2CINhNVv">Enter</code> 或点击即引用。</li>
+<li data-page-node-id="aWUCAEhvNHjd1PnIPYMIZ7">手机没 Tab 键：点目录行右侧的 <code data-page-node-id="P86pPcCQPvProEr4mlOmyf">›</code> 箭头进入，列表首项「返回上一级」逐级退出。</li>
+<li data-page-node-id="pOSzaubBb1z9BZG2IHdIjQ">引用后输入框里保留 <code data-page-node-id="6zSNLeSJNrlmjgHtGSUlJA">@相对路径</code> 高亮，<strong data-page-node-id="ctJtpFXrF9uc2XQ5Axh4Z7">发送时自动替换成绝对路径</strong>；目录保留尾部的 <code data-page-node-id="G5ZAQgGG7ez2mrFpzsXO7L">/</code>，模型就知道要处理整个目录。</li>
+<li data-page-node-id="TOmY8RhZUQAScDqOj3RDME">只有工作区里真实存在的路径才会被替换，所以 <code data-page-node-id="VdLlg2QqVVwqtuUoZdsrWX">@gmail.com</code> 这种普通文本不受影响。</li>
 </ul>
-<h2 id="25-pdf">2.5 让它看图、看 PDF</h2>
-<ul>
-<li><strong>直接拖图片到输入框</strong> → 自动作为本轮附件。</li>
-<li><strong>让它看自己之前生成的图</strong> → 用缩略图右下角 ↩ 复用按钮发回输入框。</li>
-<li><strong>多图分批</strong>：<code>vision_analyze</code> 单批 4 张，超出的自动分批并标注「共 N 张 / 已展示前 M 张」，模型不会误以为只有这几张。</li>
-<li><strong>PDF 三件套</strong>（2.1.0 新）：<code>read_pdf</code> 抽文本层、<code>pdf_render_pages</code> 把页面渲成图、<code>pdf_zoom_region</code> 局部高清放大看小字和表格。扫描件（没文本层）会自动引导转页图，再让视觉模型识图。</li>
+<h2 id="25-pdf" data-page-node-id="DfrV2YzZsShPFI4qCDLyFR">2.5 让它看图、看 PDF</h2>
+<ul data-page-node-id="q8Lq8FbrKiHZ2usTgpUwmt">
+<li data-page-node-id="2qfr8e085AOzgFh3FQVn97"><strong data-page-node-id="fnzeNIkxiSPaRfr3RAyFyG">直接拖图片到输入框</strong> → 自动作为本轮附件。</li>
+<li data-page-node-id="AErZ3W4aP5za8tzAtZv10O"><strong data-page-node-id="EqAUDIoDo511wGWxwmVNB1">让它看自己之前生成的图</strong> → 用缩略图右下角 ↩ 复用按钮发回输入框。</li>
+<li data-page-node-id="m8IUrYhzoDYkQGixfR7tka"><strong data-page-node-id="X3cEFpNJR2P3cnTT8ABFA2">多图分批</strong>：<code data-page-node-id="0jEX5bGBkWSwuHFAq0UQ03">vision_analyze</code> 单批 4 张，超出的自动分批并标注「共 N 张 / 已展示前 M 张」，模型不会误以为只有这几张。</li>
+<li data-page-node-id="wWUrWxErUm2vdmM3Vz9ukf"><strong data-page-node-id="aHPc5VMsnysMIuVcGl8r6v">PDF 三件套</strong>（2.1.0 新）：<code data-page-node-id="ZDvNdz1J550ua43N4kPBJm">read_pdf</code> 抽文本层、<code data-page-node-id="Q0N4vR1BjvzW7VZ0sxGwIT">pdf_render_pages</code> 把页面渲成图、<code data-page-node-id="CTJtIqENuVuxnWExldcVaw">pdf_zoom_region</code> 局部高清放大看小字和表格。扫描件（没文本层）会自动引导转页图，再让视觉模型识图。</li>
 </ul>
-<p>视觉后端在「设置 → 视觉」里挑供应商，留空会走免费兜底链：</p>
-<p><img alt="视觉设置" src="images/09-settings-vision.png"></p>
-<blockquote>
-<p>文本模型收到图片时只拿到路径引用，由模型按需调用 <code>vision_analyze</code>（结果以工具块呈现）；原生多模态模型直接收到原图。</p>
+<p data-page-node-id="icBbz5AFX74NEwltSEwdmw">视觉后端在「设置 → 视觉」里挑供应商，留空会走免费兜底链：</p>
+<p data-page-node-id="JirGbADZE5GkGVWR7dIzci"><img alt="视觉设置" src="images/09-settings-vision.png" data-page-node-id="azLJuXWpWaGAFJBqbQKBOn"></p>
+<blockquote data-page-node-id="NbmRmsWJWo2TL2qCwbjSpP">
+<p data-page-node-id="EvpzubnMaSkbR6fd8i5tIS">文本模型收到图片时只拿到路径引用，由模型按需调用 <code data-page-node-id="OEGUloHuXJPdBOMalTGwQ6">vision_analyze</code>（结果以工具块呈现）；原生多模态模型直接收到原图。</p>
 </blockquote>
-<h2 id="26">2.6 让它执行命令</h2>
-<p>Naiba Chat <strong>只用一个工具</strong>：<code>pwsh</code>（PowerShell 7+）。所有系统操作都走它。</p>
-<pre><code>&quot;在 D:\naiba-chat 下跑 pytest，失败的话把 trace 给我看&quot;
+<h2 id="26" data-page-node-id="rNEhMFFnhPWD2pWc0ohb43">2.6 让它执行命令</h2>
+<p data-page-node-id="Wx1xx3YspYytpaAeOuvGOx">Naiba Chat <strong data-page-node-id="L6NOnMsdqRJ5VkvsmwaF6P">只用一个工具</strong>：<code data-page-node-id="y4TjZwtFOHrJTVdrmNQVZE">pwsh</code>（PowerShell 7+）。所有系统操作都走它。</p>
+<pre data-page-node-id="5KYRVxPwWDDoy2JhjyWkIQ"><code data-page-node-id="qMwtBHUh5SzmaoO2OoPoJc">&quot;在 D:\naiba-chat 下跑 pytest，失败的话把 trace 给我看&quot;
 </code></pre>
-<h2 id="27-http">2.7 让它发 HTTP 请求 / 联网搜</h2>
-<ul>
-<li><code>http_request</code>：GET/POST/PUT/DELETE 都行，可设 header / body / 超时。</li>
-<li><code>web_search</code>：需在「设置 → 联网搜索」配置 API profile。搜索结果会作为「联网来源」折叠块附在消息末尾，<strong>当素材引用，别当真理</strong>。</li>
+<h2 id="27-http" data-page-node-id="ANeAOi0zsmKYxKcAbRwWGs">2.7 让它发 HTTP 请求 / 联网搜</h2>
+<ul data-page-node-id="ul5h0puurXAVBV5apKfOry">
+<li data-page-node-id="N0IFOG7pdqDzIM8rWbhnKr"><code data-page-node-id="kvP2GpoMdoQ4IOA0jjF7YL">http_request</code>：GET/POST/PUT/DELETE 都行，可设 header / body / 超时。</li>
+<li data-page-node-id="5VlRHLqW28CvLgMfoJFluU"><code data-page-node-id="RhJnZ5KkN9quJJna5GBIXO">web_search</code>：需在「设置 → 联网搜索」配置 API profile。搜索结果会作为「联网来源」折叠块附在消息末尾，<strong data-page-node-id="HlkO3iuqPhx7EwuteDJyeh">当素材引用，别当真理</strong>。</li>
 </ul>
-<p><img alt="联网搜索设置" src="images/10-settings-search.png"></p>
-<h2 id="28">2.8 长任务放后台</h2>
-<p>对耗时任务（出图、出视频、跑大命令）AI 会自动用 <code>run_in_background</code> 启动后台 Job，按 <code>job_output</code> 轮询。</p>
-<blockquote>
-<p>顶栏「任务」按钮随时能看所有后台任务的历史和状态：</p>
+<p data-page-node-id="AywSKAPTwN8WKNj8bXlA9S"><img alt="联网搜索设置" src="images/10-settings-search.png" data-page-node-id="AdoLai1fcCL3HLHiIgJZJT"></p>
+<h2 id="28" data-page-node-id="oTlAviGHfnALAFD7CCT7qe">2.8 长任务放后台</h2>
+<p data-page-node-id="ti3Yl8w5oWfOzA12ZlGEje">对耗时任务（出图、出视频、跑大命令）AI 会自动用 <code data-page-node-id="EZSMeGBCHGXMCVRVFWkiyn">run_in_background</code> 启动后台 Job，按 <code data-page-node-id="AgNQRYC8hkM17uI7ELqqL7">job_output</code> 轮询。</p>
+<blockquote data-page-node-id="q0BcY0l72XevybracwqGK7">
+<p data-page-node-id="CDrzgH0SoBAsrE3fZk17fL">顶栏「任务」按钮随时能看所有后台任务的历史和状态：</p>
 </blockquote>
-<p><img alt="异步任务面板" src="images/15-tasks-dialog.png"></p>
-<p><code>run_in_background</code> / <code>job_output</code> / <code>job_status</code> / <code>job_wait</code> / <code>job_kill</code> 五个工具覆盖完整生命周期。</p>
-<h2 id="29">2.9 中途插话、暂停、取消</h2>
-<ul>
-<li><strong>插话</strong>：AI 跑着时，你在输入框打字回车 → AI 接住你这条引导，把当前步骤合并（用于纠偏）。</li>
-<li><strong>暂停</strong>：消息下面的「暂停」按钮 → 停止当前轮，<strong>已生成内容保留</strong>。</li>
-<li><strong>取消</strong>：右上角 ✕ → 标记当前轮为「中止」，已生成内容同样保留。</li>
-<li><strong>停止级联子任务</strong>：取消父任务会自动 kill 所有子任务。</li>
+<p data-page-node-id="AKCVwqlMzwFfXSY4LVeFTC"><img alt="异步任务面板" src="images/15-tasks-dialog.png" data-page-node-id="NnvlGKz2xyWEQzHDFD4nlG"></p>
+<p data-page-node-id="xfCVI7B55yCatVySZftenC"><code data-page-node-id="ux4OJCCLrcj2wrL2ttg2cm">run_in_background</code> / <code data-page-node-id="slEsqgRfDYSllcACCKhE8r">job_output</code> / <code data-page-node-id="DI0l42YqKFP4PaW4EtgV9W">job_status</code> / <code data-page-node-id="m2B2KytJyDTWJAk78C3ST0">job_wait</code> / <code data-page-node-id="pOnQZDVIKJF4NC0iyKxSGB">job_kill</code> 五个工具覆盖完整生命周期。</p>
+<h2 id="29" data-page-node-id="r4NHv4Wd2NrgX3lDADmLQY">2.9 中途插话、暂停、取消</h2>
+<ul data-page-node-id="HcYJkKjWh7AmAKcDm6auFX">
+<li data-page-node-id="FUQagQos2x3DbJ5cuP3WJ4"><strong data-page-node-id="XcF83PJB3QjIj6vgtIOMzv">插话</strong>：AI 跑着时，你在输入框打字回车 → AI 接住你这条引导，把当前步骤合并（用于纠偏）。</li>
+<li data-page-node-id="LiDESBwrHw1SpQA0ccU8y0"><strong data-page-node-id="w7hISUY1oMP0upQgCtzV8H">暂停</strong>：消息下面的「暂停」按钮 → 停止当前轮，<strong data-page-node-id="7o1ag7bqq09hz5Dp8sit4L">已生成内容保留</strong>。</li>
+<li data-page-node-id="iglAb2a9Q8FGg8BE3fLI5D"><strong data-page-node-id="5WAJVu5sGikMemWj0IXFH1">取消</strong>：右上角 ✕ → 标记当前轮为「中止」，已生成内容同样保留。</li>
+<li data-page-node-id="ffaEqOoDBHypqVRKfGkutF"><strong data-page-node-id="hxVPj6YneNZGWRjmpzRkUS">停止级联子任务</strong>：取消父任务会自动 kill 所有子任务。</li>
 </ul>
-<h2 id="210-token">2.10 上下文用量 &amp; Token</h2>
-<p><img alt="上下文用量" src="images/19-context-usage.png"></p>
-<ul>
-<li><strong>彩色环</strong>（输入区右）：上下文用满的百分比，越满越红。</li>
-<li><strong>点开看详情</strong>：本轮消耗（输入 / 输出 / 缓存命中率 / 请求数 / 生成速率）。</li>
-<li><strong>缓存命中率</strong>：70% 以上是常态；突然掉到 0% 说明切了模型或改了系统提示词，DeepSeek 等支持前缀缓存的模型会贵一点。</li>
+<h2 id="210-token" data-page-node-id="XlV4lFjBNys9L4iJnMGyij">2.10 上下文用量 &amp; Token</h2>
+<p data-page-node-id="9o547Deu5kG6KYMBvhF9TV"><img alt="上下文用量" src="images/19-context-usage.png" data-page-node-id="4gAWkZdJ1nL3FjvzsBiWpU"></p>
+<ul data-page-node-id="VJHxc7hGQjwztRoLVLqcHV">
+<li data-page-node-id="8qNdpblFDnH7RaY6H8JN1J"><strong data-page-node-id="128wsGn6x37ipyVv9eCGjV">彩色环</strong>（输入区右）：上下文用满的百分比，越满越红。</li>
+<li data-page-node-id="FDn20JFrEacF569ey5lO0F"><strong data-page-node-id="E7hgONg6rOdTPGAdTHBDow">点开看详情</strong>：本轮消耗（输入 / 输出 / 缓存命中率 / 请求数 / 生成速率）。</li>
+<li data-page-node-id="ssurTGC15ycio1AuCVL4Dl"><strong data-page-node-id="ZGnQk0P4ATD3Tlp4wFmLZT">缓存命中率</strong>：70% 以上是常态；突然掉到 0% 说明切了模型或改了系统提示词，DeepSeek 等支持前缀缓存的模型会贵一点。</li>
 </ul>
-<h2 id="211">2.11 本轮修改文件</h2>
-<p>每轮结束后，AI 用 <code>write_file</code> / <code>edit_file</code> 改过的文件会在消息末尾列出来：</p>
-<p><img alt="本轮修改文件" src="images/21-chat-filechanges.png"></p>
-<ul>
-<li><strong><code>新</code></strong> = 新建，<strong><code>改</code></strong> = 编辑。</li>
-<li><strong>多媒体产物</strong>（图片 / 视频 / 音频）走原附件卡片，<strong>不进 chip</strong>（避免重复）。</li>
-<li><strong>点文件名</strong> → 右侧文件面板打开（见 2.12）。</li>
-<li><strong>中止/失败的轮次</strong>只要写盘成功也保留记录。</li>
+<h2 id="211" data-page-node-id="1CN1bGPANm82Ss9tpG5hkm">2.11 本轮修改文件</h2>
+<p data-page-node-id="1IMaZhlQKHTWnry1WrQKZ3">每轮结束后，AI 用 <code data-page-node-id="8eMzNBdrQB59cCEyxh9IGB">write_file</code> / <code data-page-node-id="skqC1PSdp7CDrLgOZQdrqk">edit_file</code> 改过的文件会在消息末尾列出来：</p>
+<p data-page-node-id="MVQmNLtTyiEKeO4luU2YkK"><img alt="本轮修改文件" src="images/21-chat-filechanges.png" data-page-node-id="XsFrMnPrRJyRQPoakl001u"></p>
+<ul data-page-node-id="HmzilPJJxri9b7YEUKC74E">
+<li data-page-node-id="nWVUeFEZ4kN3DBDEglJQNF"><strong data-page-node-id="mvArtieEE8lYcrbFNImdEu"><code data-page-node-id="vNF4acDGUWTxC2bzEFBT8l">新</code></strong> = 新建，<strong data-page-node-id="7Qyo5p360PhK3KCBfOFWln"><code data-page-node-id="B5vGbMFspNKvMWycMw640Y">改</code></strong> = 编辑。</li>
+<li data-page-node-id="Anu2C7vXUcQaN180aYHHfg"><strong data-page-node-id="MvUYauQdEl4xZjmVyT2l1O">多媒体产物</strong>（图片 / 视频 / 音频）走原附件卡片，<strong data-page-node-id="VaNQkHRWiQ1OqlrHGUDRoC">不进 chip</strong>（避免重复）。</li>
+<li data-page-node-id="hfbrdQjnzQcUNVi8VyBFDe"><strong data-page-node-id="uM2iRodOqz2XAgaMWTK1hV">点文件名</strong> → 右侧文件面板打开（见 2.12）。</li>
+<li data-page-node-id="v7DvXduCy2ldMZkPzOf5TM"><strong data-page-node-id="0jsosPneCjok95N6AX7JVG">中止/失败的轮次</strong>只要写盘成功也保留记录。</li>
 </ul>
-<h2 id="212">2.12 右侧文件面板</h2>
-<p>点 chip 或顶栏「文件」按钮 → 右侧文件面板打开，多标签管理：</p>
-<p><img alt="右侧文件面板" src="images/03-file-panel.png"></p>
-<table>
-<thead>
-<tr>
-<th>文件类型</th>
-<th>行为</th>
+<h2 id="212" data-page-node-id="8Uja9Et8qntjOCT88dMYyD">2.12 右侧文件面板</h2>
+<p data-page-node-id="GMr0OhS2madDnCvhXm4wMc">点 chip 或顶栏「文件」按钮 → 右侧文件面板打开，多标签管理：</p>
+<p data-page-node-id="4IMpbrmi6OWtCyL96lnXix"><img alt="右侧文件面板" src="images/03-file-panel.png" data-page-node-id="mZp7LOpLpHH84mgsEDhovB"></p>
+<table data-page-node-id="qVAzkbuO0xV2io7Cmec3xe">
+<thead data-page-node-id="eCSovFfqny8lqWK8PnLDHb">
+<tr data-page-node-id="8QC9Phkrn74opQjFXlBLrY">
+<th data-page-node-id="OVe9wwC4PBP8RcwLKAVJNL">文件类型</th>
+<th data-page-node-id="WmmIQAl7qcHN4VAi2aM08t">行为</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td><strong>Markdown</strong></td>
-<td>直接渲染（带表格 / 代码块）</td>
+<tbody data-page-node-id="Zn7bDrR1JNwMlHmEY54bHB">
+<tr data-page-node-id="idrQW9vrtq5dcrrUreGaEL">
+<td data-page-node-id="wBBRHGLN4WDolpnCDcMwzz"><strong data-page-node-id="vvJomApF71AuCHvwfXFJ9r">Markdown</strong></td>
+<td data-page-node-id="MHQEAlQebTzveOut5Wp4FR">直接渲染（带表格 / 代码块）</td>
 </tr>
-<tr>
-<td><strong>文本</strong>（.py / .json / .txt 等）</td>
-<td>可手动编辑 → <code>Ctrl/⌘+S</code> 或 <code>Ctrl/⌘+Enter</code> 保存回磁盘，<code>Esc</code> 取消</td>
+<tr data-page-node-id="OaqCT8TmPZviE1VMCxHnbY">
+<td data-page-node-id="8oxBtxJ9AvZDGzTpDxrW1S"><strong data-page-node-id="2F3iQMhlMFJOds2pP5hCsn">文本</strong>（.py / .json / .txt 等）</td>
+<td data-page-node-id="olKS3hNqVMtRvApplSr4l3">可手动编辑 → <code data-page-node-id="6EzJgSUANL1m4VESaC4Svf">Ctrl/⌘+S</code> 或 <code data-page-node-id="tdt3z14YXzBOGra6cJDHfC">Ctrl/⌘+Enter</code> 保存回磁盘，<code data-page-node-id="7XavTJnBGvXqMR8jzdSHHJ">Esc</code> 取消</td>
 </tr>
-<tr>
-<td><strong>图片</strong></td>
-<td>直接预览，点开是大图</td>
+<tr data-page-node-id="MYGMnpHDbowGKkezfniazk">
+<td data-page-node-id="7rNj0X3AUIwaDcXVTtpbei"><strong data-page-node-id="XAidXzwCZQRnisaC76F0we">图片</strong></td>
+<td data-page-node-id="TIhZmF3y8ouF9jO2Iqm6Q6">直接预览，点开是大图</td>
 </tr>
-<tr>
-<td><strong>PDF / 二进制</strong></td>
-<td>走 PDF 三件套或给出明确提示，不再吐乱码</td>
+<tr data-page-node-id="hfc44BMxOvCaD22laOFkaN">
+<td data-page-node-id="9kzMAkvXCpYxAAhOot1ze1"><strong data-page-node-id="ALE7jb8fOWxMHltehBdPVV">PDF / 二进制</strong></td>
+<td data-page-node-id="z2opSixLalBCNCSYBcn8Uw">走 PDF 三件套或给出明确提示，不再吐乱码</td>
 </tr>
 </tbody>
 </table>
-<p><strong>安全边界</strong>：面板只允许看<strong>本会话改动过</strong>或<strong>位于会话工作区内</strong>的文件，「保存写回」要求同时满足两者。路径越界一律拒绝（不能当任意文件读写入口用）。</p>
-<p>面板左缘可以拖动调宽（280px ~ 半个窗口，会记住）。收起后顶栏出现「文件」按钮，标签都还在：</p>
-<p><img alt="文件面板收起后" src="images/04-file-panel-closed.png"></p>
-<h2 id="213">2.13 消息编辑重发 / 分支到新会话</h2>
-<ul>
-<li><strong>点自己的消息</strong> → 编辑文本 → 回车 → 从这条消息重开（<strong>保留之前的附件和上下文</strong>）。</li>
-<li><strong>消息右下角「分支」按钮</strong> → 从该点分叉到新会话，旧会话保留。</li>
-<li><strong>分支会继承同一个 API 和模型名</strong>（2.1.1），分出去的新会话不用重新选模型。</li>
+<p data-page-node-id="NBw5qzZ83mGdpPfqixTXes"><strong data-page-node-id="XLejCXGTeFpFxaPpPcIwz4">安全边界</strong>：面板只允许看<strong data-page-node-id="VvFNuN9cQoLP1QAatF5axR">本会话改动过</strong>或<strong data-page-node-id="mDw32BlTRdaGhKb2DpRmhv">位于会话工作区内</strong>的文件，「保存写回」要求同时满足两者。路径越界一律拒绝（不能当任意文件读写入口用）。</p>
+<p data-page-node-id="uAxuD4FQJuDhG3i74cIzKk">面板左缘可以拖动调宽（280px ~ 半个窗口，会记住）。收起后顶栏出现「文件」按钮，标签都还在：</p>
+<p data-page-node-id="eDKOtv3XGOufqMZHQzhMol"><img alt="文件面板收起后" src="images/04-file-panel-closed.png" data-page-node-id="TvjxMgrGeTrpaqRnhNkf3Z"></p>
+<h2 id="213" data-page-node-id="TS5DMXLnznZEpQFTWNTmxj">2.13 消息编辑重发 / 分支到新会话</h2>
+<ul data-page-node-id="PpTvTjshmnuwf6RYby0TU0">
+<li data-page-node-id="S3YRTR53gZ8ghUrPXIZzYC"><strong data-page-node-id="0tT4fIHf7DqGGHFHr3HS46">点自己的消息</strong> → 编辑文本 → 回车 → 从这条消息重开（<strong data-page-node-id="QQryQq83zzWljnFpHU7A3y">保留之前的附件和上下文</strong>）。</li>
+<li data-page-node-id="z27mxnUqxX7i9hKIRwnJcR"><strong data-page-node-id="6WaWIzAmqeXiifGfDFmatu">消息右下角「分支」按钮</strong> → 从该点分叉到新会话，旧会话保留。</li>
+<li data-page-node-id="EJBSn7PbyBUwCPq1GQ4bUV"><strong data-page-node-id="MsW1xC7aLjOA59N16oZ9Iq">分支会继承同一个 API 和模型名</strong>（2.1.1），分出去的新会话不用重新选模型。</li>
 </ul>
-<hr>
-<h1 id="3_1">第 3 章　特色功能（重点章）</h1>
-<blockquote>
-<p><strong>读完这章你能</strong>：把 Naiba Chat 调成你顺手的样子，知道哪些功能可以替你省 1 小时/天。</p>
+<hr data-page-node-id="VvaXZmG5ftztsdJ4zGm9uF">
+<h1 id="3_1" data-page-node-id="olaPZ9pbPAfNXCK6DlF3uE">第 3 章　特色功能（重点章）</h1>
+<blockquote data-page-node-id="5SJBhfhzShNW8JV2hvUvFv">
+<p data-page-node-id="XU9PsCuqwoSi4bR12JZGdc"><strong data-page-node-id="7H7OXV14zP7Pg76RS9Dw94">读完这章你能</strong>：把 Naiba Chat 调成你顺手的样子，知道哪些功能可以替你省 1 小时/天。</p>
 </blockquote>
-<p>每节固定结构：<strong>痛点 → 30 秒试 → 能玩到什么程度 → 注意</strong>。</p>
-<h2 id="31-211-api">3.1 每个会话单独选模型（2.1.1 新：API 与模型分离）</h2>
-<p><strong>痛点</strong>：以前顶栏「模型」下拉里塞的是「API 名称 · 模型名」的拼串——切一下既换供应商又换模型，同一个会话里想只换模型（比如从便宜的换到强的）就得去设置里改；而且换完模型，图片能力还是按上一个模型记的，容易误判。</p>
-<p><strong>30 秒试</strong></p>
-<ol>
-<li>看<strong>顶栏</strong>：现在叫「<strong>API</strong>」，只负责选连接配置（哪个供应商、哪个地址、哪个 Key），选项直接显示 API 名称。</li>
-<li>看<strong>输入框下方最左边</strong>：新增「<strong>模型</strong>」下拉，打开会话时会自动拉取当前 API 的模型目录，选一个就<strong>存到这个会话</strong>。</li>
-<li>想用下拉里没有的模型 → 选「<strong>手动输入模型名称…</strong>」，直接填（最长 256 字符，失焦或回车自动保存）。</li>
+<p data-page-node-id="rnew6AFQnpJ4qrHKibjP8b">每节固定结构：<strong data-page-node-id="rb35F4w2IizglmsSInRtjR">痛点 → 30 秒试 → 能玩到什么程度 → 注意</strong>。</p>
+<h2 id="31-211-api" data-page-node-id="bkmiVECg7xWgNF3bCK1P0O">3.1 每个会话单独选模型（2.1.1 新：API 与模型分离）</h2>
+<p data-page-node-id="CyZeqFZpr2uGPVGVBxZi1U"><strong data-page-node-id="b8LTMnQdBEuv0fCQH43BP7">痛点</strong>：以前顶栏「模型」下拉里塞的是「API 名称 · 模型名」的拼串——切一下既换供应商又换模型，同一个会话里想只换模型（比如从便宜的换到强的）就得去设置里改；而且换完模型，图片能力还是按上一个模型记的，容易误判。</p>
+<p data-page-node-id="QxyJ0sqnHunFhvQuNfhzTe"><strong data-page-node-id="8CG0uRABNZJdmdNKHB3Hra">30 秒试</strong></p>
+<ol data-page-node-id="IEs8AjckK4ZyTOzKouDETH">
+<li data-page-node-id="5T9zGdgQtNKmOPNGIbo9wI">看<strong data-page-node-id="nQjwiZlC4mBozLkljQy48E">顶栏</strong>：现在叫「<strong data-page-node-id="rFHac8eCVg5rRG8vkMFzyv">API</strong>」，只负责选连接配置（哪个供应商、哪个地址、哪个 Key），选项直接显示 API 名称。</li>
+<li data-page-node-id="e7857twv29wodhHGxPze5c">看<strong data-page-node-id="C2cJAAVO4UeaRJ6CQ6InPT">输入框下方最左边</strong>：新增「<strong data-page-node-id="GUPaFnl1IV2uH7Z8X1rzDO">模型</strong>」下拉，打开会话时会自动拉取当前 API 的模型目录，选一个就<strong data-page-node-id="EUnHI2dTabGxtJurzrtcqf">存到这个会话</strong>。</li>
+<li data-page-node-id="qLqvtxEDzhOSDN3rZyfjYG">下拉就是<strong data-page-node-id="wGKmkNgASXZRDwZVlpZyRW">当前 API 的模型目录</strong>里有的全部模型，选中即存到这个会话（2.2.0 起不再有手写框，避免填了目录里没有的名字）。</li>
 </ol>
-<p><img alt="会话级模型选择" src="images/32-model-selector.png"></p>
-<p><strong>能玩到什么程度</strong></p>
-<ul>
-<li><strong>按会话记忆</strong>：新建会话、继续会话都按<strong>这个会话自己选的模型</strong>发送。A 会话用 DeepSeek 写稿、B 会话用本地模型跑批，互不干扰。</li>
-<li><strong>分支继承</strong>：从某条消息「分支」出来的新会话，会继承同一个 API 和模型名。</li>
-<li><strong>切 API 会清空模型名</strong>：顶栏换 API 后，模型名一并清空让你重新选（不同供应商的模型名不一样，留着没意义）。</li>
-<li><strong>自动重新探测图像能力</strong>：换 API 或换模型名后，<code>chat_supports_images</code> 重置为「待探测」，发送时按新模型的<strong>真实能力</strong>判断——换到纯文本模型不会再误发图片，换到多模态模型也不会再被当成纯文本。</li>
-<li>模型目录拉取失败时，回退用 API 配置里填的默认模型，不会卡住。</li>
+<p data-page-node-id="Hgj6ZqAFnwsa95B6GNUaMI"><img alt="会话级模型选择" src="images/32-model-selector.png" data-page-node-id="A8xUWgghUWq3HQCaO4uVRu"></p>
+<p data-page-node-id="5AmO1Erz3GtkwlL9iONC0a"><strong data-page-node-id="1r5SoZGLQ6maQvnEbhiSR1">能玩到什么程度</strong></p>
+<ul data-page-node-id="yPOl9HFAUG8QVJTlg8geYD">
+<li data-page-node-id="X5VkYBt3NDaVurmv2E85eB"><strong data-page-node-id="0mPWNBI1TVcon1jKOxRFug">按会话记忆</strong>：新建会话、继续会话都按<strong data-page-node-id="nAGRFGHbTmj947hpr0Vh87">这个会话自己选的模型</strong>发送。A 会话用 DeepSeek 写稿、B 会话用本地模型跑批，互不干扰。</li>
+<li data-page-node-id="95esGU2eiLgCpXx32GiVCx"><strong data-page-node-id="ZNdzCvsoJFiPdBPrh5KqGO">分支继承</strong>：从某条消息「分支」出来的新会话，会继承同一个 API 和模型名。</li>
+<li data-page-node-id="dbyl57G05hzI11oRFhh6TM"><strong data-page-node-id="r9EIBO84b0Z1Ulu4T5Hgz8">切 API 会清空模型名</strong>：顶栏换 API 后，模型名一并清空让你重新选（不同供应商的模型名不一样，留着没意义）。</li>
+<li data-page-node-id="pBLXjhJIjiVTIs1CwdeBSw"><strong data-page-node-id="ZLZP49lMZneS4ZyGZVGRYA">自动重新探测图像能力</strong>：换 API 或换模型名后，<code data-page-node-id="e074VHZCDi3o6HKoew7uq7">chat_supports_images</code> 重置为「待探测」，发送时按新模型的<strong data-page-node-id="YSUje1FjpyimKIJS1eZraV">真实能力</strong>判断——换到纯文本模型不会再误发图片，换到多模态模型也不会再被当成纯文本。</li>
+<li data-page-node-id="5h3c3Rh8XaZhC78Ps9wBoj"><strong data-page-node-id="XUOsGh3SisvFCCJuXk7lHe">目录里没有但以前选过</strong>：旧会话保存的模型名如果不在当前目录里，会置顶显示成「<strong data-page-node-id="DO6FOkUtDe7VDpY4jWQ1sW">已保存：xxx</strong>」并默认选中——不会被目录里第一个悄悄顶掉，发出去的模型和你保存的一致。</li>
+<li data-page-node-id="lAmB26R0GjKSRpOM7hRF7G">模型目录拉取失败时，回退用 API 配置里填的默认模型，不会卡住。</li>
+<li data-page-node-id="pIiRCqADbdHSGcXTm3mxMp">2.2.0 起 API 供应商卡片也瘦身了：只保留两行（名称 + 格式标签），模型名不再上卡片。</li>
 </ul>
-<p><strong>注意</strong></p>
-<blockquote>
-<ul>
-<li><strong>顶栏 = 选「去哪儿」（连接），输入区 = 选「派谁干」（模型）</strong>，这两个现在是两个独立开关。</li>
-<li>升级到 2.1.1 会自动完成数据库 v17 迁移（给 <code>conversations</code> 表加 <code>model_name</code> 列），幂等、不会重复执行。</li>
-<li>老会话首次打开时模型名为空，会用它所属 API 的默认模型，确认一下再发比较稳。</li>
-</ul>
-</blockquote>
-<h2 id="32-210">3.2 长会话模式：聊一整天也不怕（2.1.0 头牌）</h2>
-<p><strong>痛点</strong>：长对话越聊越长，token 越来越贵；而且前面跑题的几十轮一直在占用上下文，真正有用的进展被淹没了。开新会话吧，前面聊的又全丢了。</p>
-<h3 id="30">30 秒试：手动划一条「新会话」分割线</h3>
-<p>在任意一条 AI 回复的末尾点「<strong>新会话</strong>」（在「复制」右边），就会在那条回复下面画出一条分割线：</p>
-<p><img alt="新会话分割线与刻度轨（示意）" src="images/29-session-divider.png"></p>
-<p><strong>这条线以上</strong>的消息不再进入模型上下文，<strong>这条线以下</strong>的消息仍在上下文里——所以你<strong>只裁掉前面跑题的部分、保留最近的进展</strong>就行。聊天记录<strong>一条不删</strong>，随时点「撤销」把线撤掉。</p>
-<h3 id="_2">能玩到什么程度</h3>
-<ul>
-<li><strong>多条分割线并存</strong>：靠时间和位置区分，最新那条决定当前上下文起点。</li>
-<li><strong>模型也能自己重置</strong>：在 Agent 工具集里勾上 <code>reset_context</code> 后，模型可以先把交接文档写进工作区、再调用它——<strong>文档不存在或为空会被拒绝</strong>，每轮最多成功一次。成功后本轮立即收尾，在该条回复下画出「模型重置」分割线。</li>
-<li><strong>种子消息自动填进输入框</strong>：模型重置后，输入框会自动填好「交接文档路径 + 请先读取再继续 + 仍在运行的后台任务清单」，<strong>你确认后点发送</strong>就开始新一段。模板可以在「设置 → 运行设置 → 新会话种子消息」里改（占位符 <code>{handoff_path}</code> / <code>{task_count}</code> / <code>{task_list}</code>）。</li>
-<li><strong>交接文档快捷键</strong>：快捷消息面板里内置了「写交接报告并 reset_context」预设，点一下插进输入框就行（见 3.3）。</li>
-<li><strong>翻历史不靠翻页</strong>：Agent 工具集里新增「长会话」一组——</li>
-<li><code>find_conversations</code>：按标题列出最近会话（id / 标题 / 时间 / 条数 / 末条预览）</li>
-<li><code>recall_history</code>：按关键词检索（不给会话 id 就全库搜、每个会话最多 3 条片段；给了 id 就只搜那个会话）</li>
-<li><code>read_conversation</code>：按序号区间读历史会话原文，用来复核片段</li>
-<li><code>reset_context</code>：重置上下文</li>
-</ul>
-<p>直接问 AI「上个月我们聊过的那版分镜脚本在哪」即可。检索结果会明示「检索了全部 N 个会话 / M 条消息」，<strong>当前会话的命中会标注「在上下文中」或「已划出上下文」</strong>——被分割线划出去的老消息不会被当成你还记得的内容。
-- <strong>「长会话模式」预设</strong>：Agent 工具集预设里直接选，等于标准模式 + 这四件套。
-- <strong>长会话懒加载</strong>：打开会话只渲染最近 10 轮，向上滚动自动往前补（每次 10 轮，视口不跳动），几万条历史也不卡。
-- <strong>对话刻度轨</strong>：聊天区右侧一列横条，一轮一条，滚动时视口所在轮次会加粗凸起，悬停看概要（第 N 轮 + 用户消息一行 + 回复两行），点一下跳过去。长会话只显示附近 30 条，窄屏自动隐藏。</p>
-<p><strong>注意</strong></p>
-<blockquote>
-<ul>
-<li>分割线<strong>只影响发给模型的内容</strong>，不影响你看到的聊天记录。</li>
-<li>划了线之后如果又想让模型参考上面的内容，点「撤销」即可，或者用 <code>recall_history</code> 把片段捞回来。</li>
-<li>模型自己调 <code>reset_context</code> 前<strong>必须先写出交接文档</strong>，否则会被拒绝——这是故意的，防止上下文凭空消失。</li>
+<p data-page-node-id="UPWLgTM2pR1j1YShSQNZs1"><strong data-page-node-id="HKf2cONPSVoKxBoHpaTkCY">注意</strong></p>
+<blockquote data-page-node-id="fq1eeF9uFMAB5bg6Rv8AfA">
+<ul data-page-node-id="tsGnbhwlTviRou1PDATSdz">
+<li data-page-node-id="HmXAorjvh5CgE6vys93AVa"><strong data-page-node-id="ljYzwQWAwSViUOppZbkN3a">顶栏 = 选「去哪儿」（连接），输入区 = 选「派谁干」（模型）</strong>，这两个现在是两个独立开关。</li>
+<li data-page-node-id="LoV5lRN7BoeOxn7JX2xZSG">升级到 2.1.1 会自动完成数据库 v17 迁移（给 <code data-page-node-id="MR9J0GBK5VthucqlJhzfUv">conversations</code> 表加 <code data-page-node-id="cbzlwAiDyvcqMTCAVFC8qU">model_name</code> 列），幂等、不会重复执行。</li>
+<li data-page-node-id="XuRKyaU5BQIxRv06P9Oy1w">切了会话但模型被顶掉多半是切太快：2.2.0 已修掉「目录返回时会话已切换」导致旧会话模型串到新会话的问题。</li>
+<li data-page-node-id="NVfIGq8WMhMM6SHiYE1MY9">老会话首次打开时模型名为空，会用它所属 API 的默认模型，确认一下再发比较稳。</li>
 </ul>
 </blockquote>
-<h2 id="33">3.3 快捷消息：把常用提示词存成一键插入</h2>
-<p><strong>痛点</strong>：有些话你一天要说十遍（「按老规矩整理一下」「写交接报告然后重置」），每次手打很烦。</p>
-<p><strong>30 秒试</strong>：输入框下方点「<strong>快捷消息</strong>」→ 点列表里任意一条 → 正文直接进输入框（还能改）→ 发送。</p>
-<p><img alt="快捷消息面板" src="images/27-quick-messages.png"></p>
-<p><strong>能玩到什么程度</strong></p>
-<ul>
-<li><strong>每条只有正文、不用起标题</strong>：列表拿正文首行当标题，其余折叠成预览。</li>
-<li><strong>自动排序</strong>：按「使用次数 × 2 + 新鲜度加分」排，常用的稳定靠前，新加的 7/30/90 天内有曝光窗口不会永远沉底。</li>
-<li>行内 <code>✎</code> 编辑、<code>✕</code> 删除、<code>＋ 新建</code> 添加（弹窗里只填正文）。</li>
-<li><strong>内置交接报告预设</strong>（带「默认」标签）：点一下就要求模型把交接报告写进工作区，再用 <code>read_file</code> 复核后调 <code>reset_context</code>。它跟你自建的条目<strong>同权</strong>——可以编辑、可以删除，软件更新不会覆盖也不会复活。</li>
+<h2 id="32-210" data-page-node-id="vogTUbCIxlO8dksUoxjTt3">3.2 长会话模式：聊一整天也不怕（2.1.0 头牌）</h2>
+<p data-page-node-id="evDc3PMU1mVHxaipPo0ZPd"><strong data-page-node-id="21xWA4w9CYzAiGFc5rquuQ">痛点</strong>：长对话越聊越长，token 越来越贵；而且前面跑题的几十轮一直在占用上下文，真正有用的进展被淹没了。开新会话吧，前面聊的又全丢了。</p>
+<h3 id="30" data-page-node-id="5c1156GybaGf0QEpGU8Pgc">30 秒试：手动划一条「新会话」分割线</h3>
+<p data-page-node-id="UFqnqtfwdKH7M7rQuTS4L2">在任意一条 AI 回复的末尾点「<strong data-page-node-id="UAzWZnjMguhMkKsdQqZ0Zz">新会话</strong>」（在「复制」右边），就会在那条回复下面画出一条分割线：</p>
+<p data-page-node-id="ErDiCEM7r01FKQAUx457xB"><img alt="新会话分割线与刻度轨（示意）" src="images/29-session-divider.png" data-page-node-id="dygY0VdU83WqzFRa4LOc0w"></p>
+<p data-page-node-id="gTJzxcb7tYpRg4maq4rwrm"><strong data-page-node-id="2ydlj8TOFyrdsFwgtt2J5O">这条线以上</strong>的消息不再进入模型上下文，<strong data-page-node-id="8l3XHjCn5mXjuboOrRMp04">这条线以下</strong>的消息仍在上下文里——所以你<strong data-page-node-id="LMCkAQWMM8REOHCJDdvQJ7">只裁掉前面跑题的部分、保留最近的进展</strong>就行。聊天记录<strong data-page-node-id="FNOHcxQNUAXMDTPmXm3tF4">一条不删</strong>，随时点「撤销」把线撤掉。</p>
+<h3 id="_2" data-page-node-id="aVzBfr8hCNNZ0fIB9XsOE1">能玩到什么程度</h3>
+<ul data-page-node-id="5EE36P9CK6yCTF652tCEQw">
+<li data-page-node-id="mPitKuAUWc8LNclRcbaYSJ"><strong data-page-node-id="jTRra4tF9Kn6fBFhPV8t1U">多条分割线并存</strong>：靠时间和位置区分，最新那条决定当前上下文起点。</li>
+<li data-page-node-id="w3YHM6gzEx1bL8vPqsOiuG"><strong data-page-node-id="vxV3HaUPrqmdWPYUs5QQCt">模型也能自己重置</strong>：在 Agent 工具集里勾上 <code data-page-node-id="aSbPn4rdkvmHQLX8IAwAd0">reset_context</code> 后，模型可以先把交接文档写进工作区、再调用它——<strong data-page-node-id="GN3DyYWbgoERFrIBIEeBC5">文档不存在或为空会被拒绝</strong>，每轮最多成功一次。成功后本轮立即收尾，在该条回复下画出「模型重置」分割线。</li>
+<li data-page-node-id="hztDWkRh95PH65Lk4ExcMV"><strong data-page-node-id="nm03RE65wicaLUISYNM9cc">种子消息自动填进输入框</strong>：模型重置后，输入框会自动填好「交接文档路径 + 请先读取再继续 + 仍在运行的后台任务清单」，<strong data-page-node-id="z2GgdZMNhAKDntWxEk3n55">你确认后点发送</strong>就开始新一段。模板可以在「设置 → 运行设置 → 新会话种子消息」里改（占位符 <code data-page-node-id="BBRZb2aeJ2GAECe8xIP0EX">{handoff_path}</code> / <code data-page-node-id="x3Hti7LHaFf3N2RZPlclxE">{task_count}</code> / <code data-page-node-id="CHbx1j9LIL40Ra7Ja0Fg4J">{task_list}</code>）。</li>
+<li data-page-node-id="BIDbKloJwrXdEKc57OELMR"><strong data-page-node-id="AOcq3EnQScGudPf6PlkplJ">交接文档快捷键</strong>：快捷消息面板里内置了「写交接报告并 reset_context」预设，点一下插进输入框就行（见 3.3）。</li>
+<li data-page-node-id="LOjA7lA3kXXORUkLtgpQYv"><strong data-page-node-id="wGGgHWuIuA1pXqsRbcjsng">翻历史不靠翻页</strong>：Agent 工具集里新增「长会话」一组——</li>
+<li data-page-node-id="h1WMKaRw8H7mRS59cKC9qY"><code data-page-node-id="sGRkU4FcYEmmTLGl4rdVBC">find_conversations</code>：按标题列出最近会话（id / 标题 / 时间 / 条数 / 末条预览）</li>
+<li data-page-node-id="vXqMN3ZfAbPoLbte8ce8ti"><code data-page-node-id="iNQbrd9rFl9DDT5rFWx3VD">recall_history</code>：按关键词检索（不给会话 id 就全库搜、每个会话最多 3 条片段；给了 id 就只搜那个会话）</li>
+<li data-page-node-id="N1rK3SNYfAv2z35eaHwR8Q"><code data-page-node-id="UpiewAC2eMoWDrklenIUxR">read_conversation</code>：按序号区间读历史会话原文，用来复核片段</li>
+<li data-page-node-id="Pg3CcMTwlxSqOJn9Uew65u"><code data-page-node-id="61pQ38rD0F4oVLKP6Ph79Z">reset_context</code>：重置上下文</li>
 </ul>
-<p><strong>注意</strong>：这是<strong>独立列表</strong>，跟开始页的自定义指令卡片互不影响，各自增删改。</p>
-<h2 id="34">3.4 一个不够就接一堆模型</h2>
-<p><strong>痛点</strong>：单一模型又慢又贵还偏科。能不能 A 写代码 / B 写文案 / C 出图？</p>
-<p><strong>30 秒试</strong>：设置 → API 供应商 → 点「添加 API」→ 选请求格式 → 填地址 / Key / 模型名 → 点「检查」秒测连通。</p>
-<p><img alt="API 供应商" src="images/05-settings-models.png"></p>
-<p><strong>能玩到什么程度</strong></p>
-<ul>
-<li><strong>在线</strong>：OpenAI 兼容（OpenAI / DeepSeek / Grok 等）、Anthropic、Gemini。</li>
-<li><strong>本地</strong>：LM Studio / Ollama / llama.cpp / Unsloth，本地模型卸载在「设置 → API 供应商」里操作。</li>
-<li>每个供应商独立设置温度、上下文长度、最大输出。</li>
-<li><strong>2.1.0 卡片化</strong>：供应商和 Agent 都改成卡片网格，点卡片才弹设置表单，右上角 × 删除。</li>
-<li><strong>5xx 自动重试</strong>：供应商返回 500/502 这类瞬时故障时自动退避重试（1.5s / 3s，最多 3 次），状态栏会提示重试进度，不再直接终止整轮。</li>
-</ul>
-<p><strong>注意</strong></p>
-<blockquote>
-<ul>
-<li><strong>怎么切模型</strong>：先顶栏「API」选连接，再在输入框下方「模型」下拉选具体模型（见 3.1 节）。</li>
-<li>切换模型不影响会话历史，但会<strong>重新探测图像能力</strong>——换到纯文本模型后图片就不会再被发出去。</li>
-<li><strong>切 Agent 会改首条消息固化下来的工具集</strong>（首轮注入，之后不可改）。</li>
+<p data-page-node-id="ZAclsgRWcQ453cHvDuFHNL">直接问 AI「上个月我们聊过的那版分镜脚本在哪」即可。检索结果会明示「检索了全部 N 个会话 / M 条消息」，<strong data-page-node-id="g0K34rBXox0gV96epCA4Cz">当前会话的命中会标注「在上下文中」或「已划出上下文」</strong>——被分割线划出去的老消息不会被当成你还记得的内容。
+- <strong data-page-node-id="IFETz8NaNgXLkD4sMLnZJ1">「长会话模式」预设</strong>：Agent 工具集预设里直接选，等于标准模式 + 这四件套。
+- <strong data-page-node-id="ofbnDYx3kzI6sZa2R9EEDA">长会话懒加载</strong>：打开会话只渲染最近 10 轮，向上滚动自动往前补（每次 10 轮，视口不跳动），几万条历史也不卡。
+- <strong data-page-node-id="GQl1QcINn5ROixUEfXNWWm">对话刻度轨</strong>：聊天区右侧一列横条，一轮一条，滚动时视口所在轮次会加粗凸起，悬停看概要（第 N 轮 + 用户消息一行 + 回复两行），点一下跳过去。长会话只显示附近 30 条，窄屏自动隐藏。</p>
+<p data-page-node-id="JqBjcjuYEYyZMCDFglLFM9"><strong data-page-node-id="cIX8Ai1uPlFfuSxGR33zCi">注意</strong></p>
+<blockquote data-page-node-id="ZspemxUWL87oCrLoms1HZ0">
+<ul data-page-node-id="OdQgyvlGU5wb9DQkdo8Jz4">
+<li data-page-node-id="s6mKNcrxsNGyMZ3evW2i3V">分割线<strong data-page-node-id="XmKKCQS0iulcFiAe1DqGJW">只影响发给模型的内容</strong>，不影响你看到的聊天记录。</li>
+<li data-page-node-id="HVnLlVb0vReuGe1Bs15Uj6">划了线之后如果又想让模型参考上面的内容，点「撤销」即可，或者用 <code data-page-node-id="pGJO22QO6VLL3AxQp4YvUB">recall_history</code> 把片段捞回来。</li>
+<li data-page-node-id="Mh82XkVbL3pI2FWmEnLS7e">模型自己调 <code data-page-node-id="LkTvXXKJeHom0BBE7DL7sx">reset_context</code> 前<strong data-page-node-id="M2RtE5VEQHzmOqRDvjxE8L">必须先写出交接文档</strong>，否则会被拒绝——这是故意的，防止上下文凭空消失。</li>
 </ul>
 </blockquote>
-<h2 id="35-skill-ai">3.5 Skill：给 AI 装"行业操作手册"</h2>
-<p><strong>痛点</strong>：通用 AI 不懂你的行业术语、不熟你常用的工作流。</p>
-<p><strong>30 秒试</strong>：输入 <code>/</code> 弹窗 → 选一个 Skill（比如 <code>cangjie</code> 拆书）→ 直接对话「把这段小说拆成 12 集」。</p>
-<p><img alt="Skill 快速引用" src="images/14-skill-refs.png"></p>
-<p><strong>能玩到什么程度</strong></p>
-<ul>
-<li><code>↑↓</code> 选、<code>Enter</code> 确认。</li>
-<li><strong>首轮注入</strong> system / <strong>后续轮追加到末尾</strong>，保持 DeepSeek 前缀缓存稳定。</li>
-<li>安装 Skill 支持 .zip / .md / 整个文件夹：</li>
+<h2 id="33" data-page-node-id="EvXBVLu8sevRnVWKvypzFW">3.3 快捷消息：把常用提示词存成一键插入</h2>
+<p data-page-node-id="phuqXdNEWyoIIvY0YOGbU5"><strong data-page-node-id="yktRLQeakWDgFD5asMC4zq">痛点</strong>：有些话你一天要说十遍（「按老规矩整理一下」「写交接报告然后重置」），每次手打很烦。</p>
+<p data-page-node-id="5izRiJgBBYcViEUkTMUGfM"><strong data-page-node-id="Y427ULueiYEESmUPm2gIuv">30 秒试</strong>：输入框下方点「<strong data-page-node-id="93CDOCMGrB5OTG8UkXdx7d">快捷消息</strong>」→ 点列表里任意一条 → 正文直接进输入框（还能改）→ 发送。</p>
+<p data-page-node-id="w75BaWPVa6Bp1bODdQTLui"><img alt="快捷消息面板" src="images/27-quick-messages.png" data-page-node-id="FNM6QODwOuqZknx5bXjkSF"></p>
+<p data-page-node-id="TB3pXPkiDByjwOkhi8kTDy"><strong data-page-node-id="FWOWUBoi5bXlqErxjIgsnB">能玩到什么程度</strong></p>
+<ul data-page-node-id="wVZDXDb2dZxUVFPl8AD8QZ">
+<li data-page-node-id="SmYg5mN0TKhMshiEeQSsVt"><strong data-page-node-id="XmmndhdCVp68cKA0XJGjqK">每条只有正文、不用起标题</strong>：列表拿正文首行当标题，其余折叠成预览。</li>
+<li data-page-node-id="pyHj0wUkl3t4C8DZLl8r7R"><strong data-page-node-id="9jJmG06H8rCZdmr1yCQSEc">自动排序</strong>：按「使用次数 × 2 + 新鲜度加分」排，常用的稳定靠前，新加的 7/30/90 天内有曝光窗口不会永远沉底。</li>
+<li data-page-node-id="tWW1uSv0fyPR8qu75IonAX">行内 <code data-page-node-id="tXDb7tE2unWgPxSgyfDcBZ">✎</code> 编辑、<code data-page-node-id="lV3CgrxhESjODHwNdsKh6H">✕</code> 删除、<code data-page-node-id="zzDfXXxuxTslW1DqxLCs62">＋ 新建</code> 添加（弹窗里只填正文）。</li>
+<li data-page-node-id="OXcKY5oDfOZKg5litxhq7C"><strong data-page-node-id="IUnIO03SDskncHTAdWBkOM">内置交接报告预设</strong>（带「默认」标签）：点一下就要求模型把交接报告写进工作区，再用 <code data-page-node-id="4NPZQiEMamxNffwU1tTJ7s">read_file</code> 复核后调 <code data-page-node-id="JEn1giaOYbKxQnuOyJRD3x">reset_context</code>。它跟你自建的条目<strong data-page-node-id="haLdsGRGM7Q6Ith39eImF4">同权</strong>——可以编辑、可以删除，软件更新不会覆盖也不会复活。</li>
 </ul>
-<p><img alt="导入 Skill" src="images/16-skill-import.png"></p>
-<ul>
-<li>隐藏 / 恢复在「设置 → Skills 管理」：</li>
+<p data-page-node-id="akjtjVxXko8SXmz5q9xWwW"><strong data-page-node-id="GdJaTZxs7pSoFlybTXBpez">注意</strong>：这是<strong data-page-node-id="AVRBKoQ31Oyh8EQRzTftKY">独立列表</strong>，跟开始页的自定义指令卡片互不影响，各自增删改。</p>
+<h2 id="34" data-page-node-id="BEEfPZYcpBTMSHnuKNZjrD">3.4 一个不够就接一堆模型</h2>
+<p data-page-node-id="nX3RWiDJTyXS0cLjGAPaJV"><strong data-page-node-id="xswBh7QHTusGj56REA7pZm">痛点</strong>：单一模型又慢又贵还偏科。能不能 A 写代码 / B 写文案 / C 出图？</p>
+<p data-page-node-id="wTtbsDFIJaGnAEEXTeUWNF"><strong data-page-node-id="lMWQQ2CzCzTDZfrx79G1BL">30 秒试</strong>：设置 → API 供应商 → 点「添加 API」→ 选请求格式 → 填地址 / Key / 模型名 → 点「检查」秒测连通。</p>
+<p data-page-node-id="ZEe7ZT9QHJ9ktg3pQQJSt9"><img alt="API 供应商" src="images/05-settings-models.png" data-page-node-id="QlaI4ETv9VNClnaG8GQCUY"></p>
+<p data-page-node-id="r47yD5tBH0ezp2cbxWapJV"><strong data-page-node-id="BHKA90WEEhSUC2z9q7Kgv2">能玩到什么程度</strong></p>
+<ul data-page-node-id="CfZdtq0FwSgZSG9UzCCFcu">
+<li data-page-node-id="TxsHVG6FdcA7Bl1HWQbO25"><strong data-page-node-id="9RmFl04DlHI5uTmCS85MoL">在线</strong>：OpenAI 兼容（OpenAI / DeepSeek / Grok 等）、Anthropic、Gemini。</li>
+<li data-page-node-id="YSatd6oKBzIwCGHOLMrkxj"><strong data-page-node-id="nUEXOacNzrlb5RiQ0nU8Nk">本地</strong>：LM Studio / Ollama / llama.cpp / Unsloth，本地模型卸载在「设置 → API 供应商」里操作。</li>
+<li data-page-node-id="y9M7IivB1GbFUObfLeIFcg">每个供应商独立设置温度、上下文长度、最大输出。</li>
+<li data-page-node-id="NOQAeuwXgOKvWq7qXKM9rc"><strong data-page-node-id="MIa2xGAFDJ05c5GdBWixp2">2.1.0 卡片化</strong>：供应商和 Agent 都改成卡片网格，点卡片才弹设置表单，右上角 × 删除。</li>
+<li data-page-node-id="qG3WWamQs3BdKeUYGYTton"><strong data-page-node-id="4Ak8kSU0LUNrGix0ozpcE8">5xx 自动重试</strong>：供应商返回 500/502 这类瞬时故障时自动退避重试（1.5s / 3s，最多 3 次），状态栏会提示重试进度，不再直接终止整轮。</li>
 </ul>
-<p><img alt="Skills 管理" src="images/11-settings-skills.png"></p>
-<p><strong>重要概念</strong></p>
-<blockquote>
-<p><strong>Skill 只是说明书，不是开关。</strong> 缺 Skill 时，已授权的通用 Tool / MCP 仍可用；Skill 只指导调用方式，<strong>不注册服务、不扩展权限</strong>。</p>
-<p><strong>Skill 脚本规范</strong>：脚本统一放 Skill 目录的 <code>scripts/</code> 子目录，读写文件要显式写 <code>encoding='utf-8'</code>。</p>
+<p data-page-node-id="ZB7AsloBoCxr1pGqORNN1j"><strong data-page-node-id="k1bGE7RC1jGllBLDlBtNZV">注意</strong></p>
+<blockquote data-page-node-id="ScNsCE7NJHWAbZTmDb5WdX">
+<ul data-page-node-id="YBnDokWR5QFyczAB4fXqAB">
+<li data-page-node-id="oOcweXCBEe0DwDG1rPPhmO"><strong data-page-node-id="bOyTVWQ0tgf5Wb6e93nW9l">怎么切模型</strong>：先顶栏「API」选连接，再在输入框下方「模型」下拉选具体模型（见 3.1 节）。</li>
+<li data-page-node-id="uDCzOJUBIgizVguNlqqvH5">切换模型不影响会话历史，但会<strong data-page-node-id="7ynC7s328CgQFKVmXczulN">重新探测图像能力</strong>——换到纯文本模型后图片就不会再被发出去。</li>
+<li data-page-node-id="3xET7ASP8WVTU0cNAMb7MR"><strong data-page-node-id="eiOk6zHJGfh1J5eXcQUlt7">切 Agent 会改首条消息固化下来的工具集</strong>（首轮注入，之后不可改）。</li>
+</ul>
 </blockquote>
-<h2 id="36-mcp-ai">3.6 MCP：给 AI 插外设</h2>
-<p><strong>痛点</strong>：AI 不能直接调 ComfyUI、数据库、第三方 API。</p>
-<p><strong>30 秒试</strong>：装好 MCP 服务器（比如 <code>npx -y @comfyorg/comfy-mcp</code>）→ 设置 → 连接状态里看到它就绪 → 直接对话「用 comfy 出 6 张封面」。</p>
-<p><img alt="连接状态" src="images/08-settings-connections.png"></p>
-<p><strong>能玩到什么程度</strong></p>
-<ul>
-<li>启动时自动连接已启用的服务，没连上的做周期重试。</li>
-<li>顶栏 MCP 圆点看状态：<strong>绿=已连接、红=未连接/出错、黄=连接中、灰=未配置</strong>，悬停看详情。</li>
-<li>手机/局域网访问地址 + 访问口令也在这一页。</li>
+<h2 id="35-skill-ai" data-page-node-id="24a9KMg6O2d3NQFKFfNwAz">3.5 Skill：给 AI 装"行业操作手册"</h2>
+<p data-page-node-id="WQ9PGgFxvDWkUc7RlPP0tF"><strong data-page-node-id="ev81KQcrxBokzqzVthaDCn">痛点</strong>：通用 AI 不懂你的行业术语、不熟你常用的工作流。</p>
+<p data-page-node-id="5wHVFDwiltx6eh2UMhoj32"><strong data-page-node-id="UOfZjooOdsaHq0I3fGw2jZ">30 秒试</strong>：输入 <code data-page-node-id="6p14yG989UzYdD7hmp6A0V">/</code> 弹窗 → 选一个 Skill（比如 <code data-page-node-id="Is3zobKE4GzQoeM84MxQsq">cangjie</code> 拆书）→ 直接对话「把这段小说拆成 12 集」。</p>
+<p data-page-node-id="r3QS5uA4OVDoegvKOTQBmk"><img alt="Skill 快速引用" src="images/14-skill-refs.png" data-page-node-id="OEmrmaplG4dEACzTbI8m3M"></p>
+<p data-page-node-id="v8XQjPihEkZ2A4Kk769XaY"><strong data-page-node-id="uanbvoXYQEqdnfhG1ugfx3">能玩到什么程度</strong></p>
+<ul data-page-node-id="ltmoPgz9A9splDVA5EZNtj">
+<li data-page-node-id="atgyq1bGASCbJXkcmYFiqT"><code data-page-node-id="W3AigPl8n12llDpGrRQIwu">↑↓</code> 选、<code data-page-node-id="2H3rtUtiK7ucvXN7RGG6TN">Enter</code> 确认。</li>
+<li data-page-node-id="YFWoUNBEF2NbGSyUq3P4O3"><strong data-page-node-id="8UyDeMVdpHfm3nRaP1Msku">首轮注入</strong> system / <strong data-page-node-id="7eR620ulu6wigFlLQUFEwG">后续轮追加到末尾</strong>，保持 DeepSeek 前缀缓存稳定。</li>
+<li data-page-node-id="0LXo2bWWSGQBHmO99lsxNM">安装 Skill 支持 .zip / .md / 整个文件夹：</li>
 </ul>
-<p><strong>注意（最常见踩坑）</strong></p>
-<blockquote>
-<p><strong>新加的 MCP 必须重开会话才生效。</strong> 改完 MCP 配置 → 关掉当前会话 → 重新开 → MCP 工具才进可用集。</p>
+<p data-page-node-id="5hdyHNeOPfgkqxvLQSAMOt"><img alt="导入 Skill" src="images/16-skill-import.png" data-page-node-id="BdYiBGDUa6YepRrIDWwANr"></p>
+<ul data-page-node-id="feHX9G8c2euXrjkvBm4QHu">
+<li data-page-node-id="bBjSwjU204dY2NThg4qllm">隐藏 / 恢复在「设置 → Skills 管理」：</li>
+</ul>
+<p data-page-node-id="HF3fcMjdMhGFRaVHpnWlTW"><img alt="Skills 管理" src="images/11-settings-skills.png" data-page-node-id="yIKAREyaFv53T25VbGx6iv"></p>
+<p data-page-node-id="qSFvK7EeooCYmDlJ2n3Viq"><strong data-page-node-id="vDIz26D1u7xcMIzV3iZ2ng">重要概念</strong></p>
+<blockquote data-page-node-id="uNwrXYt6deCJotzkqMsqnq">
+<p data-page-node-id="KHunbhPB45JER55bX75Qgb"><strong data-page-node-id="dZnVymyTMuyPrFDdk56ndC">Skill 只是说明书，不是开关。</strong> 缺 Skill 时，已授权的通用 Tool / MCP 仍可用；Skill 只指导调用方式，<strong data-page-node-id="MzXRFFS6W4llKajqEOHoEL">不注册服务、不扩展权限</strong>。</p>
+<p data-page-node-id="k8xiZbCEAXeo77jQpltsEC"><strong data-page-node-id="kx4b3cFANdxZWBnXlwiZ2Q">Skill 脚本规范</strong>：脚本统一放 Skill 目录的 <code data-page-node-id="1yV6cUPzIHKFHogDH9XWEi">scripts/</code> 子目录，读写文件要显式写 <code data-page-node-id="LRHaAZrhWUDA52puTX40D8">encoding='utf-8'</code>。</p>
+<p data-page-node-id="rtqHEPhyKpwruPbEOMLehF"><strong data-page-node-id="BslcI1Vd7eXvvWTpfzfDFD">安装目录归属（2.2.0 修了一个狠的数据事故）</strong>：以前导入单个 <code data-page-node-id="WerfqIfrvwAsz3IqEeVjvy">.md</code> 或顶层散放 <code data-page-node-id="GisGZbQisvEqLiKZtsPnPq">SKILL.md</code> 的 zip，定义文件会直接落在托管 Skills 目录的根上，<strong data-page-node-id="i7qz8hnrp8vR0EQ50EYT2V">删这一个 Skill 会把整个目录搬走、所有 Skill 一起消失</strong>。现在凡是直接落在导入根的上传都会先建独立子目录，删除前也会校验归属（越界一律拒绝）；升级时会自动把历史裸文件迁入同名子目录，引用不会断。</p>
 </blockquote>
-<h2 id="37-comfyui">3.7 ComfyUI 自动流水线</h2>
-<p><strong>痛点</strong>：跑 ComfyUI 工作流要切窗口、改参数、收图、改名、传图……繁琐。</p>
-<p><strong>30 秒试</strong>（前提：装好 ComfyUI + comfy-mcp）：</p>
-<pre><code>&quot;用当前目录下的 cover_v2.json 出 12 张 1080x1440 封面，seed 1-12&quot;
+<h2 id="36-mcp-ai" data-page-node-id="8ZyQwnRabHTZcGoSDL2bEV">3.6 MCP：给 AI 插外设</h2>
+<p data-page-node-id="IIyCHdCxwO8vHBdBpXvfWk"><strong data-page-node-id="a7kDK0nHyvn1t5fUNm3AiW">痛点</strong>：AI 不能直接调 ComfyUI、数据库、第三方 API。</p>
+<p data-page-node-id="JlDqReQrWhoFFVB49Rg3J8"><strong data-page-node-id="Beodu10ttURnxE4NbScAl7">30 秒试</strong>：装好 MCP 服务器（比如 <code data-page-node-id="OhIDTD6DRKmCkqtkK5lLtP">npx -y @comfyorg/comfy-mcp</code>）→ 设置 → 连接状态里看到它就绪 → 直接对话「用 comfy 出 6 张封面」。</p>
+<p data-page-node-id="DhZySWqNOuyq1iZGKvANS5"><img alt="连接状态" src="images/08-settings-connections.png" data-page-node-id="gTC0MqAnuNK3jx6s4R59zm"></p>
+<p data-page-node-id="VSHzx2V3YpQEXWzBXJ8ehk"><strong data-page-node-id="BBlVyDggvyOtkjQia9I143">能玩到什么程度</strong></p>
+<ul data-page-node-id="tZlsWk0oSqDC2Q2VQ1VPYF">
+<li data-page-node-id="Cyx94Z1WXMxc8HU695E767">启动时自动连接已启用的服务，没连上的做周期重试。</li>
+<li data-page-node-id="71dtpIOfdAEF1GcSJdOO2F">顶栏 MCP 圆点看状态：<strong data-page-node-id="iTuVGfWRnvpKek0PmaBit8">绿=已连接、红=未连接/出错、黄=连接中、灰=未配置</strong>，悬停看详情。</li>
+<li data-page-node-id="4wCPRHmpMGLm4CjursMnNq">手机/局域网访问地址 + 访问口令也在这一页。</li>
+</ul>
+<p data-page-node-id="g7d5vHsxXaWCncU0WvgtlO"><strong data-page-node-id="rJiGq1dgHT0P61LSityhRZ">注意（最常见踩坑）</strong></p>
+<blockquote data-page-node-id="b0yBOuTVKj7uGJ79DVAhTv">
+<p data-page-node-id="ASSmQxawugoRzfWSauoQZG"><strong data-page-node-id="b98mRtOFBAtAHKKpdR01Gu">新加的 MCP 必须重开会话才生效。</strong> 改完 MCP 配置 → 关掉当前会话 → 重新开 → MCP 工具才进可用集。</p>
+</blockquote>
+<h2 id="37-comfyui" data-page-node-id="4FOb7zUUBaOKL1mqWIiC84">3.7 ComfyUI 自动流水线</h2>
+<p data-page-node-id="6AkReoDE95tSNI4oWBDF3N"><strong data-page-node-id="eUzxuzYCGpeD9B2hBSDLk3">痛点</strong>：跑 ComfyUI 工作流要切窗口、改参数、收图、改名、传图……繁琐。</p>
+<p data-page-node-id="iBImQlsyKuOSlotFTPu7O8"><strong data-page-node-id="fE2zFpXHOam9auofAA8nHO">30 秒试</strong>（前提：装好 ComfyUI + comfy-mcp）：</p>
+<pre data-page-node-id="ZhDWZyO0ScTCEX7kkrJ7sb"><code data-page-node-id="pDwtdOmjtypxXEcy0YwxGG">&quot;用当前目录下的 cover_v2.json 出 12 张 1080x1440 封面，seed 1-12&quot;
 </code></pre>
-<p><strong>能玩到什么程度</strong></p>
-<ul>
-<li><strong>批改本地工作流再引用路径</strong>，别把大 JSON 贴进对话：用 <code>read_file</code> / <code>comfyui_prepare_workflow</code> 读，用 <code>edit_file</code> 局部改，再用 <code>comfyui_batch</code> 的 <code>workflow_paths</code> 提交文件路径。</li>
-<li>产物自动落到 <code>data/generated</code>，聊天里直接预览、点开大图、↩ 复用。</li>
-<li>后台任务完成后产物<strong>自动挂回发起它的那条消息</strong>，不用再追问模型。</li>
-<li>视频/音频可以在气泡里直接播放（支持拖动进度条）。</li>
+<p data-page-node-id="5ODCiE0fr9cABMYbCOx2la"><strong data-page-node-id="2fYKMoHiL7xBGWyP3RxEMP">能玩到什么程度</strong></p>
+<ul data-page-node-id="AteCZ9sFCTLz7e5GzHcCEm">
+<li data-page-node-id="vsd8xqEDr9NO2KV3Zyrmac"><strong data-page-node-id="ZmSPHHgZmirpKkwfMskiWd">批改本地工作流再引用路径</strong>，别把大 JSON 贴进对话：用 <code data-page-node-id="rW06sPlEvW39B3ZFSCDr1z">read_file</code> / <code data-page-node-id="HMRiuF5chC9i3yEuWyrELx">comfyui_prepare_workflow</code> 读，用 <code data-page-node-id="EUUuYw7oycBpfCzIPGCEYL">edit_file</code> 局部改，再用 <code data-page-node-id="WESOozb1Dcu9L9dLAdvTLe">comfyui_batch</code> 的 <code data-page-node-id="A7nnmHuLvAn228XP7RfmF4">workflow_paths</code> 提交文件路径。</li>
+<li data-page-node-id="BEacPlG7WOPtO81BLbnm0f">产物自动落到 <code data-page-node-id="OBQ8LGTJ0scPiLoPB0qVCo">data/generated</code>，聊天里直接预览、点开大图、↩ 复用。</li>
+<li data-page-node-id="p7UCQLfsyTXNIqSDJ7Tged">后台任务完成后产物<strong data-page-node-id="A6ruFTwt6jBBeLt9qU925c">自动挂回发起它的那条消息</strong>，不用再追问模型。</li>
+<li data-page-node-id="qEBOviZjExwFGwDfMkMo8V">视频/音频可以在气泡里直接播放（支持拖动进度条）。</li>
 </ul>
-<p><strong>注意</strong></p>
-<ul>
-<li><strong>UI JSON ≠ API JSON</strong>：UI 拖拽的连线图直接保存不能喂 API，导出时要选「API 格式」。</li>
-<li>ComfyUI 自身<strong>不传图</strong>给模型，AI 看的是产物缩略图（必要时调视觉模型）。</li>
+<p data-page-node-id="9ES66fsmc3XMuJ9cfZsyb4"><strong data-page-node-id="MqUACDiuoxVlmwh8KRhmLx">注意</strong></p>
+<ul data-page-node-id="CINjbWzggGxDbqgj0zehez">
+<li data-page-node-id="vBqsLNRNF5fGz7TYwz8FxA"><strong data-page-node-id="5m80gD3eMifJqJwpUbA1H7">UI JSON ≠ API JSON</strong>：UI 拖拽的连线图直接保存不能喂 API，导出时要选「API 格式」。</li>
+<li data-page-node-id="FKYCGVvU35puKt6Bgmbwdv">ComfyUI 自身<strong data-page-node-id="x4nY7z9e9ZjEGQt1vz3Hxb">不传图</strong>给模型，AI 看的是产物缩略图（必要时调视觉模型）。</li>
 </ul>
-<h2 id="38-runninghub">3.8 RunningHub 云端生成</h2>
-<p><strong>痛点</strong>：本地没显卡，ComfyUI 跑不动。</p>
-<p><strong>30 秒试</strong>：装 <code>runninghub</code> Skill → 对话「用 runninghub 的文生图出 6 张古风封面」。</p>
-<p><strong>能玩到什么程度</strong></p>
-<ul>
-<li>不用显卡，420+ 端点：文生图、图生视频、TTS、音乐、3D、图片放大、跑任意 AI 应用。</li>
-<li>产物在聊天里直接以缩略图网格预览，每张右下角 ↩ 一键发回输入框复用：</li>
+<h2 id="38-runninghub" data-page-node-id="QJLFTrQzvbb8gZaEfDAadP">3.8 RunningHub 云端生成</h2>
+<p data-page-node-id="3s537gDZpqNpvSf6vXfJpl"><strong data-page-node-id="wrLrJ3dQy5OVMrUEFzGqny">痛点</strong>：本地没显卡，ComfyUI 跑不动。</p>
+<p data-page-node-id="W1zqe4U1z0vF7AQxxvOVR8"><strong data-page-node-id="2dFldEJ0fghN6ZMTxRn1AW">30 秒试</strong>：装 <code data-page-node-id="Wm6WDcqNP2o1CgKBVHrvcE">runninghub</code> Skill → 对话「用 runninghub 的文生图出 6 张古风封面」。</p>
+<p data-page-node-id="Yf1MG13kws5yD5fLTJC0EC"><strong data-page-node-id="zuHHp44wP1rOjpAUzxidzo">能玩到什么程度</strong></p>
+<ul data-page-node-id="3iz1yOZdNSkabCezWVocKT">
+<li data-page-node-id="AKBCUjAR9kzOl797ZkQrUD">不用显卡，420+ 端点：文生图、图生视频、TTS、音乐、3D、图片放大、跑任意 AI 应用。</li>
+<li data-page-node-id="rnQ14e2XE4CGocBpFJFm0r">产物在聊天里直接以缩略图网格预览，每张右下角 ↩ 一键发回输入框复用：</li>
 </ul>
-<p><img alt="产物卡片（示意）" src="images/23-chat-artifacts.png"></p>
-<ul>
-<li>切换站点（国内 / 海外）在「设置 → Skills 管理」里。</li>
+<p data-page-node-id="pnGhGpwvl0KgA9TL5DtXe2"><img alt="产物卡片（示意）" src="images/23-chat-artifacts.png" data-page-node-id="dBnzqJXhKyQdrvgHnLxAqV"></p>
+<ul data-page-node-id="m5DzGLvLywJgGFs5JGY5XZ">
+<li data-page-node-id="A2MPpdwH6VtjtLNrzs5Jz3">切换站点（国内 / 海外）在「设置 → Skills 管理」里。</li>
 </ul>
-<p><strong>注意</strong>：需要你自己的 RunningHub 账号和额度。</p>
-<h2 id="39">3.9 并行与分身</h2>
-<ul>
-<li><strong>后台 Job</strong>：<code>run_in_background</code> 跑长任务，不阻塞主对话。</li>
-<li><strong>子 Agent</strong>：<code>subagent</code> 工具起一个独立 Agent 干另一件事，结束后回报。</li>
+<p data-page-node-id="TxEtp4yc5nmrbAvmOok4OL"><strong data-page-node-id="l2sOwVbTcCAtR7ZZs1xKw1">注意</strong>：需要你自己的 RunningHub 账号和额度。</p>
+<h2 id="39" data-page-node-id="Gvm1hQl1fBKfz7lzHTPDOL">3.9 并行与分身</h2>
+<ul data-page-node-id="XL6diRhE8uDJ3uxQ97iuEB">
+<li data-page-node-id="6jDoJ7l3tVnjMEwGzWdYDz"><strong data-page-node-id="G4mjhEQHGLXiX3ZYkU7zDh">后台 Job</strong>：<code data-page-node-id="dce5jychi1qNkHfNIaeqHd">run_in_background</code> 跑长任务，不阻塞主对话。</li>
+<li data-page-node-id="gNULeylRXNuGENLbCpKqFf"><strong data-page-node-id="A0bMHW3ydlJt8osYLjXgnJ">子 Agent</strong>：<code data-page-node-id="1JfPxLr3J3xMBXjZGFU8ES">subagent</code> 工具起一个独立 Agent 干另一件事，结束后回报。</li>
 </ul>
-<p>适用：一边跑图、一边写文档；一边跑分析、一边查资料。</p>
-<h2 id="310">3.10 手机/局域网远程访问</h2>
-<p><strong>痛点</strong>：在沙发上不想开电脑，但想让家里的 Naiba Chat 跑点啥。</p>
-<p><strong>30 秒试</strong>：设置 → 连接状态 → 复制带口令和 IP 的链接 → 同一 WiFi 的手机浏览器打开。</p>
-<p><img alt="移动端主界面" src="images/25-mobile-main.png"></p>
-<p>设置页在手机上同样完整可用：</p>
-<p><img alt="移动端设置" src="images/26-mobile-settings.png"></p>
-<p><strong>注意</strong>：外网访问需要内网穿透；本机访问免口令，<strong>局域网访问必须口令</strong>。</p>
-<h2 id="311">3.11 权限与安全</h2>
-<ul>
-<li>对话、设置、附件、任务状态<strong>全部存本地</strong>，不出你的机器。</li>
-<li>文件预览只允许工作区和受管理数据目录（<code>data/uploads</code>、<code>data/generated</code>）。</li>
-<li><strong>API Key 不出机器</strong>——所有在线模型调用都从你的电脑直接发到供应商，不经中转。</li>
-<li>高风险写入、删除、外部发布和凭据操作仍受权限策略保护。</li>
-<li><strong>缓存管理</strong>：图片/PDF/视频/音频统一统计，设置页打开即刷新；超限自动清理（默认 256MB，可调，填 0 关闭）<strong>只删未被消息引用的最旧文件</strong>——历史消息引用的附件永不自动删除。</li>
-</ul>
-<h2 id="312">3.12 稳如老狗</h2>
-<ul>
-<li><strong>断线重连</strong>不重复回放：网络抖一下，不会把同一段响应重发两次。</li>
-<li><strong>失败不丢已生成内容</strong>：模型报错，已经写出的思考/部分回复/工具活动完整保留。</li>
-<li><strong>5xx 自动重试</strong>（2.1.0 新），失败请求体会落盘到 <code>naiba-model-error-payload.json</code> 便于定位。</li>
-<li><strong>停止级联子任务</strong>：父任务停 → 子任务全部 kill。</li>
-<li><strong>更新带 SHA-256 校验</strong>：下载完先校哈希再替换，损坏直接拒绝。</li>
-<li><strong>可版本回退</strong>：更新面板支持「选历史版本 → 一键回退」。</li>
-</ul>
-<p><img alt="软件更新" src="images/13-settings-updates.png"></p>
-<h2 id="313">3.13 侧栏、收藏与折叠</h2>
-<p><img alt="侧栏折叠" src="images/02-sidebar-collapsed.png"></p>
-<ul>
-<li><strong>折叠</strong>：桌面端点侧栏顶部 ◀ 收起（列宽恒定 880px，只是重新居中），聊天区左上 ▶ 展开，<strong>状态会记住</strong>。移动端左上角 ☰ 滑出抽屉。</li>
-<li><strong>收藏</strong>：会话条目的<strong>五角星</strong>点一下即收藏；侧栏底部有跨工作区的「已收藏」分组。收藏<strong>同时保留在原工作区</strong>，两处都显示，而且<strong>不会把会话顶到列表最前</strong>。</li>
-<li><strong>⋯ 菜单</strong>：重命名和删除收在这里；新建工作区也是对话框（选目录 → 填名称）。</li>
-<li>条目整条可点，点击时列表不会强制滚到最上（已可见就保持位置）。</li>
-</ul>
-<hr>
-<h1 id="4">第 4 章　场景实战</h1>
-<blockquote>
-<p><strong>读完这章你能</strong>：把第 3 章的能力翻译成「我今天就用的场景」。</p>
+<p data-page-node-id="HL5QvzyqZ5J9zQRL4NPsjx">适用：一边跑图、一边写文档；一边跑分析、一边查资料。</p>
+<h2 id="310-220" data-page-node-id="CQ7XTgZKe2H1X2hgdNBjmJ">3.10 手机/局域网远程访问（2.2.0：功能对等）</h2>
+<p data-page-node-id="iEakc5nM9N2MqNMrfpWUnn"><strong data-page-node-id="SchUD6CeYLuk369IVBCkfv">痛点</strong>：在沙发上不想开电脑，但想让家里的 Naiba Chat 跑点啥——<strong data-page-node-id="Q1k4oNcogCAxPSKqGodrAl">而且不想因为用手机就少一堆功能</strong>。</p>
+<p data-page-node-id="da1aKcW9rPgsrp6V1bBrvh"><strong data-page-node-id="BqzjbsWEs2vQinMybACPKq">30 秒试</strong>：设置 → 连接状态 → 复制带口令和 IP 的链接 → 同一 WiFi 的手机浏览器打开。</p>
+<p data-page-node-id="Rzrnb7nmZUuQsqsLz8jfpi"><img alt="移动端主界面" src="images/25-mobile-main.png" data-page-node-id="Ean86l8COlnhWD3sNgpDx9"></p>
+<p data-page-node-id="qIUGb6btS5G0Q7gDabsS8k">设置页在手机上同样完整可用：</p>
+<p data-page-node-id="GroBOW3aWEZpyCynm8XYgc"><img alt="移动端设置" src="images/26-mobile-settings.png" data-page-node-id="JN5OZjbHFODnDBex67MG2z"></p>
+<p data-page-node-id="OD08ZjMnff5mpP7EEMGO0c"><strong data-page-node-id="z42K4HwWnO6d1CUmLbJmhB">能玩到什么程度（2.2.0「功能对等」）</strong></p>
+<blockquote data-page-node-id="op9xjUdtOTkIpyO045Zd7Q">
+<p data-page-node-id="HbOPCdkLBkrbKUCq4dSvt7">原则只有一句：<strong data-page-node-id="EP5eZQ18VMhWQ5e6BzpicS">不删能力，只换形态</strong>。电脑上有的，手机上都有；放不下的控件换成等价的样子。</p>
 </blockquote>
-<h2 id="41">4.1 短剧/漫画批量出图</h2>
-<p>两条路：</p>
-<ul>
-<li><strong>本地 ComfyUI</strong>（你有显卡）→ 3.7 节</li>
-<li><strong>云端 RunningHub</strong>（没显卡）→ 3.8 节</li>
+<table data-page-node-id="lhLRRrdiraRvoZhsN0H1nx">
+<thead data-page-node-id="FLBvby25gILTSlleGdCzUI">
+<tr data-page-node-id="rITNLVEPtIPNR1Gvh3IDkb">
+<th data-page-node-id="DYIvBqPecxcTELXJgcATTz">桌面</th>
+<th data-page-node-id="Za7k3ewmGjKHY4wxEE4fGS">手机上换成</th>
+</tr>
+</thead>
+<tbody data-page-node-id="cqwr4nJYY8h2ciKKaP0i8f">
+<tr data-page-node-id="tGd65mNTvLtybRsXkWdODw">
+<td data-page-node-id="940ODK84U5UwS8HNwApij0">右侧文件面板</td>
+<td data-page-node-id="W5k8eKHaqgvxaL1QzGkjSv"><strong data-page-node-id="sOsVz2oyo9zBEucqmuU9z1">全屏抽屉</strong>（占满屏幕打开，看完关掉；和桌面共用同一套开合逻辑）</td>
+</tr>
+<tr data-page-node-id="q7U7JSsOorHj6yoqBX28pM">
+<td data-page-node-id="lQlXtew1D8ti3ddxv3xzOG">消息末尾「本轮修改的文件」</td>
+<td data-page-node-id="zKQQAxscYjxpU6bC1iYPhi"><strong data-page-node-id="NoTxCf9uGlIrneqForZPHs">恢复可点</strong>，点一下直接打开文件抽屉</td>
+</tr>
+<tr data-page-node-id="mDb4ug4GaYjLzaIuzaUwjz">
+<td data-page-node-id="scPt0Wdt7JbEJAtrjPkVzY">聊天区右侧「对话刻度轨」</td>
+<td data-page-node-id="p6FKrGu1ZpGcxsCBpyaHIe">顶栏 <strong data-page-node-id="4uERgk4JRCO2kzEKCqgzp9">「轮次」下拉</strong>：列出「第 N 轮 · 用户消息摘要」，选中即跳过去，滚动时自动显示当前轮次（不足 2 轮自动隐藏）</td>
+</tr>
+<tr data-page-node-id="KX7tQyWvB1YmXqpOxSmsVo">
+<td data-page-node-id="4NkgfXZ86H6phxcAxC56bT">鼠标悬停/点击</td>
+<td data-page-node-id="Ww4XF9qWkdPS4IuhGAStm0"><strong data-page-node-id="CpponCRlOyYeupT6Tb1DGc">触摸目标统一 ≥44px</strong>（顶栏按钮、侧栏开关、输入区图标与发送、文件面板关闭）</td>
+</tr>
+</tbody>
+</table>
+<p data-page-node-id="hehj5JMGekJG2S015Xxtr8">手机上点文件名，文件面板就以全屏抽屉打开：</p>
+<p data-page-node-id="pEdUCQUbvOkzEyXrxKh5qj"><img alt="手机端文件面板抽屉" src="images/34-mobile-file-drawer.png" data-page-node-id="bR5k2L1DcWYCO5G0mKjuac"></p>
+<ul data-page-node-id="NOBuxBz3lcCvjkTQFXPhF3">
+<li data-page-node-id="Ryzcj402uWaDLfHC5b3VJv">跨过 760px 边界（比如旋转屏幕、接外接屏）<strong data-page-node-id="nbUGeVFi1gmOGtZQyZUvpy">不会顺手把文件面板关掉</strong>。</li>
+<li data-page-node-id="CgfPmzhZQsjHIgYbNwqRCc">窄屏也不隐藏任何文字标签，宁可整行换行，不会出现「一个问号图标猜它是啥」。</li>
+<li data-page-node-id="wXmcpdCDFBcOEMTcADV4KP">手机判定只有一个来源（CSS 760px 断点），不会出现「同一台设备有时像手机有时像电脑」。</li>
 </ul>
-<p><strong>通用流程</strong></p>
-<ol>
-<li>工作区建好，参考图、风格参考放进去。</li>
-<li>提示词模板放 Skill 里（参考 <code>h3-prompt-writing</code>）。</li>
-<li>AI 改本地工作流（标记哪些是占位参数）→ 批改 → 提交。</li>
-<li>产物自动进 <code>data/generated</code>，缩略图在聊天里。</li>
-<li>看效果，AI 继续改 prompt，再批跑。</li>
+<p data-page-node-id="MdGDtsDrdZT6x6hDIGX3LU"><strong data-page-node-id="gQRT5g2KfxMC4pmHExUkLu">注意</strong>：外网访问需要内网穿透；本机访问免口令，<strong data-page-node-id="LHkoAMbD2lKAkB50H2vj4f">局域网访问必须口令</strong>。</p>
+<h2 id="311" data-page-node-id="GAv1fUJONq6Ukq7MUjALNU">3.11 权限与安全</h2>
+<ul data-page-node-id="EwC2x6C7hnItCF4Z8RS9BR">
+<li data-page-node-id="ZurVV4NLPD1BIBRjwnWbEO">对话、设置、附件、任务状态<strong data-page-node-id="6Tq1lrSS06xAOqd73dIR2I">全部存本地</strong>，不出你的机器。</li>
+<li data-page-node-id="tjpgWfTIl7CECbf5WMMydk">文件预览只允许工作区和受管理数据目录（<code data-page-node-id="rdOFbTaxd915ahsuLYBcwM">data/uploads</code>、<code data-page-node-id="0L8kMLtaEgXHD1JihqK7Hj">data/generated</code>）。</li>
+<li data-page-node-id="NF3qQNxVp8GgWGTYouT4c1"><strong data-page-node-id="3HZYTW8E1nCdoEHnrfuwrV">API Key 不出机器</strong>——所有在线模型调用都从你的电脑直接发到供应商，不经中转。</li>
+<li data-page-node-id="jTv82TkzAAqLtJYsXoF8MS">高风险写入、删除、外部发布和凭据操作仍受权限策略保护。</li>
+<li data-page-node-id="e8pfbQRr2QxiWgYeJQbQXo"><strong data-page-node-id="pQHG58UzVlnWiJXDFzvE33">缓存管理</strong>：图片/PDF/视频/音频统一统计，设置页打开即刷新；超限自动清理（默认 256MB，可调，填 0 关闭）<strong data-page-node-id="dr3KqowIbqHr5pT5UrEHjL">只删未被消息引用的最旧文件</strong>——历史消息引用的附件永不自动删除。</li>
+</ul>
+<h2 id="312" data-page-node-id="CUt9pVmFcsdTOMhQCesVUC">3.12 稳如老狗</h2>
+<ul data-page-node-id="Szk2bHDZQF6RcuHByNXCCC">
+<li data-page-node-id="ZfA6jYiUsBEjujEKjrEd8H"><strong data-page-node-id="DnDdAB3wNJC4SfbOzKD2hW">断线重连</strong>不重复回放：网络抖一下，不会把同一段响应重发两次。</li>
+<li data-page-node-id="TF33FCb7Q8EoksXjkNZbAy"><strong data-page-node-id="TATjqFAMLCcQ9baQMaidlC">失败不丢已生成内容</strong>：模型报错，已经写出的思考/部分回复/工具活动完整保留。</li>
+<li data-page-node-id="lHpObuOGkNiyYr7sANq7Hy"><strong data-page-node-id="ubxwvyducu3rdZCExXjPjV">出错自动重试</strong>（2.1.0 起，2.2.0 扩大范围）：HTTP 5xx（含 500）与 429/502/503/504 同等对待，按 1.5s / 3s 退避重试、最多 3 次；失败请求体会落盘到 <code data-page-node-id="BzdPGH8tAcSLMOPYGiNY4g">naiba-model-error-payload.json</code> 取证（超长字段截断、<strong data-page-node-id="HbFGXAZNvaVQaFu7Czx2cv">不含 API Key</strong>）。</li>
+<li data-page-node-id="7N66ceHylbS5BGfbOiLJoU"><strong data-page-node-id="2g99ezTWKNKnSOA885e0ML">Codex Responses 聚合回填</strong>（2.2.0 新）：只收到「事件汇总」没有逐字流也能正确拿到正文、思考和工具调用，不会被误判成空答复；这种格式下真出现空流会按瞬时故障重发。</li>
+<li data-page-node-id="3xnA6h7GIXPvO2qtnlUEkd"><strong data-page-node-id="rgFEikue4d0EoyF7IPIXHs">停止级联子任务</strong>：父任务停 → 子任务全部 kill。</li>
+<li data-page-node-id="dvsTIWnXll0FCFsgyfKEX6"><strong data-page-node-id="Z1YyhNGmp65MoYHPt6dlcE">更新带 SHA-256 校验</strong>：下载完先校哈希再替换，损坏直接拒绝。</li>
+<li data-page-node-id="wGxiXqsD98vSsxOVpuWvGv"><strong data-page-node-id="uiBdxYgg8hQ7S1t6HtNLJ0">可版本回退</strong>：更新面板支持「选历史版本 → 一键回退」。</li>
+</ul>
+<p data-page-node-id="ztTf6BFIPlQNoFKvyS29X7"><img alt="软件更新" src="images/13-settings-updates.png" data-page-node-id="nTR6EHZ97JisztOxvZRBQJ"></p>
+<h2 id="313" data-page-node-id="2sEA81RUsOlerIIWgdpEij">3.13 侧栏、收藏与折叠</h2>
+<p data-page-node-id="MyI3bDQToP1tYp4jghLl52"><img alt="侧栏折叠" src="images/02-sidebar-collapsed.png" data-page-node-id="RWgLepjfttu014uJtO3YeJ"></p>
+<ul data-page-node-id="1E22ilJDLnyElOoEs0RNEV">
+<li data-page-node-id="Qh61F2UP7giOuokgPF0J5w"><strong data-page-node-id="OrU8Ix6u2Flkry0zrPReJh">折叠</strong>：桌面端点侧栏顶部 ◀ 收起（列宽恒定 880px，只是重新居中），聊天区左上 ▶ 展开，<strong data-page-node-id="FpfWbdKYUbBWa2rQvor9CT">状态会记住</strong>。移动端左上角 ☰ 滑出抽屉。</li>
+<li data-page-node-id="BH4jiXK1dvRviBp3CCyVZN"><strong data-page-node-id="WWK7QlAQbJBPjDCHwgsc98">收藏</strong>：会话条目的<strong data-page-node-id="zaatK8EbEL63arf0XNTWt8">五角星</strong>点一下即收藏；侧栏底部有跨工作区的「已收藏」分组。收藏<strong data-page-node-id="yzuFN5LyHrECtP89AyHbAE">同时保留在原工作区</strong>，两处都显示，而且<strong data-page-node-id="eFRykbHHANoz1mrGvsLClu">不会把会话顶到列表最前</strong>。</li>
+<li data-page-node-id="KqRWDOu1ja8cqS3idOEhBZ"><strong data-page-node-id="EQnZcyav7iPACyqlN0cbiD">⋯ 菜单</strong>：重命名和删除收在这里；新建工作区也是对话框（选目录 → 填名称）。</li>
+<li data-page-node-id="gCtwSVCvBsH3j21436oGX2">条目整条可点，点击时列表不会强制滚到最上（已可见就保持位置）。</li>
+</ul>
+<hr data-page-node-id="82xP6C0oIMuVw0AiiaoCLp">
+<h1 id="4" data-page-node-id="kiw2Mwjyt8590LzPoHrOaR">第 4 章　场景实战</h1>
+<blockquote data-page-node-id="XZ2iSx7vZ1WD2ABa2fDEBR">
+<p data-page-node-id="w4McoVnBzHXH7P3npHpRs8"><strong data-page-node-id="MFHFanUcJa0zr8G77PL8RU">读完这章你能</strong>：把第 3 章的能力翻译成「我今天就用的场景」。</p>
+</blockquote>
+<h2 id="41" data-page-node-id="UOgGHczAeTZypoxjZ0B3Rt">4.1 短剧/漫画批量出图</h2>
+<p data-page-node-id="8uZ0LIDB7nSx3TkCj6Eu2K">两条路：</p>
+<ul data-page-node-id="1UEGDDqWDT6W0WYoQWxwAH">
+<li data-page-node-id="CRtCOZxpVH5GnNzwnOMf2R"><strong data-page-node-id="bybauzqRkrFadjzKpmOzuy">本地 ComfyUI</strong>（你有显卡）→ 3.7 节</li>
+<li data-page-node-id="8NeyZucB4iwCvesN9BpmxD"><strong data-page-node-id="3PbeKTM8AFBRnl8DBA0Dpx">云端 RunningHub</strong>（没显卡）→ 3.8 节</li>
+</ul>
+<p data-page-node-id="IhMk7GtJbT6mVCi8laBzvN"><strong data-page-node-id="h5x0AF9nRAAM65DjC1RUuc">通用流程</strong></p>
+<ol data-page-node-id="K9vdKu3oPxcdvPXXXnXXCU">
+<li data-page-node-id="84G1YHORtnQxMFyP6mFbqQ">工作区建好，参考图、风格参考放进去。</li>
+<li data-page-node-id="LLaq0FVfLH13UsOGcfCXSq">提示词模板放 Skill 里（参考 <code data-page-node-id="ayUiTOwBZ6rBOSDqZrKmxS">h3-prompt-writing</code>）。</li>
+<li data-page-node-id="f9tDIDzSSDfNGrIaVWKOvd">AI 改本地工作流（标记哪些是占位参数）→ 批改 → 提交。</li>
+<li data-page-node-id="rAqwC14YJPL3gFswyjxxPh">产物自动进 <code data-page-node-id="o2fvkVM7CxxegQWAvnyJgA">data/generated</code>，缩略图在聊天里。</li>
+<li data-page-node-id="bWjqAvQ76R3NuVkkTXFFdC">看效果，AI 继续改 prompt，再批跑。</li>
 </ol>
-<p><strong>可直接复制的提示词</strong></p>
-<blockquote>
-<p>「用当前工作区的 cover_v2.json 出 12 张 1080x1440 古风竖构图封面，seed 1-12，人物参考用 <code>reference_sheet.png</code>。出完用「本轮修改」列表给我看哪些参数改过。」</p>
+<p data-page-node-id="k3GGNxHBEQgxcGizN2eFVi"><strong data-page-node-id="efWG8rkXwvGbKcy2dyNC7Q">可直接复制的提示词</strong></p>
+<blockquote data-page-node-id="ZiwmIhBUXmFbAaBmsBBDHQ">
+<p data-page-node-id="9w0r20JBn7cafugyt7BYgg">「用当前工作区的 cover_v2.json 出 12 张 1080x1440 古风竖构图封面，seed 1-12，人物参考用 <code data-page-node-id="v9ymX436w1VMG5gOgwtyXQ">reference_sheet.png</code>。出完用「本轮修改」列表给我看哪些参数改过。」</p>
 </blockquote>
-<h2 id="42">4.2 读懂并改造一个代码项目</h2>
-<pre><code>&quot;读 D:\my-project 下 main.py 和 requirements.txt，
+<h2 id="42" data-page-node-id="C1bGc9AbqUhH3pa0Hyz1AC">4.2 读懂并改造一个代码项目</h2>
+<pre data-page-node-id="QgThsEKjESzY7bdESWEK6u"><code data-page-node-id="pgCZ0aKAFA9tZXCr9MlFwg">&quot;读 D:\my-project 下 main.py 和 requirements.txt，
 告诉我这个项目在做什么、依赖什么、入口在哪。
 然后把 main.py 里的硬编码路径改成支持环境变量。&quot;
 </code></pre>
-<p>AI 会先 <code>read_file</code> → <code>search_files</code> 查引用 → <code>edit_file</code> 改 → 文件面板里你能直接看并改回。</p>
-<h2 id="43-pdf">4.3 批量整理资料 / 读 PDF</h2>
-<pre><code>&quot;把 D:\桌面\inbox 下所有 pdf 按年月重命名（YYYYMM_原名.pdf），
+<p data-page-node-id="B3BL249xa2R7yoDETC2P3v">AI 会先 <code data-page-node-id="0GY343r2ilUesBtdWZG1fG">read_file</code> → <code data-page-node-id="kPhgwCFHJ7NiGBkxeUp138">search_files</code> 查引用 → <code data-page-node-id="IJ3uyDV1BormBLjOb5NNnD">edit_file</code> 改 → 文件面板里你能直接看并改回。</p>
+<h2 id="43-pdf" data-page-node-id="ZfHWdUF7QcEqG6hocJaZq8">4.3 批量整理资料 / 读 PDF</h2>
+<pre data-page-node-id="YLZBFCTgW6EG15HEvGrWt1"><code data-page-node-id="kbbZfJc3kGSwxCAwpTF9xL">&quot;把 D:\桌面\inbox 下所有 pdf 按年月重命名（YYYYMM_原名.pdf），
 建个 README.md 列出改名清单。&quot;
 </code></pre>
-<p>适合：下载文件夹归类、扫描件整理、合同/发票归档。扫描件（没文本层）AI 会自动转页图再用视觉模型认字。</p>
-<h2 id="44">4.4 一句话跑一条流水线</h2>
-<pre><code>&quot;读 E:\reports 下的 50 份 csv，统计每个用户的总消费，
+<p data-page-node-id="E0780SgGqMDebaCvKI7hRt">适合：下载文件夹归类、扫描件整理、合同/发票归档。扫描件（没文本层）AI 会自动转页图再用视觉模型认字。</p>
+<h2 id="44" data-page-node-id="M7ExKvOa2DVObrtkwup4x6">4.4 一句话跑一条流水线</h2>
+<pre data-page-node-id="4mLHmVTTIaQX7bH18WSHht"><code data-page-node-id="pEhQycgvyVFCntbX0XsSMK">&quot;读 E:\reports 下的 50 份 csv，统计每个用户的总消费，
 按消费降序输出到 E:\reports\summary.csv，前 10 名加颜色标红。&quot;
 </code></pre>
-<p>AI 自己拆步骤：列文件 → 读 → 聚合 → 写。</p>
-<h2 id="45-skill-ai">4.5 用 Skill 把 AI 调教成领域专家</h2>
-<ul>
-<li><strong>cangjie</strong>：拆小说 → 短剧分集</li>
-<li><strong>h3-prompt-writing / h3-text-to-promptv2</strong>：把剧情写成 MiniMax H3 视频提示词</li>
-<li><strong>comfyui-shortdrama</strong>：ComfyUI 短剧工作流专精</li>
-<li><strong>shortdramav2-rh</strong>：RunningHub 上的短剧工作流</li>
+<p data-page-node-id="ruFARRIDVCR0MEraYNNafm">AI 自己拆步骤：列文件 → 读 → 聚合 → 写。</p>
+<h2 id="45-skill-ai" data-page-node-id="XbAMgdeWvaEwRY9rpkosGT">4.5 用 Skill 把 AI 调教成领域专家</h2>
+<ul data-page-node-id="41A7fCsqq8DPzitYXGDBeR">
+<li data-page-node-id="qD9Rr9kGLrcsIY4j7wkj3e"><strong data-page-node-id="JgsHGhDXStdzhVE9RHvRmJ">cangjie</strong>：拆小说 → 短剧分集</li>
+<li data-page-node-id="mBwXB5zbzqNscSZXvjG7YK"><strong data-page-node-id="Ib4GS7S1YGmlae9tEo6rXR">h3-prompt-writing / h3-text-to-promptv2</strong>：把剧情写成 MiniMax H3 视频提示词</li>
+<li data-page-node-id="nOHZWgpDlAS4taA262EkkR"><strong data-page-node-id="paIA7qBZSqQZJoW07FOaCq">comfyui-shortdrama</strong>：ComfyUI 短剧工作流专精</li>
+<li data-page-node-id="m5Mk2HmtoJ6WGGBVVgMpdF"><strong data-page-node-id="YpGdiphvncH84zsxBCySCH">shortdramav2-rh</strong>：RunningHub 上的短剧工作流</li>
 </ul>
-<p>用 <code>/</code> 引用 Skill 后，AI 输出的就是该领域的标准格式，不用每次都交代。</p>
-<hr>
-<h1 id="5">第 5 章　设置全解</h1>
-<blockquote>
-<p><strong>每个 tab 一节，按页面顺序排。</strong></p>
+<p data-page-node-id="p2sji90uHbwFHiWQCVNOfE">用 <code data-page-node-id="m6S4HoUVkHvDzM7zoctB21">/</code> 引用 Skill 后，AI 输出的就是该领域的标准格式，不用每次都交代。</p>
+<hr data-page-node-id="WkYGXLFxLELKZpjR0ZhSmi">
+<h1 id="5" data-page-node-id="SSkTqxcOOCMhnNk9Xqvq5l">第 5 章　设置全解</h1>
+<blockquote data-page-node-id="0U0peGhDzXqiLOrsQCrq80">
+<p data-page-node-id="PuMOGSnpiNwTtejf9NIArR"><strong data-page-node-id="l5Iu2CpgY9zQFkxBHYNYjd">每个 tab 一节，按页面顺序排。</strong></p>
 </blockquote>
-<h2 id="51-api">5.1 API 供应商</h2>
-<p><img alt="API 供应商" src="images/05-settings-models.png"></p>
-<ul>
-<li><strong>卡片网格</strong>：一行最多三张，末尾固定「添加 API」卡片，卡片右上角 × 删除；点卡片才弹设置表单。</li>
-<li><strong>请求格式</strong>：OpenAI 兼容 / Anthropic / Gemini / Ollama / LM Studio / llama.cpp / Unsloth 等。</li>
-<li><strong>「检查」按钮</strong>：测连通 + 测图片能力 + 测工具调用。</li>
-<li><strong>温度 / 上下文 / 最大输出</strong>：每个供应商独立。</li>
-<li><strong>API Key 留空 = 保留原值</strong>（不用每次重填）。</li>
+<h2 id="51-api" data-page-node-id="ruhrpgO9JYjPuHZpTnF1MO">5.1 API 供应商</h2>
+<p data-page-node-id="O5EEhvBqVG5ZQg94rdNUPW"><img alt="API 供应商" src="images/05-settings-models.png" data-page-node-id="12Mbusui3ZSzyVerT6iPNV"></p>
+<ul data-page-node-id="Cgz9Vqhejca10XTYOt7sKS">
+<li data-page-node-id="CevZtzwsCBsQNSMUZQ2kHA"><strong data-page-node-id="DCF9SPp9c5ZiQ1SvTxqajo">卡片网格</strong>：一行最多三张，末尾固定「添加 API」卡片，卡片右上角 × 删除；点卡片才弹设置表单。</li>
+<li data-page-node-id="dRn8OArTNmw81m7meAM7Hx"><strong data-page-node-id="hNSWgNtkrx8g15HuEgGJK7">请求格式</strong>：OpenAI 兼容 / Anthropic / Gemini / Ollama / LM Studio / llama.cpp / Unsloth 等。</li>
+<li data-page-node-id="ixzhXMeDlWZzpHYvywKUch"><strong data-page-node-id="6L2CH1fzMRazJKvnAFVqrA">「检查」按钮</strong>：测连通 + 测图片能力 + 测工具调用。</li>
+<li data-page-node-id="aejI6vSvAxs8bFX03dPtMu"><strong data-page-node-id="iYE7x22jH7tYXXCF8Cwe1Z">温度 / 上下文 / 最大输出</strong>：每个供应商独立。</li>
+<li data-page-node-id="dKaySl8szEOpjTZ3RYHWiY"><strong data-page-node-id="TDg2935FnLYnpm8wefe8Z9">API Key 留空 = 保留原值</strong>（不用每次重填）。</li>
 </ul>
-<blockquote>
-<p><strong>2.1.1 起「API」和「模型」分开了</strong>：这一页配的是<strong>连接</strong>（去哪儿）。具体用哪个模型，在<strong>输入框下方左边的「模型」下拉</strong>里选，按会话记忆；下拉里没有就选「手动输入模型名称…」自己填。详见 3.1 节。</p>
+<blockquote data-page-node-id="00N2Dl11X7VRsalXkW0GFt">
+<p data-page-node-id="KEvFac8YWeOiLKuzyW1HY1"><strong data-page-node-id="bVQ7Y1IqXqm0YNsrX45G8n">2.1.1 起「API」和「模型」分开了</strong>：这一页配的是<strong data-page-node-id="9Ob1dhUBHhtpBPx4szC9XC">连接</strong>（去哪儿）。具体用哪个模型，在<strong data-page-node-id="u0bFHPDRLqGS0TgyLrlBJa">输入框下方左边的「模型」下拉</strong>里选（列表来自该 API 的模型目录），按会话记忆。详见 3.1 节。</p>
+<p data-page-node-id="Gp6fq8YpdYJjgXVC56pDns"><strong data-page-node-id="T9JJlLrM7HAtAfiTGOOH83">2.2.0 卡片更紧凑</strong>：每张卡片压成两行——名称 + 格式标签（当前使用的有角标），模型名不再上卡片，卡片高度从 116px 降到 88px。</p>
 </blockquote>
-<h2 id="52-agent">5.2 Agent</h2>
-<p><img alt="Agent 设置" src="images/06-settings-agent.png"></p>
-<ul>
-<li><strong>卡片网格</strong>：末尾固定「新增 Agent」卡片。卡片上显示固定 Skill 数和<strong>它当前用的工具集名称</strong>（「工具集：标准模式」/「未限制（全部工具）」/「自定义 · N 个工具」）。</li>
-<li><strong>不再标「默认」角标</strong>——默认项由顶栏 Agent 选择器体现。</li>
-<li><strong>点卡片进编辑表单</strong>：</li>
+<h2 id="52-agent" data-page-node-id="Zfa57a5bauWrLkwJJeO9bl">5.2 Agent</h2>
+<p data-page-node-id="oVUFiZ98BOuwn2wrk96RIT"><img alt="Agent 设置" src="images/06-settings-agent.png" data-page-node-id="I5gEKTR31im3jmXHY7zqH4"></p>
+<ul data-page-node-id="Bum8THb262pY91ehyYvDyD">
+<li data-page-node-id="JKmNIIe5dXB8cBJzrt0de3"><strong data-page-node-id="YGTk0WoqeBBVDBqAsTByKD">卡片网格</strong>：末尾固定「新增 Agent」卡片。卡片上显示固定 Skill 数和<strong data-page-node-id="SfLFA6gLn5r3AMjTBnpECh">它当前用的工具集名称</strong>（「工具集：标准模式」/「未限制（全部工具）」/「自定义 · N 个工具」）。</li>
+<li data-page-node-id="kob1FLAssTZjxD3N57QCig"><strong data-page-node-id="VJC36cgHqcKUVcflEdKPM9">不再标「默认」角标</strong>——默认项由顶栏 Agent 选择器体现。</li>
+<li data-page-node-id="CiepbGZzEc8yJSxmSoBBoK"><strong data-page-node-id="gJsdTmuvWnEfqbYgMsOOHh">点卡片进编辑表单</strong>：</li>
 </ul>
-<p><img alt="Agent 编辑" src="images/20-agent-edit.png"></p>
-<ul>
-<li><strong>ID 自动生成</strong>：新建不用填 ID，保存时后台分配；已有 ID 显示在副标题。</li>
-<li><strong>自定义头像</strong>：上传图片自动中心裁切为 256px WebP；用了这个 Agent 的会话，助手气泡的「AI」圆标会换成这张头像。</li>
-<li><strong>系统提示词（预设与规则）</strong>：标题行右侧就是工具栏——套用快捷提示词 / 存为快捷提示词 / 导入角色卡 PNG / 自定义头像。角色卡是<strong>追加</strong>语义，不覆盖你手写的内容。</li>
-<li><strong>工具集两态</strong>：默认显示 4 张只读预设卡（只读 / 标准 / ComfyUI 联动 / 全能）+ 「我的工具集」+ 虚线「添加自定义工具集」；点任意一张，工具列表从下方滑入，命名栏自动填上卡片名字，勾选就是该卡的工具，可继续增删再存成「我的工具集」。<strong>内置预设只读，自定义可删。</strong></li>
+<p data-page-node-id="JBwm3Sj9fWPG77AOMbOMwU"><img alt="Agent 编辑" src="images/20-agent-edit.png" data-page-node-id="bxlnXHqmn0e01AyG8G6wDB"></p>
+<ul data-page-node-id="x78WVtB4HDaY37EJs7AHVd">
+<li data-page-node-id="dsQBHMYhlSggZUtu1ZR87d"><strong data-page-node-id="fN9dEhrr168471ndBAtitI">ID 自动生成</strong>：新建不用填 ID，保存时后台分配；已有 ID 显示在副标题。</li>
+<li data-page-node-id="RWX52Yb52pPX6fT5CjIFge"><strong data-page-node-id="PiC9uLHVHDFVmA70ayxNN7">自定义头像</strong>：上传图片自动中心裁切为 256px WebP；用了这个 Agent 的会话，助手气泡的「AI」圆标会换成这张头像。</li>
+<li data-page-node-id="qUaS6zos6E8MEFRusPx8jw"><strong data-page-node-id="NgUA97titTKIvGtmmV4RGf">系统提示词（预设与规则）</strong>：标题行右侧就是工具栏——套用快捷提示词 / 存为快捷提示词 / 导入角色卡 PNG / 自定义头像。角色卡是<strong data-page-node-id="aQoov0kOhN2Q0WAeDkr46N">追加</strong>语义，不覆盖你手写的内容。</li>
+<li data-page-node-id="vpGglWo1dOlx1rEGLMSloH"><strong data-page-node-id="Ju8VdmJeYKArkEtIBA0d2M">工具集两态</strong>：默认显示 4 张只读预设卡（只读 / 标准 / ComfyUI 联动 / 全能）+ 「我的工具集」+ 虚线「添加自定义工具集」；点任意一张，工具列表从下方滑入，命名栏自动填上卡片名字，勾选就是该卡的工具，可继续增删再存成「我的工具集」。<strong data-page-node-id="25SYn4U3oe20AxSz848oNW">内置预设只读，自定义可删。</strong></li>
 </ul>
-<p><img alt="Agent 工具集选择" src="images/20b-agent-tools.png"></p>
-<blockquote>
-<p><strong>重要规则</strong>：<strong>工具集在首条消息固化，之后不可改</strong>。要换工具集就开新会话。</p>
-<p>2.1.0 起「我的工具集」存在后端 <code>config.json</code>（不再存 localStorage），重启不会丢。
-想做长会话的话，工具集预设里直接选「<strong>长会话模式</strong>」（标准 + <code>find_conversations</code> / <code>recall_history</code> / <code>read_conversation</code> / <code>reset_context</code>）。</p>
+<p data-page-node-id="kCN6cguZTtLTDqwgCZkVzU"><img alt="Agent 工具集选择" src="images/20b-agent-tools.png" data-page-node-id="pdJ9BVOb3K1VOe4BxODzpT"></p>
+<blockquote data-page-node-id="n7qfYpbkcLccU9ErJktj0T">
+<p data-page-node-id="AhhBgeyG61CsAkGrOf56vN"><strong data-page-node-id="HaI6fUrF1p9kOaH3R1wIpF">重要规则</strong>：<strong data-page-node-id="1y3ACXZoO6RgPrQxEybPos">工具集在首条消息固化，之后不可改</strong>。要换工具集就开新会话。</p>
+<p data-page-node-id="McIG5tW6HtXJdyCPny9cFe">2.1.0 起「我的工具集」存在后端 <code data-page-node-id="OvEZiBT0uDtxRQSbGgIvu3">config.json</code>（不再存 localStorage），重启不会丢。
+想做长会话的话，工具集预设里直接选「<strong data-page-node-id="Ez3ljUV47VtDLAc1qUf1bX">长会话模式</strong>」（标准 + <code data-page-node-id="pXFKPO5HEV0lJAj4TVwPo1">find_conversations</code> / <code data-page-node-id="zeIB1rsKCQzxR9JE9s2bEQ">recall_history</code> / <code data-page-node-id="GAT60LYASGjr4jdDPt5VfA">read_conversation</code> / <code data-page-node-id="D2WX2MpWJRspO6M1lTzrtD">reset_context</code>）。</p>
 </blockquote>
-<h2 id="53">5.3 运行设置</h2>
-<p><img alt="运行设置" src="images/07-settings-runtime.png"></p>
-<ul>
-<li><strong>命令超时</strong>（只管工具/命令，不管模型响应）</li>
-<li><strong>上下文提醒阈值</strong>（默认 80%，填 0 关闭）</li>
-<li><strong>新会话种子消息模板</strong>（<code>{handoff_path}</code> / <code>{task_count}</code> / <code>{task_list}</code>）</li>
-<li><strong>原图上传</strong>（关闭则压缩后传）、<strong>上传最大像素 / 缩略图尺寸 / 缓存清理阈值</strong></li>
+<h2 id="53" data-page-node-id="TfhmNnO2VEYq3DldFEu5CW">5.3 运行设置</h2>
+<p data-page-node-id="Z00x4zKCRCTepohPtP8Ra2"><img alt="运行设置" src="images/07-settings-runtime.png" data-page-node-id="opyLl7X4RWaeCEXqwBGAtp"></p>
+<ul data-page-node-id="pZLBECwVN3LocHCJB2ZBkr">
+<li data-page-node-id="OJRVoO4BfJeiN2svPfQGwR"><strong data-page-node-id="6Er6hW7BXtNSBqwBLP5K2q">命令超时</strong>（只管工具/命令，不管模型响应）</li>
+<li data-page-node-id="YbmKMMlfOQCbBKdeJvlLSi"><strong data-page-node-id="TissU9SoTgWtMtqYtHdbpP">上下文提醒阈值</strong>（默认 80%，填 0 关闭）</li>
+<li data-page-node-id="CWl2yEOhXmLcne3kVAL5l2"><strong data-page-node-id="kV25vP70iqPLhemBKwA4SG">新会话种子消息模板</strong>（<code data-page-node-id="I1nMdMvORO7Eh8HcgOyS9M">{handoff_path}</code> / <code data-page-node-id="CvTFF1SjRl5vnVd2PSoDjy">{task_count}</code> / <code data-page-node-id="oHhm5Jo0E2BZxkI3FhEaF2">{task_list}</code>）</li>
+<li data-page-node-id="8ozPlhhJA5mLhybrwSWNpV"><strong data-page-node-id="9ig7CVGwHTNyrj77DGhxZH">原图上传</strong>（关闭则压缩后传）、<strong data-page-node-id="twYqwCF7faQiNpOEvZBT74">上传最大像素 / 缩略图尺寸 / 缓存清理阈值</strong></li>
 </ul>
-<h2 id="54">5.4 连接状态</h2>
-<p><img alt="连接状态" src="images/08-settings-connections.png"></p>
-<p>上半：MCP 列表（绿点已连接 / 红点出错 / 灰点未启用）。下半：手机访问地址 + 访问口令 + 局域网 URL。</p>
-<h2 id="55">5.5 视觉</h2>
-<p><img alt="视觉" src="images/09-settings-vision.png"></p>
-<ul>
-<li><strong>视觉供应商</strong>：留空 = 走免费兜底链</li>
-<li><strong>单次视觉请求超时（毫秒）</strong></li>
-<li><strong>最大图片数</strong>：单轮占位引用的图片数上限（默认 4）</li>
+<h2 id="54" data-page-node-id="IyErlsA6e0b19ok4TIUcdH">5.4 连接状态</h2>
+<p data-page-node-id="38tKzx7SMETOApU2jBNI3f"><img alt="连接状态" src="images/08-settings-connections.png" data-page-node-id="6FIu12Bb9iqfnOfpd97Rag"></p>
+<p data-page-node-id="3kcfYUJjWOqV2jQybesIXv">上半：MCP 列表（绿点已连接 / 红点出错 / 灰点未启用）。下半：手机访问地址 + 访问口令 + 局域网 URL。</p>
+<h2 id="55" data-page-node-id="TW1RiQebljbOaUbH1QBYYn">5.5 视觉</h2>
+<p data-page-node-id="DorH4BiYZ1bQNjH8NmoxAn"><img alt="视觉" src="images/09-settings-vision.png" data-page-node-id="3PAnaZqy7fXKfKlciLjJ2Y"></p>
+<ul data-page-node-id="9jk8nRpojGRInXlStm9fah">
+<li data-page-node-id="rYjLkJAC2LguC4TCy42VUE"><strong data-page-node-id="KpfJDI3plwJcECvhCBj5o5">视觉供应商</strong>：留空 = 走免费兜底链</li>
+<li data-page-node-id="rFiBsQrvrJ0V7TPoiYC8Zi"><strong data-page-node-id="eBBg4rODHNJ6eROd1ypEo5">单次视觉请求超时（毫秒）</strong></li>
+<li data-page-node-id="12gJjIKWljhV7QqqFThuGW"><strong data-page-node-id="lVspD5QckCGEPIDlSAwSPP">最大图片数</strong>：单轮占位引用的图片数上限（默认 4）</li>
 </ul>
-<h2 id="56">5.6 联网搜索</h2>
-<p><img alt="联网搜索" src="images/10-settings-search.png"></p>
-<ul>
-<li>搜索 API profile（可配多个）</li>
-<li>搜索结果当素材引用，<strong>别当真理</strong></li>
+<h2 id="56" data-page-node-id="y3Vdhejv2WVSvIPyHtdiwS">5.6 联网搜索</h2>
+<p data-page-node-id="XncyGM7t87PIHwnig1kojg"><img alt="联网搜索" src="images/10-settings-search.png" data-page-node-id="fEnFEBpG8KCIbXy4fUHljO"></p>
+<ul data-page-node-id="7adxJeM8ETZ8LnOBOvlDwi">
+<li data-page-node-id="yvkJ1eyGC1nulx9HtHhwQZ">搜索 API profile（可配多个）</li>
+<li data-page-node-id="GMdR4RNsjGV59n5DTaiX8H">搜索结果当素材引用，<strong data-page-node-id="PzzjGUCoAlUCfB3gvySwEf">别当真理</strong></li>
 </ul>
-<h2 id="57-skills">5.7 Skills 管理</h2>
-<p><img alt="Skills 管理" src="images/11-settings-skills.png"></p>
-<ul>
-<li>已装 Skill 列表 + 启用/隐藏切换 + 恢复已隐藏。</li>
-<li>装新 Skill → 点「安装 Skill」按钮或拖 .zip / .md。</li>
-<li>RunningHub 站点切换也在这里。</li>
+<h2 id="57-skills" data-page-node-id="Lq946unA78Xy1W2uzyXIm8">5.7 Skills 管理</h2>
+<p data-page-node-id="x0AY1ye4FDx0l2yqEw9eY9"><img alt="Skills 管理" src="images/11-settings-skills.png" data-page-node-id="A0yk3HH0zbxYpPKNiv4Nuh"></p>
+<ul data-page-node-id="nQhNwHCho2sKlOjHC0bN6v">
+<li data-page-node-id="8mA74StFBwRJSKRxdTlDqR">已装 Skill 列表 + 启用/隐藏切换 + 恢复已隐藏。</li>
+<li data-page-node-id="BO5pE25hbuG64bBUbQrFoF">装新 Skill → 点「安装 Skill」按钮或拖 .zip / .md。</li>
+<li data-page-node-id="KyTx7lTjOzxD6F2KOAE0RV">RunningHub 站点切换也在这里。</li>
 </ul>
-<p><img alt="导入 Skill" src="images/16-skill-import.png"></p>
-<h2 id="58">5.8 数据与迁移</h2>
-<p><img alt="数据与迁移" src="images/12-settings-datamigration.png"></p>
-<ul>
-<li>数据库版本 / 数据目录 / 当前 Skills 目录 / 健康状态 / 备份位置。</li>
-<li><strong>历史数据管理</strong>：查看数据库占用并一键压缩回收空间（实测 400MB 可压到 ~90MB，继续会话发给模型的历史消息逐字节不变）。</li>
-<li>「备份」一键压缩 <code>data/</code> 到 <code>backups/</code>，<strong>升级前必做</strong>。</li>
+<p data-page-node-id="wBCoUvN6wa1MpRJ32y8oRt"><img alt="导入 Skill" src="images/16-skill-import.png" data-page-node-id="8G6yVGP3hjr0Ctdd5nuZAI"></p>
+<h2 id="58" data-page-node-id="hqrPpVB7V7HAFUqXbyGC67">5.8 数据与迁移</h2>
+<p data-page-node-id="eJk9XI5e3m9ObBXaL2SbgH"><img alt="数据与迁移" src="images/12-settings-datamigration.png" data-page-node-id="R1ATAHG51JKrYLhLwDji4E"></p>
+<ul data-page-node-id="I1JIf4j8k5ghdhex3DcGwP">
+<li data-page-node-id="bsAi5lp82qRQYxztn0DEoP">数据库版本 / 数据目录 / 当前 Skills 目录 / 健康状态 / 备份位置。</li>
+<li data-page-node-id="gBzFi59r0mZj3xenpvqZ0w"><strong data-page-node-id="nQmmG0HxmMIhPaAZuPAC2I">历史数据管理</strong>：查看数据库占用并一键压缩回收空间（实测 400MB 可压到 ~90MB，继续会话发给模型的历史消息逐字节不变）。</li>
+<li data-page-node-id="qIka2jBEQpU1vAEnfL66rG">「备份」一键压缩 <code data-page-node-id="2tuy3O3QiZ5WH2XgffJZg7">data/</code> 到 <code data-page-node-id="MBYmjxepoJU69mf4VP8wZx">backups/</code>，<strong data-page-node-id="bxs9aE4UrVzbyBXTeZEo00">升级前必做</strong>。</li>
 </ul>
-<h2 id="59">5.9 软件更新</h2>
-<p><img alt="软件更新" src="images/13-settings-updates.png"></p>
-<ul>
-<li><strong>EXE 模式</strong>：自动检查 → 下载 → SHA-256 校验 → 提示重启。</li>
-<li><strong>源码模式</strong>：<strong>不支持一键更新</strong>，需 <code>git pull --ff-only</code> 然后重启服务。</li>
-<li>目标版本下拉可选历史版本 + 回退；检查完成后自动选中新版本。</li>
+<h2 id="59" data-page-node-id="sqhvXP2qdDTFMJdqBwcwgk">5.9 软件更新</h2>
+<p data-page-node-id="DzvYV6eRWQLeNEjrXcGY0x"><img alt="软件更新" src="images/13-settings-updates.png" data-page-node-id="qO4ei4GDAA6ENUdLUsFHHs"></p>
+<ul data-page-node-id="UoQfIlV1xBC8AmC9D0YZb7">
+<li data-page-node-id="0eDEMKHopJS5snOEVvsd41"><strong data-page-node-id="2T6da0I8i40D12VPtb1kAV">EXE 模式</strong>：自动检查 → 下载 → SHA-256 校验 → 提示重启。</li>
+<li data-page-node-id="7R5tTetFZ6tg0Pv0VLtEPu"><strong data-page-node-id="DkDBnbqwzZMS9XNTgvxzBH">源码模式</strong>：<strong data-page-node-id="o7WqKJY08xgsFUHUClwu4j">不支持一键更新</strong>，需 <code data-page-node-id="RRkblsfjCmjFDKnYmxGu6G">git pull --ff-only</code> 然后重启服务。</li>
+<li data-page-node-id="wyH26WtipF0H8ETzjZox8R">目标版本下拉可选历史版本 + 回退；检查完成后自动选中新版本。</li>
 </ul>
-<h2 id="510">5.10 工作区</h2>
-<p><img alt="工作区选择" src="images/17-workspace-dialog.png"></p>
-<ul>
-<li>工作区 = AI 可读写的根目录（<strong>安全边界</strong>）。</li>
-<li>在输入框下方的「工作区」下拉或设置页添加，支持直接选目录 / 浏览 / 上级跳转。</li>
-<li><strong>切换分组即切换目录</strong>：把会话移到某个工作区分组，其磁盘工作区同步指向该分组目录；「移至未分组」只改侧栏分类、保留原目录。</li>
+<h2 id="510" data-page-node-id="boiRsTvFW6QIm9tGdXLKoJ">5.10 工作区</h2>
+<p data-page-node-id="Fwi1XEOXs84fMFdGwt4amo"><img alt="工作区选择" src="images/17-workspace-dialog.png" data-page-node-id="YkcYxuWNcYgEyDKU7p5YVQ"></p>
+<ul data-page-node-id="IeS7Gh7HXgEPS3MweRrEdZ">
+<li data-page-node-id="AE4mjAVSQVrDmlJRGfX5XM">工作区 = AI 可读写的根目录（<strong data-page-node-id="30yDDooKhX3drecISzhfo1">安全边界</strong>）。</li>
+<li data-page-node-id="Ajn8cvGckdsBewfh4v1oho">在输入框下方的「工作区」下拉或设置页添加，支持直接选目录 / 浏览 / 上级跳转。</li>
+<li data-page-node-id="hop2xtbEtrud27AZtMpDEC"><strong data-page-node-id="JDOy7nddYIU7dzRqQaZ7kl">切换分组即切换目录</strong>：把会话移到某个工作区分组，其磁盘工作区同步指向该分组目录；「移至未分组」只改侧栏分类、保留原目录。</li>
 </ul>
-<hr>
-<h1 id="6">第 6 章　常见问题与高手技巧</h1>
-<h2 id="61-500">6.1 模型连不上 / 报 500 / 代理冲突</h2>
-<ul>
-<li>「检查」按钮能告诉你<strong>网络层 vs API Key vs 路径</strong>是哪一层错。</li>
-<li>国内访问海外供应商常需开系统代理；Naiba Chat 不内置代理，但遇到代理进程重启导致的连接拒绝会自动改用直连重试。</li>
-<li>2.1.0 起 <strong>5xx 会自动重试</strong>（1.5s / 3s，最多 3 次）；如果三次都失败，去看进程工作目录下的 <code>naiba-model-error-payload.json</code>（不含 API Key）。</li>
-<li>DeepSeek 触发速率限制的话，<strong>等 60 秒</strong>再试。</li>
+<hr data-page-node-id="cZ4WwckNw3TIEwoG2Z4tBb">
+<h1 id="6" data-page-node-id="V1OEthX6hkWCcabtOADK9W">第 6 章　常见问题与高手技巧</h1>
+<h2 id="61-500" data-page-node-id="RbXwuAXCi2PZK2Fgz64KXc">6.1 模型连不上 / 报 500 / 代理冲突</h2>
+<ul data-page-node-id="mQY24sZ1lahBei6Njv54nL">
+<li data-page-node-id="VeYH7PAXzBARVWOVg8B8Do">「检查」按钮能告诉你<strong data-page-node-id="ge1slywZeuhRtghCQUXgrS">网络层 vs API Key vs 路径</strong>是哪一层错。</li>
+<li data-page-node-id="Y71Xo8KU2Djl5Vw4Upe90d">国内访问海外供应商常需开系统代理；Naiba Chat 不内置代理，但遇到代理进程重启导致的连接拒绝会自动改用直连重试。</li>
+<li data-page-node-id="kbS98OANspNj1oaelvE0s6">2.1.0 起 <strong data-page-node-id="Q1Uvtwu6wgf4ChpSGc5wdO">5xx 会自动重试</strong>（1.5s / 3s，最多 3 次）；如果三次都失败，去看进程工作目录下的 <code data-page-node-id="xAMATKChnDpwEAFbcOHKho">naiba-model-error-payload.json</code>（不含 API Key）。</li>
+<li data-page-node-id="Qw3u9asIyx4nT7gVj8jr31">DeepSeek 触发速率限制的话，<strong data-page-node-id="tW5UWXxfojmoQef043LhRG">等 60 秒</strong>再试。</li>
 </ul>
-<h2 id="62-comfyui">6.2 ComfyUI 工作流报错</h2>
-<ul>
-<li><strong>UI JSON ≠ API JSON</strong>：导出时<strong>必须</strong>选「API 格式」。</li>
-<li>报错 <code>Prompt outputs failed validation</code>：节点连线断了，重开 UI 检查。</li>
-<li>comfy-mcp 圆点红色：见 3.6 节。</li>
+<h2 id="62-comfyui" data-page-node-id="2N0m05XwIHeJW9fDTaZNE1">6.2 ComfyUI 工作流报错</h2>
+<ul data-page-node-id="lN2BkFHvAsc3SoPtBgYgba">
+<li data-page-node-id="k8VG0NIImR1lGqAKX3bFiY"><strong data-page-node-id="Pr5W9WEqXb8OHiIqy60QUm">UI JSON ≠ API JSON</strong>：导出时<strong data-page-node-id="Sj0kZJgXPFo07fz7VQFedY">必须</strong>选「API 格式」。</li>
+<li data-page-node-id="2hMOcXTQFXJScBalXP0VcC">报错 <code data-page-node-id="9RMFsqaThZWuoGH43LYb6a">Prompt outputs failed validation</code>：节点连线断了，重开 UI 检查。</li>
+<li data-page-node-id="QEDnDhWg7iGhO3fIFss52t">comfy-mcp 圆点红色：见 3.6 节。</li>
 </ul>
-<h2 id="63-mcp">6.3 MCP 工具调不到</h2>
-<p><strong>新加的 MCP 必须重开会话才生效。</strong> 配完 → 关当前会话 → 重新开。</p>
-<h2 id="64">6.4 换了模型却不生效 / 图片发不出去</h2>
-<ul>
-<li><strong>确认两处都选了</strong>：顶栏「API」是连接，输入框下方「模型」才是真正干活的那一个，两个都要对。</li>
-<li><strong>换了模型仍按旧能力走</strong>：2.1.1 起切 API 或模型名会自动把图像能力重置为「待探测」，下一次发送时按新模型的真实能力判断；如果还是不对，重开一次会话让它重新探测。</li>
-<li><strong>想让 A 会话用便宜模型、B 会话用强模型</strong>：直接在各自的会话里选就行，模型名按会话记忆，互不干扰。</li>
+<h2 id="63-mcp" data-page-node-id="qKgiFXhBHqGBtrA2QAED5G">6.3 MCP 工具调不到</h2>
+<p data-page-node-id="zqByMUo4xPMPHqhVt9idQG"><strong data-page-node-id="NhQigGWIt6fuUbpAwMY0FP">新加的 MCP 必须重开会话才生效。</strong> 配完 → 关当前会话 → 重新开。</p>
+<h2 id="64" data-page-node-id="7JShlMTTH15usMfitAVNMq">6.4 换了模型却不生效 / 图片发不出去</h2>
+<ul data-page-node-id="yzA3GMxbVieTjSKapmjv6h">
+<li data-page-node-id="zvRC52BMegIGVBd6DZBY3F"><strong data-page-node-id="cnwMRncAP3bcZC6rJkYO2n">确认两处都选了</strong>：顶栏「API」是连接，输入框下方「模型」才是真正干活的那一个，两个都要对。</li>
+<li data-page-node-id="6bHdCrmzE1lyTyozRIoaFv"><strong data-page-node-id="WnC2RSYEm5lE7ZaYeXDSnc">换了模型仍按旧能力走</strong>：2.1.1 起切 API 或模型名会自动把图像能力重置为「待探测」，下一次发送时按新模型的真实能力判断；如果还是不对，重开一次会话让它重新探测。</li>
+<li data-page-node-id="IcEkrEBKTyR9Xs5qnDbL8M"><strong data-page-node-id="bdCuLnU3v2bV80U9b1LSlr">想让 A 会话用便宜模型、B 会话用强模型</strong>：直接在各自的会话里选就行，模型名按会话记忆，互不干扰。</li>
 </ul>
-<h2 id="65">6.5 权限一直弹窗</h2>
-<p>审批档位从「确认」切到「自动」（工作区内免问）。完全不用问就用「完全」档（<strong>慎用</strong>）。</p>
-<h2 id="66">6.6 上下文快满了怎么办</h2>
-<ol>
-<li>看输入框下方「上下文 x%」——70% 黄、90% 红。</li>
-<li>到 80% 会弹窗提醒，选「让模型写交接文档 + 开始新会话」。</li>
-<li>或者手动点某条回复下面的「<strong>新会话</strong>」划分割线。</li>
-<li>想更省：勾上 <code>reset_context</code> 工具，让模型自己判断何时重置。</li>
+<h2 id="65" data-page-node-id="tYsyzv9NdSYP4lnUxIWRXX">6.5 权限一直弹窗</h2>
+<p data-page-node-id="JF1h7u4VA775sUChJTCl1J">审批档位从「确认」切到「自动」（工作区内免问）。完全不用问就用「完全」档（<strong data-page-node-id="IrIdohg9NJo1wlC2eZXaAU">慎用</strong>）。</p>
+<h2 id="66" data-page-node-id="LeZzvQG1IVYDDlFmWy85hy">6.6 上下文快满了怎么办</h2>
+<ol data-page-node-id="5qrB2AjAnFkWttj5jkLjb5">
+<li data-page-node-id="HBYCnGFzwI9s2vbexJe9sL">看输入框下方「上下文 x%」——70% 黄、90% 红。</li>
+<li data-page-node-id="d0aftxBVZHEEFCquFwCPSp">到 80% 会弹窗提醒，选「让模型写交接文档 + 开始新会话」。</li>
+<li data-page-node-id="CwngRUNEsqta4suQX9z7XP">或者手动点某条回复下面的「<strong data-page-node-id="HvX4WNTEpQVHB5wDumkU02">新会话</strong>」划分割线。</li>
+<li data-page-node-id="L6gobSiuuBsZb2BHH1yf4v">想更省：勾上 <code data-page-node-id="Ta44Cq0QYpLK6XGA7Z1T56">reset_context</code> 工具，让模型自己判断何时重置。</li>
 </ol>
-<h2 id="67">6.7 卡住了怎么办</h2>
-<ol>
-<li>消息下方「暂停」按钮。</li>
-<li>看「任务」面板有没有跑死的后台任务 → 杀掉。</li>
-<li>看上下文用量环是不是满了 → 划分割线或开新会话。</li>
-<li>实在不行重开会话（<strong>会话内容会保留</strong>）。</li>
+<h2 id="67" data-page-node-id="I6r4zANYnf2fj8hd9gO15Q">6.7 卡住了怎么办</h2>
+<ol data-page-node-id="DjjcWHdHNGhUBgUua1XXnx">
+<li data-page-node-id="IDTc4jf6V1i38D6J8IU7Fa">消息下方「暂停」按钮。</li>
+<li data-page-node-id="DjP8Zb0cM6UW93Ez6ROBE2">看「任务」面板有没有跑死的后台任务 → 杀掉。</li>
+<li data-page-node-id="SdIpwiGmCDMwrH9v0xTs2i">看上下文用量环是不是满了 → 划分割线或开新会话。</li>
+<li data-page-node-id="l8AK5uoWp9Ffz9KQIgCH4P">实在不行重开会话（<strong data-page-node-id="zH9uCL8ElDMmb7bIALruHS">会话内容会保留</strong>）。</li>
 </ol>
-<h2 id="68">6.8 高手技巧</h2>
-<ol>
-<li><strong><code>↑↓</code> 选 Skill</strong> / <strong><code>@</code> 引文件用 <code>Tab</code> 进目录</strong> / <strong><code>Enter</code> 发送</strong> / <strong><code>Shift+Enter</code> 换行</strong>。</li>
-<li><strong>运行中 <code>Enter</code> 插话</strong>（引导合并到当前轮）。</li>
-<li><strong><code>Ctrl+Enter</code> 全部引导</strong>（取消当前轮 + 把引导作为新轮发）。</li>
-<li><strong>纯附件就能发</strong>：不写字直接点发送，模型会收到明确说明，不会瞎猜。</li>
-<li><strong>消息分支</strong>（点自己消息「分支」按钮）→ 新会话接着干。</li>
-<li><strong>Token 环判断缓存命中</strong>：掉到 0% 提示「可能改了系统提示词」。</li>
-<li><strong>快捷消息</strong>：把一天说十遍的话存进去，点一下就进输入框。</li>
-<li><strong>数据目录备份再升级</strong>：设置 → 数据与迁移 → 备份。</li>
-<li><strong>历史太大就压缩</strong>：设置 → 数据与迁移 → 历史数据管理 → 压缩。</li>
-<li><strong>手机扫码直连</strong>：设置 → 连接状态里复制带口令的局域网地址。</li>
-<li><strong>按会话换模型</strong>：A 会话用便宜模型跑批、B 会话用强模型写稿，各自在输入框下方「模型」下拉里选，互不干扰。</li>
+<h2 id="68" data-page-node-id="6EtvTVns8qxRBVNLrZALsV">6.8 高手技巧</h2>
+<ol data-page-node-id="gMwBQ2BNFfU66AiXcpFScs">
+<li data-page-node-id="VZK55WAowiv10rrkV8oMGI"><strong data-page-node-id="2c72FL8F3mbQliPYO8K5m3"><code data-page-node-id="PDzJP6qWdb9HwY2x5uHZet">↑↓</code> 选 Skill</strong> / <strong data-page-node-id="MzTI866lXG15WShah9wvJU"><code data-page-node-id="YuptVfa4Ip2QM0kK4Sxi71">@</code> 引文件用 <code data-page-node-id="lgT8DoZ1GzT9nI2Bhhj1dB">Tab</code> 进目录</strong> / <strong data-page-node-id="MQ54tLhgp7P4NFy69PTGgN"><code data-page-node-id="8E84mxnkSHttLRLztHLj1T">Enter</code> 发送</strong> / <strong data-page-node-id="vR41pJ9v7QNXfv0EbaAnsq"><code data-page-node-id="GPG6WZiI2bFi9pydNIEdpR">Shift+Enter</code> 换行</strong>。</li>
+<li data-page-node-id="N7YS0tEXrq1U8AMbqzHDHr"><strong data-page-node-id="tgBhBxG7YZvXnNbPoUGrWw">运行中 <code data-page-node-id="v4sWFPCJXAMJaHxahNdHGm">Enter</code> 插话</strong>（引导合并到当前轮）。</li>
+<li data-page-node-id="6AscEFxm5t9pwBDHWhPDGp"><strong data-page-node-id="uVN7vq3dA0SCxNUPIDxJBN"><code data-page-node-id="IGhVJyEiiEseMHGVTG45YI">Ctrl+Enter</code> 全部引导</strong>（取消当前轮 + 把引导作为新轮发）。</li>
+<li data-page-node-id="eFnoMb613lEYyhVFp7IZ1F"><strong data-page-node-id="9cuW8rz6Bwbtdj89IYzwa0">纯附件就能发</strong>：不写字直接点发送，模型会收到明确说明，不会瞎猜。</li>
+<li data-page-node-id="j9iOQ62W7eAXxwMB4rAQzC"><strong data-page-node-id="uIbX9zb4iDgIAa7hrqXBUF">消息分支</strong>（点自己消息「分支」按钮）→ 新会话接着干。</li>
+<li data-page-node-id="K5EFgsM4FTybETR0XOHfut"><strong data-page-node-id="LEL0kvIteVnaODE82kVJnN">Token 环判断缓存命中</strong>：掉到 0% 提示「可能改了系统提示词」。</li>
+<li data-page-node-id="917bBCOqZpX6GlzJ5GfiK1"><strong data-page-node-id="2ywrJQnNN5YozXJr0z0yHD">快捷消息</strong>：把一天说十遍的话存进去，点一下就进输入框。</li>
+<li data-page-node-id="HFEK5V0qg68pndeORC4g6K"><strong data-page-node-id="aYshcqqVrGJzoiw5l68okH">数据目录备份再升级</strong>：设置 → 数据与迁移 → 备份。</li>
+<li data-page-node-id="lXCPtwzFaMB79liu0NAprq"><strong data-page-node-id="M1qwzZF9b9w6N5OReS6qxR">历史太大就压缩</strong>：设置 → 数据与迁移 → 历史数据管理 → 压缩。</li>
+<li data-page-node-id="4JRuIKfGbEflJbXuktRznJ"><strong data-page-node-id="15zmC2n7PymGm5hLAQJI4D">手机扫码直连</strong>：设置 → 连接状态里复制带口令的局域网地址。</li>
+<li data-page-node-id="dt9SuWHHXyY2V0oqnhkvYr"><strong data-page-node-id="ZQEfNCtd4y1vfXdVoUmNXg">按会话换模型</strong>：A 会话用便宜模型跑批、B 会话用强模型写稿，各自在输入框下方「模型」下拉里选，互不干扰。</li>
 </ol>
-<hr>
-<h1 id="_3">附录</h1>
-<h2 id="a">A 文件都存哪儿</h2>
-<pre><code>D:\naibachatdata\               ← 数据根目录（冻结版固定 %LOCALAPPDATA%\NaibaChat）
+<hr data-page-node-id="YxMXYqCE4XhS9yJJpJkECv">
+<h1 id="_3" data-page-node-id="3Wce2nHhhEP9JKYCW1NAUJ">附录</h1>
+<h2 id="a" data-page-node-id="ME1pVlfWputDtEPD8Np3Fv">A 文件都存哪儿</h2>
+<pre data-page-node-id="V7Qtx3uDwaCdAJ7VLPZrvV"><code data-page-node-id="M7CQcDDCDNAHuikN5EvjMD">D:\naibachatdata\               ← 数据根目录（冻结版固定 %LOCALAPPDATA%\NaibaChat）
 ├── config.json                 ← 主配置（含 Agent / 工具集 / 快捷消息）
 ├── conversations.db            ← 会话数据库
 ├── uploads\                    ← 你上传的附件（按日分目录）
@@ -906,238 +1066,232 @@ D:\naiba-chat\                  ← 项目根（可改）
 └── skills\                     ← 装在本项目的 Skill
 D:\skills\                      ← 用户级 Skill（可选）
 </code></pre>
-<h2 id="b">B 速查卡</h2>
-<h3 id="_4">输入快捷键</h3>
-<table>
-<thead>
-<tr>
-<th>按键</th>
-<th>作用</th>
+<h2 id="b" data-page-node-id="u9RFWlCwZr3HCw5Sdwvn12">B 速查卡</h2>
+<h3 id="_4" data-page-node-id="H23iKkkQBfog80wnPNjwq5">输入快捷键</h3>
+<table data-page-node-id="B1N85bL4qfPhL6LeK4fnif">
+<thead data-page-node-id="qikBsH5Ms3FENMcnMB7FqF">
+<tr data-page-node-id="NVJyAzFchdPERCHBr21y26">
+<th data-page-node-id="mAGuPHOGCuuQPC4JnHJtH3">按键</th>
+<th data-page-node-id="go94nu5cMW604EWGLLDagp">作用</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td><code>/</code></td>
-<td>弹 Skill 列表</td>
+<tbody data-page-node-id="N2Bv2mT1OqRPfVXL6pw0xr">
+<tr data-page-node-id="gC5p97UvAsskxxZCr8D7ME">
+<td data-page-node-id="lM21cGRIRWtD6AiTox1m08"><code data-page-node-id="HOHtDZAv7w17Juvb7MsWs7">/</code></td>
+<td data-page-node-id="XDasULxlbcQUaaehSpZ1zR">弹 Skill 列表</td>
 </tr>
-<tr>
-<td><code>/skill-name</code></td>
-<td>引用指定 Skill</td>
+<tr data-page-node-id="5CB3mB0HLn6cNzetEcKfF3">
+<td data-page-node-id="DbXE3isSBTircAR6hCcGuW"><code data-page-node-id="4VM562V4AoHJ5lhzBs4Vdt">/skill-name</code></td>
+<td data-page-node-id="BtLLOmDdcr6kYawUNrf2lA">引用指定 Skill</td>
 </tr>
-<tr>
-<td><code>@</code></td>
-<td>弹工作区文件/目录列表（<code>Tab</code> 进目录、<code>Shift+Tab</code> 返回）</td>
+<tr data-page-node-id="ffAjq50gpBCxsbKtPRrUM6">
+<td data-page-node-id="bIaDNAgvneeKy8sfiG2Ta9"><code data-page-node-id="iaHVbxStn371F2KFOr0Oh2">@</code></td>
+<td data-page-node-id="SBNWzuMBFVyKplyXTYte74">弹工作区文件/目录列表（<code data-page-node-id="rsQ9FF8GuWdIS3RJMCcx3i">Tab</code> 进目录、<code data-page-node-id="DFHZ68tvsBOyOVTeOe9Vtu">Shift+Tab</code> 返回）</td>
 </tr>
-<tr>
-<td><code>↑↓ + Enter</code></td>
-<td>在弹层里选择</td>
+<tr data-page-node-id="tlvDF4tLklR5EEfprxaqZx">
+<td data-page-node-id="YcWu1KAPLbEMU9BFQRskdD"><code data-page-node-id="MuJKGlaHPEs8h4cFBrw9HN">↑↓ + Enter</code></td>
+<td data-page-node-id="n5qGkzY6AILCR4WyVEhpIi">在弹层里选择</td>
 </tr>
-<tr>
-<td><code>Enter</code></td>
-<td>发送消息</td>
+<tr data-page-node-id="L6t7lf3riv0vOHud06vDeO">
+<td data-page-node-id="Hkel9OzqZHZqstWr7cKG0o"><code data-page-node-id="CYsHgvMWZ6Cv5t9JGEOuEY">Enter</code></td>
+<td data-page-node-id="yHRjV4CAmUW7dyR0KsvydY">发送消息</td>
 </tr>
-<tr>
-<td><code>Shift+Enter</code></td>
-<td>换行</td>
+<tr data-page-node-id="z1Bf4mmJ9brxy0X2vrD51Q">
+<td data-page-node-id="GWCXI9R073Jlju3xYFxMXK"><code data-page-node-id="uXtcxOSGbFsEk1BqxJjtoO">Shift+Enter</code></td>
+<td data-page-node-id="suDubW5wLgAciBa84YPSb1">换行</td>
 </tr>
-<tr>
-<td><code>Esc</code></td>
-<td>关闭弹窗 / 取消编辑 / 关文件面板</td>
+<tr data-page-node-id="Xr44fxy2lxrnthImSqbLGs">
+<td data-page-node-id="wPI5AEPK7KH7IC7xV3Imj9"><code data-page-node-id="ej3DoKdXoHujXAwDQS88fI">Esc</code></td>
+<td data-page-node-id="acIyBAahRyTch7GKIuuBhx">关闭弹窗 / 取消编辑 / 关文件面板</td>
 </tr>
 </tbody>
 </table>
-<h3 id="_5">顶栏左侧下拉</h3>
-<table>
-<thead>
-<tr>
-<th>下拉</th>
-<th>作用</th>
+<h3 id="_5" data-page-node-id="RDtIrSJRpDP46uTKAmzMuD">顶栏左侧下拉</h3>
+<table data-page-node-id="847Iw30tNrt0qxJRMlwEDw">
+<thead data-page-node-id="vhCTwv0olytyraHaUegKGQ">
+<tr data-page-node-id="iEXZqDm8bpoFWuEUQLexZJ">
+<th data-page-node-id="5gtC3eaaWW20b4zVpO0tjl">下拉</th>
+<th data-page-node-id="09k3ZtW74vKC5JXPDHt9bK">作用</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td><strong>API</strong></td>
-<td>选连接配置（哪个供应商 / 地址 / Key），切换后该会话的模型名清空重选</td>
+<tbody data-page-node-id="McE6sJyYCwdHyFfV8By7FL">
+<tr data-page-node-id="3kt2Pm7tgESik5hldcwB8E">
+<td data-page-node-id="k6OZ3kfodmAgP5hKwUQ5lz"><strong data-page-node-id="nrRDZ4ubDQRM7e1NicGNRY">API</strong></td>
+<td data-page-node-id="VC6YGekJhOvdRkuNDw6FQS">选连接配置（哪个供应商 / 地址 / Key），切换后该会话的模型名清空重选</td>
 </tr>
-<tr>
-<td><strong>Agent</strong></td>
-<td>选人设 + 系统提示词 + 工具集（首条消息后工具集固化）</td>
+<tr data-page-node-id="D0MNX0LwoHwp0qauCVXBfP">
+<td data-page-node-id="umGv8EAM9gyn39qvoVBo3P"><strong data-page-node-id="zDLX9gKhNWony4kYyatlzy">Agent</strong></td>
+<td data-page-node-id="lqwqkPdjg4f9wh9ug0iYSU">选人设 + 系统提示词 + 工具集（首条消息后工具集固化）</td>
 </tr>
 </tbody>
 </table>
-<h3 id="_6">顶栏按钮</h3>
-<table>
-<thead>
-<tr>
-<th>按钮</th>
-<th>作用</th>
+<h3 id="_6" data-page-node-id="B9kFc8aOlzydoNqYBENCqx">顶栏按钮</h3>
+<table data-page-node-id="ZIDhxi7OD9ZUmhOdXD6DG1">
+<thead data-page-node-id="FwFqawavVTnyJFelWGdghU">
+<tr data-page-node-id="qCzlXiwluqBXRF0wrUqiqS">
+<th data-page-node-id="ZA9A6a9uT7tNvM8PVhMr5D">按钮</th>
+<th data-page-node-id="ctWjzRq4x30sVOZyuZTgvq">作用</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td>文件</td>
-<td>重新打开文件面板（保留已打开的标签）</td>
+<tbody data-page-node-id="VnuhZ2qIwQTIQAJt2FoXcK">
+<tr data-page-node-id="1ynFeiUwTQawv5ibX3jAQC">
+<td data-page-node-id="TAsvCNc0wWYOTWC9G50ouh">文件</td>
+<td data-page-node-id="VV4Mw2pHpDsjmOY1jxky22">重新打开文件面板（保留已打开的标签）</td>
 </tr>
-<tr>
-<td>N 任务</td>
-<td>看所有后台 Job</td>
+<tr data-page-node-id="7P8nLl59h6UGqHW6KFu3zA">
+<td data-page-node-id="maabxayStBtKiFo34AaPon">N 任务</td>
+<td data-page-node-id="mNFS3iVWBu4jV2ZneRwAfi">看所有后台 Job</td>
 </tr>
-<tr>
-<td>N Skill</td>
-<td>看当前会话已选的 Skill</td>
+<tr data-page-node-id="8i21klBsSFHuUVB3EUy1I3">
+<td data-page-node-id="SsN3CBwk4UIuWkOuqiqmCg">N Skill</td>
+<td data-page-node-id="CXBONZM40V5GwHkyLm8FM2">看当前会话已选的 Skill</td>
 </tr>
-<tr>
-<td>MCP</td>
-<td>圆点看连接状态（绿/红/黄/灰）</td>
+<tr data-page-node-id="5FxnEzUspO9ETHzwP9XeGs">
+<td data-page-node-id="6uBnhxaGsufFKGpU1PWVRQ">MCP</td>
+<td data-page-node-id="tHgof1bGTeUeQtznZqPVVc">圆点看连接状态（绿/红/黄/灰）</td>
 </tr>
-<tr>
-<td>刷新</td>
-<td>整页 reload（内嵌窗口用不了 F5 时点它）</td>
+<tr data-page-node-id="pLEAUQXmK9OAavtj3a939L">
+<td data-page-node-id="JfqECeLWk9IYeUI7BLFBWy">刷新</td>
+<td data-page-node-id="BOiL7nZowbfV0H5ECFfcNk">整页 reload（内嵌窗口用不了 F5 时点它）</td>
 </tr>
 </tbody>
 </table>
-<h3 id="_7">底部状态栏</h3>
-<table>
-<thead>
-<tr>
-<th>控件</th>
-<th>默认</th>
-<th>说明</th>
+<h3 id="_7" data-page-node-id="K9gj0GJu1HWozxpGfAJBIB">底部状态栏</h3>
+<table data-page-node-id="5GKicLiMWShtnFmDaHRyHX">
+<thead data-page-node-id="CtjQmzLEhDApjycobmFt2B">
+<tr data-page-node-id="Z7SrIF0jrKuJqlxjutwDFV">
+<th data-page-node-id="aVqVZ1dWYTNzYBAUha9CC6">控件</th>
+<th data-page-node-id="YGHqyFXFwakbsl9NiehAAi">默认</th>
+<th data-page-node-id="OC6vQrHEN3ynZRZCdOIOIG">说明</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td><strong>模型</strong></td>
-<td>跟随 API 默认</td>
-<td>本会话用哪个模型，按会话记忆；可选「手动输入模型名称…」</td>
+<tbody data-page-node-id="PuCvzowOdjKQMBvCA0Mgf2">
+<tr data-page-node-id="03urtI3Jl6KF1KN7FicBdd">
+<td data-page-node-id="ASXMoYH6eLcmp7KmTnNM5T"><strong data-page-node-id="4p7z8FgHGriYo6lHCDVSaE">模型</strong></td>
+<td data-page-node-id="eaZw0BBZNkJ73a6aBzkPh0">跟随 API 默认</td>
+<td data-page-node-id="TDlBEmtYpBTWwKP5HgICcI">本会话用哪个模型；列表来自当前 API 的模型目录，按会话记忆（旧值显示「已保存：X」）</td>
 </tr>
-<tr>
-<td>工作区</td>
-<td>未分组</td>
-<td>AI 能读写的目录根 = 安全边界</td>
+<tr data-page-node-id="AoR2eolNAsGJUTIQlijKnY">
+<td data-page-node-id="WTEd2l2SMrIgjgzvsQHJBF">工作区</td>
+<td data-page-node-id="dEmA4z4tSKF9lej5a7WEQ6">未分组</td>
+<td data-page-node-id="sECFZpYuU40Xh1TFBqlrNt">AI 能读写的目录根 = 安全边界</td>
 </tr>
-<tr>
-<td>审批 确认</td>
-<td>✓</td>
-<td>每次工具调用都问</td>
+<tr data-page-node-id="fFGJVA9DyUp2xMDVXUwGuh">
+<td data-page-node-id="INObSx72wFEUKvjnc4FZGD"><strong data-page-node-id="AJnGDyyFbwUCOkAgOznS0M">审批</strong>（按钮）</td>
+<td data-page-node-id="SScGsDJsuYALTLzSZbjlmL">确认</td>
+<td data-page-node-id="y5Gv2ktiq0mYMq6w6MeErj">点开是上拉框，三档：确认 / 自动 / 完全（完全慎用）</td>
 </tr>
-<tr>
-<td>审批 自动</td>
-<td></td>
-<td>工作区内自动</td>
+<tr data-page-node-id="ilYbxGRhJqZN5j9CqRArrf">
+<td data-page-node-id="fEdhIq5XdXnchAhvVufPbk">快捷消息</td>
+<td data-page-node-id="xfFzbigW9fVbs8OI2b4Sgo"></td>
+<td data-page-node-id="ZtRutafl63VHnkaspYINyF">常用提示词一键插入</td>
 </tr>
-<tr>
-<td>审批 完全</td>
-<td></td>
-<td>工具不确认（慎用）</td>
+<tr data-page-node-id="4wqyIsHWRLWCgAju2BwJBn">
+<td data-page-node-id="CkAbxHaIYITSboEOoHkJFx">思考 自动</td>
+<td data-page-node-id="kZwFT7eXYY4TQ1BlgEdkxq">✓</td>
+<td data-page-node-id="rqyuColkLWgh0ta9EjYbP9">当前思考强度（点输入区球形按钮切）</td>
 </tr>
-<tr>
-<td>快捷消息</td>
-<td></td>
-<td>常用提示词一键插入</td>
-</tr>
-<tr>
-<td>思考 自动</td>
-<td>✓</td>
-<td>当前思考强度（点输入区球形按钮切）</td>
-</tr>
-<tr>
-<td>上下文 --</td>
-<td></td>
-<td>实时百分比，70% 黄 / 90% 红</td>
+<tr data-page-node-id="w9tzBG9h4IYU2XAjtl0Jmr">
+<td data-page-node-id="odCzUzE7ag8lemFVqMYfwd">上下文 --</td>
+<td data-page-node-id="dQrmFRNMXR6lCdRYCrGFoV"></td>
+<td data-page-node-id="uSBj0m9SUuJYPhMcU4AFQr">实时百分比，70% 黄 / 90% 红</td>
 </tr>
 </tbody>
 </table>
-<h2 id="c">C 术语表</h2>
-<table>
-<thead>
-<tr>
-<th>术语</th>
-<th>一句话 + 比喻</th>
+<h2 id="c" data-page-node-id="Fyxc2yCjBQvXss8YzStgBJ">C 术语表</h2>
+<table data-page-node-id="bFXAoAgCYC11wFlsRdTfGW">
+<thead data-page-node-id="A5KcH67AR3Ev4NkIAFWQFK">
+<tr data-page-node-id="ixPhhUhp3W4SGSgcDR0fn0">
+<th data-page-node-id="XQ2Mi8eMPAxJhL6DwOxXvz">术语</th>
+<th data-page-node-id="O8G59Q8uplJpG2NBDinAFB">一句话 + 比喻</th>
 </tr>
 </thead>
-<tbody>
-<tr>
-<td><strong>Agent</strong></td>
-<td>人设 + 系统提示词 + 工具集。<strong>比喻</strong>：员工岗。</td>
+<tbody data-page-node-id="EkUcMjQ8l6yG7cmJQVPgir">
+<tr data-page-node-id="gJVuFDtjonUDBE0zXsWiT0">
+<td data-page-node-id="gY7eMkWIg6TrbYp3xfbAsV"><strong data-page-node-id="JPPhddXCucRLzEdFv4Ccl2">Agent</strong></td>
+<td data-page-node-id="ydBaUVoPPcjoxUcBJmtD0I">人设 + 系统提示词 + 工具集。<strong data-page-node-id="BFVZnJ5yDlpAQohAmsybFH">比喻</strong>：员工岗。</td>
 </tr>
-<tr>
-<td><strong>Skill</strong></td>
-<td>给 Agent 的"行业培训手册"。<strong>比喻</strong>：岗位操作手册。</td>
+<tr data-page-node-id="XN14sW6cnHleT1PwNyYwpx">
+<td data-page-node-id="DcIGdzz2heYkC8pcrE51RO"><strong data-page-node-id="mkRxa0cCV6P4T0Fh4tuHXI">Skill</strong></td>
+<td data-page-node-id="a5aH68bkxESOKakHSTb9yl">给 Agent 的"行业培训手册"。<strong data-page-node-id="zM2MK8wbl9rESwS8RzZmDD">比喻</strong>：岗位操作手册。</td>
 </tr>
-<tr>
-<td><strong>MCP</strong></td>
-<td>Agent 能调用的外部服务接口。<strong>比喻</strong>：员工桌上的电话。</td>
+<tr data-page-node-id="2FXxc3LbMJP5s8CUDtd5IV">
+<td data-page-node-id="uEG9EHOxFBORkcLTFuyJxd"><strong data-page-node-id="bsdm5Z3c5VdsjFEWbKPuMz">MCP</strong></td>
+<td data-page-node-id="2NQzCnaHYemCX3n17u3ihv">Agent 能调用的外部服务接口。<strong data-page-node-id="8j9aEoSJs1RtIwZXkcwkyV">比喻</strong>：员工桌上的电话。</td>
 </tr>
-<tr>
-<td><strong>Tool</strong></td>
-<td>Naiba Chat 内置的能力（读文件、跑命令等）。<strong>比喻</strong>：员工的手。</td>
+<tr data-page-node-id="6fmyDiXU0jcxzplRyFMIT2">
+<td data-page-node-id="bgs0kD9dBOIYJ7jgJepjKa"><strong data-page-node-id="rI0CiW3baPkGAw7i2ISgd6">Tool</strong></td>
+<td data-page-node-id="9sW14hknGNJeApYwJlJLne">Naiba Chat 内置的能力（读文件、跑命令等）。<strong data-page-node-id="ckVwqS3ldJFhxhZgoMKllb">比喻</strong>：员工的手。</td>
 </tr>
-<tr>
-<td><strong>工具集</strong></td>
-<td>一个 Agent 被允许使用的工具清单。<strong>比喻</strong>：上岗时发的工具箱。</td>
+<tr data-page-node-id="DjDemvjERlHgXPfpDxpO1x">
+<td data-page-node-id="MDGX6RAaI6xa4VVKtQeiN8"><strong data-page-node-id="EaXzZsuksPNfUpPqhAWOHo">工具集</strong></td>
+<td data-page-node-id="PWTkII48Jd2HqLja4nhOGZ">一个 Agent 被允许使用的工具清单。<strong data-page-node-id="kP9e2NNyUOeMwyG19rUplf">比喻</strong>：上岗时发的工具箱。</td>
 </tr>
-<tr>
-<td><strong>Job</strong></td>
-<td>后台跑着的任务。<strong>比喻</strong>：员工出去跑外勤。</td>
+<tr data-page-node-id="fJMHhlyT1bKLaYfKngJMcB">
+<td data-page-node-id="VBeukuvjjbWLEfFzstqaZF"><strong data-page-node-id="eFLYG5fMzOCnz3j5GtDhiC">Job</strong></td>
+<td data-page-node-id="dzL0MQYFC1kh0r2hWRlBvf">后台跑着的任务。<strong data-page-node-id="27af3rHbIbNjpo9xJRFal2">比喻</strong>：员工出去跑外勤。</td>
 </tr>
-<tr>
-<td><strong>API（连接）</strong></td>
-<td>一个供应商的地址 + Key 配置。<strong>比喻</strong>：你要打哪条外线。</td>
+<tr data-page-node-id="CmOEFZpvr9INyil8LgLWVn">
+<td data-page-node-id="a0dtbcd9GAPWXJAFhFSjGW"><strong data-page-node-id="e22AsS9D66SUmLOb5B70qT">API（连接）</strong></td>
+<td data-page-node-id="ltNSUXnKZfCpWwBQVPwCYb">一个供应商的地址 + Key 配置。<strong data-page-node-id="FbZ9dl6MCx1vpEcH0TqXCI">比喻</strong>：你要打哪条外线。</td>
 </tr>
-<tr>
-<td><strong>模型</strong></td>
-<td>具体干活的那个 AI 大脑，按会话选。<strong>比喻</strong>：这一单派哪位专家。</td>
+<tr data-page-node-id="VyoHfvtvQZ5HzgKMOWbvHt">
+<td data-page-node-id="H6lDyy11k3Ugo1K5oD0P8C"><strong data-page-node-id="DHETk8CydOy1ecyERthyu1">模型</strong></td>
+<td data-page-node-id="mR1lkcovijmsBQgbWMOqD3">具体干活的那个 AI 大脑，按会话选。<strong data-page-node-id="qC8RnUsjrktXWuY9AfoNEA">比喻</strong>：这一单派哪位专家。</td>
 </tr>
-<tr>
-<td><strong>工作区</strong></td>
-<td>AI 能读写的目录根，安全边界。<strong>比喻</strong>：员工能进的办公室。</td>
+<tr data-page-node-id="Sg2lZ6iZQWKuXZ5Onlk9CU">
+<td data-page-node-id="TNF2ohO3UkKPoTluUtPz82"><strong data-page-node-id="pCCmLaV6tAoSz1m2Tim1aT">托管 Skills 目录</strong></td>
+<td data-page-node-id="zsgzdZ1wjtABcJR7Et4WjA">Skill 的安装根，每个 Skill 一个子目录。<strong data-page-node-id="hji3OdjBIKRJ4PaOrjnygT">比喻</strong>：书架上的一格放一本。</td>
 </tr>
-<tr>
-<td><strong>审批档</strong></td>
-<td>AI 跑工具要不要你点头的开关。<strong>比喻</strong>：出门要不要老板签字。</td>
+<tr data-page-node-id="J2mmdRiTZMeZ6EHMY5Ekcl">
+<td data-page-node-id="Mq9C62sY37hRoRCzcB6hdD"><strong data-page-node-id="xkOxDsJyPPmfPKGIdWRBd6">工作区</strong></td>
+<td data-page-node-id="OKBUnxOMBkr8dPuKKnhEPP">AI 能读写的目录根，安全边界。<strong data-page-node-id="yShb6omDoq5bM9g8Qse1Lj">比喻</strong>：员工能进的办公室。</td>
 </tr>
-<tr>
-<td><strong>新会话分割线</strong></td>
-<td>在此线以上截断上下文、不删聊天记录。<strong>比喻</strong>：给笔记本换一页，旧页还在。</td>
+<tr data-page-node-id="mFqTPtgfHt2ZvA7oofytkn">
+<td data-page-node-id="HJkgNUpUBgA5E1TXUw58LF"><strong data-page-node-id="29YqXLlnFtPWokI0gie8ru">审批档</strong></td>
+<td data-page-node-id="kN9CCca7xvUP89BtboCfIa">AI 跑工具要不要你点头的开关。<strong data-page-node-id="8dCTUXxGcS53eV4nEA5wQg">比喻</strong>：出门要不要老板签字。</td>
 </tr>
-<tr>
-<td><strong>交接文档</strong></td>
-<td>重置前让 AI 写的工作小结。<strong>比喻</strong>：换班交接单。</td>
+<tr data-page-node-id="zXWLPbY6hp7I5ujFR37FqS">
+<td data-page-node-id="QetOoocsMQnY99wUQMxoF6"><strong data-page-node-id="tGqZd1lbxqfMCF48x9pp3r">新会话分割线</strong></td>
+<td data-page-node-id="1OAhnfnDkacApI0cUiYD6D">在此线以上截断上下文、不删聊天记录。<strong data-page-node-id="Kwx3N2De2d8NruYGpfniuB">比喻</strong>：给笔记本换一页，旧页还在。</td>
 </tr>
-<tr>
-<td><strong>刻度轨</strong></td>
-<td>聊天区右侧的一轮一条横条。<strong>比喻</strong>：书页侧边的章节标签。</td>
+<tr data-page-node-id="W1u0I6rx2WOL2bvOWnejl6">
+<td data-page-node-id="osKjXhFRngYWAGAmOI3Hvo"><strong data-page-node-id="wzok5YeB8OX4VBgec39HVS">交接文档</strong></td>
+<td data-page-node-id="lG9pQKHwOgCYOuVTbrfOnM">重置前让 AI 写的工作小结。<strong data-page-node-id="D0KH8XBrR5PWBuU8kwGElD">比喻</strong>：换班交接单。</td>
 </tr>
-<tr>
-<td><strong>本轮修改文件</strong></td>
-<td>一轮对话里 AI 写盘的所有文件。<strong>比喻</strong>：本轮会议纪要。</td>
+<tr data-page-node-id="7k5PUoom25sBS8MYChOEs9">
+<td data-page-node-id="ABvifcmovY7ivdYvFZ0jdE"><strong data-page-node-id="u04WEHiLsVhcCpHIigj5z7">刻度轨</strong></td>
+<td data-page-node-id="NMeH2fKlDn0ebJJCwbiWQx">聊天区右侧的一轮一条横条。<strong data-page-node-id="HjRGlVw8bgWUAAwFHrHJKq">比喻</strong>：书页侧边的章节标签。</td>
 </tr>
-<tr>
-<td><strong>文件面板</strong></td>
-<td>右侧多标签的文件预览/编辑器。<strong>比喻</strong>：桌上摊开的文件。</td>
+<tr data-page-node-id="NVEDWwmEASFdEiwEGGXNK3">
+<td data-page-node-id="QGjPdG6wGWiV6BPyTLzjRA"><strong data-page-node-id="eWi8d0bAoUyjEQuwubiK1R">本轮修改文件</strong></td>
+<td data-page-node-id="PHLgw6tv9Fbteyn1Jn0HGf">一轮对话里 AI 写盘的所有文件。<strong data-page-node-id="JP0HiLWYPhAZTHU3w8MC8I">比喻</strong>：本轮会议纪要。</td>
 </tr>
-<tr>
-<td><strong>缓存命中率</strong></td>
-<td>DeepSeek 等模型前缀缓存的命中比例。<strong>比喻</strong>：省钱的程度。</td>
+<tr data-page-node-id="D6ctqxuUQPc6ZO00PxFhAL">
+<td data-page-node-id="73XZFUwKpTd2YBFNAMXPvf"><strong data-page-node-id="pEcXmP1tgc305hHU3r8yX8">文件面板</strong></td>
+<td data-page-node-id="JF4PIgejb0WzjNPRCgCHM2">右侧多标签的文件预览/编辑器。<strong data-page-node-id="BLaFTzevy1BWiioBVCN11l">比喻</strong>：桌上摊开的文件。</td>
 </tr>
-<tr>
-<td><strong>上下文固化</strong></td>
-<td>Agent 工具集在首条消息固定。<strong>比喻</strong>：上岗后不能改工种。</td>
+<tr data-page-node-id="OLGnSdD6qdNI4CsbTOSFAi">
+<td data-page-node-id="NBwg5zNdlZ2L7ybiHQ2SXD"><strong data-page-node-id="bssNSfHGtquBjo0OnWQNSb">缓存命中率</strong></td>
+<td data-page-node-id="4qA53NdwDgvikLPUJRaY1N">DeepSeek 等模型前缀缓存的命中比例。<strong data-page-node-id="tREwBCM6vje4AlGZGs6UcI">比喻</strong>：省钱的程度。</td>
+</tr>
+<tr data-page-node-id="xScJ61U7cLfjR5WxpknuCa">
+<td data-page-node-id="J3m1GKHrUJZUPHaboXe9GW"><strong data-page-node-id="R0Rgy20moE32Rnz2MSWmG3">上下文固化</strong></td>
+<td data-page-node-id="uvQp1xswQLVBX1O8KTeFCI">Agent 工具集在首条消息固定。<strong data-page-node-id="d9CIqcsiWUigzywy3z8CPx">比喻</strong>：上岗后不能改工种。</td>
 </tr>
 </tbody>
 </table>
-<hr>
-<blockquote>
-<p><strong>版本</strong>：2.1.1 Beta · 截图 2026-09-10
-<strong>项目仓库</strong>：https://github.com/yc883123/naiba-chat
-<strong>反馈</strong>：https://github.com/yc883123/naiba-chat/issues</p>
+<hr data-page-node-id="UeyfQc8F4pNxmHZ8QXbXgz">
+<blockquote data-page-node-id="nguJZu2Fvh3cdyrwEKt2yD">
+<p data-page-node-id="W8mmzEW6dcMQz170yW1saU"><strong data-page-node-id="pGQaHaVnF2UCnivhuoDuFA">版本</strong>：2.2.0 Beta · 截图 2026-09-10
+<strong data-page-node-id="DulA1v6izY4EbIVxuNiQZH">项目仓库</strong>：https://github.com/yc883123/naiba-chat
+<strong data-page-node-id="8u1CDxlAsdw0lLJiMgByUD">反馈</strong>：https://github.com/yc883123/naiba-chat/issues</p>
 </blockquote>
   </main>
 </div>
-<div class="lightbox" id="lb" onclick="document.getElementById('lb').classList.remove('open')">
-  <button class="lightbox-close" aria-label="关闭">×</button>
-  <img id="lb-img" alt="">
+<div class="lightbox" id="lb" onclick="document.getElementById('lb').classList.remove('open')" data-page-node-id="Zf4pbDUIu7Tkvu0ZY2gpOJ">
+  <button class="lightbox-close" aria-label="关闭" data-page-node-id="85eTjLbwotKYsdjUpr0BSV">×</button>
+  <img id="lb-img" alt="" data-page-node-id="KYdvDwTo0FItuDmqpbFUwe">
 </div>
 <script>
   document.querySelectorAll('main img').forEach((img) => {

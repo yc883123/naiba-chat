@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 2.2.1-beta
-  RELEASE_TAG: v2.2.1-beta
-  PACKAGE_NAME: naiba-chat-2.2.1-beta-windows-x64
+  RELEASE_VERSION: 2.2.2-beta
+  RELEASE_TAG: v2.2.2-beta
+  PACKAGE_NAME: naiba-chat-2.2.2-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 2.2.1 Beta release
+      - name: Publish 2.2.2 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 2.2.1 Beta
+          name: Naiba Chat 2.2.2 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,14 +99,15 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 2.2.1 Beta Windows build from `${{ github.sha }}`.
+            Naiba Chat 2.2.2 Beta Windows build from `${{ github.sha }}`.
 
-            本次修复（完整清单见 `release_notes.json` / 应用内「更新说明」）：
-            - 异步任务不再卡死：ComfyUI 重启/清空队列后，已提交但已不在 `/history` 与 `/queue` 的镜头不再被当成「还在跑」而空转到 2 小时上限——按预算自动重新提交同一工作流，预算用尽则明确记为失败收尾。
-            - 重启不再复制任务：中断恢复改为幂等标记（`resumed_into` / `resume_skipped`），checkpoint 相同的中断记录只恢复最新一条，杜绝「重启一次任务翻一倍」。
-            - 后台任务不再锁死对话：只有顶层 Run 占用会话互斥位，长跑/卡住的异步任务不会再让该会话发不出新消息。
-            - 任务面板恢复「停止」按钮（新增 `POST /api/jobs/{id}/cancel`，可真正中止运行中的任务）。
-            - 新增 8 例守门测试覆盖上述四条不变量。
+            本次更新（完整清单见 `release_notes.json` / 应用内「更新说明」）：
+            - Skill 删除重构：删除改为确认对话框，可选「移至回收目录（可恢复）」或「彻底删除」；设置页新增回收目录列表，可一键恢复或清空。
+            - 修掉「点了删除却删不掉」：同一 Skill 在多个目录（或打包内置 + 托管副本）各有一份时不再只搬走一份、让另一份立刻复活——这类 Skill 统一按 ID 隐藏（可在「已隐藏 Skill」恢复），重启不会回来；已删除的内置 Skill 也不再被启动同步写回。
+            - 会话模型只从「检测到的模型目录」里选：移除供应商默认模型兜底与手动输入，未检查模型或选中项不在目录里时拦下发送并给出提示。
+            - 修复供应商更换默认模型后，隐式跟随旧默认模型的会话仍发送旧模型名的问题。
+            - 冻结版打包补齐 multipart 解析器（修复安装版上传附件失败）。
+            - 单文件 Skill 导入不再强制 YAML frontmatter（自动从标题与首段补最小元数据）；清理冗余旧版内置技能包。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

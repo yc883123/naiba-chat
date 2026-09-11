@@ -124,6 +124,14 @@ TEMPLATE = """<!doctype html>
   nav.toc-nav .search input { width: 100%; padding: 5px 8px; font-size: 12px;
     border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
 
+  /* 打印专用目录：屏幕上隐藏，打印时顶到正文最前面（见 @media print） */
+  .print-toc { display: none; }
+  .print-toc .pt-title { font-size: 16px; border: 0; margin: 0 0 10px; padding: 0; }
+  .print-toc ul { list-style: none; padding-left: 0; margin: 0 0 8px; }
+  .print-toc li { margin: 1px 0; break-inside: avoid; }
+  .print-toc a { color: var(--text); }
+  .print-toc .toc-l1 a { font-weight: 700; color: var(--accent); }
+
   /* 主区 */
   main { flex: 1; padding: 32px 48px 80px; max-width: 980px; }
   main h1 { font-size: 30px; border-bottom: 2px solid var(--line); padding-bottom: 12px; margin-top: 0; }
@@ -159,6 +167,22 @@ TEMPLATE = """<!doctype html>
     nav.toc-nav { width: 100%; height: auto; max-height: 50vh; position: relative; }
     main { padding: 20px; }
   }
+
+  /* 打印（务必放在 @media (max-width:900px) 之后，否则会被它覆盖——A4 宽约 794px < 900px）：
+     侧边目录是 position:sticky + height:100vh + overflow 的容器，Chrome 打印时会与正文
+     重叠（前两页糊成一团），且 CDP printToPDF 在本页会无限挂起。打印态直接隐藏侧栏，
+     改用正文顶部的 .print-toc 普通块级目录（两栏），既不会重叠也能正常分页。 */
+  @media print {
+    .layout { display: block; }
+    nav.toc-nav, a.dl-pdf, .lightbox { display: none !important; }
+    main { max-width: none; padding: 0; }
+    .print-toc { display: block; columns: 2; column-gap: 28px; font-size: 11.5px;
+      margin-bottom: 24px; break-after: page; }
+    .print-toc .pt-title { break-after: avoid; }
+    img { break-inside: avoid; max-height: 85vh; }
+    pre, table { break-inside: avoid; }
+    h1, h2, h3 { break-after: avoid; }
+  }
 </style>
 </head>
 <body>
@@ -171,6 +195,10 @@ TEMPLATE = """<!doctype html>
     <a class="dl-pdf" href="__PDFNAME__" download>下载 PDF</a>
   </nav>
   <main class="doc">
+    <div class="print-toc" aria-hidden="true">
+      <div class="pt-title">Naiba Chat 应用说明书 · 2.2.0 Beta · 目录</div>
+      __TOC__
+    </div>
     __BODY__
   </main>
 </div>

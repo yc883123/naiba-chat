@@ -455,7 +455,7 @@ class RequestHandler(BaseHTTPRequestHandler):
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/providers":
             try:
-                self._json(self.app.config.upsert_provider(body))
+                self._json(self.app.api_upsert_model_profile(body))
             except Exception as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/providers/test":
@@ -474,7 +474,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._unload_provider(body)
         elif path == "/api/model-profiles":
             try:
-                self._json(self.app.config.upsert_model_profile(body))
+                self._json(self.app.api_upsert_model_profile(body))
             except Exception as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/imaging/clean":
@@ -604,9 +604,14 @@ class RequestHandler(BaseHTTPRequestHandler):
                 "skills": self.app.catalog.scan(),
                 "configured": self.app.config.get_skills_dirs(),
                 "hidden_skills": self._hidden_skill_entries(),
+                "recycled_skills": self.app._recycled_skill_entries(),
             })
         elif path == "/api/skills/delete":
             self._delete_skill(body)
+        elif path == "/api/skills/recycle/clear":
+            self._clear_skill_recycle(body)
+        elif path == "/api/skills/recycle/restore":
+            self._restore_skill_recycle(body)
         elif path == "/api/skills/unhide":
             self._unhide_skill(body)
         elif path == "/api/starter-prompts":
@@ -1384,6 +1389,12 @@ class RequestHandler(BaseHTTPRequestHandler):
 
     def _delete_skill(self, body: dict[str, Any]) -> None:
         self._json(*self.app._delete_skill(body))
+
+    def _clear_skill_recycle(self, body: dict[str, Any]) -> None:
+        self._json(*self.app._clear_skill_recycle(body))
+
+    def _restore_skill_recycle(self, body: dict[str, Any]) -> None:
+        self._json(*self.app._restore_skill_recycle(body))
 
     def _delete_skill_by_id(self, body: dict[str, Any]) -> None:
         self._json(*self.app._delete_skill_by_id(body))

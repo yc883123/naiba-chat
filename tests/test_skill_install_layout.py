@@ -18,10 +18,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from naiba.app import NaibaChatApp  # noqa: E402
 from naiba.skills.catalog import SkillCatalog  # noqa: E402
+from naiba.skills.install import validate_and_install_skill  # noqa: E402
 from naiba.paths import PathContext  # noqa: E402
 
 SINGLE_MD = "---\nname: flat-skill\ndescription: 单文件技能\n---\n\n正文\n"
 OTHER_MD = "---\nname: other-skill\ndescription: 另一个技能\n---\n"
+BUILTIN_MD = "---\nname: builtin-skill\ndescription: 内置技能\n---\n\n正文\n"
+LEGACY_MD = "---\nname: legacy-skill\ndescription: 旧目录技能\n---\n"
 
 
 def _b64(text: str) -> str:
@@ -56,6 +59,25 @@ class SkillInstallLayoutTests(unittest.TestCase):
         self.assertTrue(skill_file.is_file())
         item = next(s for s in SkillCatalog([self.managed]).scan() if s["name"] == "flat-skill")
         self.assertEqual(Path(item["root"]).resolve(), skill_file.parent.resolve())
+
+    def test_direct_single_md_install_lands_in_own_subdirectory(self):
+        source = Path(self._tmp.name) / "single.md"
+        source.write_text(SINGLE_MD, encoding="utf-8")
+        result = validate_and_install_skill(source, self.managed)
+        self.assertTrue(result["success"], result)
+        self.assertTrue((self.managed / "flat-skill" / "SKILL.md").is_file())
+        self.assertFalse((self.managed / "SKILL.md").exists())
+
+    def test_plain_single_md_gets_minimal_frontmatter(self):
+        source = Path(self._tmp.name) / "plain.md"
+        source.write_text("# 我的技能\n\n把这段内容交给 AI。\n", encoding="utf-8")
+        result = validate_and_install_skill(source, self.managed)
+        self.assertTrue(result["success"], result)
+        installed = self.managed / "我的技能" / "SKILL.md"
+        self.assertTrue(installed.is_file())
+        text = installed.read_text(encoding="utf-8")
+        self.assertIn("name: 我的技能", text)
+        self.assertIn("description: 把这段内容交给 AI。", text)
 
     def test_folder_upload_keeps_its_top_level_directory(self):
         self._install_folder([
@@ -127,3 +149,97 @@ class SkillInstallLayoutTests(unittest.TestCase):
         self.assertFalse((self.managed / "pack").exists())
         self.assertTrue((self.managed / "keep" / "SKILL.md").is_file())
         self.assertTrue((self.recycle / "pack" / "SKILL.md").is_file())
+
+    def test_permanent_delete_managed_skill_removes_its_directory(self):
+        self._install_folder([{"path": "pack/SKILL.md", "data": _b64(OTHER_MD)}])
+        target = next(s for s in self.app.catalog.by_id().values() if s["name"] == "other-skill")
+        payload, status = self.app._delete_skill({"skill_id": target["id"], "mode": "permanent"})
+        self.assertEqual(int(status), 200, payload)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["permanently_deleted"])
+        self.assertIsNone(payload["recycled_to"])
+        self.assertFalse(payload["recycled_skills"])
+        self.assertNotIn(target["id"], [skill["id"] for skill in payload["skills"]])
+        self.assertFalse((self.managed / "pack").exists())
+        self.assertFalse(self.recycle.exists())
+
+    def test_hiding_bundled_skill_recycles_its_managed_copy(self):
+        bundled = self.app.paths.resource_dir / "skills" / "builtin-skill"
+        bundled.mkdir(parents=True)
+        (bundled / "SKILL.md").write_text(BUILTIN_MD, encoding="utf-8")
+        app = NaibaChatApp(paths=self.app.paths)
+        item = next(s for s in app.catalog.scan() if s["name"] == "builtin-skill")
+        payload, status = app._delete_skill({"skill_id": item["id"], "mode": "recycle"})
+        self.assertEqual(int(status), 200, payload)
+        self.assertTrue(payload["hidden"])
+        self.assertFalse((self.managed / "builtin-skill").exists())
+        self.assertTrue((self.recycle / "builtin-skill" / "SKILL.md").is_file())
+
+    def test_clear_skill_recycle_permanently_removes_its_contents(self):
+        recycled = self.recycle / "old-skill"
+        recycled.mkdir(parents=True)
+        (recycled / "SKILL.md").write_text(SINGLE_MD, encoding="utf-8")
+        payload, status = self.app._clear_skill_recycle({})
+        self.assertEqual(int(status), 200, payload)
+        self.assertEqual(payload["deleted"], 1)
+        self.assertTrue(self.recycle.is_dir())
+        self.assertFalse(any(self.recycle.iterdir()))
+
+    def test_recycled_skill_can_be_restored(self):
+        self._install_folder([{"path": "pack/SKILL.md", "data": _b64(OTHER_MD)}])
+        target = next(s for s in self.app.catalog.by_id().values() if s["name"] == "other-skill")
+        self.app._delete_skill({"skill_id": target["id"], "mode": "recycle"})
+        entry = self.app._recycled_skill_entries()[0]
+        payload, status = self.app._restore_skill_recycle({"entry": entry["entry"]})
+        self.assertEqual(int(status), 200, payload)
+        self.assertTrue((self.managed / "pack" / "SKILL.md").is_file())
+        self.assertFalse(self.app._recycled_skill_entries())
+
+    def test_bundled_skill_delete_hides_in_one_click_and_never_revives(self):
+        """冻结版历史 bug：内置 Skill 被托管副本遮蔽时，删除只搬走副本 → 立刻"复活"。
+
+        现在这类 Skill 的真实来源标为 builtin、并带重复目录信息；删除走隐藏，
+        一次点击即从列表消失，且重启（内置同步 + 旧目录合并）不会把它带回来。
+        """
+        bundled = self.app.paths.resource_dir / "skills" / "builtin-skill"
+        bundled.mkdir(parents=True)
+        (bundled / "SKILL.md").write_text(BUILTIN_MD, encoding="utf-8")
+
+        app = NaibaChatApp(paths=self.app.paths)
+        item = next(s for s in app.catalog.scan() if s["name"] == "builtin-skill")
+        self.assertEqual(item["source"], "builtin", "托管副本不得遮蔽内置来源")
+        self.assertTrue(item["duplicate_dirs"], "应报告同一 Skill 的重复目录")
+        self.assertTrue((self.managed / "builtin-skill" / "SKILL.md").is_file())
+
+        payload, status = app._delete_skill_by_id(item["id"])
+        self.assertEqual(int(status), 200, payload)
+        self.assertTrue(payload.get("hidden"))
+        self.assertTrue(payload.get("recycled_to"), "内置 Skill 的托管副本应移入回收目录")
+        self.assertFalse((self.managed / "builtin-skill").exists())
+        self.assertTrue((self.recycle / "builtin-skill" / "SKILL.md").is_file())
+        self.assertNotIn("builtin-skill", [s["name"] for s in payload["skills"]])
+
+        restarted = NaibaChatApp(paths=self.app.paths)
+        self.assertTrue((bundled / "SKILL.md").is_file(), "内置原件不允许被删除")
+        self.assertNotIn(item["id"], [s["id"] for s in restarted.catalog.scan()])
+
+    def test_hidden_bundled_skill_is_not_resynced_into_managed(self):
+        """已隐藏（删除）的内置 Skill 不得在启动时被重新写回托管目录。"""
+        app = NaibaChatApp(paths=self.app.paths)
+        (self.managed / "legacy-skill").mkdir(parents=True)
+        (self.managed / "legacy-skill" / "SKILL.md").write_text(LEGACY_MD, encoding="utf-8")
+        item = next(s for s in app.catalog.by_id().values() if s["name"] == "legacy-skill")
+        payload, status = app._delete_skill_by_id(item["id"])
+        self.assertEqual(int(status), 200, payload)
+        self.assertTrue((self.recycle / "legacy-skill" / "SKILL.md").is_file())
+
+        # 旧目录（resource_dir/skills 之外的 data 同级 skills）里放一份同名 Skill，
+        # 模拟"删除后旧目录合并又把它复制回来"的复活路径。
+        legacy_dir = self.app.paths.data_dir.parent / "skills" / "legacy-skill"
+        legacy_dir.mkdir(parents=True)
+        (legacy_dir / "SKILL.md").write_text(LEGACY_MD, encoding="utf-8")
+        app.config.hide_skill(item["id"])
+        NaibaChatApp(paths=self.app.paths)
+        self.assertFalse((self.managed / "legacy-skill").exists(),
+                         "已隐藏的 Skill 不得被旧目录合并重新复制回托管目录")
+

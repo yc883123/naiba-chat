@@ -778,6 +778,9 @@ export function bindEvents() {
     setSkillImportStatus('');
     $('#skillImportDialog').showModal();
   });
+  $('#skillDeleteRecycle')?.addEventListener('click', () => runInstalledSkillDelete('recycle'));
+  $('#skillDeletePermanent')?.addEventListener('click', () => runInstalledSkillDelete('permanent'));
+  $('#clearSkillRecycle')?.addEventListener('click', clearSkillRecycle);
   $('#skillImportFolder').addEventListener('click', () => $('#skillImportFolderInput').click());
   $('#skillImportFiles').addEventListener('click', () => $('#skillImportFileInput').click());
   $('#skillImportFolderInput').addEventListener('change', (event) => { skillImportFolderFiles(event.target.files); event.target.value = ''; });
@@ -849,6 +852,7 @@ export async function skillImportFolderFiles(fileList) {
     if (result.configured) state.skillDirs = result.configured;
     renderInstalledSkills(result.skills || []);
     renderHiddenSkills(result.hidden_skills || []);
+    renderRecycledSkills(result.recycled_skills || []);
     const unhiddenTag = (result.unhidden && result.unhidden.length) ? ` · 已安装并取消隐藏` : '';
     setSkillImportStatus(`已安装 ${result.files} 个文件到 ${result.dir}${unhiddenTag}`, 'ok');
   } catch (error) {
@@ -864,6 +868,7 @@ export async function skillImportZipFile(file) {
     if (result.configured) state.skillDirs = result.configured;
     renderInstalledSkills(result.skills || []);
     renderHiddenSkills(result.hidden_skills || []);
+    renderRecycledSkills(result.recycled_skills || []);
     const unhiddenTag = (result.unhidden && result.unhidden.length) ? ' · 已安装并取消隐藏' : '';
     setSkillImportStatus(`已安装到 ${result.dir}${unhiddenTag}`, 'ok');
   } catch (error) {
@@ -874,16 +879,12 @@ export async function skillImportZipFile(file) {
 export async function skillImportMdFile(file) {
   setSkillImportStatus(`正在读取 ${file.name}…`);
   try {
-    const text = await file.text();
-    if (!hasSkillFrontmatter(text)) {
-      setSkillImportStatus('该 .md 缺少 name + description 的 YAML 头，无法作为 Skill 安装。', 'error');
-      return;
-    }
     const data = await readAsDataUrl(file);
     const result = await api('/api/skills/install_folder', { method: 'POST', body: { files: [{ path: 'SKILL.md', data }] } });
     if (result.configured) state.skillDirs = result.configured;
     renderInstalledSkills(result.skills || []);
     renderHiddenSkills(result.hidden_skills || []);
+    renderRecycledSkills(result.recycled_skills || []);
     const unhiddenTag = (result.unhidden && result.unhidden.length) ? ' · 已安装并取消隐藏' : '';
     setSkillImportStatus(`已作为 Skill 安装到 ${result.dir}${unhiddenTag}`, 'ok');
   } catch (error) {
@@ -916,6 +917,7 @@ export async function loadInstalledSkills(showToast) {
     if (data.configured) state.skillDirs = data.configured;
     renderInstalledSkills(data.skills || []);
     renderHiddenSkills(data.hidden_skills || []);
+    renderRecycledSkills(data.recycled_skills || []);
     if (showToast) toast('已重新扫描 Skill');
   } catch (error) {
     toast(`扫描失败：${error.message}`);
@@ -923,6 +925,7 @@ export async function loadInstalledSkills(showToast) {
 }
 
 export let lastInstalledSkills = [];
+let pendingSkillDelete = null;
 
 export function isSkillBuiltin(skill) {
   return skill.source === 'builtin';
@@ -962,26 +965,72 @@ export function renderInstalledSkills(skills) {
       tag.textContent = skill.source === 'builtin' ? '内置' : '外部';
       item.append(tag);
     }
+    const dupDirs = Array.isArray(skill.duplicate_dirs) ? skill.duplicate_dirs : [];
+    // 内置 Skill 必有「打包一份 + 托管副本」两份，重复徽标只提示非内置的多目录重复。
+    if (dupDirs.length > 1 && skill.source !== 'builtin') {
+      const dup = document.createElement('span');
+      dup.className = 'skill-tag';
+      dup.textContent = `重复 ${dupDirs.length} 处`;
+      dup.title = `同一 Skill 在以下目录各有一份：\n${dupDirs.join('\n')}`;
+      item.append(dup);
+    }
     const del = document.createElement('button');
     del.className = 'skill-delete';
     del.type = 'button';
-    del.title = skill.source === 'managed' ? '删除 Skill（移动到回收目录）' : '隐藏 Skill（可恢复原文件）';
+    del.title = skill.source === 'managed' && dupDirs.length <= 1
+      ? '删除 Skill（移动到回收目录）'
+      : '隐藏 Skill（可在「已隐藏」中恢复；多处副本一并隐藏）';
     del.textContent = '删除';
-    del.addEventListener('click', () => deleteInstalledSkill(skill));
+    del.addEventListener('click', () => openInstalledSkillDelete(skill));
     item.append(del);
     list.append(item);
   });
 }
 
-export async function deleteInstalledSkill(skill) {
+export function openInstalledSkillDelete(skill) {
   const refs = (state.bootstrap.agents || [])
     .filter((a) => (a.skill_ids || []).map(String).includes(String(skill.id)))
     .map((a) => a.name);
   const dir = skill.path || skill.root || '';
-  const msg = `删除 Skill「${skill.name}」？\n目录：${dir}\n${refs.length ? `被以下 Agent 引用：${refs.join('、')}（引用将被移除）` : '未被任何 Agent 引用'}`;
-  if (!confirm(msg)) return;
+  const dupDirs = Array.isArray(skill.duplicate_dirs) ? skill.duplicate_dirs : [];
+  const bundled = skill.source === 'builtin';
+  const shared = skill.source !== 'managed' || dupDirs.length > 1;
+  const canDeleteFiles = skill.source === 'managed' && !shared;
+  const dialog = $('#skillDeleteDialog');
+  if (!dialog) return;
+  pendingSkillDelete = skill;
+  $('#skillDeleteDialogSummary').textContent = `Skill：${skill.name}`;
+  const refText = refs.length ? `被以下 Agent 引用：${refs.join('、')}。删除后会移除引用。` : '未被任何 Agent 引用。';
+  let details = `位置：${dir}\n${refText}`;
+  if (canDeleteFiles) {
+    details += '\n可将整个托管目录移入回收目录，或直接永久删除。';
+  } else if (bundled) {
+    details += '\n这是程序内置 Skill。操作会按 ID 隐藏它；托管目录中的副本会一并处理，程序包原件不可删除。';
+  } else {
+    details += `\n该 Skill ${dupDirs.length > 1 ? '在多个目录中存在副本' : '来自外部目录'}，为了避免删除用户文件，只能隐藏全部同 ID 副本。`;
+  }
+  $('#skillDeleteDialogDetails').textContent = details;
+  const recycle = $('#skillDeleteRecycle');
+  const permanent = $('#skillDeletePermanent');
+  recycle.textContent = canDeleteFiles ? '删除（移到回收目录，可恢复）' : '隐藏（可恢复）';
+  permanent.hidden = !canDeleteFiles && !bundled;
+  if (bundled) permanent.textContent = '彻底删除托管副本';
+  else permanent.textContent = '彻底删除（直接删文件，不可恢复）';
+  dialog.showModal();
+}
+
+export async function runInstalledSkillDelete(mode) {
+  const skill = pendingSkillDelete;
+  if (!skill) return;
+  const dialog = $('#skillDeleteDialog');
+  const recycle = $('#skillDeleteRecycle');
+  const permanent = $('#skillDeletePermanent');
+  if (mode === 'permanent' && !confirm(`彻底删除 Skill「${skill.name}」的托管文件？此操作不可恢复。`)) return;
+  if (dialog?.open) dialog.close();
+  if (recycle) recycle.disabled = true;
+  if (permanent) permanent.disabled = true;
   try {
-    const result = await api(`/api/skills/${encodeURIComponent(skill.id)}`, { method: 'DELETE' });
+    const result = await api('/api/skills/delete', { method: 'POST', body: { skill_id: skill.id, mode } });
     state.selectedSkills = state.selectedSkills.filter((id) => id !== skill.id);
     localStorage.setItem('naibaChatSkillIds', JSON.stringify(state.selectedSkills));
     if (result.skills) state.bootstrap.skills = result.skills;
@@ -989,9 +1038,78 @@ export async function deleteInstalledSkill(skill) {
     renderInstalledSkills(result.skills || lastInstalledSkills.filter((s) => s.id !== skill.id));
     renderSkills($('#skillSearch')?.value || '');
     renderHiddenSkills(result.hidden_skills || []);
-    toast(result.hidden ? '已删除 Skill（原文件保留并隐藏）' : `已删除，回收位置：${result.recycled_to || '未知'}`);
+    renderRecycledSkills(result.recycled_skills || []);
+    if (result.hidden) {
+      toast(result.permanently_deleted ? '已隐藏，托管副本已彻底删除' : (result.managed_copy_removed ? '已隐藏，托管副本已移到回收目录' : '已隐藏，可在「已隐藏 Skill」中恢复'));
+    } else if (result.permanently_deleted) {
+      toast('已彻底删除');
+    } else {
+      toast(`已移到回收目录：${result.recycled_to || '未知'}`);
+    }
   } catch (error) {
     toast(`删除失败：${error.message}`);
+  } finally {
+    pendingSkillDelete = null;
+    if (recycle) recycle.disabled = false;
+    if (permanent) permanent.disabled = false;
+  }
+}
+
+export async function clearSkillRecycle() {
+  if (!confirm('清空 Skill 回收目录？其中的文件将永久删除，且无法恢复。')) return;
+  try {
+    const result = await api('/api/skills/recycle/clear', { method: 'POST', body: {} });
+    renderRecycledSkills([]);
+    toast(result.deleted ? `已永久删除回收目录中的 ${result.deleted} 项` : '回收目录已是空的');
+  } catch (error) {
+    toast(`清空回收目录失败：${error.message}`);
+  }
+}
+
+export function renderRecycledSkills(recycledSkills) {
+  const list = $('#recycledSkillList');
+  if (!list) return;
+  const items = Array.isArray(recycledSkills) ? recycledSkills : [];
+  const count = $('#recycledSkillCount');
+  if (count) count.textContent = String(items.length);
+  list.innerHTML = '';
+  if (!items.length) {
+    list.innerHTML = '<small class="hint">回收目录为空</small>';
+    return;
+  }
+  items.forEach((skill) => {
+    const item = document.createElement('div');
+    item.className = 'skill-item connection-item';
+    const info = document.createElement('div');
+    const name = document.createElement('b');
+    name.textContent = skill.name;
+    const path = document.createElement('small');
+    path.className = 'desc';
+    path.textContent = skill.path || '';
+    info.append(name, path);
+    const restore = document.createElement('button');
+    restore.className = 'skill-delete';
+    restore.type = 'button';
+    restore.textContent = '恢复';
+    restore.title = '恢复到托管 Skill 目录并重新启用';
+    restore.addEventListener('click', () => restoreRecycledSkill(skill));
+    item.append(info, restore);
+    list.append(item);
+  });
+}
+
+export async function restoreRecycledSkill(skill) {
+  if (!skill?.entry) return;
+  try {
+    const result = await api('/api/skills/recycle/restore', { method: 'POST', body: { entry: skill.entry } });
+    if (state.bootstrap && result.skills) state.bootstrap.skills = result.skills;
+    renderInstalledSkills(result.skills || []);
+    renderHiddenSkills(result.hidden_skills || []);
+    renderRecycledSkills(result.recycled_skills || []);
+    renderSkills($('#skillSearch')?.value || '');
+    toast('Skill 已恢复');
+  } catch (error) {
+    toast(`恢复失败：${error.message}`);
   }
 }
 

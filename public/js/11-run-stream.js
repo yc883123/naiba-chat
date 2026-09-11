@@ -7,7 +7,7 @@ import { pendingContextWarning, showContextWarning } from "./03-media.js";
 import { messageElement, scrollToBottom, setStickToBottom } from "./04-messages.js";
 import { loadTasks } from "./06-tasks-plans.js";
 import { createConversation, loadConversations, openConversation } from "./08-conversations.js";
-import { selectedModelName } from "./07-models-agents.js";
+import { composerModelChoice, composerModelIsValidated, selectedProvider } from "./07-models-agents.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { closeQuickMessagePanel, handleChatEvent, hideChoiceButtons, setBusy } from "./12-chat-input.js";
 import { hideSkillPopup, parseSkillReferences, renderInputMirror, resizeTextarea, stripSkillReferences } from "./13-skill-refs.js";
@@ -437,6 +437,10 @@ export async function sendChatMessage(textOverride = '', { skipContextWarning = 
     toast(`请等待「${uploadingFile.name}」上传完成${uploadingFile.progress > 0 ? `（${uploadingFile.progress}%）` : ''}`);
     return;
   }
+  if (!selectedProvider() || !composerModelIsValidated()) {
+    toast('请先在设置中检查模型，并在会话底部选择检测到的模型');
+    return;
+  }
   if (!state.conversationId) await createConversation();
   if (state.chatRunId || state.abortController) {
     toast('回复进行中，请等待完成或先点击停止');
@@ -493,7 +497,7 @@ export async function sendChatMessage(textOverride = '', { skipContextWarning = 
         display_message: text,
         attachments,
         model_key: $('#modelSelect').value,
-        model_name: selectedModelName(),
+        model_name: composerModelChoice(),
         skill_policy: {
           mode: 'exclusive',
           referenced_ids: referencedIds,

@@ -1,5 +1,5 @@
 ---
-name: comfyui-shortdrama
+name: comfyui-shortdramav2
 description: 通用短剧批量生成模板：用 ComfyUI + MiniMax H3 Ref2VA 把任意单元短剧剧本（markdown，每段英文 H3 提示词 + <Picture N>/<Audio N> 参考标签）批量转成 15 秒视频片段。任何人准备自己的角色图/声音、填一份 config.json 即可复用"解析 → 映射 → 建工作流 → 入队 → 轮询 → 收集"流水线。
 ---
 

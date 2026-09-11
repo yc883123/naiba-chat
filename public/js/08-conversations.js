@@ -5,7 +5,7 @@
 import { $, api, escapeHtml, state, toast } from "./01-core.js";
 import { renderMessages } from "./04-messages.js";
 import { activeTaskStatuses, loadTasks, renderPermissionModeSwitch, taskStatusLabel } from "./06-tasks-plans.js";
-import { applyConversationAgent, applyConversationModel, selectedModelName } from "./07-models-agents.js";
+import { applyConversationAgent, applyConversationModel, composerModelChoice } from "./07-models-agents.js";
 import { readAsDataUrl } from "./10-upload.js";
 import { detachRunSubscription, resumeConversationRun } from "./11-run-stream.js";
 import { closePermissionModeMenu, closeQuickMessagePanel, hideChoiceButtons, updateDeepReasoningButton } from "./12-chat-input.js";
@@ -598,7 +598,7 @@ export async function createConversation(workspaceGroup = '', workspaceDir = '',
       deep_reasoning_enabled: false,
       agent_id: nextAgentId,
       model_key: $('#modelSelect')?.value || '',
-      model_name: selectedModelName(),
+      model_name: composerModelChoice(),
       // 新建对话继承当前全局工作区目录；若在某工作区内新建则覆盖为该工作区目录并绑定分组。
       workspace_dir: workspaceDir || state.bootstrap?.settings?.workspace_dir || '',
       workspace_group: workspaceGroup || '',

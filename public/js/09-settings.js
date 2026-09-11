@@ -3,7 +3,7 @@
 // ============================================================
 
 import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
-import { applyConversationAgent, populateModels, renderAgents, updateUnloadModelButton } from "./07-models-agents.js";
+import { applyConversationAgent, populateComposerModels, populateModels, renderAgents, updateUnloadModelButton } from "./07-models-agents.js";
 import { closeAgentPromptPresetPanel, currentAgentFixedSkillIds, renderAgentPromptPresetList } from "./08-conversations.js";
 import { skillList } from "./13-skill-refs.js";
 import { switchSettingsTab } from "./15-bind-events.js";
@@ -275,18 +275,23 @@ export async function loadProviderModels({ automatic = false } = {}) {
     return;
   }
   const button = $('#loadProviderModels');
+  const providerKey = `${values.kind === 'local' ? 'local' : 'online'}:${String(values.id || '').trim()}`;
+  if (values.id) delete state.providerModelCatalogs[providerKey];
   button.disabled = true;
   button.textContent = '检查中…';
   if (!automatic) $('#providerError').textContent = '正在获取可用模型…';
   try {
     const result = await api('/api/providers/models', { method: 'POST', body: values });
-    if (!result.models?.length) throw new Error('接口没有返回可用模型，请选择"手动输入模型名称"');
+    if (!result.models?.length) throw new Error('接口没有返回可用模型，请检查供应商配置');
+    if (values.id) state.providerModelCatalogs[providerKey] = result.models;
     const current = $('#providerModel').value;
     setProviderModelOptions(result.models, current && current !== '__custom__' ? current : '');
     applyProviderModelCapabilities();
     $('#providerError').textContent = '模型目录可访问；请继续点击“测试连接”验证实际推理。';
+    if ($('#modelSelect')?.value === providerKey) void populateComposerModels();
     toast(`已找到 ${result.models.length} 个模型`);
   } catch (error) {
+    if (values.id) delete state.providerModelCatalogs[providerKey];
     $('#providerError').textContent = `模型检查失败：${error.message}`;
     if (!$('#providerModel').value) setProviderModelOptions([], '');
   } finally {

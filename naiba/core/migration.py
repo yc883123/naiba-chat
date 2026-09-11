@@ -41,28 +41,53 @@ def _database_has_conversations(path: Path) -> bool:
         return False
 
 
-def _merge_data_tree(source: Path, target: Path) -> bool:
-    """Copy a data tree recursively, keeping files already present at target."""
+def _skip_set(skip_relative: Any) -> set[str]:
+    """把「相对根路径」集合归一为 POSIX 分隔、去首尾斜杠的形式。"""
+    return {
+        str(item).replace("\\", "/").strip("/")
+        for item in (skip_relative or set())
+        if str(item).strip("/")
+    }
+
+
+def _merge_data_tree(source: Path, target: Path, skip_relative: Any = None, _relative: str = "") -> bool:
+    """Copy a data tree recursively, keeping files already present at target.
+
+    ``skip_relative`` 里的相对目录会被整枝跳过：用户已删除（隐藏）的 Skill 不能被
+    旧目录合并重新复制回来，否则每次启动都会"复活"，表现为删不掉。
+    """
+    skip = _skip_set(skip_relative)
     changed = False
     target.mkdir(parents=True, exist_ok=True)
     for item in source.iterdir():
+        child = f"{_relative}/{item.name}" if _relative else item.name
+        if skip and child in skip:
+            continue
         destination = target / item.name
         if item.is_dir():
-            changed = _merge_data_tree(item, destination) or changed
+            changed = _merge_data_tree(item, destination, skip, child) or changed
         elif not destination.exists():
             shutil.copy2(item, destination)
             changed = True
     return changed
 
 
-def _sync_bundled_skills(source: Path, target: Path) -> bool:
-    """Refresh packaged Skill files without deleting older persisted Skills."""
+def _sync_bundled_skills(source: Path, target: Path, skip_relative: Any = None, _relative: str = "") -> bool:
+    """Refresh packaged Skill files without deleting older persisted Skills.
+
+    ``skip_relative`` 里的相对目录会被整枝跳过，避免把用户已删除的内置 Skill
+    在每次启动时重新写回托管目录。
+    """
     changed = False
+    skip = _skip_set(skip_relative)
     target.mkdir(parents=True, exist_ok=True)
     for item in source.iterdir():
+        child = f"{_relative}/{item.name}" if _relative else item.name
+        if skip and child in skip:
+            continue
         destination = target / item.name
         if item.is_dir():
-            changed = _sync_bundled_skills(item, destination) or changed
+            changed = _sync_bundled_skills(item, destination, skip, child) or changed
             continue
         try:
             needs_copy = not destination.is_file() or item.read_bytes() != destination.read_bytes()

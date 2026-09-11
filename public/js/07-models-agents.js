@@ -201,10 +201,9 @@ export function selectedProvider() {
   return profiles.find((p) => p.model_key === value) || null;
 }
 
-export function selectedModelName() {
+export function composerModelChoice() {
   const select = $('#composerModelSelect');
-  if (select?.value) return String(select.value).trim();
-  return String(selectedProvider()?.model || '').trim();
+  return select ? String(select.value || '').trim() : '';
 }
 
 function composerModelEntries(provider) {
@@ -216,7 +215,6 @@ function composerModelEntries(provider) {
     seen.add(clean);
     entries.push({ id: clean, name: String(name || clean) });
   };
-  add(provider?.model);
   (state.providerModelCatalogs[provider?.model_key] || []).forEach((model) => {
     add(model?.id, model?.name || model?.id);
   });
@@ -228,15 +226,12 @@ function renderComposerModels(provider, preferredModel = '') {
   if (!select) return;
   const desired = String(preferredModel || '').trim();
   const entries = composerModelEntries(provider);
-  // 下拉只列「当前 API 的模型目录 + 该 API 的默认模型」，不再提供手动输入。
-  // 历史会话保存的模型可能已不在目录里：置顶为「已保存：X」并默认选中，否则会被
-  // 目录里的第一个悄悄顶掉——发出去的模型与保存的不一致，用户无从察觉。
+  select.replaceChildren();
   const savedMissing = Boolean(desired) && !entries.some((item) => item.id === desired);
-  select.innerHTML = '';
   if (savedMissing) {
     const saved = document.createElement('option');
     saved.value = desired;
-    saved.textContent = `已保存：${desired}`;
+    saved.textContent = `已保存：${desired}（请重新检查模型）`;
     select.append(saved);
   }
   entries.forEach((model) => {
@@ -245,17 +240,42 @@ function renderComposerModels(provider, preferredModel = '') {
     option.textContent = model.name;
     select.append(option);
   });
-  const selected = desired || String(provider?.model || '').trim();
-  if (selected) select.value = selected;
+  if (!entries.length && !savedMissing) {
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = '请先在设置中检查模型';
+    empty.disabled = true;
+    select.append(empty);
+  }
+  if ([...select.options].some((option) => option.value === desired)) {
+    select.value = desired;
+  } else if (entries.length) {
+    // 新会话没有历史选择时，默认选中检测目录的第一项；它仍是会话下拉的实际选择。
+    select.value = entries[0].id;
+  } else {
+    select.value = '';
+  }
 }
 
-export async function populateComposerModels(preferredModel = '') {
+export function composerModelIsValidated() {
+  const provider = selectedProvider();
+  const choice = composerModelChoice();
+  const catalog = provider?.model_key ? state.providerModelCatalogs[provider.model_key] : null;
+  return Boolean(choice && Array.isArray(catalog)
+    && catalog.some((model) => String(model?.id || '').trim() === choice));
+}
+
+export async function populateComposerModels(preferredModel = null) {
   const provider = selectedProvider();
   const providerKey = String(provider?.model_key || '');
   // 记下发请求时的会话：目录返回后会话可能已经切走。两个会话共用同一 API 时，
   // 先返回的旧请求若照旧重绘，会把旧会话的模型顶到新会话的下拉框上。
   const conversationId = state.conversationId;
-  renderComposerModels(provider, preferredModel || selectedModelName());
+  // null = 未指定：保持当前下拉框选择；字符串则按它重绘。
+  const desired = preferredModel === null
+    ? composerModelChoice()
+    : String(preferredModel || '').trim();
+  renderComposerModels(provider, desired);
   if (!providerKey || state.providerModelCatalogs[providerKey]) return;
   try {
     const result = await api('/api/providers/models', { method: 'POST', body: { model_key: providerKey } });
@@ -264,9 +284,9 @@ export async function populateComposerModels(preferredModel = '') {
     // 当前下拉框的实际值重算，不再回填旧请求的 preferredModel。
     if ($('#modelSelect')?.value !== providerKey) return;
     if (state.conversationId !== conversationId) return;
-    renderComposerModels(selectedProvider(), selectedModelName());
+    renderComposerModels(selectedProvider(), composerModelChoice());
   } catch (error) {
-    // 某些 API 不提供 models 目录；此时只剩该 API 自身配置的默认模型（不再有手动输入入口）。
+    // 某些 API 不提供 models 目录时保持空列表；发送前会明确提示先检查模型。
     console.debug('[naiba] 获取 API 模型目录失败:', error.message);
   }
 }
@@ -284,7 +304,7 @@ export async function saveComposerModelSelection() {
   const select = $('#composerModelSelect');
   if (!select) return;
   try {
-    await persistConversationModelName(selectedModelName());
+    await persistConversationModelName(composerModelChoice());
   } catch (error) {
     toast(`保存模型失败：${error.message}`);
   }
@@ -359,7 +379,8 @@ export async function saveModelSelection() {
     }
   }
   updateUnloadModelButton();
-  await populateComposerModels(String(selectedProvider()?.model || ''));
+  // 切换 API 后清空会话模型，等待新 API 的检测目录填充下拉。
+  await populateComposerModels('');
   toast('API 已切换');
 }
 

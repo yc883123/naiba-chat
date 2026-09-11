@@ -41,11 +41,12 @@ VISION_OPS_GUIDE = "仅当用户明确要求裁剪、OCR、坐标、像素比较
 
 
 def _profile_with_model_override(config: Any, model_key: str, model_name: str) -> dict[str, Any]:
-    """Resolve an API profile and apply the conversation's optional model override."""
+    """Resolve an API profile using the concrete model selected in the conversation."""
     profile = dict(config.profile(model_key))
     clean_name = str(model_name or "").strip()
-    if clean_name:
-        profile["model"] = clean_name
+    if not clean_name:
+        raise ValueError("请先在会话中选择模型；请先在设置中检查模型")
+    profile["model"] = clean_name
     return profile
 
 
@@ -214,6 +215,8 @@ class ConversationRunMixin:
             if not isinstance(raw_model_name, str):
                 raise ValueError("model_name 必须是文本")
             model_name = raw_model_name.strip()[:256]
+            if not model_name:
+                raise ValueError("请先在会话底部选择模型；可用模型来自设置页的模型检查结果")
             if (
                 model_key != str(conversation.get("model_key") or "")
                 or model_name != str(conversation.get("model_name") or "")
@@ -480,10 +483,8 @@ class ConversationRunMixin:
                 model_key = f"online:{snapshot['provider_id']}"
             # 先解析当前模型 profile（含 supports_images 能力），再交给视觉路由判断。
             # 顺序错误会导致 prepare_history 因 profile 未定义而整体被跳过（视觉失效）。
-            profile = dict(self.app.config.profile(model_key))
             model_name = str(snapshot.get("model_name") or "").strip()
-            if model_name:
-                profile["model"] = model_name
+            profile = _profile_with_model_override(self.app.config, model_key, model_name)
             conversation_effort = str(snapshot.get("reasoning_effort") or "").strip().lower()
             if conversation_effort in {"off", "low", "medium", "high"}:
                 # 会话显式指定了思维强度，覆盖 provider 设置。

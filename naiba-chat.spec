@@ -90,6 +90,9 @@ a = Analysis(
         "opentelemetry.context",
         "opentelemetry.propagate",
         "opentelemetry.trace",
+        # Multipart upload parser is imported lazily by naiba.http.
+        "python_multipart",
+        "python_multipart.multipart",
     ],
     hookspath=[],
     hooksconfig={},

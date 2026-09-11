@@ -138,8 +138,14 @@ class TopbarStyleTests(unittest.TestCase):
         self.assertNotIn("saveCustomComposerModel", models)
         self.assertNotIn("__custom__", models, "下拉里不应再有「手动输入」分支")
         self.assertIn("已保存：", models, "历史模型不在目录时置顶「已保存：X」，不能被静默换掉")
+        self.assertIn("请重新检查模型", models, "历史模型不在最新目录时提示重新检查，不能被静默换掉")
+        self.assertIn("composerModelIsValidated", models, "发送前校验模型来自检测目录")
         stream = (ROOT / "public/js/11-run-stream.js").read_text(encoding="utf-8")
-        self.assertIn("model_name: selectedModelName()", stream)
+        self.assertIn(
+            "model_name: composerModelChoice()",
+            stream,
+            "提交必须发送原始选择（'' = 跟随），否则跟随会被静默固化成覆盖",
+        )
 
     def test_turn_jump_select_lives_in_topbar_actions(self) -> None:
         """手机端轮次下拉在顶栏操作区（桌面由 .mobile-only 隐藏），细节见 test_turn_jump.py。"""

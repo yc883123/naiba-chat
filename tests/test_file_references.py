@@ -191,7 +191,9 @@ class SubmitChatFileReferenceTests(unittest.TestCase):
             web_search=_SearchStub(),
         )
         self.manager = ConversationRunManager(app)
-        self.conversation = self.storage.create_conversation(workspace_dir=str(self.workspace))
+        self.conversation = self.storage.create_conversation(
+            workspace_dir=str(self.workspace), model_name="test-model"
+        )
 
     def tearDown(self):
         self.tmp.cleanup()

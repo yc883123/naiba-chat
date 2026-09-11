@@ -297,6 +297,21 @@
     </div>
   </dialog>
 
+  <dialog id="skillDeleteDialog" class="skill-delete-dialog" aria-labelledby="skillDeleteDialogTitle">
+    <div class="dialog-toolbar">
+      <div><h2 id="skillDeleteDialogTitle">删除 Skill</h2><p id="skillDeleteDialogSummary"></p></div>
+      <button class="icon-button" data-close="skillDeleteDialog" type="button" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button>
+    </div>
+    <div class="skill-delete-body">
+      <p id="skillDeleteDialogDetails"></p>
+      <div class="form-actions">
+        <button class="control-button" type="button" data-close="skillDeleteDialog">取消</button>
+        <button class="control-button" id="skillDeleteRecycle" type="button">删除（移到回收目录，可恢复）</button>
+        <button class="danger-button" id="skillDeletePermanent" type="button">彻底删除（直接删文件，不可恢复）</button>
+      </div>
+    </div>
+  </dialog>
+
 
   <!-- 会话条目「⋯」菜单：fixed 定位并挂到 body，避免被侧栏滚动容器裁剪（教训 §九.27） -->
   <div class="conversation-menu" id="conversationItemMenu" hidden role="menu" aria-label="会话操作">
@@ -514,9 +529,14 @@
           </div>
           <h3 class="subheading">已加载 Skill（<span id="installedSkillCount">0</span>）</h3>
           <div class="skill-list" id="installedSkillList"></div>
-          <h3 class="subheading">已隐藏 Skill（<span id="hiddenSkillCount">0</span>）</h3>
+          <div class="subheading-row">
+            <h3 class="subheading">已隐藏 Skill（<span id="hiddenSkillCount">0</span>）</h3>
+            <button class="danger-button skill-recycle-clear" id="clearSkillRecycle" type="button">清空回收目录</button>
+          </div>
           <div class="skill-list" id="hiddenSkillList"><small class="hint">无已隐藏的 Skill</small></div>
-          <p class="hint">此前被"删除/隐藏"的 Skill 会出现在这里；点击"取消隐藏"即可在会话中重新使用。重新导入同名 Skill 也会自动取消隐藏。</p>
+          <h3 class="subheading">回收目录（<span id="recycledSkillCount">0</span>）</h3>
+          <div class="skill-list" id="recycledSkillList"><small class="hint">回收目录为空</small></div>
+          <p class="hint">此前被隐藏的 Skill 会出现在这里；点击“取消隐藏”即可重新使用。回收目录中的内容可恢复，清空后将永久删除。</p>
         </section>
         <section data-settings-panel="datamigration" hidden>
           <h3>数据与迁移</h3>

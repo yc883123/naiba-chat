@@ -164,7 +164,28 @@ def _install_single_md(src: Path, managed_dir: Path, name: str | None) -> dict[s
     md_name = _frontmatter_value(text, "name")
     md_desc = _frontmatter_value(text, "description")
     if not md_name or not md_desc:
-        raise _SkillInstallError("单个 .md 必须包含有效的 YAML frontmatter，且同时具备 name 与 description 字段")
+        # 单文件导入允许裸 Markdown。为 SkillCatalog 补齐最小元数据，同时保留原正文。
+        body_lines = [line.strip() for line in text.splitlines() if line.strip()]
+        heading_index = next((index for index, line in enumerate(body_lines) if line.startswith("#")), -1)
+        heading = (
+            re.sub(r"^#{1,6}\s*", "", body_lines[heading_index]).strip()
+            if heading_index >= 0 else ""
+        )
+        md_name = md_name or heading or src.stem or "skill"
+        description_lines = body_lines[heading_index + 1:] if heading_index >= 0 else body_lines
+        md_desc = md_desc or next(
+            (
+                line.lstrip("#>*- ").strip()
+                for line in description_lines
+                if line not in {"---", "..."}
+                and not re.match(r"^(name|description):\s*", line, re.I)
+                and not line.startswith("#")
+            ),
+            "未提供描述",
+        )
+        md_name = md_name.replace("\n", " ").strip()[:120] or "skill"
+        md_desc = md_desc.replace("\n", " ").strip()[:240] or "未提供描述"
+        text = f"---\nname: {md_name}\ndescription: {md_desc}\n---\n\n{text.lstrip()}"
     dest = _unique_dir(managed_dir, name or md_name or src.stem)
     dest.mkdir(parents=True, exist_ok=True)
     (dest / "SKILL.md").write_text(text, encoding="utf-8")
@@ -311,8 +332,9 @@ def delete_skill(
     agent_configs: list[dict[str, Any]],
     managed_dir: Any,
     skills_by_id: dict[str, dict[str, Any]] | None = None,
+    permanently: bool = False,
 ) -> dict[str, Any]:
-    """可恢复删除（移动到回收目录，而非永久删除）一个托管 Skill。
+    """删除一个托管 Skill，可选择移入回收目录或永久删除。
 
     Args:
         skill_id: 目标 Skill id。
@@ -320,6 +342,7 @@ def delete_skill(
         agent_configs: agent 配置列表，每项含 'id' 与 'skill_ids'。
         managed_dir: 应用托管的 skills 目录（用于校验路径归属）。
         skills_by_id: 可选，预构建的 {id: skill}；缺省时扫描 managed_dir。
+        permanently: True 时直接删除托管文件；False 时移入 recycle_dir。
 
     Returns:
         {"success": True, "skill_id", "name", "recycled_to", "cleaned_agent_refs": [...], "error": None}
@@ -350,8 +373,6 @@ def delete_skill(
 
     managed = Path(managed_dir).expanduser().resolve()
     root = Path(str(skill.get("root") or skill.get("path") or "")).expanduser().resolve()
-    recycle = Path(recycle_dir).expanduser().resolve()
-    recycle.mkdir(parents=True, exist_ok=True)
     if root == managed or not _path_within(root, managed):
         # 散装 Skill：定义文件直接放在扫描目录根下（例如单文件导入的 <managed>/SKILL.md），
         # 此时 root 就是扫描目录本身。绝不能整目录移动，否则会把该目录下所有 Skill 一起
@@ -359,30 +380,110 @@ def delete_skill(
         skill_file = Path(str(skill.get("path") or "")).expanduser().resolve()
         if skill_file == managed or not _path_within(skill_file, managed) or not skill_file.is_file():
             return {"success": False, "error": "拒绝删除：Skill 定义不在托管目录内，请手动处理"}
-        dest = _unique_dir(recycle, str(skill.get("name") or skill_file.stem))
-        dest.mkdir(parents=True, exist_ok=True)
         try:
-            shutil.move(str(skill_file), str(dest / skill_file.name))
+            if permanently:
+                skill_file.unlink()
+                recycled_to = None
+            else:
+                recycle = Path(recycle_dir).expanduser().resolve()
+                recycle.mkdir(parents=True, exist_ok=True)
+                dest = _unique_dir(recycle, str(skill.get("name") or skill_file.stem))
+                dest.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(skill_file), str(dest / skill_file.name))
+                recycled_to = str(dest)
         except OSError as exc:
-            return {"success": False, "error": f"移动失败：{exc}"}
+            operation = "永久删除" if permanently else "移动"
+            return {"success": False, "error": f"{operation}失败：{exc}"}
         return {
             "success": True,
             "skill_id": skill_id,
             "name": str(skill.get("name", skill_file.stem)),
-            "recycled_to": str(dest),
+            "recycled_to": recycled_to,
+            "permanently_deleted": permanently,
             "cleaned_agent_refs": cleaned,
             "error": None,
         }
-    dest = _unique_dir(recycle, root.name)
     try:
-        shutil.move(str(root), str(dest))
+        if permanently:
+            shutil.rmtree(root)
+            recycled_to = None
+        else:
+            recycle = Path(recycle_dir).expanduser().resolve()
+            recycle.mkdir(parents=True, exist_ok=True)
+            dest = _unique_dir(recycle, root.name)
+            shutil.move(str(root), str(dest))
+            recycled_to = str(dest)
     except OSError as exc:
-        return {"success": False, "error": f"移动失败：{exc}"}
+        operation = "永久删除" if permanently else "移动"
+        return {"success": False, "error": f"{operation}失败：{exc}"}
     return {
         "success": True,
         "skill_id": skill_id,
         "name": str(skill.get("name", root.name)),
-        "recycled_to": str(dest),
+        "recycled_to": recycled_to,
+        "permanently_deleted": permanently,
         "cleaned_agent_refs": cleaned,
         "error": None,
     }
+
+
+def clear_skill_recycle(recycle_dir: Any) -> dict[str, Any]:
+    """Permanently clear only direct children of the dedicated Skill recycle directory."""
+    recycle = Path(recycle_dir).expanduser().resolve()
+    if not recycle.exists():
+        return {"success": True, "deleted": 0}
+    if not recycle.is_dir():
+        return {"success": False, "error": "Skill 回收目录不是文件夹"}
+    deleted = 0
+    try:
+        for item in recycle.iterdir():
+            if item.is_symlink() or item.is_file():
+                item.unlink()
+            else:
+                shutil.rmtree(item)
+            deleted += 1
+    except OSError as exc:
+        return {"success": False, "error": f"清空回收目录失败：{exc}"}
+    return {"success": True, "deleted": deleted}
+
+
+def list_skill_recycle(recycle_dir: Any) -> list[dict[str, str]]:
+    """List restorable Skill folders directly contained by the recycle directory."""
+    recycle = Path(recycle_dir).expanduser().resolve()
+    if not recycle.is_dir():
+        return []
+    entries: list[dict[str, str]] = []
+    for item in recycle.iterdir():
+        if item.is_symlink() or not item.is_dir() or not (item / "SKILL.md").is_file():
+            continue
+        try:
+            text = (item / "SKILL.md").read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        entries.append({
+            "entry": item.name,
+            "name": _frontmatter_value(text, "name") or item.name,
+            "path": str(item),
+        })
+    return sorted(entries, key=lambda entry: entry["name"].lower())
+
+
+def restore_skill_recycle_entry(entry: str, recycle_dir: Any, managed_dir: Any) -> dict[str, Any]:
+    """Move one validated recycled Skill folder back into the managed directory."""
+    name = str(entry or "").strip()
+    if not name or Path(name).name != name or name in {".", ".."}:
+        return {"success": False, "error": "回收目录条目无效"}
+    recycle = Path(recycle_dir).expanduser().resolve()
+    source = (recycle / name).resolve()
+    if not _path_within(source, recycle) or source == recycle or source.is_symlink():
+        return {"success": False, "error": "回收目录条目无效"}
+    if not source.is_dir() or not (source / "SKILL.md").is_file():
+        return {"success": False, "error": "回收目录中没有可恢复的 Skill"}
+    managed = Path(managed_dir).expanduser().resolve()
+    managed.mkdir(parents=True, exist_ok=True)
+    dest = _unique_dir(managed, source.name)
+    try:
+        shutil.move(str(source), str(dest))
+    except OSError as exc:
+        return {"success": False, "error": f"恢复失败：{exc}"}
+    return {"success": True, "restored_to": str(dest)}

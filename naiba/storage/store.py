@@ -1411,6 +1411,30 @@ class ChatStorage:
                 return None
         return self.get_conversation(conversation_id, include_messages=False)
 
+    def clear_conversation_model_overrides(self, model_key: str, model_name: str) -> int:
+        """清空「仍保存着该 API 旧默认模型名」的会话覆盖，返回受影响会话数。
+
+        会话 ``model_name`` 是会话级覆盖，为空表示跟随 API 供应商的默认模型。用户在输入区
+        没主动选过模型时，历史实现会把供应商当时的默认模型名一并落库成覆盖——供应商之后
+        改了默认模型，这些旧会话仍会继续发送旧模型名。这里只清空「覆盖值恰好等于旧默认
+        模型名」的会话（它们本来就在隐式跟随），显式固定成其它模型的会话保持不变。
+
+        不推进 ``updated_at``：这是静默修正，按更新时间排序的侧栏不应因此被重排。
+        ``chat_supports_images`` 归零为未知（-1），下次运行按新模型重新探测。
+        """
+        key = str(model_key or "").strip()
+        name = str(model_name or "").strip()
+        if not key or not name:
+            return 0
+        model_id = key.split(":", 1)[1] if ":" in key else key
+        with self._connect() as db:
+            cursor = db.execute(
+                "UPDATE conversations SET model_name = '', chat_supports_images = -1 "
+                "WHERE model_name = ? AND (model_key = ? OR (model_key = '' AND provider_id = ?))",
+                (name, key, model_id),
+            )
+            return int(cursor.rowcount or 0)
+
     def set_enabled_tool_ids(self, conversation_id: str, tool_ids: list[str] | tuple[str, ...] | set[str]) -> None:
         """固化某会话的启用工具集（会话启动时写入，之后不可改）。"""
         with self._connect() as db:

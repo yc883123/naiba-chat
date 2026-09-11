@@ -62,15 +62,38 @@ class SkillCatalog:
         directories: list[Path],
         base_dir: Path | None = None,
         hidden_ids: list[str] | set[str] | None = None,
+        package_dir: Path | None = None,
+        sources: list[str] | None = None,
     ):
         self.base_dir = base_dir or Path.cwd()
         self.directories = [self._resolve(directory) for directory in directories]
         self.hidden_ids = {str(item) for item in (hidden_ids or [])}
+        # 打包内置目录（冻结版为 _MEIPASS/skills）：用于判定 Skill 的"真实来源"，
+        # 以及让上层识别"托管副本遮蔽内置副本"的重复情形。
+        self.package_dir = self._resolve(package_dir) if package_dir is not None else None
+        # 显式来源标签（与 directories 一一对应）。缺省时沿用历史的位置约定：
+        # 目录 0 = 内置、目录 1 = 托管、其余 = 外部。
+        self.sources = [str(item) for item in sources] if sources else None
+        self._package_cache: list[dict[str, Any]] | None = None
         self._scan_cache: list[dict[str, Any]] | None = None
         self._scan_signature: tuple[Any, ...] | None = None
         self._scan_lock = threading.RLock()
         self._content_cache: dict[str, tuple[int, int, str]] = {}
         self._content_lock = threading.RLock()
+
+    def bundled_entries(self) -> list[dict[str, Any]]:
+        """打包内置目录里的 Skill 条目（不带隐藏过滤），用于来源判定与同步去重。"""
+        if self._package_cache is None:
+            if self.package_dir and self.package_dir.is_dir():
+                probe = SkillCatalog([self.package_dir], base_dir=self.base_dir, hidden_ids=[])
+                self._package_cache = [dict(item) for item in probe.scan()]
+            else:
+                self._package_cache = []
+        return [dict(item) for item in self._package_cache]
+
+    def bundled_skill_ids(self) -> set[str]:
+        """内置 Skill 的稳定 id 集合；删除这些 Skill 只能隐藏，不能搬走副本。"""
+        return {str(item.get("id") or "") for item in self.bundled_entries()}
 
     def _resolve(self, directory: Path) -> Path:
         directory = Path(directory).expanduser()
@@ -82,13 +105,30 @@ class SkillCatalog:
         resolved = self._resolve(directory)
         if resolved not in self.directories:
             self.directories.append(resolved)
+            if self.sources is not None:
+                self.sources.append("external")
             self._scan_cache = None
         return resolved
 
     def remove_directory(self, directory: Path) -> None:
         resolved = self._resolve(directory)
+        if self.sources is not None and len(self.sources) == len(self.directories):
+            self.sources = [
+                label for label, item in zip(self.sources, self.directories) if item != resolved
+            ]
         self.directories = [item for item in self.directories if item != resolved]
         self._scan_cache = None
+
+    def _source_for(self, directory_index: int, directory: Path) -> str:
+        if self.sources is not None and directory_index < len(self.sources):
+            return self.sources[directory_index]
+        if self.package_dir is not None and directory == self.package_dir:
+            return "builtin"
+        if directory_index == 0:
+            return "builtin"
+        if directory_index == 1:
+            return "managed"
+        return "external"
 
     @staticmethod
     def _iter_skill_files(directory: Path) -> list[Path]:
@@ -143,16 +183,12 @@ class SkillCatalog:
                 return [dict(item) for item in self._scan_cache]
         found: dict[str, dict[str, Any]] = {}
         seen_files: set[str] = set()
+        id_providers: dict[str, list[str]] = {}
         files_by_directory = {directory: files for directory, files in skill_files_by_directory}
         for directory_index, directory in enumerate(self.directories):
             # 目录 0 为内置（bundled）Skill 目录；目录 1 为应用托管（安装目标）目录；
-            # 其余为用户额外添加的扫描目录（外部）。
-            if directory_index == 0:
-                directory_source = "builtin"
-            elif directory_index == 1:
-                directory_source = "managed"
-            else:
-                directory_source = "external"
+            # 其余为用户额外添加的扫描目录（外部）。显式传入 sources 时以它为准。
+            directory_source = self._source_for(directory_index, directory)
             if not directory.exists():
                 continue
             for skill_file in files_by_directory.get(directory, []):
@@ -201,6 +237,10 @@ class SkillCatalog:
                     continue
                 scripts_dir = skill_file.parent / "scripts"
                 script_count = sum(1 for item in scripts_dir.rglob("*") if item.is_file()) if scripts_dir.exists() else 0
+                providers = id_providers.setdefault(skill_id, [])
+                directory_key = str(directory)
+                if directory_key not in providers:
+                    providers.append(directory_key)
                 found[skill_id] = {
                     "id": skill_id,
                     "name": name,
@@ -214,6 +254,15 @@ class SkillCatalog:
                     "mcp_servers": declared_mcp_servers,
                     "source": directory_source,
                 }
+        # 后置修正：同一 id 由多个目录提供时，托管副本会覆盖内置副本的展示来源，
+        # 让「内置 Skill」看起来像可整目录删除的托管 Skill（点一次删不掉，重启还会复活）。
+        # 这里把真实来源还原为 builtin，并附上重复目录清单供前端提示。
+        bundled_ids = self.bundled_skill_ids()
+        for skill_id, entry in found.items():
+            providers = id_providers.get(skill_id) or []
+            entry["duplicate_dirs"] = providers if len(providers) > 1 else []
+            if skill_id in bundled_ids:
+                entry["source"] = "builtin"
         result = sorted(found.values(), key=lambda item: item["name"].lower())
         with self._scan_lock:
             self._scan_signature = signature
