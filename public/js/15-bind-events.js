@@ -4,7 +4,7 @@
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, restoreTopbarCompact, runTextContextAction, setTopbarCompact, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarning, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, resetContextWarningResume, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
-import { branchMessage, cancelSessionStart, fillContextResetSeed, initTurnRail, isNearBottom, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
+import { branchMessage, cancelSessionStart, confirmActiveEdit, fillContextResetSeed, initTurnRail, isNearBottom, regenerateMessage, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveComposerModelSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
@@ -236,6 +236,8 @@ export function bindEvents() {
   $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
+    // 编辑态下底部按钮就是「重新发送」：不发新消息，改为确认上面那个编辑框。
+    if (state.editingMessageId) { confirmActiveEdit(); return; }
     if (state.chatRunId || state.abortController) cancelCurrentRun();
     else sendMessage();
   });
@@ -268,6 +270,8 @@ export function bindEvents() {
     }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
+      // 编辑态下回车同样改走确认编辑（与底部发送按钮同口径）。
+      if (state.editingMessageId) { confirmActiveEdit(); return; }
       if (state.chatRunId || state.abortController) {
         toast('回复进行中，请等待完成或先点击停止');
       } else {
@@ -452,6 +456,11 @@ export function bindEvents() {
       } catch (error) {
         toast(`复制失败：${error.message}`);
       }
+      return;
+    }
+    const regenerateButton = event.target.closest('[data-regenerate-message]');
+    if (regenerateButton) {
+      regenerateMessage(regenerateButton.dataset.regenerateMessage);
       return;
     }
     const openFileButton = event.target.closest('[data-open-file]');

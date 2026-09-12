@@ -1119,11 +1119,9 @@ export function setBusy(busy) {
       ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2"></rect></svg>'
       : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"></path></svg>');
   $$('#choiceButtons button').forEach((button) => { button.disabled = busy; });
-  const messageInput = $('#messageInput');
-  messageInput.disabled = false;
-  messageInput.placeholder = busy ? '回复进行中…' : '输入消息';
-  // 发送按钮的 disabled/title/aria-label 由 updateSendButtonState 单点维护
-  // （经 updateContextComposerLock 调用），此处只负责图标与停止态样式。
+  // 输入框的 disabled/placeholder 与发送按钮一律由 updateContextComposerLock /
+  // updateSendButtonState 单点维护（含「上下文已满」与「正在编辑消息」两种锁定原因），
+  // 此处只负责图标与停止态样式——两个写入点会互相覆盖，实测踩过。
   updateContextComposerLock(busy);
   updateDeepReasoningButton();
   updateUnloadModelButton();

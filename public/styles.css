@@ -448,8 +448,13 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 #messages.conversation-running .message-actions [data-branch-message] { display: none; }
 .message-actions [data-branch-message]:hover { color: var(--accent); }
 .message-actions [data-session-start-after]:hover { color: var(--accent); }
+.message-actions [data-edit-message]:hover { color: var(--accent); }
+.message-actions [data-regenerate-message]:hover { color: var(--accent); }
 /* 运行中不显示「新会话」入口（与「分支」同口径：位置要落在已完成的回复之后） */
 #messages.conversation-running .message-actions [data-session-start-after] { display: none; }
+/* 「编辑」「重新生成」同口径：都从某条已落库的消息处截断并重发，运行中禁止，避免与进行中的回答打架 */
+#messages.conversation-running .message-actions [data-edit-message] { display: none; }
+#messages.conversation-running .message-actions [data-regenerate-message] { display: none; }
 
 /* 「新会话」分割线（标在某条消息 metadata 上，渲染在其正下方）：划分模型上下文窗口，
    线以上的消息不再进入请求，线以下的仍在上下文中；聊天记录全部保留 */
@@ -512,6 +517,9 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .edit-attachments { margin: 8px 0; }
 .edit-attachments .media-grid { max-width: 100%; }
 .edit-attachments img { max-width: 180px; max-height: 140px; object-fit: contain; }
+/* 「编辑消息」态：会话内的编辑框是唯一的编辑入口，底部输入区整体让位——
+   草稿附件列表收起（附件在编辑框里自带一份），避免"以为在编辑、其实在写新消息"的两个框打架 */
+body.is-editing-message #pendingFiles { display: none; }
 .tool-stack { margin: 8px 0 12px; border-left: 2px solid var(--warning); padding-left: 10px; }
 .tool-availability { margin: 8px 0 12px; color: var(--muted); font-size: 12px; }
 .tool-availability summary { cursor: pointer; color: var(--warning); font-weight: 600; }

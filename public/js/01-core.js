@@ -24,6 +24,11 @@ export const state = {
   selectedSkills: storedSkillIds,
   skillMode: initialSkillMode,
   pendingFiles: [],
+  // 「编辑消息」态：会话内编辑框打开期间记录被编辑的消息 id，底部输入区整体让位给它
+  // （输入框锁住、草稿附件收起、发送键变「重新发送」）。同一时刻最多一个编辑框。
+  editingMessageId: '',
+  editingHasText: false,
+  editingHasAttachments: false,
   abortController: null,
   chatRunId: '',
   runConversationId: '',

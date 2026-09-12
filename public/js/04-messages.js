@@ -4,7 +4,7 @@
 
 import { $, api, draggedFileCache, emptyStateElement, escapeHtml, notifyComposerChanged, state, toast } from "./01-core.js";
 import { markdown } from "./02-markdown.js";
-import { activityMarkup, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, mediaTruncatedNotice, reasoningMarkup, remainingAttachments, skillMarkup, sourcesMarkup, toolMarkup, updateContextUsage, uploadedFileMarkup, usageMarkup } from "./03-media.js";
+import { activityMarkup, closeImageLightbox, fileChangesSummaryMarkup, fileUrl, mediaKind, mediaMarkup, mediaTruncatedNotice, reasoningMarkup, remainingAttachments, skillMarkup, sourcesMarkup, toolMarkup, updateContextComposerLock, updateContextUsage, updateSendButtonState, uploadedFileMarkup, usageMarkup } from "./03-media.js";
 import { openConversation, syncCurrentConversation } from "./08-conversations.js";
 import { renderPendingFiles } from "./10-upload.js";
 import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
@@ -123,7 +123,14 @@ export function messageElement(message, temporary = false) {
     });
   }
   if (message.role === 'user') {
-    const actions = message.id ? '<div class="message-actions"><button data-branch-message title="从这条消息分支到新会话继续">分支</button></div>' : '';
+    // 「编辑」（破坏性：截断这条提问及其之后）在前，「分支」（非破坏性）在后——编辑更常用，
+    // 且与 AI 回复上的「重新生成」是同一个截断点的两种入口。
+    const actions = message.id
+      ? '<div class="message-actions">'
+        + '<button data-edit-message title="编辑这条提问并从这里重新发送（其后的消息会被删除）">编辑</button>'
+        + '<button data-branch-message title="从这条消息分支到新会话继续">分支</button>'
+        + '</div>'
+      : '';
     row.innerHTML = `<div class="message-body">${renderUserContent(metadata.display_content || message.content)}${uploadedFileMarkup(metadata.attachments)}${actions}</div>`;
   } else {
     const abortedBadge = metadata.aborted
@@ -149,6 +156,12 @@ export function messageElement(message, temporary = false) {
     const sessionButton = (!temporary && message.id)
       ? `<button data-session-start-after="${escapeHtml(message.id)}" title="在这条回复之后划一条分割线：此线以上的消息不再进入模型上下文（下方消息仍在上下文中，聊天记录全部保留）">新会话</button>`
       : '';
+    // 「重新生成」入口：夹在「复制」与「新会话」之间（操作区顺序 复制 → 重新生成 → 新会话）。
+    // 显示条件与「新会话」同口径（!temporary && message.id），因此「已中止 / 未完成」的回复同样有按钮
+    // ——那正是最常见的真实场景。
+    const regenerateButton = (!temporary && message.id)
+      ? `<button data-regenerate-message="${escapeHtml(message.id)}" title="用同一条提问重新生成这条回复（前面的对话历史保持不变）">重新生成</button>`
+      : '';
     row.innerHTML = `
       ${avatarHtml}
       <div class="message-card">
@@ -163,7 +176,7 @@ export function messageElement(message, temporary = false) {
           ${bottomAttachments.length ? mediaTruncatedNotice(metadata.attachments_truncated) : ''}
           ${temporary ? '' : fileChangesSummaryMarkup(metadata.files)}
           ${temporary ? '' : usageMarkup({ ...(metadata.usage || {}), performance: metadata.performance || metadata.usage?.performance }, message.created_at)}
-          ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button>${sessionButton}</div>`}
+          ${temporary ? '' : `<div class="message-actions"><button data-copy-message>复制</button>${regenerateButton}${sessionButton}</div>`}
         </div>
       </div>`;
   }
@@ -176,6 +189,58 @@ export function preloadDraggedFile(source, name = '') {
   fetch(url).then((response) => response.ok ? response.blob() : Promise.reject(new Error('image fetch failed')))
     .then((blob) => draggedFileCache.set(url, new File([blob], name || 'image' + (blob.type ? '.' + blob.type.split('/')[1] : ''), { type: blob.type })))
     .catch(() => {});
+}
+
+// 「编辑消息」态的开关：编辑框打开期间，底部输入区整体让位给它——
+// 输入框锁住（占位提示改用编辑框确认/取消）、草稿附件列表收起、添加文件按钮禁用，
+// 发送按钮则由 updateSendButtonState 按编辑框内容变成「重新发送」。
+// 同一时刻最多一个编辑框，所以态记在 `state` 上供 03-media / 15-bind-events 只读消费
+// （若把访问器放在本模块再反向 import，会造出 03↔04 循环依赖）。
+function applyEditingState(row) {
+  const editing = Boolean(row);
+  const textarea = editing ? row.querySelector('[data-edit-input]') : null;
+  state.editingMessageId = editing ? String(row.dataset.messageId || '') : '';
+  state.editingHasText = Boolean(String(textarea?.value || '').trim());
+  state.editingHasAttachments = editing
+    ? Boolean(((row.__messageMetadata || {}).attachments || []).length)
+    : false;
+  document.body.classList.toggle('is-editing-message', editing);
+  const attach = $('#attachButton');
+  if (attach) attach.disabled = editing;
+  // 输入框的 disabled/placeholder 与发送按钮仍是 updateContextComposerLock / updateSendButtonState
+  // 两个单点写入，这里只负责切换状态后触发刷新（一个控件不留第二个写入点）。
+  updateContextComposerLock(state.chatBusy);
+}
+
+// 找到当前打开的那个编辑框（同一时刻最多一个）。
+function activeEditPair() {
+  const textarea = document.querySelector('#messages textarea[data-edit-input]');
+  const row = textarea ? textarea.closest('.message-row') : null;
+  return textarea && row ? { textarea, row } : null;
+}
+
+// 确认编辑：先退出编辑态（底部输入区立刻恢复），再把新内容交给共用重发。
+function submitEdit(row, textarea) {
+  const value = String(textarea?.value ?? '');
+  applyEditingState(null);
+  confirmEditMessage(row, value);
+}
+
+// 取消编辑：退出编辑态并重新渲染当前会话（编辑框随之消失）。
+function cancelEdit() {
+  applyEditingState(null);
+  if (state.conversationId) openConversation(state.conversationId);
+}
+
+// 底部「发送」按钮在编辑态下的回调：不发新消息，改为确认上面的编辑框。
+export function confirmActiveEdit() {
+  const pair = activeEditPair();
+  if (!pair) {
+    applyEditingState(null);
+    return false;
+  }
+  submitEdit(pair.row, pair.textarea);
+  return true;
 }
 
 export function startEditMessage(row) {
@@ -201,50 +266,126 @@ export function startEditMessage(row) {
   const textarea = body.querySelector('[data-edit-input]');
   textarea.focus();
   textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  body.querySelector('[data-edit-cancel]').addEventListener('click', () => {
-    // 取消：重新渲染当前会话
-    if (state.conversationId) openConversation(state.conversationId);
+  applyEditingState(row);
+  // 编辑框内容变化要同步发送按钮可用性（编辑态下它是唯一的内容来源）。
+  textarea.addEventListener('input', () => {
+    state.editingHasText = Boolean(String(textarea.value || '').trim());
+    updateSendButtonState();
   });
-  body.querySelector('[data-edit-confirm]').addEventListener('click', () => {
-    confirmEditMessage(row, textarea.value);
-  });
+  body.querySelector('[data-edit-cancel]').addEventListener('click', cancelEdit);
+  body.querySelector('[data-edit-confirm]').addEventListener('click', () => submitEdit(row, textarea));
   textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) confirmEditMessage(row, textarea.value);
-    if (e.key === 'Escape' && state.conversationId) openConversation(state.conversationId);
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitEdit(row, textarea);
+    if (e.key === 'Escape') cancelEdit();
   });
 }
 
-export async function confirmEditMessage(row, newText) {
-  const text = newText.trim();
-  if (!text) {
+// 共用重发：截断到某条用户消息、恢复它的附件、回到输入框并发送。
+// 「编辑后确认」与「重新生成」截断位置完全相同（都落在那条 user 消息上），只是文本不同，因此共用此处：
+//   - 编辑 → text 用编辑框里的新内容
+//   - 重新生成 → text 用该提问的原文（原样重发，不改字）
+// 截断走 /api/messages/edit：它只接受 role == "user" 的 id，随即删除该消息及其之后所有消息，并回传原附件。
+// 放行口径与 sendChatMessage/submit_chat 一致：**文字与可用附件至少有一个**——纯附件轮次
+// （只发文件/图片、不写字）同样可以重发；只传空文字又无附件才拒绝。
+export async function resendFromUserMessage(userMessageId, text, { successText = '已从该消息重开，编辑点之前的上下文将复用缓存', errorPrefix = '重发', attachments = [] } = {}) {
+  const content = String(text ?? '').trim();
+  const knownAttachments = Array.isArray(attachments) ? attachments : [];
+  if (!content && !knownAttachments.length) {
     toast('内容不能为空');
-    return;
+    return false;
   }
-  const messageId = row.dataset.messageId;
-  if (!messageId || !state.conversationId) return;
+  const conversationId = state.conversationId;
+  if (!userMessageId || !conversationId) return false;
   try {
     const result = await api('/api/messages/edit', {
       method: 'POST',
-      body: { conversation_id: state.conversationId, message_id: messageId },
+      body: { conversation_id: conversationId, message_id: userMessageId },
     });
-    toast('已从该消息重开，编辑点之前的上下文将复用缓存');
-    // 恢复原消息的附件，供重发使用
-    state.pendingFiles = (result.attachments || []).map((f) => ({ name: f.name, path: f.path, size: f.size }));
+    toast(successText);
+    // 恢复原消息的附件，供重发使用。字段口径与「分支」一致（含 thumb_path）：
+    // 缺 thumb_path 时渲染层会退化成推导 `<path>_thumb.webp`，一旦缩略图不在同目录就 404。
+    state.pendingFiles = (result.attachments || []).map((f) => ({
+      name: f.name,
+      path: f.path,
+      size: f.size,
+      thumb_path: f.thumb_path,
+    }));
     renderPendingFiles();
-    // 截断后重新渲染会话（被编辑的消息已从历史消失）
-    await openConversation(state.conversationId);
-    // 填入新内容并重发
+    // 截断后重新渲染会话（被截断的消息已从历史消失）
+    await openConversation(conversationId);
+    // 填入内容并重发（纯附件轮次 text 为空，sendChatMessage 只靠 pendingFiles 放行）
     const input = $('#messageInput');
-    input.value = text;
+    input.value = content;
     resizeTextarea();
     renderInputMirror();
     updateSkillPopup();
     notifyComposerChanged(input);
     await sendMessage();
+    return true;
   } catch (error) {
-    toast(`编辑失败：${error.message}`);
+    toast(`${errorPrefix}失败：${error.message}`);
     if (state.conversationId) openConversation(state.conversationId);
+    return false;
   }
+}
+
+export async function confirmEditMessage(row, newText) {
+  const text = newText.trim();
+  const messageId = row.dataset.messageId;
+  if (!messageId || !state.conversationId) return;
+  const attachments = (row.__messageMetadata || {}).attachments || [];
+  // 空文字只在同时也没有附件时才拒绝（纯附件轮次同样可编辑重发）。
+  await resendFromUserMessage(messageId, text, {
+    successText: '已从该消息重开，编辑点之前的上下文将复用缓存',
+    errorPrefix: '编辑',
+    attachments,
+  });
+}
+
+// 「重新生成」：对某条已落库的 AI 回复，用它的上一条用户提问原样重发（不改字）。
+// 截断点与「编辑」相同——都从那条 user 消息处截断，因此反复点击不会累积重复提问，
+// 且 U1..A(N-1) 字节级不动 → 前缀缓存照常命中（这是重发最省钱的理由）。
+export async function regenerateMessage(assistantMessageId) {
+  if (state.chatRunId || state.abortController) {
+    toast('请先等待当前回答结束或停止后再重新生成');
+    return;
+  }
+  if (!state.conversationId) return;
+  const messages = state.messages || [];
+  const index = messages.findIndex((m) => String(m.id) === String(assistantMessageId));
+  if (index < 0) {
+    toast('重新生成失败：消息不存在');
+    return;
+  }
+  // 往前找最近一条用户消息（session 分割线等中间消息自动跳过）。
+  // 从 state.messages 而非 DOM 推导：懒加载只渲染窗口内的消息，DOM 里未必有那条提问。
+  let userMessage = null;
+  for (let i = index - 1; i >= 0; i -= 1) {
+    if (messages[i] && messages[i].role === 'user') { userMessage = messages[i]; break; }
+  }
+  if (!userMessage || !userMessage.id) {
+    toast('重新生成失败：找不到对应的提问');
+    return;
+  }
+  const metadata = userMessage.metadata || {};
+  // 原文取 display_content（用户原样，含 /ref）；content 是剥离引用、解析过 @ 的模型可见版，
+  // 用错会把引用悄悄弄丢。
+  const text = String(metadata.display_content || userMessage.content || '');
+  // 这条回复之后还有多少条消息（截断它们时会一并删除），以及输入框是否已有草稿。
+  const trailing = messages.slice(index + 1).length;
+  const input = $('#messageInput');
+  const hasDraft = Boolean(input && String(input.value || '').trim());
+  if (trailing > 0 || hasDraft) {
+    const lines = ['重新生成这条回复？', '', '前面的对话历史保持不变。'];
+    if (trailing > 0) lines.splice(2, 0, `这条回复之后还有 ${trailing} 条消息，会一并删除。`);
+    if (hasDraft) lines.push('', '输入框里的草稿会被替换成这条提问。');
+    if (!window.confirm(lines.join('\n'))) return;
+  }
+  await resendFromUserMessage(userMessage.id, text, {
+    successText: '正在重新生成（复用前缀缓存）',
+    errorPrefix: '重新生成',
+    attachments: metadata.attachments || [],
+  });
 }
 
 // 从某条 user 消息分支：新开一个会话，复制分支点之前的历史，并把分支消息预填进输入框。
@@ -568,6 +709,9 @@ export function renderMessages(messages) {
   const container = $('#messages');
   const empty = emptyStateElement;
   closeImageLightbox();
+  // 重渲染会把会话内编辑框一起换掉 → 编辑态必须同步退出，
+  // 否则底部会一直卡在「重新发送」（编辑框已经不在了）。
+  if (state.editingMessageId) applyEditingState(null);
   const list = Array.isArray(messages) ? messages : [];
   // 切换会话 → 窗口重置为「最近 N 轮」；同一会话刷新（轮询/保存后）→ 保留当前窗口与滚动位置，
   // 否则用户正在往上翻历史时一次轮询就会把他拽回底部。
