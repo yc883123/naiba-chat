@@ -19,6 +19,7 @@ export const initialSkillMode = ['auto', 'pinned', 'exclusive'].includes(storedS
 export const state = {
   token: urlToken || localStorage.getItem('naibaChatToken') || localStorage.getItem('lanSkillToken') || '',
   bootstrap: null,
+  appearance: { theme: 'system', skin: 'violet' },
   conversations: [],
   conversationId: '',
   selectedSkills: storedSkillIds,
@@ -132,6 +133,84 @@ export const state = {
   updateAutoSelectLatest: false,
 };
 export const draggedFileCache = new Map();
+
+// ---- 外观主题 ----
+// 主题偏好同时保存在服务端 settings.appearance 与本地缓存：本地缓存用于首屏无闪烁，
+// 服务端值在 bootstrap 返回后覆盖它，从而在同一实例的桌面/手机端保持一致。
+const APPEARANCE_KEY = 'naibaChatAppearance';
+const THEMES = new Set(['system', 'light', 'dark']);
+const SKINS = new Set(['violet', 'ocean', 'rose', 'forest']);
+
+function readStoredAppearance() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(APPEARANCE_KEY) || '{}');
+    return {
+      theme: THEMES.has(raw.theme) ? raw.theme : 'system',
+      skin: SKINS.has(raw.skin) ? raw.skin : 'violet',
+    };
+  } catch (_) {
+    return { theme: 'system', skin: 'violet' };
+  }
+}
+
+function resolvedTheme(theme) {
+  return theme === 'system'
+    ? (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+    : theme;
+}
+
+export function applyAppearance(appearance = {}) {
+  const previous = state.appearance || {};
+  const next = {
+    theme: THEMES.has(appearance.theme) ? appearance.theme : (THEMES.has(previous.theme) ? previous.theme : 'system'),
+    skin: SKINS.has(appearance.skin) ? appearance.skin : (SKINS.has(previous.skin) ? previous.skin : 'violet'),
+  };
+  state.appearance = next;
+  const root = document.documentElement;
+  const actualTheme = resolvedTheme(next.theme);
+  root.dataset.theme = actualTheme;
+  root.dataset.themeMode = next.theme;
+  root.dataset.skin = next.skin;
+  root.style.colorScheme = actualTheme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = actualTheme === 'dark' ? '#111522' : (next.skin === 'ocean' ? '#f0f7ff' : '#f4f5f2');
+  try { localStorage.setItem(APPEARANCE_KEY, JSON.stringify(next)); } catch (_) { /* storage disabled */ }
+  return next;
+}
+
+export function initializeAppearance() {
+  const initial = readStoredAppearance();
+  applyAppearance(initial);
+  const media = window.matchMedia?.('(prefers-color-scheme: dark)');
+  media?.addEventListener?.('change', () => {
+    if (state.appearance?.theme === 'system') applyAppearance(state.appearance);
+  });
+  return initial;
+}
+
+// 在 bootstrap 完成后调用，服务端配置优先；旧版本无 appearance 时保留本地偏好。
+export function syncAppearanceFromBootstrap(bootstrap) {
+  const configured = bootstrap?.settings?.appearance || bootstrap?.appearance;
+  const local = readStoredAppearance();
+  return applyAppearance({
+    theme: configured?.theme ?? local.theme,
+    skin: configured?.skin ?? local.skin,
+  });
+}
+
+export async function saveAppearance(patch = {}) {
+  const next = applyAppearance({ ...state.appearance, ...patch });
+  try {
+    const result = await api('/api/settings', { method: 'POST', body: { appearance: next } });
+    const saved = result?.settings?.appearance || result?.appearance;
+    if (saved) applyAppearance(saved);
+    if (state.bootstrap?.settings) state.bootstrap.settings.appearance = saved || next;
+    return state.appearance;
+  } catch (error) {
+    // 乐观更新后端失败时仍保留本地选择，调用方负责提示用户。
+    throw error;
+  }
+}
 
 export const $ = (selector) => document.querySelector(selector);
 export const $$ = (selector) => [...document.querySelectorAll(selector)];

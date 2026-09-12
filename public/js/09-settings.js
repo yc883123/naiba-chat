@@ -2,7 +2,7 @@
 // 09-settings.js —— 拆分自 public/app.js 第 3115-4672 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, $$, api, escapeHtml, state, toast } from "./01-core.js";
+import { $, $$, api, applyAppearance, escapeHtml, state, toast } from "./01-core.js";
 import { applyConversationAgent, populateComposerModels, populateModels, renderAgents, updateUnloadModelButton } from "./07-models-agents.js";
 import { closeAgentPromptPresetPanel, currentAgentFixedSkillIds, renderAgentPromptPresetList } from "./08-conversations.js";
 import { skillList } from "./13-skill-refs.js";
@@ -19,6 +19,15 @@ export function renderSkills(filter = '') {
       <span class="skill-tag" title="点击插入到输入框">/${escapeHtml(skill.ref || skill.name)}</span>
     </button>`).join('');
   updateSkillSummary();
+}
+
+export function populateAppearanceSettings() {
+  const appearance = state.bootstrap?.settings?.appearance || {};
+  const theme = appearance.theme || 'system';
+  const skin = appearance.skin || 'violet';
+  $$('input[name="appearanceTheme"]').forEach((input) => { input.checked = input.value === theme; });
+  $$('input[name="appearanceSkin"]').forEach((input) => { input.checked = input.value === skin; });
+  applyAppearance({ theme, skin });
 }
 
 export function updateSkillSummary() {

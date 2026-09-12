@@ -2,11 +2,11 @@
 // 05-bootstrap.js —— 拆分自 public/app.js 第 1502-1605 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, $$, api, setServerStatus, state, toast } from "./01-core.js";
+import { $, $$, api, initializeAppearance, setServerStatus, state, syncAppearanceFromBootstrap, toast } from "./01-core.js";
 import { loadTasks, startTaskSync } from "./06-tasks-plans.js";
 import { populateModels, renderAgents, renderUpdateStatus } from "./07-models-agents.js";
 import { loadConversationPromptPresets, loadConversations, restoreSidebarWidth, setSidebarScrollToActive, startConversationSync } from "./08-conversations.js";
-import { migrateLegacyToolTemplates, populateRuntimeSettings, populateSearchSettings, populateVisionSettings, renderAgentManager, renderMcp, renderProviders, renderSkills, startMcpPoll } from "./09-settings.js";
+import { migrateLegacyToolTemplates, populateAppearanceSettings, populateRuntimeSettings, populateSearchSettings, populateVisionSettings, renderAgentManager, renderMcp, renderProviders, renderSkills, startMcpPoll } from "./09-settings.js";
 import { loadStarterPrompts } from "./12-chat-input.js";
 export async function authenticate(token) {
   const response = await fetch('/api/auth', {
@@ -51,6 +51,8 @@ export async function enableLanAccess() {
 }
 
 export async function initialize() {
+  // 尽早应用本地偏好，避免首屏闪烁；bootstrap 返回后再以服务端配置同步。
+  initializeAppearance();
   restoreSidebarWidth();
   setSidebarScrollToActive(true);
   try {
@@ -62,6 +64,8 @@ export async function initialize() {
     $('#authDialog').showModal();
     return;
   }
+  syncAppearanceFromBootstrap(state.bootstrap);
+  populateAppearanceSettings();
   const migration = state.bootstrap.data_location?.migration;
   if (migration?.migrated) {
     const restored = [

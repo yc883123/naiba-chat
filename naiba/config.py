@@ -16,6 +16,12 @@ from naiba.paths import PathContext
 
 logger = logging.getLogger("naiba.config")
 
+# Appearance preferences are intentionally small, stable enums.  Keeping the
+# values in one place lets both config migration and runtime updates apply the
+# same validation rules.
+APPEARANCE_THEMES = frozenset({"system", "light", "dark"})
+APPEARANCE_SKINS = frozenset({"violet", "ocean", "rose", "forest"})
+
 
 def validate_skills_dir(resolved: Path, *, app_dir: Path, public_dir: Path, data_dir: Path) -> None:
     """限制 Skill 目录范围，防止把高危目录暴露给扫描、解压和文件读取。"""
@@ -46,6 +52,12 @@ def default_config() -> dict[str, Any]:
         "workspace_dir": "workspace",
         "data_dir": "data",
         "workspaces": [],
+        # UI appearance preferences.  These are persisted server-side so all
+        # clients connected to the same Naiba Chat instance share the choice.
+        "appearance": {
+            "theme": "system",
+            "skin": "violet",
+        },
         # Per-user reusable system prompts for conversation settings.  These
         # live in config.json instead of the conversation database by design.
         "conversation_prompt_presets": [],
@@ -680,10 +692,17 @@ class ConfigStore:
             except (OSError, json.JSONDecodeError):
                 pass
         # 嵌套默认值合并：用户配置若只写了部分子字段，补齐缺失键。
-        for key in ("vision", "search"):
+        for key in ("vision", "search", "appearance"):
             merged = dict(default_config().get(key, {}))
             if isinstance(defaults.get(key), dict):
                 merged.update(defaults[key])
+            if key == "appearance":
+                # Normalize hand-edited/legacy config values.  Invalid enum
+                # values should never leak into the public settings payload.
+                theme = str(merged.get("theme") or "").strip().lower()
+                skin = str(merged.get("skin") or "").strip().lower()
+                merged["theme"] = theme if theme in APPEARANCE_THEMES else "system"
+                merged["skin"] = skin if skin in APPEARANCE_SKINS else "violet"
             defaults[key] = merged
         # Build 74 changes the historical 120-second Run-wide vision budget
         # into a 180-second timeout for each individual visual request. Only
@@ -1521,6 +1540,7 @@ class ConfigStore:
             "search",
             "proxy",
             "workspaces",
+            "appearance",
         }
         with self.lock:
             for key in allowed:
@@ -1566,6 +1586,29 @@ class ConfigStore:
                         self.data[key] = raw
                     elif key == "context_size":
                         self.data[key] = self._positive_context_size(values[key], "context_size")
+                    elif key == "appearance":
+                        incoming = values[key]
+                        if not isinstance(incoming, dict):
+                            raise ValueError("appearance 必须是对象")
+                        unknown = set(incoming) - {"theme", "skin"}
+                        if unknown:
+                            names = ", ".join(sorted(map(str, unknown)))
+                            raise ValueError(f"appearance 包含不支持的字段：{names}")
+                        merged = dict(self.data.get("appearance", {}))
+                        if "theme" in incoming:
+                            theme = str(incoming["theme"] or "").strip().lower()
+                            if theme not in APPEARANCE_THEMES:
+                                raise ValueError("主题必须是 system、light 或 dark")
+                            merged["theme"] = theme
+                        if "skin" in incoming:
+                            skin = str(incoming["skin"] or "").strip().lower()
+                            if skin not in APPEARANCE_SKINS:
+                                raise ValueError("皮肤必须是 violet、ocean、rose 或 forest")
+                            merged["skin"] = skin
+                        self.data[key] = {
+                            "theme": merged.get("theme", "system"),
+                            "skin": merged.get("skin", "violet"),
+                        }
                     elif key in ("vision", "search", "imaging"):
                         incoming = values[key]
                         if not isinstance(incoming, dict):

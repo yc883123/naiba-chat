@@ -2,7 +2,7 @@
 // 15-bind-events.js —— 拆分自 public/app.js 第 6658-7653 行（阶段 5.1 按域拆分，跨文件引用零改动）
 // ============================================================
 
-import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, restoreTopbarCompact, runTextContextAction, setTopbarCompact, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
+import { $, $$, api, applyAppearance, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, restoreTopbarCompact, runTextContextAction, saveAppearance, setTopbarCompact, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarning, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, resetContextWarningResume, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
 import { branchMessage, cancelActiveEdit, cancelSessionStart, confirmActiveEdit, fillContextResetSeed, initTurnRail, isNearBottom, regenerateMessage, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
@@ -168,6 +168,31 @@ export function bindEvents() {
     $('#settingsDialog').showModal();
     loadStorageStats();
     refreshImageCacheSize();
+  });
+  // 外观面板控件为可选增强：旧版 index.html 没有这些节点时不影响其它事件。
+  const appearanceReset = $('#resetAppearance');
+  const appearanceSave = $('#saveAppearance');
+  const syncAppearanceControls = () => {
+    const theme = state.appearance?.theme || 'system';
+    const skin = state.appearance?.skin || 'violet';
+    $$('input[name="appearanceTheme"]').forEach((el) => { el.checked = el.value === theme; });
+    $$('input[name="appearanceSkin"]').forEach((el) => { el.checked = el.value === skin; });
+  };
+  $$('input[name="appearanceTheme"], input[name="appearanceSkin"]').forEach((input) => input.addEventListener('change', () => {
+    const theme = $('input[name="appearanceTheme"]:checked')?.value || 'system';
+    const skin = $('input[name="appearanceSkin"]:checked')?.value || 'violet';
+    applyAppearance({ theme, skin });
+    const status = $('#appearanceStatus'); if (status) status.textContent = '有未保存的外观更改';
+  }));
+  appearanceSave?.addEventListener('click', async () => {
+    const theme = $('input[name="appearanceTheme"]:checked')?.value || 'system';
+    const skin = $('input[name="appearanceSkin"]:checked')?.value || 'violet';
+    try { await saveAppearance({ theme, skin }); syncAppearanceControls(); const status = $('#appearanceStatus'); if (status) status.textContent = '外观设置已保存'; }
+    catch (error) { toast(`保存外观失败：${error.message}`); }
+  });
+  appearanceReset?.addEventListener('click', async () => {
+    try { await saveAppearance({ theme: 'system', skin: 'violet' }); syncAppearanceControls(); }
+    catch (error) { toast(`恢复默认失败：${error.message}`); }
   });
   $$('[data-close]').forEach((button) => button.addEventListener('click', () => $(`#${button.dataset.close}`).close()));
   // 会话条目「⋯」菜单：菜单项点击 → 重命名/删除；点击外部、Esc、侧栏滚动均关闭。
@@ -686,6 +711,18 @@ export function bindEvents() {
     if (parent && parent !== current) loadWorkspaceTree(parent);
   });
   $$('.settings-nav button').forEach((button) => button.addEventListener('click', () => switchSettingsTab(button.dataset.settingsTab)));
+  $('#settingsSearch')?.addEventListener('input', (event) => {
+    const query = String(event.target.value || '').trim().toLowerCase();
+    let visible = 0;
+    $$('.settings-nav button[data-settings-tab]').forEach((button) => {
+      const haystack = `${button.textContent} ${button.dataset.settingsSearch || ''}`.toLowerCase();
+      const match = !query || haystack.includes(query);
+      button.hidden = !match;
+      if (match) visible += 1;
+    });
+    $$('.settings-nav-group').forEach((group) => { group.hidden = !group.querySelector('button[data-settings-tab]:not([hidden])'); });
+    const empty = $('#settingsNavEmpty'); if (empty) empty.hidden = visible > 0;
+  });
   // API 供应商卡片：整张卡可点即打开设置弹层；右上角 × 删除；末尾「添加 API」卡片新建。
   $('#providerCards').addEventListener('click', (event) => {
     const remove = event.target.closest('[data-provider-delete]');
@@ -1256,6 +1293,12 @@ export async function backupData() {
 export function switchSettingsTab(name) {
   $$('.settings-nav button').forEach((button) => button.classList.toggle('active', button.dataset.settingsTab === name));
   $$('[data-settings-panel]').forEach((panel) => { panel.hidden = panel.dataset.settingsPanel !== name; });
+  if (name === 'appearance') {
+    const theme = state.appearance?.theme || 'system';
+    const skin = state.appearance?.skin || 'violet';
+    $$('input[name="appearanceTheme"]').forEach((el) => { el.checked = el.value === theme; });
+    $$('input[name="appearanceSkin"]').forEach((el) => { el.checked = el.value === skin; });
+  }
   if (name === 'agent') renderAgentManager();
   if (name === 'skills') loadInstalledSkills(false);
   if (name === 'connections') loadMcpServers();
