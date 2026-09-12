@@ -13,24 +13,38 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 # ---- 1) 两份 release_notes 一致性 ----
 notes = json.loads((ROOT / "release_notes.json").read_text(encoding="utf-8"))
 update = json.loads((ROOT / "naiba-chat-update.json").read_text(encoding="utf-8"))
+version = update["version"]        # 如 2.3.5-beta
+series = version.split("-")[0]     # 2.3.5
 print(f"[§2/§3] release_notes {len(notes)} 条，与更新清单一致 = {notes == update['release_notes']}，"
-      f"version = {update['version']}")
+      f"version = {version}")
 
-# ---- 2) README 版本串 ----
+# ---- 2) README 版本串（版本号从更新清单派生；曾写死 2.1.0 而长期失效）----
 readme = (ROOT / "README.md").read_text(encoding="utf-8")
-for token in ("# Naiba Chat 2.1.0 Beta", "## 2.1.0 Beta 主要能力",
-              "naiba-chat-2.1.0-beta-windows-x64.zip", "NAIBA_BUILD_VERSION = \"2.1.0-beta\""):
+for token in (f"# Naiba Chat {series} Beta", f"## {series} Beta 主要能力",
+              f"naiba-chat-{version}-windows-x64.zip",
+              f'NAIBA_BUILD_VERSION = "{version}"'):
     print(f"[§4] README 含 {token!r}: {token in readme}")
 
-# ---- 3) 工作流 YAML ----
+# ---- 3) 工作流 YAML：三处版本串必须与清单一致（无 pyyaml 也照查）----
+workflow = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
 try:
     import yaml  # type: ignore
-    data = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8"))
+    data = yaml.safe_load(workflow)
     print(f"[§1] YAML 解析 OK，env.RELEASE_VERSION = {data['env']['RELEASE_VERSION']}")
 except ImportError:
-    print("[§1] 未安装 pyyaml，跳过 YAML 解析")
+    print("[§1] 未安装 pyyaml，跳过 YAML 解析（改用下面的正则口径）")
 except Exception as exc:  # noqa: BLE001
     print(f"[§1] YAML 解析失败：{exc}")
+
+for field, expect in (("RELEASE_VERSION", version),
+                      ("RELEASE_TAG", f"v{version}"),
+                      ("PACKAGE_NAME", f"naiba-chat-{version}-windows-x64")):
+    found = re.search(rf"^\s*{field}:\s*(\S+)\s*$", workflow, re.M)
+    actual = found.group(1) if found else "(未找到)"
+    suffix = "" if actual == expect else f"  ← 与清单不符（应为 {expect}）"
+    print(f"[§1] {field} = {actual}{suffix}")
+for token in (f"name: Naiba Chat {series} Beta", f"Publish {series} Beta release"):
+    print(f"[§1] 工作流含 {token!r}: {token in workflow}")
 
 # ---- 4) 本地绝对路径审计 ----
 PATTERNS = {

@@ -228,6 +228,9 @@ verify/*
 !verify/provider_cards_smoke.cjs
 !verify/quick_msg_smoke.cjs
 !verify/record_golden.py
+!verify/regenerate_smoke.cjs
+!verify/regenerate_smoke.py
+!verify/release_watch.py
 !verify/ring_usage_smoke.cjs
 !verify/ring_usage_smoke.py
 !verify/scan_undef_all.py

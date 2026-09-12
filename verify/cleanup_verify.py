@@ -61,6 +61,10 @@ KEEP = {
     "composer_model_smoke.py", "composer_model_smoke.cjs",
     # 发布清单同步自检（只读）
     "_release_check.py",
+    # 「重新生成 / 编辑」冒烟（§六 已登记；Python 自编排 + Node 检查）
+    "regenerate_smoke.py", "regenerate_smoke.cjs",
+    # 发版跟踪与 Release 资产核对（本机无 gh：走匿名 GitHub API）
+    "release_watch.py",
     # 本脚本自身
     "cleanup_verify.py",
 }
