@@ -9,9 +9,9 @@ permissions:
   contents: write
 
 env:
-  RELEASE_VERSION: 2.3.5-beta
-  RELEASE_TAG: v2.3.5-beta
-  PACKAGE_NAME: naiba-chat-2.3.5-beta-windows-x64
+  RELEASE_VERSION: 2.3.6-beta
+  RELEASE_TAG: v2.3.6-beta
+  PACKAGE_NAME: naiba-chat-2.3.6-beta-windows-x64
 
 concurrency:
   group: naiba-chat-release
@@ -87,11 +87,11 @@ jobs:
           Copy-Item -LiteralPath "README.md" -Destination $packageDir
           Compress-Archive -Path "$packageDir\*" -DestinationPath "dist\${{ env.PACKAGE_NAME }}.zip" -Force
 
-      - name: Publish 2.3.5 Beta release
+      - name: Publish 2.3.6 Beta release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: Naiba Chat 2.3.5 Beta
+          name: Naiba Chat 2.3.6 Beta
           prerelease: false
           make_latest: true
           files: |
@@ -99,13 +99,11 @@ jobs:
             dist/${{ env.PACKAGE_NAME }}.zip
             naiba-chat-update.json
           body: |
-            Naiba Chat 2.3.5 Beta Windows build from `${{ github.sha }}`。
+            Naiba Chat 2.3.6 Beta Windows build from `${{ github.sha }}`。
 
             本次更新（完整清单见 `release_notes.json` / 应用内「更新说明」）：
-            - AI 回复新增「重新生成」（复制 · 重新生成 · 新会话）：用这条回复对应的那条提问原样重新作答，不必再手动复制粘贴重问。截断点是那条提问本身而不是回复——之前的问答逐字节保持原样、前缀缓存继续命中，反复点也不会像「从回复处截断」那样越点越多重复提问。
-            - 用户消息「编辑」回归（编辑 · 分支）：在该条消息位置就地展开编辑框，改字后按同一套重发链路重开。只有非最后一轮才弹确认框（写明「之后还有 N 条会一并删除」），最后一轮一键直发；运行中两个按钮自动隐藏。
-            - 引用与附件保真：/ref 技能引用与 @ 工作区引用逐字保留（@ 仍由后端按该会话工作区替换为绝对路径）；编辑框带出该轮原有图片/文件（与「分支」同口径，含缩略图字段），纯附件轮次也能重发。
-            - 编辑时底部输入区让位：输入框锁定并提示「正在编辑上面的消息」，发送键变为「重新发送」、可用性跟着编辑框内容走（清空即禁用），点底部发送键或 Ctrl+Enter 即确认编辑，Esc 取消。
+            - 「编辑」升级为完整输入区就地编辑：点「编辑」后，底部那一整块输入区（输入框、/ Skill 引用、@ 工作区引用、图片/文件上传、待发送附件列表、思考强度与模型/工作区 meta 行）连同它的全部事件绑定一起搬进那条用户气泡，底部只留隐藏占位。编辑时照常粘贴/拖拽上传、增删附件、用 / 与 @ 引用；Enter 重新发送、Shift+Enter 换行、Esc 取消；退出后恢复进入编辑前的底部草稿与附件。
+            - 修复编辑态层级互压：/ 与 @ 弹层现在稳定盖在「正在编辑此消息 / 取消」之上（弹层关闭后「取消」恢复可点），不再出现白色「取消」按钮截断弹层文字、两层文字互相压。
 
             The application verifies `naiba-chat.exe` against the SHA-256 value
             in `naiba-chat-update.json` before installing an update.

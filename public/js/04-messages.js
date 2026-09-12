@@ -9,6 +9,7 @@ import { openConversation, syncCurrentConversation } from "./08-conversations.js
 import { renderPendingFiles } from "./10-upload.js";
 import { hideChoiceButtons, sendMessage, showChoiceButtons } from "./12-chat-input.js";
 import { hideSkillPopup, renderInputMirror, renderUserContent, resizeTextarea, updateSkillPopup } from "./13-skill-refs.js";
+import { hideFilePopup } from "./16-file-refs.js";
 // 当前会话所用 Agent 的自定义头像 URL（没有则空串 → 回退到默认的「AI」圆标）。
 // 与 currentAgentFixedSkillIds 同口径：会话绑定的 Agent 优先，失效时回退默认 Agent。
 export function currentAgentAvatarUrl() {
@@ -191,43 +192,75 @@ export function preloadDraggedFile(source, name = '') {
     .catch(() => {});
 }
 
-// 「编辑消息」态的开关：编辑框打开期间，底部输入区整体让位给它——
-// 输入框锁住（占位提示改用编辑框确认/取消）、草稿附件列表收起、添加文件按钮禁用，
-// 发送按钮则由 updateSendButtonState 按编辑框内容变成「重新发送」。
-// 同一时刻最多一个编辑框，所以态记在 `state` 上供 03-media / 15-bind-events 只读消费
-// （若把访问器放在本模块再反向 import，会造出 03↔04 循环依赖）。
+// 编辑时把完整的底部 composer-wrap 原节点移动到用户气泡中。这样输入框、@/Skill
+// 弹层、附件列表、粘贴/拖放上传和发送按钮都继续使用原有事件绑定。
+// 同一时刻最多一个编辑框，退出前必须先把原节点归位，避免 openConversation 重绘时丢失。
+function restoreInlineComposer({ restoreDraft = false } = {}) {
+  const stash = state.editComposerStash;
+  const wrap = document.querySelector('.composer-wrap.is-inline-edit') || stash?.wrap;
+  if (!stash || !wrap) return;
+  const parent = stash.parent;
+  if (parent) {
+    if (stash.nextSibling && stash.nextSibling.parentNode === parent) parent.insertBefore(wrap, stash.nextSibling);
+    else parent.appendChild(wrap);
+  }
+  wrap.hidden = false;
+  if (stash.placeholder && stash.placeholder.parentNode) stash.placeholder.remove();
+  wrap.classList.remove('is-inline-edit');
+  wrap.querySelector('.edit-composer-header')?.remove();
+  if (restoreDraft) {
+    state.pendingFiles = (stash.files || []).map((file) => ({ ...file }));
+    const input = $('#messageInput');
+    if (input) input.value = String(stash.text || '');
+    renderPendingFiles();
+    resizeTextarea();
+    renderInputMirror();
+    updateSkillPopup();
+    notifyComposerChanged(input);
+  }
+  state.editComposerStash = null;
+}
+
 function applyEditingState(row) {
   const editing = Boolean(row);
-  const textarea = editing ? row.querySelector('[data-edit-input]') : null;
+  if (!editing) {
+    const previousRow = state.editComposerStash?.row;
+    restoreInlineComposer();
+    previousRow?.classList.remove('is-editing');
+  }
   state.editingMessageId = editing ? String(row.dataset.messageId || '') : '';
-  state.editingHasText = Boolean(String(textarea?.value || '').trim());
-  state.editingHasAttachments = editing
-    ? Boolean(((row.__messageMetadata || {}).attachments || []).length)
-    : false;
+  row?.classList.toggle('is-editing', editing);
   document.body.classList.toggle('is-editing-message', editing);
-  const attach = $('#attachButton');
-  if (attach) attach.disabled = editing;
-  // 输入框的 disabled/placeholder 与发送按钮仍是 updateContextComposerLock / updateSendButtonState
-  // 两个单点写入，这里只负责切换状态后触发刷新（一个控件不留第二个写入点）。
   updateContextComposerLock(state.chatBusy);
 }
 
-// 找到当前打开的那个编辑框（同一时刻最多一个）。
+// 找到当前移动到消息气泡里的完整输入区。
 function activeEditPair() {
-  const textarea = document.querySelector('#messages textarea[data-edit-input]');
+  const textarea = $('#messageInput');
   const row = textarea ? textarea.closest('.message-row') : null;
-  return textarea && row ? { textarea, row } : null;
+  return state.editingMessageId && textarea && row ? { textarea, row } : null;
 }
 
-// 确认编辑：先退出编辑态（底部输入区立刻恢复），再把新内容交给共用重发。
+// 确认编辑：先保存编辑态附件，再把 composer 归位，随后交给共用重发。
 function submitEdit(row, textarea) {
   const value = String(textarea?.value ?? '');
+  hideSkillPopup();
+  hideFilePopup();
+  const attachments = (state.pendingFiles || []).filter((file) => file && file.path)
+    .map(({ name, path, size, thumb_path }) => ({ name, path, size, thumb_path }));
+  restoreInlineComposer();
+  row.classList.remove('is-editing');
   applyEditingState(null);
-  confirmEditMessage(row, value);
+  confirmEditMessage(row, value, attachments);
 }
 
-// 取消编辑：退出编辑态并重新渲染当前会话（编辑框随之消失）。
-function cancelEdit() {
+// 取消编辑：恢复进入编辑前的底部草稿与附件，再重新渲染当前会话。
+export function cancelActiveEdit() {
+  const row = state.editComposerStash?.row;
+  hideSkillPopup();
+  hideFilePopup();
+  restoreInlineComposer({ restoreDraft: true });
+  row?.classList.remove('is-editing');
   applyEditingState(null);
   if (state.conversationId) openConversation(state.conversationId);
 }
@@ -245,8 +278,11 @@ export function confirmActiveEdit() {
 
 export function startEditMessage(row) {
   if (!row) return;
+  // #composerForm：移动真实表单节点，不复制它，确保既有事件监听与 @/附件行为全部保留。
+  if (state.editingMessageId) cancelActiveEdit();
   const body = row.querySelector('.message-body');
-  if (!body || body.querySelector('textarea[data-edit-input]')) return;
+  const wrap = document.querySelector('.composer-wrap');
+  if (!body || !wrap) return;
   // 提取纯文本内容（不含附件标记）。带 /ref 引用的消息优先回填原始 display_content（含引用的原文），
   // 否则退到 DOM 文本/rawContent。
   const displayContent = row.__messageMetadata?.display_content;
@@ -255,29 +291,38 @@ export function startEditMessage(row) {
     ? displayContent
     : (row.dataset.rawContent || textContent.trim());
   const attachments = row.__messageMetadata?.attachments || [];
+  const placeholder = document.createElement('div');
+  placeholder.className = 'composer-wrap edit-placeholder';
+  placeholder.hidden = true;
+  wrap.parentNode?.insertBefore(placeholder, wrap);
+  state.editComposerStash = {
+    wrap,
+    row,
+    placeholder,
+    parent: wrap.parentNode,
+    nextSibling: wrap.nextSibling,
+    text: $('#messageInput')?.value || '',
+    files: (state.pendingFiles || []).map((file) => ({ ...file })),
+  };
   row.dataset.rawContent = currentText;
-  body.innerHTML = `
-    <textarea class="edit-input" data-edit-input rows="9">${escapeHtml(currentText)}</textarea>
-    <div class="edit-attachments">${uploadedFileMarkup(attachments)}</div>
-    <div class="edit-actions">
-      <button class="primary-button" data-edit-confirm>重新发送</button>
-      <button class="control-button" data-edit-cancel>取消</button>
-    </div>`;
-  const textarea = body.querySelector('[data-edit-input]');
+  body.replaceChildren();
+  const header = document.createElement('div');
+  header.className = 'edit-composer-header';
+  header.innerHTML = '<span>正在编辑此消息</span><button type="button" class="control-button" data-edit-cancel>取消</button>';
+  body.append(wrap, header);
+  wrap.classList.add('is-inline-edit');
+  state.pendingFiles = attachments.map((file) => ({ ...file, existingAttachment: true }));
+  const textarea = $('#messageInput');
+  if (!textarea) return;
+  textarea.value = currentText;
+  renderPendingFiles();
+  applyEditingState(row);
+  resizeTextarea();
+  renderInputMirror();
+  notifyComposerChanged(textarea);
+  header.querySelector('[data-edit-cancel]').addEventListener('click', cancelActiveEdit);
   textarea.focus();
   textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-  applyEditingState(row);
-  // 编辑框内容变化要同步发送按钮可用性（编辑态下它是唯一的内容来源）。
-  textarea.addEventListener('input', () => {
-    state.editingHasText = Boolean(String(textarea.value || '').trim());
-    updateSendButtonState();
-  });
-  body.querySelector('[data-edit-cancel]').addEventListener('click', cancelEdit);
-  body.querySelector('[data-edit-confirm]').addEventListener('click', () => submitEdit(row, textarea));
-  textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitEdit(row, textarea);
-    if (e.key === 'Escape') cancelEdit();
-  });
 }
 
 // 共用重发：截断到某条用户消息、恢复它的附件、回到输入框并发送。
@@ -287,7 +332,8 @@ export function startEditMessage(row) {
 // 截断走 /api/messages/edit：它只接受 role == "user" 的 id，随即删除该消息及其之后所有消息，并回传原附件。
 // 放行口径与 sendChatMessage/submit_chat 一致：**文字与可用附件至少有一个**——纯附件轮次
 // （只发文件/图片、不写字）同样可以重发；只传空文字又无附件才拒绝。
-export async function resendFromUserMessage(userMessageId, text, { successText = '已从该消息重开，编辑点之前的上下文将复用缓存', errorPrefix = '重发', attachments = [] } = {}) {
+export async function resendFromUserMessage(userMessageId, text, { successText = '已从该消息重开，编辑点之前的上下文将复用缓存', errorPrefix = '重发', attachments = [], attachmentsOverride = null } = {}) {
+  // 编辑/重发最终仍走同一条输入管线：notifyComposerChanged(input) 会刷新镜像、引用弹层与发送状态。
   const content = String(text ?? '').trim();
   const knownAttachments = Array.isArray(attachments) ? attachments : [];
   if (!content && !knownAttachments.length) {
@@ -304,7 +350,8 @@ export async function resendFromUserMessage(userMessageId, text, { successText =
     toast(successText);
     // 恢复原消息的附件，供重发使用。字段口径与「分支」一致（含 thumb_path）：
     // 缺 thumb_path 时渲染层会退化成推导 `<path>_thumb.webp`，一旦缩略图不在同目录就 404。
-    state.pendingFiles = (result.attachments || []).map((f) => ({
+    const restoredAttachments = Array.isArray(attachmentsOverride) ? attachmentsOverride : (result.attachments || []);
+    state.pendingFiles = restoredAttachments.map((f) => ({
       name: f.name,
       path: f.path,
       size: f.size,
@@ -329,16 +376,19 @@ export async function resendFromUserMessage(userMessageId, text, { successText =
   }
 }
 
-export async function confirmEditMessage(row, newText) {
+export async function confirmEditMessage(row, newText, editedAttachments = null) {
   const text = newText.trim();
   const messageId = row.dataset.messageId;
   if (!messageId || !state.conversationId) return;
-  const attachments = (row.__messageMetadata || {}).attachments || [];
+  const attachments = Array.isArray(editedAttachments)
+    ? editedAttachments
+    : ((row.__messageMetadata || {}).attachments || []);
   // 空文字只在同时也没有附件时才拒绝（纯附件轮次同样可编辑重发）。
   await resendFromUserMessage(messageId, text, {
     successText: '已从该消息重开，编辑点之前的上下文将复用缓存',
     errorPrefix: '编辑',
     attachments,
+    attachmentsOverride: editedAttachments,
   });
 }
 

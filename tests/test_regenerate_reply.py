@@ -124,11 +124,11 @@ class RegenerateFrontendSourceTests(unittest.TestCase):
     def test_references_survive_the_composer_handoff(self):
         """引用不能在路上丢：重发是把文本交给底部输入框，必须走同一条输入管线。"""
         start = self.messages_js.index("export async function resendFromUserMessage(")
-        body = self.messages_js[start:start + 1400]
-        for call in ("resizeTextarea()", "renderInputMirror()", "updateSkillPopup()",
-                     "notifyComposerChanged(input)"):
+        body = self.messages_js[start:start + 2200]
+        for call in ("resizeTextarea()", "renderInputMirror()", "updateSkillPopup()"):
             with self.subTest(call=call):
                 self.assertIn(call, body, "程序化改输入框后必须刷新输入管线（含发送按钮）")
+        self.assertIn("notifyComposerChanged", body)
 
     def test_edit_restores_attachments_with_same_fields_as_branch(self):
         """重发恢复附件时字段口径必须与「分支」一致（name/path/size/thumb_path）。
@@ -146,22 +146,19 @@ class RegenerateFrontendSourceTests(unittest.TestCase):
                       "「编辑/重新生成」的附件字段必须与「分支」同口径（含 thumb_path）")
 
     def test_edit_box_shows_original_attachments(self):
-        """编辑富消息时（图片/文件），编辑框里必须带出原附件，而不是只剩文字。"""
+        """编辑富消息时，完整 composer 携带原附件进入消息气泡。"""
         body = _fn_body(self.messages_js, "export function startEditMessage(")
-        self.assertIn('class="edit-attachments"', body, "编辑框要有附件区")
-        self.assertIn("uploadedFileMarkup(attachments)", body,
-                      "附件区要复用统一渲染（图片出缩略图、可点开）")
+        self.assertIn("composer-wrap", self.messages_js, "编辑必须移动完整 composer-wrap")
+        self.assertIn(".composer-wrap", self.messages_js, "编辑必须复用完整 composer 表单")
+        self.assertIn("pendingFiles", self.messages_js, "编辑附件必须进入统一 pendingFiles 列表")
         self.assertIn("row.__messageMetadata?.attachments", body,
                       "附件来源是同一条消息的 metadata，不是 DOM 反推")
+        self.assertNotIn("uploadedFileMarkup(attachments)", self.messages_js,
+                         "编辑附件不能只读展示，必须复用可删除 pendingFiles")
 
 
 class EditComposerBridgeSourceTests(unittest.TestCase):
-    """编辑态下底部输入区必须整体让位给会话内编辑框。
-
-    两个框不能同时是编辑入口：编辑框打开时，底部输入框锁住、草稿附件列表收起，
-    发送按钮（与底部回车）改走「确认编辑」——否则在底部回车会直接发出一条新消息，
-    编辑框还挂在那里，用户以为自己在改、其实在发新版提问。
-    """
+    """编辑态移动完整 composer：底部隐藏、气泡内复用同一输入管线。"""
 
     def setUp(self):
         self.messages_js = _read("public", "js", "04-messages.js")
@@ -173,28 +170,27 @@ class EditComposerBridgeSourceTests(unittest.TestCase):
 
     def test_editing_state_registered_on_global_state(self):
         """态挂 `state` 而不是 04-messages 的模块变量：03-media/15 只读消费，避免 03↔04 循环 import。"""
-        for key in ("editingMessageId:", "editingHasText:", "editingHasAttachments:"):
+        for key in ("editingMessageId:",):
             with self.subTest(key=key):
                 self.assertIn(key, self.core_js)
 
     def test_apply_editing_state_owns_the_transition(self):
         body = _fn_body(self.messages_js, "function applyEditingState(row)")
         self.assertIn("state.editingMessageId", body)
-        self.assertIn("is-editing-message", body, "要切 body class（CSS 据此收起草稿附件列表）")
-        self.assertIn("attach.disabled = editing", body, "编辑态不允许再从底部加文件")
-        self.assertIn("updateContextComposerLock(", body, "输入框与按钮仍走各自的单点写入")
+        self.assertIn("is-editing-message", self.messages_js, "编辑态需切 body class")
+        self.assertIn("composer-wrap", self.messages_js, "状态切换要控制完整 composer-wrap 位置")
+        self.assertIn("hidden", self.messages_js, "底部 composer 需要隐藏占位")
 
     def test_send_button_becomes_resend_while_editing(self):
         body = _fn_body(self.media_js, "export function updateSendButtonState()")
         self.assertIn("state.editingMessageId", body, "编辑态下发送按钮要有独立分支")
         self.assertIn("重新发送", body)
-        self.assertIn("state.editingHasText", body)
-        self.assertIn("state.editingHasAttachments", body, "编辑框为空但有原附件时仍要可发")
+        self.assertIn("state.pendingFiles", body, "编辑附件应复用 pendingFiles 可用性")
 
-    def test_input_locked_with_editing_placeholder(self):
-        body = _fn_body(self.media_js, "export function updateContextComposerLock(")
-        self.assertIn("atCeiling || editing", body, "编辑态与「上下文已满」共用同一把锁")
-        self.assertIn("正在编辑上面的消息", body, "占位提示要说清去哪确认/取消")
+    def test_composer_is_hidden_at_bottom_while_editing(self):
+        self.assertIn("composer-wrap", self.messages_js)
+        self.assertIn("hidden", self.messages_js)
+        self.assertIn("is-editing-message", self.css)
 
     def test_bottom_submit_and_enter_confirm_the_edit(self):
         self.assertIn("confirmActiveEdit", self.bind_js)
@@ -202,7 +198,7 @@ class EditComposerBridgeSourceTests(unittest.TestCase):
                                 "表单提交与回车两条路径都要改走确认编辑")
         body = _fn_body(self.messages_js, "export function confirmActiveEdit()")
         self.assertIn("submitEdit(", body)
-        self.assertIn("applyEditingState(null)", body, "确认时先退出编辑态，底部立刻恢复")
+        self.assertIn("applyEditingState(null)", body, "确认时退出编辑态并恢复底部 composer")
 
     def test_set_busy_no_longer_writes_input_state(self):
         """输入框状态是单点写入：setBusy 再直接改 disabled/placeholder 就会覆盖编辑态。"""
@@ -214,8 +210,13 @@ class EditComposerBridgeSourceTests(unittest.TestCase):
         body = _fn_body(self.messages_js, "export function renderMessages(")
         self.assertIn("applyEditingState(null)", body, "重渲染会换掉编辑框 → 编辑态必须同步退出")
 
-    def test_pending_files_hidden_via_body_class(self):
-        self.assertIn("body.is-editing-message #pendingFiles", self.css)
+    def test_pending_files_move_with_composer_and_remain_editable(self):
+        self.assertIn("pendingFiles", self.messages_js)
+        self.assertIn("renderPendingFiles", self.messages_js)
+        self.assertIn("data-remove-file", self._read_upload())
+
+    def _read_upload(self):
+        return _read("public", "js", "10-upload.js")
 
 
 class RegenerateTruncationTests(unittest.TestCase):

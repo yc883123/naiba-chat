@@ -4,7 +4,7 @@
 
 import { $, $$, api, contextMenuPreviousFocus, copyText, draggedFileCache, editableElement, ensureContextMenu, hideTextContextMenu, restoreTopbarCompact, runTextContextAction, setTopbarCompact, showTextContextMenu, state, toast, topLayerContainer } from "./01-core.js";
 import { closeContextUsagePopover, closeImageLightbox, continueAfterContextWarning, ensureImageContextMenu, handleImageLightboxKey, hideImageContextMenu, initImageLightboxInteractions, isPywebview, openImageLightbox, positionContextUsagePopover, resetContextWarningResume, runImageContextAction, showImageContextMenu, stepImageLightbox, toggleContextUsagePopover, updateSendButtonState } from "./03-media.js";
-import { branchMessage, cancelSessionStart, confirmActiveEdit, fillContextResetSeed, initTurnRail, isNearBottom, regenerateMessage, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
+import { branchMessage, cancelActiveEdit, cancelSessionStart, confirmActiveEdit, fillContextResetSeed, initTurnRail, isNearBottom, regenerateMessage, setStickToBottom, startEditMessage, startNewSession } from "./04-messages.js";
 import { authenticate, enableLanAccess, initialize } from "./05-bootstrap.js";
 import { switchPermissionMode } from "./06-tasks-plans.js";
 import { checkUpdate, installUpdate, renderUpdateStatus, saveAgentSelection, saveComposerModelSelection, saveModelSelection, unloadConfiguredProviderModel, unloadProviderModel } from "./07-models-agents.js";
@@ -236,7 +236,7 @@ export function bindEvents() {
   $('#skillSearch').addEventListener('input', (event) => renderSkills(event.target.value));
   $('#composerForm').addEventListener('submit', (event) => {
     event.preventDefault();
-    // 编辑态下底部按钮就是「重新发送」：不发新消息，改为确认上面那个编辑框。
+    // 输入区在编辑态下已移到消息处，提交同一表单时确认当前编辑。
     if (state.editingMessageId) { confirmActiveEdit(); return; }
     if (state.chatRunId || state.abortController) cancelCurrentRun();
     else sendMessage();
@@ -249,7 +249,10 @@ export function bindEvents() {
   window.addEventListener('resize', () => { positionSkillPopup(); positionFilePopup(); });
   $('#messageInput').addEventListener('keydown', (event) => {
     // @ 工作区引用弹层优先消费按键（Tab 进目录 / Shift+Tab 返回 / Enter 引用）。
-    if (handleFilePopupKey(event)) return;
+    if (handleFilePopupKey(event)) {
+      if (event.key === 'Escape') event.stopPropagation();
+      return;
+    }
     if (popupState.open) {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault();
@@ -264,13 +267,20 @@ export function bindEvents() {
       }
       if (event.key === 'Escape') {
         event.preventDefault();
+        event.stopPropagation();
         hideSkillPopup();
         return;
       }
     }
+    if (event.key === 'Escape' && state.editingMessageId) {
+      event.preventDefault();
+      event.stopPropagation();
+      cancelActiveEdit();
+      return;
+    }
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
-      // 编辑态下回车同样改走确认编辑（与底部发送按钮同口径）。
+      // 编辑态下回车同样确认编辑，与当前输入区的发送按钮保持一致。
       if (state.editingMessageId) { confirmActiveEdit(); return; }
       if (state.chatRunId || state.abortController) {
         toast('回复进行中，请等待完成或先点击停止');
@@ -421,9 +431,10 @@ export function bindEvents() {
     if (!button) return;
     const index = Number(button.dataset.removeFile);
     const [chip] = state.pendingFiles.splice(index, 1);
-    // 上传中 → 中止 XHR；已完成但未发送 → 删除宿主缓存文件（未被引用时）。
+    // 上传中 → 中止 XHR；新上传附件 → 删除未引用的缓存文件。
+    // 从历史消息带入的附件仅从编辑列表移除，取消编辑后原消息仍需使用原文件。
     if (chip?.cancel) chip.cancel();
-    if (chip?.path && !chip.uploading) {
+    if (chip?.path && !chip.uploading && !chip.existingAttachment) {
       api('/api/uploads/delete', { method: 'POST', body: { path: chip.path } }).catch(() => { /* 有引用/删除失败时保留文件，由清理机制回收 */ });
     }
     renderPendingFiles();

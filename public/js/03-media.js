@@ -957,15 +957,15 @@ export function resetContextWarningResume() {
 }
 
 export function updateContextComposerLock(busy = false) {
-  const atCeiling = Boolean(state.contextAtCeiling);
   const editing = Boolean(state.editingMessageId);
+  const atCeiling = Boolean(state.contextAtCeiling) && !editing;
   const input = $('#messageInput');
-  // 单一写入点：上下文满 / 正在编辑消息 都会锁住输入框，编辑态还要把原因写进占位提示
-  // （编辑入口在会话内的编辑框里，底部输入框此时不接受输入，避免"以为在编辑、其实在发新消息"）。
+  // 输入区移动到历史消息后继续接受输入；编辑重发会先截断历史，上下文占用随后重算。
+  // 只有普通新消息在上下文已满时锁住输入，disabled/placeholder 仍由这里统一维护。
   if (input) {
-    input.disabled = atCeiling || editing;
+    input.disabled = atCeiling;
     input.placeholder = editing
-      ? '正在编辑上面的消息：在编辑框里 Ctrl+Enter 确认，Esc 取消'
+      ? '编辑消息，Enter 重新发送，Shift+Enter 换行，Esc 取消'
       : (atCeiling ? '上下文已满，请新建对话后继续' : (busy ? '回复进行中…' : '输入消息'));
   }
   // 发送按钮的可用性由 updateSendButtonState 单点维护（含"运行中即停止键"语义）。
@@ -975,8 +975,7 @@ export function updateContextComposerLock(busy = false) {
 // 发送按钮可用性（唯一写入点）：文字或附件至少有一个才可发送——纯附件轮次（只发文件/
 // 图片、不写字）合法；上传未完成 / 上下文已满 / 无内容时 disabled（灰暗样式由
 // styles.css 的 .send-button:disabled 承担）；回复进行中按钮变身"停止"，始终可点。
-// 「编辑消息」态下按钮变成「重新发送」：可用性只看会话内那个编辑框（附件随确认自动带回，
-// 因此编辑框为空但有原附件时仍可发）。
+// 「编辑消息」态复用同一输入框与附件列表，按钮变成「重新发送」，同样等待上传完成。
 export function updateSendButtonState() {
   const sendBtn = $('#sendButton');
   if (!sendBtn) return;
@@ -987,22 +986,21 @@ export function updateSendButtonState() {
   if (busy) {
     disabled = cancelRequested;
     title = cancelRequested ? '正在停止' : '停止当前任务';
-  } else if (state.editingMessageId) {
-    disabled = !state.editingHasText && !state.editingHasAttachments;
-    title = disabled ? '编辑框里还没有内容' : '重新发送（编辑中）';
-  } else if (state.contextAtCeiling) {
+  } else if (state.contextAtCeiling && !state.editingMessageId) {
     disabled = true;
     title = '上下文已满，请新建对话后继续';
   } else {
+    const editing = Boolean(state.editingMessageId);
     const uploading = state.pendingFiles.find((file) => file.uploading);
     const hasText = Boolean(String($('#messageInput')?.value || '').trim());
     const hasAttachment = state.pendingFiles.some((file) => file.path);
+    title = editing ? '重新发送（编辑中）' : '发送';
     if (uploading) {
       disabled = true;
       title = `请等待「${uploading.name}」上传完成`;
     } else if (!hasText && !hasAttachment) {
       disabled = true;
-      title = '输入消息或添加文件后发送';
+      title = editing ? '编辑消息或添加文件后重新发送' : '输入消息或添加文件后发送';
     }
   }
   sendBtn.disabled = disabled;

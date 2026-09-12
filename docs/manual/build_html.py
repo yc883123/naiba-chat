@@ -11,6 +11,12 @@ IMG_DIR = ROOT / 'images'
 
 md_text = MD_PATH.read_text(encoding='utf-8')
 
+# 版本号一律从 README 标题派生，避免「改了 md 忘了改这里」——历史上有过 PDF 名还停在旧版本的情况。
+_m = re.search(r'^#\s+.*?（(\d+\.\d+\.\d+)\s+Beta）', md_text, re.M)
+VERSION = _m.group(1) if _m else '0.0.0'
+PDF_NAME = f'Naiba-Chat-手册-{VERSION}.pdf'
+TITLE = f'Naiba Chat 应用说明书 · {VERSION} Beta'
+
 # 把 19/20/21 引用补进文档末尾占位
 placeholder = '''<!--
 待补配图（涉及真实会话内容，需授权或自行补充）：
@@ -60,7 +66,7 @@ TEMPLATE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Naiba Chat 应用说明书 · 2.2.0 Beta</title>
+<title>__TITLE__</title>
 <style>
   :root {
     --bg: #fbfaf7;
@@ -189,14 +195,14 @@ TEMPLATE = """<!doctype html>
 <div class="layout">
   <nav class="toc-nav">
     <div class="brand">Naiba Chat<br>应用说明书</div>
-    <div class="sub">2.2.0 Beta · Windows</div>
+    <div class="sub">__VERSION__ Beta · Windows</div>
     <input class="search" type="search" placeholder="搜索标题（Ctrl+F）" onfocus="this.select()">
     __TOC__
     <a class="dl-pdf" href="__PDFNAME__" download>下载 PDF</a>
   </nav>
   <main class="doc">
     <div class="print-toc" aria-hidden="true">
-      <div class="pt-title">Naiba Chat 应用说明书 · 2.2.0 Beta · 目录</div>
+      <div class="pt-title">__TITLE__ · 目录</div>
       __TOC__
     </div>
     __BODY__
@@ -222,12 +228,11 @@ TEMPLATE = """<!doctype html>
 </html>
 """
 
-# 找出 README 里的 h1（应该是主标题）和它的 id，前置页要排除在 toc l1 之外
-# 实际上 toc 第一个 h1（"Naiba Chat 应用说明书"）保留也没坏，作为回到顶部
-PDF_NAME = 'Naiba-Chat-手册-2.2.0.pdf'
 html = (TEMPLATE
         .replace('__TOC__', toc_html)
         .replace('__BODY__', body_html)
-        .replace('__PDFNAME__', PDF_NAME))
+        .replace('__PDFNAME__', PDF_NAME)
+        .replace('__VERSION__', VERSION)
+        .replace('__TITLE__', TITLE))
 HTML_PATH.write_text(html, encoding='utf-8')
 print('wrote', HTML_PATH, 'size', HTML_PATH.stat().st_size, 'B,', len(toc_items), 'toc items')

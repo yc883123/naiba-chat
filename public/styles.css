@@ -378,6 +378,8 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-body { min-width: 0; max-width: 100%; overflow-wrap: anywhere; word-break: break-word; line-height: 1.7; font-size: 15px; user-select: text; -webkit-user-select: text; }
 .message-card .message-body { padding: 0; background: none; border: 0; }
 .message-row.user .message-body { max-width: min(75%, 680px); background: var(--user-bubble); border: 1px solid var(--violet-line); padding: 9px 13px; border-radius: var(--r-md); }
+.message-row.user.is-editing .message-body { max-width: 100%; width: 100%; background: transparent; border-color: transparent; padding: 0; }
+.message-row.user.is-editing { grid-template-columns: minmax(0, 1fr); }
 .message-body p { margin: 0 0 10px; }
 .message-body p:last-child { margin-bottom: 0; }
 .answer-content h1,
@@ -444,7 +446,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .message-body a { color: var(--accent); }
 .message-actions { margin-top: 8px; display: flex; gap: 8px; }
 .message-actions button { border: 0; background: none; color: var(--muted); padding: 2px 5px; font-size: 12px; }
-/* 运行中不显示“分支”按钮；只有模型回复完毕或用户停止后才允许分支 */
+/* 运行中不显示"分支"按钮；只有模型回复完毕或用户停止后才允许分支 */
 #messages.conversation-running .message-actions [data-branch-message] { display: none; }
 .message-actions [data-branch-message]:hover { color: var(--accent); }
 .message-actions [data-session-start-after]:hover { color: var(--accent); }
@@ -510,16 +512,33 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .reasoning-block summary { cursor: pointer; color: var(--reasoning-text); font-size: 12px; font-weight: 600; }
 .reasoning-block .reasoning-content { margin-top: 6px; font-size: 13px; color: var(--muted); max-height: 320px; overflow-y: auto; }
 .reasoning-block.tool-reasoning { border-left-color: var(--reasoning-border); background: var(--surface-2); }
-/* 流式过程中插入到事件流里的“中途正文”块：普通正文样式，与思考/工具块的时间顺序交错。 */
+/* 流式过程中插入到事件流里的"中途正文"块：普通正文样式，与思考/工具块的时间顺序交错。 */
 .message-body > .stream-prose { margin: 8px 0; }
 .reasoning-block.tool-reasoning summary { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 92%; }
 .aborted-badge { display: inline-block; margin: 0 6px 6px 0; padding: 2px 8px; border-radius: var(--r-xs); background: var(--aborted-bg); color: var(--warning); font-size: 11px; font-weight: 600; border: 1px solid var(--aborted-border); }
 .edit-attachments { margin: 8px 0; }
 .edit-attachments .media-grid { max-width: 100%; }
 .edit-attachments img { max-width: 180px; max-height: 140px; object-fit: contain; }
-/* 「编辑消息」态：会话内的编辑框是唯一的编辑入口，底部输入区整体让位——
-   草稿附件列表收起（附件在编辑框里自带一份），避免"以为在编辑、其实在写新消息"的两个框打架 */
-body.is-editing-message #pendingFiles { display: none; }
+/* 编辑时把完整底部 composer-wrap 原节点搬到消息气泡：保留输入、@、附件、思考与 meta 的全部行为。 */
+.composer-wrap.is-inline-edit { position: relative; z-index: 1000; width: 100%; max-width: none; min-height: 0; max-height: none; overflow: visible; padding: 0; background: transparent; }
+/* 死规则（当前匹配不到任何元素，留着仅作结构记录）：header 是 composer-wrap 的**兄弟**节点
+   （startEditMessage 里 body.append(wrap, header)），不是它的后代，所以这条里的
+   display/space-between/12px/--muted 与下面的 z-index 一律不生效——刻意不修选择器，改外观是另一件事。
+   里面的 z-index 压到 1（原先 1001）：万一将来有人把 header 挪进 wrap，1 < 弹层的 40，
+   仍然不会盖住 / 与 @ 弹层（1001 会让这个 bug 原地复发）。 */
+.composer-wrap.is-inline-edit .edit-composer-header { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 0 6px; color: var(--muted); font-size: 12px; }
+/* 编辑态头部真正生效的规则（header 与 .composer-wrap.is-inline-edit 同为 .message-body 的子节点）：
+   层级必须低于 composer-wrap 的 z-index:1000，否则「正在编辑此消息 / 取消」会盖住 / 与 @ 弹层
+   （弹层在该 stacking context 内只有 40），表现为「取消」白块截断弹层文字、两层文字互压。
+   这里只调层级：不打字号/颜色/对齐的主意（头部现按 .message-body 继承成正文样式）。 */
+.message-row.user.is-editing .edit-composer-header { position: relative; z-index: 0; }
+.composer-wrap.is-inline-edit .edit-composer-header button { flex: none; }
+.composer-wrap.is-inline-edit .composer { width: 100%; }
+.composer-wrap.is-inline-edit .composer-meta { white-space: normal; min-width: 0; overflow: hidden; }
+.composer-wrap.is-inline-edit .composer-meta-left,
+.composer-wrap.is-inline-edit .composer-meta-right { min-width: 0; max-width: 100%; flex-wrap: wrap; }
+.composer-wrap.is-inline-edit .pending-files { grid-template-columns: minmax(0, 1fr); max-height: 180px; overflow-y: auto; }
+body.is-editing-message .composer-wrap:not(.is-inline-edit) { visibility: hidden; min-height: 0; height: 0; overflow: hidden; padding-top: 0; padding-bottom: 0; }
 .tool-stack { margin: 8px 0 12px; border-left: 2px solid var(--warning); padding-left: 10px; }
 .tool-availability { margin: 8px 0 12px; color: var(--muted); font-size: 12px; }
 .tool-availability summary { cursor: pointer; color: var(--warning); font-weight: 600; }
@@ -730,7 +749,7 @@ body.is-editing-message #pendingFiles { display: none; }
   .file-popup-enter { width: 32px; height: 32px; }
 }
 
-/* Skill 对话框：点击插入，去掉“选中态” */
+/* Skill 对话框：点击插入，去掉"选中态" */
 .skill-item.skill-click { display: grid; grid-template-columns: minmax(0, 1fr) auto; width: 100%; border: 0; background: none; text-align: left; font: inherit; cursor: pointer; }
 .skill-item.skill-click:hover { background: var(--surface-2); }
 

@@ -314,6 +314,50 @@ await ev(`document.querySelector('#closeFilePanel')?.click()`);
 await sleep(800);
 await shot('04-file-panel-closed.png');
 
+// ---------- 2.5 消息操作区：编辑 · 分支 / 复制 · 重新生成 · 新会话 ----------
+// 真实会话需要真模型才能产出回复，这里用渲染器 04-messages.js 里逐字照搬的同一套 markup
+// 注入，按钮、顺序、title 与线上完全一致。
+console.log('[2.5] 消息操作区');
+await clean();
+await ev([
+  "(() => {",
+  "  const es = document.querySelector('#emptyState'); if (es) es.hidden = true;",
+  "  const m = document.querySelector('#messages'); if (!m) return;",
+  "  m.innerHTML = '';",
+  "  const user = document.createElement('article');",
+  "  user.className = 'message-row user';",
+  "  user.innerHTML = '<div class=\"message-body\"><p>把 build_html.py 里打印样式那段注释翻译成中文</p>'",
+  "    + '<div class=\"message-actions\">'",
+  "    + '<button data-edit-message title=\"编辑这条提问并从这里重新发送（其后的消息会被删除）\">编辑</button>'",
+  "    + '<button data-branch-message title=\"从这条消息分支到新会话继续\">分支</button>'",
+  "    + '</div></div>';",
+  "  const ai = document.createElement('article');",
+  "  ai.className = 'message-row assistant';",
+  "  ai.innerHTML = '<div class=\"message-avatar\">AI</div>'",
+  "    + '<div class=\"message-card\"><div class=\"message-body\">'",
+  "    + '<div class=\"answer-content\"><p>已经改好了。打印目录那一节现在写的是「屏幕版目录在左侧栏，打印版改由正文顶部的 .print-toc 承担」。</p></div>'",
+  "    + '<div class=\"message-actions\">'",
+  "    + '<button data-copy-message>复制</button>'",
+  "    + '<button data-regenerate-message=\"demoMsg\" title=\"用同一条提问重新生成这条回复（前面的对话历史保持不变）\">重新生成</button>'",
+  "    + '<button data-session-start-after=\"demoMsg\" title=\"在这条回复之后划一条分割线：此线以上的消息不再进入模型上下文（下方消息仍在上下文中，聊天记录全部保留）\">新会话</button>'",
+  "    + '</div></div></div>';",
+  "  m.append(user, ai);",
+  "})()",
+].join('\n'));
+await sleep(600);
+const actionsBox = await ev(`(() => {
+  const m = document.querySelector('#messages');
+  if (!m) return null;
+  const r = m.getBoundingClientRect();
+  const h = Math.min(Math.round(m.scrollHeight), 460);
+  return { x: Math.max(0, Math.round(r.left)), y: Math.max(0, Math.round(r.top)), width: Math.round(r.width), height: h };
+})()`);
+if (actionsBox && actionsBox.height > 60) {
+  await shotClip('35-message-actions.png', { ...actionsBox, scale: 2 });
+} else {
+  await shot('35-message-actions.png');
+}
+
 // ---------- 3. 设置 9 个 tab ----------
 console.log('[3] 设置面板');
 const tabs = [
@@ -332,6 +376,30 @@ for (const [tab, file] of tabs) {
   await settingsTab(tab);
   await shot(file);
 }
+
+// ---------- 3.5 Skill 删除对话框 ----------
+// 注意：删除对话框需要「已加载 Skill」列表里有条目才点得出来，而当前环境里已加载 Skill 为 0
+// （没有可点的「删除」按钮），所以这里只在确实有 Skill 时才截；回收目录本身已经在
+// 11-settings-skills.png 里露出（该页有「回收目录」区块），不另造示意图。
+console.log('[3.5] Skill 删除对话框（可选）');
+await settingsTab('skills');
+let skillDel = 0;
+for (let i = 0; i < 10; i += 1) {
+  skillDel = await ev(`document.querySelectorAll('#installedSkillList .skill-delete').length`) || 0;
+  if (skillDel > 0) break;
+  await sleep(500);
+}
+console.log('  installedSkillList 可删条目 =', skillDel);
+if (skillDel > 0) {
+  await ev(`(() => { const b = document.querySelector('#installedSkillList .skill-delete'); if (b) b.click(); })()`);
+  await sleep(900);
+  const deleteOpen = await ev(`(() => { const d = document.querySelector('#skillDeleteDialog'); return !!(d && d.open); })()`);
+  console.log('  skill delete dialog open ->', deleteOpen);
+  if (deleteOpen) await shot('39-skill-delete-dialog.png');
+} else {
+  console.log('  跳过：没有已加载 Skill，删除对话框无真实入口');
+}
+await clean();
 
 // ---------- 4. Agent 编辑弹层（卡片化 → 点卡片进表单） ----------
 console.log('[4] Agent 编辑弹层');
@@ -361,16 +429,23 @@ await openDialog('#tasksDialog');
 await ev(`(() => {
   const list = document.querySelector('#taskList');
   if (!list) return;
-  const item = (title, meta, status, cls) => \`
+  // 逐字对齐 08-conversations.js 里 #taskList 的真实渲染：
+  // 只有 activeTaskStatuses（queued/running/waiting/cancelling）才带「停止」按钮。
+  const active = new Set(['queued', 'running', 'waiting', 'cancelling']);
+  const item = (title, meta, status, cls, detail) => \`
     <div class="task-item">
       <div class="task-title">\${title}</div>
       <div class="task-meta">\${meta}</div>
-      <div class="task-actions"><span class="task-status \${cls}">\${status}</span></div>
+      <div class="task-detail">\${detail || ''}</div>
+      <div class="task-actions">
+        <span class="task-status \${cls}">\${status}</span>
+        \${active.has(cls) ? '<button type="button" class="task-cancel" data-task-cancel="demo">停止</button>' : ''}
+      </div>
     </div>\`;
   list.innerHTML = [
-    item('批量生成 12 张 1080×1440 竖版封面（RunningHub 文生图）', '后台 · 通用 Agent · 短剧封面批量 · 已运行 4 分 12 秒', '运行中', 'running'),
-    item('用 cover_v2.json 跑 ComfyUI 工作流（12 个 seed）', '后台 · 短剧 Agent · 说明书演示 · 用时 2 分 08 秒', '已完成', 'completed'),
-    item('整理 D:\\\\素材4 下的工作流并加 _backup 备份', '前台 · 通用 Agent · 说明书演示 · 用时 36 秒', '失败：ComfyUI 未启动（127.0.0.1:8188 连接被拒）', 'failed'),
+    item('批量生成 12 张 1080×1440 竖版封面（RunningHub 文生图）', '后台 · 通用 Agent · 短剧封面批量 · 已运行 4 分 12 秒', '运行中', 'running', ''),
+    item('用 cover_v2.json 跑 ComfyUI 工作流（12 个 seed）', '后台 · 短剧 Agent · 说明书演示 · 用时 2 分 08 秒', '已完成', 'completed', ''),
+    item('整理 D:\\\\素材4 下的工作流并加 _backup 备份', '前台 · 通用 Agent · 说明书演示 · 用时 36 秒', '失败', 'failed', '失败：ComfyUI 未启动（127.0.0.1:8188 连接被拒）'),
   ].join('');
 })()`);
 await sleep(500);
@@ -732,6 +807,22 @@ await sleep(1500);
 await shot('34-mobile-file-drawer.png');
 await ev(`document.querySelector('#closeFilePanel')?.click()`);
 await sleep(700);
+
+// 手机端顶栏折叠（收起整条操作区，把高度还给会话区）
+await ev(`(() => { const b = document.querySelector('#toggleTopbarCompact'); if (b) b.click(); else return 'no toggle'; })()`);
+await sleep(900);
+const compactBox = await ev(`(() => {
+  const t = document.querySelector('.topbar');
+  if (!t) return null;
+  const r = t.getBoundingClientRect();
+  // 只截顶栏（外加收起后那条可点的细条），别把会话正文带进来抢镜。
+  return { x: 0, y: 0, width: Math.round(window.innerWidth), height: Math.round(r.height) + 44 };
+})()`);
+console.log('  topbar compact ->', JSON.stringify(compactBox));
+if (compactBox && compactBox.height > 80) await shotClip('38-mobile-topbar-compact.png', { ...compactBox, scale: 2 });
+else await shot('38-mobile-topbar-compact.png');
+await ev(`document.querySelector('#toggleTopbarCompact')?.click()`);
+await sleep(500);
 
 await openDialog('#settingsDialog');
 await settingsTab('models');

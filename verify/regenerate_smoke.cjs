@@ -215,22 +215,37 @@ async function messagesOf(conversationId) {
 
     await reload();
 
-    // ---- ④ 「编辑」富消息：/ref + @ + 图片，三条引用链一起钉 ----
+    // ---- ④ 「编辑」富消息：完整 composer 移入气泡，附件可删/取消可恢复 ----
     dialogs.length = 0;
     const before = chatPayloads.length;
     await page.click(`#messages .message-row:has-text("${Q2_PLAIN}") [data-edit-message]`);
-    await page.waitForSelector('#messages textarea[data-edit-input]', { timeout: 10000 });
+    await page.waitForSelector(`#messages .message-row:has-text("${Q2_PLAIN}") .composer-wrap`, { timeout: 10000 });
     await page.waitForTimeout(300);
-    const prefilled = await page.inputValue('#messages textarea[data-edit-input]');
+    const prefilled = await page.inputValue('#messages .message-row:has-text("第二问") #messageInput');
     check('「编辑」逐字回填用户原文（含 /ref 与 @ 工作区引用）', prefilled === Q2_DISPLAY, prefilled);
     check('编辑框里带出了原图片附件（不是只留文字）',
-      (await page.locator('#messages .edit-attachments figure.attachment-image').count()) === 1);
+      (await page.locator(`#messages .message-row:has-text("${Q2_PLAIN}") #pendingFiles .pending-item`).count()) === 1);
+
+    const placement = await page.evaluate(() => {
+      const row = [...document.querySelectorAll('#messages .message-row')]
+        .find((el) => (el.textContent || '').includes('第二问'));
+      const inline = row?.querySelector('.composer-wrap');
+      const bottom = [...document.querySelectorAll('.composer-wrap')].find((el) => !row?.contains(el));
+      return {
+        inline: Boolean(inline),
+        inputInRow: Boolean(inline?.querySelector('#messageInput')),
+        bottomHidden: Boolean(bottom && (bottom.hidden || getComputedStyle(bottom).display === 'none')),
+        uniqueInput: document.querySelectorAll('#messageInput').length === 1,
+      };
+    });
+    check('完整 composer-wrap 已移动到选择编辑的消息气泡',
+      placement.inline && placement.inputInRow && placement.uniqueInput, JSON.stringify(placement));
+    check('底部 composer 隐藏并保留占位', placement.bottomHidden, JSON.stringify(placement));
 
     const b1 = await bridge();
     check('编辑态已标记（body.is-editing-message）', b1.editingClass === true, JSON.stringify(b1));
-    check('底部输入框锁住并提示去编辑框确认',
-      b1.inputDisabled === true && b1.placeholder.includes('正在编辑上面的消息'), JSON.stringify(b1));
-    check('添加文件按钮同时禁用', b1.attachDisabled === true, JSON.stringify(b1));
+    check('移动后的输入框保持可编辑', b1.inputDisabled === false, JSON.stringify(b1));
+    check('移动后的添加文件按钮保持可用', b1.attachDisabled === false, JSON.stringify(b1));
     check('发送按钮变成「重新发送」且可用',
       b1.sendDisabled === false && b1.sendTitle.includes('重新发送'), JSON.stringify(b1));
 
@@ -241,39 +256,37 @@ async function messagesOf(conversationId) {
       fullPage: false,
     });
 
-    // 草稿附件列表要真的被收起（不真上传：直接补一个占位行再读计算样式）
-    await page.evaluate(() => {
-      const box = document.querySelector('#pendingFiles');
-      box.hidden = false;
-      box.innerHTML = '<div class="pending-file">占位草稿</div>';
-    });
-    const pendingDisplay = await page.evaluate(
-      () => getComputedStyle(document.querySelector('#pendingFiles')).display);
-    check('编辑态下草稿附件列表被收起（底部让位）', pendingDisplay === 'none', pendingDisplay);
+    // 原附件位于移动后的 pendingFiles，点移除应立即消失；取消编辑后原附件恢复。
+    await page.click(`#messages .message-row:has-text("${Q2_PLAIN}") #pendingFiles [data-remove-file]`);
+    check('编辑态可删除原消息附件',
+      (await page.locator(`#messages .message-row:has-text("${Q2_PLAIN}") #pendingFiles .pending-item`).count()) === 0);
+    await page.click(`#messages .message-row:has-text("${Q2_PLAIN}") [data-edit-cancel]`);
+    await page.waitForTimeout(250);
+    check('取消编辑后底部 composer 恢复',
+      (await page.locator('.composer-wrap #messageInput').count()) === 1);
+    await page.click(`#messages .message-row:has-text("${Q2_PLAIN}") [data-edit-message]`);
+    await page.waitForSelector(`#messages .message-row:has-text("${Q2_PLAIN}") .composer-wrap`);
+    check('取消后重新编辑仍恢复原附件',
+      (await page.locator(`#messages .message-row:has-text("${Q2_PLAIN}") #pendingFiles .pending-item`).count()) === 1);
 
     // 清空编辑框 → 底部按钮可用性跟着编辑框走（纯附件轮次：有附件仍应可发）
-    await page.fill('#messages textarea[data-edit-input]', '');
+    await page.fill('#messages .message-row:has-text("第二问") #messageInput', '');
     await page.waitForTimeout(200);
     const b2 = await bridge();
     check('编辑框清空但仍有图片附件时「重新发送」保持可用', b2.sendDisabled === false, JSON.stringify(b2));
 
     // 改字后点**底部发送按钮**（不是编辑框里的按钮）→ 必须确认编辑，而不是发新消息
-    await page.fill('#messages textarea[data-edit-input]', EDITED_RICH);
+    await page.fill('#messages .message-row:has-text("第二问") #messageInput', EDITED_RICH);
+    await page.click(`#messages .message-row:has-text("${Q2_PLAIN}") #pendingFiles [data-remove-file]`);
     await page.waitForTimeout(200);
     await page.click('#sendButton');
     const p2 = await waitFor(() => chatPayloads[before] || null);
     check('底部发送按钮确认了编辑（重发改后文本）', p2 && p2.message === EDITED_RICH, String(p2 && p2.message));
     check('重发的 display_message 就是编辑框里的文本', p2 && p2.display_message === EDITED_RICH,
       String(p2 && p2.display_message));
-    check('重发带回了原图片附件（attachment 数量 1）',
-      Boolean(p2) && Array.isArray(p2.attachments) && p2.attachments.length === 1,
+    check('重发使用编辑后保留的附件（已删除则数量为 0）',
+      Boolean(p2) && Array.isArray(p2.attachments) && p2.attachments.length === 0,
       JSON.stringify(p2 && p2.attachments));
-    check('图片附件带回的是原 path（图片内容没丢）',
-      Boolean(p2) && p2.attachments[0] && p2.attachments[0].path === IMG_PATH,
-      JSON.stringify(p2 && p2.attachments && p2.attachments[0]));
-    check('图片附件同时带回 thumb_path（缩略图不退化）',
-      Boolean(p2) && p2.attachments[0] && p2.attachments[0].thumb_path === IMG_THUMB,
-      JSON.stringify(p2 && p2.attachments && p2.attachments[0]));
     const after4 = await messagesOf(convId);
     check('「编辑」从该提问截断：后端只剩更早的两条（U1,A1）',
       after4.length === 2, JSON.stringify(after4.map((m) => `${m.role}:${String(m.content).slice(0, 12)}`)));
@@ -288,9 +301,9 @@ async function messagesOf(conversationId) {
 
     // ---- ⑤ 编辑最前面那条 → 后端清空（截断到头的边界）----
     await page.click(`#messages .message-row:has-text("${Q1}") [data-edit-message]`);
-    await page.waitForSelector('#messages textarea[data-edit-input]', { timeout: 10000 });
+    await page.waitForSelector('#messages .message-row:has-text("第一问") #messageInput', { timeout: 10000 });
     const p3before = chatPayloads.length;
-    await page.fill('#messages textarea[data-edit-input]', EDITED);
+    await page.fill('#messages .message-row:has-text("第一问") #messageInput', EDITED);
     await page.waitForTimeout(200);
     await page.click('#messages [data-edit-confirm]');
     const p3 = await waitFor(() => chatPayloads[p3before] || null);

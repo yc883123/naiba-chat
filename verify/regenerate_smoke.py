@@ -18,21 +18,20 @@
 from __future__ import annotations
 
 import base64
-import json
 import os
-import shutil
 import subprocess
 import sys
 import time
+import tempfile
 import urllib.request
 from pathlib import Path
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))  # 直接跑本脚本时也能 import naiba
 PORT = 8796
 BASE = f"http://127.0.0.1:{PORT}"
-DATA_DIR = ROOT / "verify" / "regenerate_tmp"
+ISOLATED_ROOT = Path(os.environ.get("NAIBA_SMOKE_ROOT", ROOT / "verify" / "regenerate_tmp"))
+DATA_DIR = ISOLATED_ROOT / "data"
 PROVIDER = {"id": "smoke-a", "name": "冒烟 API A", "model": "smoke-default-a"}
 BOUND_MODEL = "smoke-pro"
 TITLE = "重新生成冒烟"
@@ -92,13 +91,27 @@ def wait_health(deadline: float = 60.0) -> bool:
     return False
 
 
+def isolated_paths():
+    from naiba.paths import PathContext
+
+    paths = PathContext.local(ISOLATED_ROOT, ISOLATED_ROOT / "config.json")
+    paths.public_dir = ROOT / "public"
+    return paths
+
+
 def seed() -> None:
     from naiba.app import NaibaChatApp
     from naiba.config import ConfigStore
     from naiba.storage.store import ChatStorage
+    from types import SimpleNamespace
 
+    paths = isolated_paths()
+    config = ConfigStore(paths.config_path, paths=paths)
+    config.data.update({"host": "127.0.0.1", "port": PORT, "access_token": "",
+                        "data_dir": str(DATA_DIR), "workspace_dir": str(ISOLATED_ROOT / "workspace"),
+                        "skills_dirs": [str(ROOT / "skills")], "mcp_servers": []})
+    config.save()
     storage = ChatStorage(DATA_DIR / "chat.db")
-    config = ConfigStore(ROOT / "config.json")
     app = SimpleNamespace(config=config, storage=storage)
     NaibaChatApp.api_upsert_model_profile(app, {
         "id": PROVIDER["id"],
@@ -116,12 +129,16 @@ def seed() -> None:
     thumb_path = uploads / IMG_THUMB_NAME
     image_path.write_bytes(IMAGE_BYTES)
     thumb_path.write_bytes(IMAGE_BYTES)
+    reference = ISOLATED_ROOT / "workspace" / AT_REF
+    reference.parent.mkdir(parents=True, exist_ok=True)
+    reference.write_bytes(IMAGE_BYTES)
     # 只有一个会话：启动时会自动打开它（loadConversations 打开 conversations[0]），
     # 冒烟因此不必驱动侧栏（虚拟列表 + 默认折叠，点开条目反而脆弱）。
     conversation = storage.create_conversation(
         TITLE,
         model_key=f"online:{PROVIDER['id']}",
         model_name=BOUND_MODEL,
+        workspace_dir=str(ISOLATED_ROOT / "workspace"),
     )
     # 首条 user 消息会自动成为会话标题（add_message 的既有行为），所以标题在 create 时先定。
     storage.add_message(conversation["id"], "user", Q1)
@@ -142,32 +159,23 @@ def seed() -> None:
 
 
 def main() -> int:
-    config_path = ROOT / "config.json"
-    original_config = config_path.read_bytes()
-    shutil.rmtree(DATA_DIR, ignore_errors=True)
+    global ISOLATED_ROOT, DATA_DIR
+    isolated = tempfile.TemporaryDirectory(prefix="regenerate_smoke_", dir=ROOT / "verify")
+    ISOLATED_ROOT = Path(isolated.name)
+    DATA_DIR = ISOLATED_ROOT / "data"
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    config = json.loads(original_config.decode("utf-8"))
-    config.update({
-        "host": "127.0.0.1",
-        "port": PORT,
-        "data_dir": str(DATA_DIR),
-        "providers": [],
-        "default_model_key": "",
-    })
-    config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-    # 从改完 config.json 起，**任何异常路径都必须还原**（包括播种）——
-    # 播种一抛异常就把开发配置留在临时端口 / 临时目录上。
     code = 1
     server: subprocess.Popen | None = None
     log = (ROOT / "verify" / "regenerate_smoke_server.log").open("w", encoding="utf-8")
     try:
         seed()
         env = dict(os.environ)
-        env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+        env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1",
+                    "NAIBA_SMOKE_ROOT": str(ISOLATED_ROOT)})
         server = subprocess.Popen(  # noqa: S603 - 固定 argv
-            [sys.executable, "server.py", "--host", "127.0.0.1", "--port", str(PORT)],
+            [sys.executable, str(Path(__file__).resolve()), "--serve"],
             cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT, env=env,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if not wait_health():
             print(f"server 未就绪（日志见 {log.name}）")
@@ -202,12 +210,24 @@ def main() -> int:
                 server.kill()
                 server.wait(timeout=10)
         log.close()
-        config_path.write_bytes(original_config)
-        shutil.rmtree(DATA_DIR, ignore_errors=True)
-        print(f"已还原 config.json 并清理 {DATA_DIR.name}"
+        isolated.cleanup()
+        print(f"已清理独立测试目录（开发 config.json 未修改）"
               f"；server 已退出（exit={server.returncode if server else 'n/a'}）")
     return code
 
 
 if __name__ == "__main__":
+    if "--serve" in sys.argv:
+        from naiba.app import NaibaChatApp
+        from naiba.http import AppHTTPServer, RequestHandler
+
+        app = NaibaChatApp(paths=isolated_paths())
+        server = AppHTTPServer(("127.0.0.1", PORT), RequestHandler, app)
+        server.daemon_threads = True
+        try:
+            server.serve_forever(poll_interval=0.1)
+        finally:
+            server.server_close()
+            app.stop()
+        sys.exit(0)
     sys.exit(main())
