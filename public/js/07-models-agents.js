@@ -6,6 +6,109 @@ import { $, api, state, toast } from "./01-core.js";
 import { renderSidebar } from "./08-conversations.js";
 import { renderSkills } from "./09-settings.js";
 import { appendPresetSkillsToComposer } from "./13-skill-refs.js";
+
+const UPDATE_BUSY_PHASES = ['checking', 'downloading', 'restarting'];
+const UPDATE_RELEASE_URL = 'https://github.com/yc883123/naiba-chat/releases';
+
+function updateVersionAllowed(release) {
+  if (!release || release.installable === false) return false;
+  const value = String(release.version || release.tag || '').trim().replace(/^v/i, '');
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  return major > 2 || (major === 2 && (minor > 0 || (minor === 0 && patch > 0)));
+}
+
+function versionLabel(release) {
+  const label = release.current ? `${release.version}（当前）` : release.version;
+  return release.published_at ? `${label} · ${String(release.published_at).slice(0, 10)}` : label;
+}
+
+function syncUpdateVersionCombobox(options, selectedValue, disabled) {
+  const wrap = $('#updateVersionCombobox');
+  const trigger = $('#updateVersionTrigger');
+  const label = $('#updateVersionLabel');
+  const menu = $('#updateVersionMenu');
+  const native = $('#updateVersionSelect');
+  if (!wrap || !trigger || !label || !menu || !native) return;
+  wrap.hidden = false;
+  trigger.disabled = disabled || !options.length;
+  const selected = options.find((item) => item.value === selectedValue) || options[0];
+  label.textContent = selected ? selected.textContent : '尚未检查';
+  trigger.setAttribute('aria-expanded', menu.hidden ? 'false' : 'true');
+  menu.replaceChildren(...options.map((item, index) => {
+    const node = document.createElement('div');
+    node.className = 'update-version-option';
+    node.id = `update-version-option-${index}`;
+    node.setAttribute('role', 'option');
+    node.dataset.value = item.value;
+    node.textContent = item.textContent;
+    node.setAttribute('aria-selected', item.value === selectedValue ? 'true' : 'false');
+    node.addEventListener('mousedown', (event) => event.preventDefault());
+    node.addEventListener('click', () => {
+      native.value = item.value;
+      native.dispatchEvent(new Event('change', { bubbles: true }));
+      closeUpdateVersionMenu();
+    });
+    return node;
+  }));
+}
+
+function closeUpdateVersionMenu() {
+  const menu = $('#updateVersionMenu');
+  const trigger = $('#updateVersionTrigger');
+  if (!menu || !trigger) return;
+  menu.hidden = true;
+  trigger.setAttribute('aria-expanded', 'false');
+}
+
+function openUpdateVersionMenu() {
+  const menu = $('#updateVersionMenu');
+  const trigger = $('#updateVersionTrigger');
+  if (!menu || !trigger || trigger.disabled) return;
+  menu.hidden = false;
+  trigger.setAttribute('aria-expanded', 'true');
+  const selected = menu.querySelector('[aria-selected="true"]');
+  selected?.scrollIntoView({ block: 'nearest' });
+}
+
+function initUpdateVersionCombobox() {
+  const trigger = $('#updateVersionTrigger');
+  const menu = $('#updateVersionMenu');
+  const native = $('#updateVersionSelect');
+  if (!trigger || !menu || !native || trigger.dataset.bound) return;
+  trigger.dataset.bound = '1';
+  trigger.addEventListener('click', () => (menu.hidden ? openUpdateVersionMenu() : closeUpdateVersionMenu()));
+  trigger.addEventListener('keydown', (event) => {
+    const items = [...menu.querySelectorAll('[role="option"]')];
+    if (!items.length) return;
+    let index = items.findIndex((item) => item.getAttribute('aria-selected') === 'true');
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (menu.hidden) openUpdateVersionMenu();
+      index = (index + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      native.value = items[index].dataset.value;
+      native.dispatchEvent(new Event('change', { bubbles: true }));
+    } else if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      menu.hidden ? openUpdateVersionMenu() : closeUpdateVersionMenu();
+    } else if (event.key === 'Escape') {
+      closeUpdateVersionMenu();
+    }
+  });
+  trigger.addEventListener('blur', () => {
+    setTimeout(() => {
+      if (!document.activeElement?.closest('#updateVersionCombobox')) closeUpdateVersionMenu();
+    }, 0);
+  });
+  document.addEventListener('click', (event) => {
+    if (!event.target.closest('#updateVersionCombobox')) closeUpdateVersionMenu();
+  });
+  initUpdateVersionCombobox._ready = true;
+}
+
 export function renderUpdateStatus(status) {
   const current = status.current_version || '开发版';
   $('#currentVersion').textContent = status.current_commit ? `${current} · ${status.current_commit.slice(0, 7)}` : current;
@@ -20,16 +123,15 @@ export function renderUpdateStatus(status) {
   const previousValue = select.value;
   // 重建版本下拉：仅保留可安装项，当前版本标记为「当前」。
   const options = releases
-    .filter((release) => release.installable)
+    .filter(updateVersionAllowed)
     .map((release) => {
       const option = document.createElement('option');
       option.value = release.tag;
-      const label = release.current ? `${release.version}（当前）` : release.version;
-      option.textContent = release.published_at ? `${label} · ${release.published_at.slice(0, 10)}` : label;
+      option.textContent = versionLabel(release);
       return option;
     });
   select.replaceChildren(...options);
-  select.disabled = options.length === 0 || ['checking', 'downloading', 'restarting'].includes(status.phase);
+  select.disabled = options.length === 0 || UPDATE_BUSY_PHASES.includes(status.phase);
   // 检查完成后优先选中新版本，而不是保留检查前的"当前版本"。否则在不展开
   // 下拉框时看不出已经有更新。手动选择版本后仍按用户选择保留。
   const newerOption = options.find((option) => {
@@ -37,7 +139,18 @@ export function renderUpdateStatus(status) {
     return release && !release.current;
   });
   if (state.updateAutoSelectLatest && status.phase !== 'checking') {
-    if (newerOption) select.value = newerOption.value;
+    const currentOption = options.find((option) => {
+      const release = releases.find((item) => item.tag === option.value);
+      return release && release.current;
+    });
+    const latestOption = options.find((option) => {
+      const release = releases.find((item) => item.tag === option.value);
+      return release && release.version === latestVersion;
+    });
+    const preferred = status.phase === 'current'
+      ? (currentOption || latestOption || options[0])
+      : (latestOption || newerOption || options[0]);
+    if (preferred) select.value = preferred.value;
     state.updateAutoSelectLatest = false;
   } else if (previousValue && options.some((option) => option.value === previousValue)) {
     select.value = previousValue;
@@ -46,6 +159,8 @@ export function renderUpdateStatus(status) {
   }
   const selectedTag = select.value;
   const selected = releases.find((release) => release.tag === selectedTag);
+  initUpdateVersionCombobox();
+  syncUpdateVersionCombobox(options, selectedTag, select.disabled);
   const notes = selected && Array.isArray(selected.release_notes)
     ? selected.release_notes.filter((note) => String(note || '').trim())
     : (selected && selected.release_notes ? [String(selected.release_notes)] : []);
@@ -67,9 +182,11 @@ export function renderUpdateStatus(status) {
     restarting: '更新已准备好，程序即将重启。',
     error: status.error || '检查更新失败。',
   };
+  const manualUrl = status.manual_release_url || status.release_url || UPDATE_RELEASE_URL;
   $('#updateMessage').textContent = !status.supported
     ? '当前运行目录不支持自动更新，请确认它来自受支持的 Git 仓库。'
     : (messages[status.phase] || messages.idle);
+  const manualDownload = status.manual_download_required || status.manual_update_available || status.phase === 'manual' || (releases.length && !options.length);
   const pending = status.pending_verification;
   if (pending && pending.pending) {
     $('#updateMessage').textContent = pending.ok
@@ -82,9 +199,19 @@ export function renderUpdateStatus(status) {
   } else if (status.phase === 'available' && selected) {
     $('#updateMessage').textContent = `将安装 ${selected.version}，完成后程序自动重启。`;
   }
+  if (manualDownload) {
+    const message = $('#updateMessage');
+    message.replaceChildren(document.createTextNode('2.0.0 及更早版本不支持自动更新，请前往 '));
+    const link = document.createElement('a');
+    link.href = manualUrl;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'GitHub Release';
+    message.append(link, document.createTextNode(' 手动下载。'));
+  }
   const canInstall = status.supported && status.mode !== 'source'
     && selected && !selected.current
-    && !['downloading', 'restarting'].includes(status.phase);
+    && !UPDATE_BUSY_PHASES.includes(status.phase);
   $('#installUpdate').hidden = !canInstall;
   $('#checkUpdate').disabled = ['checking', 'downloading', 'restarting'].includes(status.phase);
 }
@@ -133,8 +260,8 @@ export async function installUpdate() {
   const status = state.bootstrap.update || {};
   const releases = Array.isArray(status.releases) ? status.releases : [];
   const selected = releases.find((release) => release.tag === tag);
-  if (!selected) {
-    toast('请先选择要安装的版本');
+  if (!selected || !updateVersionAllowed(selected)) {
+    toast(selected ? '2.0.0 及更早版本请前往 GitHub Release 手动下载' : '请先选择要安装的版本');
     return;
   }
   if (!confirm(`确定要安装版本 ${selected.version} 吗？更新完成后程序将自动重启。`)) {
@@ -515,4 +642,3 @@ export async function saveAgentSelection() {
     applyConversationAgent(state.conversations.find((item) => item.id === state.conversationId));
   }
 }
-

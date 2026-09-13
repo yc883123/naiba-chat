@@ -28,7 +28,7 @@ COMMIT_C = "c" * 40
 SHA_B = "b" * 64
 
 
-def manifest_payload(version="1.6.7-beta", commit=COMMIT_A, repository=REPOSITORY, **overrides):
+def manifest_payload(version="2.1.7-beta", commit=COMMIT_A, repository=REPOSITORY, **overrides):
     value = {
         "repository": repository,
         "commit": commit,
@@ -131,6 +131,36 @@ class ExecutableUpdateTests(unittest.TestCase):
             "current": False,
         }
 
+    def test_release_normalization_filters_migration_and_dedupes(self):
+        entries = [
+            self.cache_entry("v1.9.9"),
+            self.cache_entry("v2.0.0"),
+            self.cache_entry("v2.1.0-beta"),
+            self.cache_entry("v2.1.0"),
+            self.cache_entry("v2.1.0"),
+        ]
+        normalized = UpdateManager._normalize_releases(entries)
+        self.assertEqual([item["version"] for item in normalized], ["2.1.0", "2.1.0-beta"])
+
+    def test_manual_migration_manifest_is_reported_without_install(self):
+        self.set_build("1.9.9", COMMIT_C)
+        self.manager._request_json = self.stub.route(
+            api=http_error(403), latest=manifest_payload(version="2.0.0", commit=COMMIT_A)
+        )
+        status = self.manager.check(force=True)
+        self.assertEqual(status["phase"], "current")
+        self.assertTrue(status["manual_update_available"])
+        self.assertEqual(status["manual_release_url"], f"https://github.com/{REPOSITORY}/releases")
+
+    def test_same_version_different_commit_is_available(self):
+        self.set_build("2.1.0", COMMIT_C)
+        self.manager._request_json = self.stub.route(
+            api=http_error(403), latest=manifest_payload(version="2.1.0", commit=COMMIT_A)
+        )
+        status = self.manager.check(force=True)
+        self.assertEqual(status["phase"], "available")
+        self.assertTrue(status["update_available"])
+
     # ---------- 错误提示分级 ----------
 
     def test_http_error_message_mapping(self):
@@ -155,20 +185,20 @@ class ExecutableUpdateTests(unittest.TestCase):
     # ---------- 磁盘缓存读回与回退 ----------
 
     def test_fresh_disk_cache_reused_without_api(self):
-        self.write_cache([self.cache_entry("v1.6.6-beta")])
+        self.write_cache([self.cache_entry("v2.1.6-beta")])
         self.manager._request_json = self.stub.route(api=AssertionError("API 不应被请求"))
         result = self.manager._fetch_releases()
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["version"], "1.6.6-beta")
+        self.assertEqual(result[0]["version"], "2.1.6-beta")
         self.assertTrue(self.manager._releases_from_cache)
         self.assertEqual(self.stub.calls, [])
 
     def test_force_bypasses_fresh_cache(self):
-        self.write_cache([self.cache_entry("v1.6.6-beta")])
-        api_payload = api_releases("v1.6.7-beta", "v1.6.6-beta")
+        self.write_cache([self.cache_entry("v2.1.6-beta")])
+        api_payload = api_releases("v2.1.7-beta", "v2.1.6-beta")
         self.manager._request_json = self.stub.route(api=api_payload)
         result = self.manager._fetch_releases(force=True)
-        self.assertEqual([item["tag"] for item in result], ["v1.6.7-beta", "v1.6.6-beta"])
+        self.assertEqual([item["tag"] for item in result], ["v2.1.7-beta", "v2.1.6-beta"])
         self.assertFalse(self.manager._releases_from_cache)
         self.assertIn(API_RELEASES_URL, self.stub.calls)
 
@@ -186,20 +216,20 @@ class ExecutableUpdateTests(unittest.TestCase):
                     cache = self.data_dir / "update" / "releases.json"
                     cache.parent.mkdir(parents=True, exist_ok=True)
                     cache.write_text(payload, encoding="utf-8")
-                api_payload = api_releases("v1.6.7-beta")
+                api_payload = api_releases("v2.1.7-beta")
                 self.manager._request_json = self.stub.route(api=api_payload)
                 result = self.manager._fetch_releases()
-                self.assertEqual([item["tag"] for item in result], ["v1.6.7-beta"])
+                self.assertEqual([item["tag"] for item in result], ["v2.1.7-beta"])
                 self.assertIn(API_RELEASES_URL, self.stub.calls)
                 self.assertFalse(self.manager._releases_from_cache)
 
     def test_api_failure_falls_back_to_cache_even_when_stale(self):
-        cache = self.write_cache([self.cache_entry("v1.6.6-beta")])
+        cache = self.write_cache([self.cache_entry("v2.1.6-beta")])
         old = time.time() - 10 * 3600
         os.utime(cache, (old, old))
         self.manager._request_json = self.stub.route(api=http_error(403, body="rate limit"))
         result = self.manager._fetch_releases()
-        self.assertEqual([item["tag"] for item in result], ["v1.6.6-beta"])
+        self.assertEqual([item["tag"] for item in result], ["v2.1.6-beta"])
         self.assertTrue(self.manager._releases_from_cache)
 
     def test_api_failure_without_cache_raises(self):
@@ -210,13 +240,13 @@ class ExecutableUpdateTests(unittest.TestCase):
     # ---------- check() 回退与合成条目 ----------
 
     def test_check_falls_back_to_latest_when_list_403(self):
-        self.set_build("1.6.6-beta")
+        self.set_build("2.1.6-beta")
         self.manager._request_json = self.stub.route(
             api=http_error(403, body="rate limit"), latest=manifest_payload()
         )
         status = self.manager.check(force=True)
         self.assertEqual(status["phase"], "available")
-        self.assertEqual(status["latest_version"], "1.6.7-beta")
+        self.assertEqual(status["latest_version"], "2.1.7-beta")
         top = status["releases"][0]
         self.assertEqual(top["tag"], LATEST_TAG)
         self.assertTrue(top["installable"])
@@ -228,7 +258,7 @@ class ExecutableUpdateTests(unittest.TestCase):
         self.assertFalse(any(url.startswith(f"{TAG_DL_BASE}/") for url in self.stub.calls))
 
     def test_check_latest_current_when_already_latest(self):
-        self.set_build("1.6.7-beta", COMMIT_A)
+        self.set_build("2.1.7-beta", COMMIT_A)
         self.manager._request_json = self.stub.route(
             api=http_error(403), latest=manifest_payload(commit=COMMIT_A)
         )
@@ -237,13 +267,13 @@ class ExecutableUpdateTests(unittest.TestCase):
         self.assertTrue(status["releases"][0]["current"])
 
     def test_check_falls_back_when_chosen_tag_manifest_network_fails(self):
-        self.set_build("1.6.6-beta")
-        api_payload = api_releases("v1.6.7-beta", "v1.6.6-beta")
+        self.set_build("2.1.6-beta")
+        api_payload = api_releases("v2.1.7-beta", "v2.1.6-beta")
 
         def tag_handler(url):
-            if "v1.6.7-beta" in url:
+            if "v2.1.7-beta" in url:
                 raise http_error(500, url=url)
-            return manifest_payload(version="1.6.6-beta", commit=COMMIT_A)
+            return manifest_payload(version="2.1.6-beta", commit=COMMIT_A)
 
         self.manager._request_json = self.stub.route(api=api_payload, tag=tag_handler, latest=manifest_payload())
         status = self.manager.check(force=True)
@@ -251,15 +281,15 @@ class ExecutableUpdateTests(unittest.TestCase):
         # 权威来源切换为 latest 直连清单
         self.assertEqual(self.manager.latest["tag"], LATEST_TAG)
         self.assertTrue(self.manager.latest["download_url"].startswith(f"{LATEST_DL_BASE}/"))
-        failed_tag_url = f"{TAG_DL_BASE}/v1.6.7-beta/{MANIFEST_ASSET}"
+        failed_tag_url = f"{TAG_DL_BASE}/v2.1.7-beta/{MANIFEST_ASSET}"
         self.assertIn(failed_tag_url, self.stub.calls)
         self.assertTrue(any(url.startswith(f"{LATEST_DL_BASE}/") for url in self.stub.calls))
         # API 列表本身可用时不再合成重复条目（列表中已有同版本真实条目）
-        self.assertEqual(status["releases"][0]["tag"], "v1.6.7-beta")
+        self.assertEqual(status["releases"][0]["tag"], "v2.1.7-beta")
 
     def test_check_validation_failure_does_not_fallback(self):
-        self.set_build("1.6.6-beta")
-        api_payload = api_releases("v1.6.7-beta")
+        self.set_build("2.1.6-beta")
+        api_payload = api_releases("v2.1.7-beta")
         bad = manifest_payload(repository="someone/else")
         self.manager._request_json = self.stub.route(api=api_payload, tag=lambda url: bad)
         status = self.manager.check(force=True)
@@ -277,26 +307,26 @@ class ExecutableUpdateTests(unittest.TestCase):
         self.assertIn("外部请求：", status["error"])
 
     def test_check_normal_api_path_regression(self):
-        self.set_build("1.6.6-beta")
-        api_payload = api_releases("v1.6.7-beta", "v1.6.6-beta")
+        self.set_build("2.1.6-beta")
+        api_payload = api_releases("v2.1.7-beta", "v2.1.6-beta")
         self.manager._request_json = self.stub.route(
-            api=api_payload, tag=lambda url: manifest_payload(version="1.6.7-beta")
+            api=api_payload, tag=lambda url: manifest_payload(version="2.1.7-beta")
         )
         status = self.manager.check(force=True)
         self.assertEqual(status["phase"], "available")
-        self.assertEqual(status["releases"][0]["tag"], "v1.6.7-beta")
+        self.assertEqual(status["releases"][0]["tag"], "v2.1.7-beta")
         self.assertFalse(any(item["tag"] == LATEST_TAG for item in status["releases"]))
-        self.assertEqual(self.manager.latest["tag"], "v1.6.7-beta")
-        self.assertIn(f"{TAG_DL_BASE}/v1.6.7-beta/{MANIFEST_ASSET}", self.stub.calls)
+        self.assertEqual(self.manager.latest["tag"], "v2.1.7-beta")
+        self.assertIn(f"{TAG_DL_BASE}/v2.1.7-beta/{MANIFEST_ASSET}", self.stub.calls)
         self.assertFalse(any(url.startswith(f"{LATEST_DL_BASE}/") for url in self.stub.calls))
 
     # ---------- 安装入口（latest 合成条目） ----------
 
     @unittest.skipUnless(os.name == "nt", "一键安装路径仅适用于 Windows")
     def test_start_install_latest_tag_uses_static_download(self):
-        self.set_build("1.6.6-beta")
+        self.set_build("2.1.6-beta")
         self.manager.releases = [
-            {"tag": LATEST_TAG, "version": "1.6.7-beta", "published_at": "",
+            {"tag": LATEST_TAG, "version": "2.1.7-beta", "published_at": "",
              "release_url": f"https://github.com/{REPOSITORY}/releases/latest",
              "release_notes": ["说明"], "installable": True, "current": False}
         ]

@@ -23,6 +23,8 @@ EXECUTABLE_ASSET = "naiba-chat.exe"
 CACHE_TTL_SECONDS = 6 * 3600
 # 合成发布条目的 tag；安装该条目时始终走 releases/latest/download 静态直连，不占 API 配额。
 LATEST_TAG = "latest"
+MANUAL_RELEASE_VERSION = (2, 0, 0)
+MANUAL_RELEASE_URL = f"https://github.com/{REPOSITORY}/releases"
 DEFAULT_RELEASE_NOTES = [
     "修复 Windows 10053/10054/10061 瞬时连接错误，并在失败时显示供应商主机和排查提示。",
     "修复推理模型只返回 reasoning 时测试连接被误判失败的问题。",
@@ -61,6 +63,8 @@ class UpdateManager:
         self.checked_at = 0
         # True 表示 self.releases 来自磁盘缓存回退（非实时 API），更新决策须以直连清单为准。
         self._releases_from_cache = False
+        self.manual_release_url = ""
+        self.manual_update_available = False
         self.build = self._read_build_info()
         self.pending_verification = self.verify_pending()
 
@@ -160,6 +164,27 @@ class UpdateManager:
         beta_number = int(match.group(5) or 0) if is_beta else 0
         return (major, minor, patch, 0 if is_beta else 1, beta_number)
 
+    @classmethod
+    def _is_auto_update_version(cls, version: str) -> bool:
+        key = cls._release_version_key(version)
+        return key is not None and key[:3] > MANUAL_RELEASE_VERSION
+
+    @classmethod
+    def _is_manual_migration_version(cls, version: str) -> bool:
+        key = cls._release_version_key(version)
+        return key is not None and key[:3] == MANUAL_RELEASE_VERSION
+
+    @classmethod
+    def _normalize_releases(cls, releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        eligible = [r for r in releases if cls._is_auto_update_version(str(r.get("version") or ""))]
+        eligible.sort(key=lambda r: (cls._release_version_key(str(r.get("version") or "")) or (0,0,0,0,0), str(r.get("published_at") or ""), str(r.get("tag") or "")), reverse=True)
+        seen: set[str] = set(); result: list[dict[str, Any]] = []
+        for release in eligible:
+            identity = str(release.get("version") or "").lower()
+            if identity in seen: continue
+            seen.add(identity); result.append(release)
+        return result
+
     @property
     def supported(self) -> bool:
         return bool(os.name == "nt" and (getattr(sys, "frozen", False) or self._source_repository()))
@@ -199,6 +224,9 @@ class UpdateManager:
                 "release_notes": latest.get("release_notes", []),
                 "published_at": latest.get("published_at", ""),
                 "release_url": latest.get("release_url", ""),
+                "manual_update_available": self.manual_update_available,
+                "manual_release_url": self.manual_release_url or MANUAL_RELEASE_URL,
+                "manual_update_message": ("2.0.0 属于大版本更新，请前往 GitHub Release 手动下载。" if self.manual_update_available else ""),
                 "releases": list(self.releases),
                 "pending_verification": self.pending_verification,
                 "source_dirty": self._source_dirty(),
@@ -312,12 +340,17 @@ class UpdateManager:
                     "current": False,
                 }
             )
-        return releases or None
+        return self._normalize_releases(releases) or None
 
     def _mark_current(self, releases: list[dict[str, Any]]) -> list[dict[str, Any]]:
         current_version = self.build.get("version", "")
+        current_commit = self.build.get("commit", "")
         for release in releases:
-            release["current"] = release.get("version") == current_version
+            release["current"] = bool(
+                release.get("version") == current_version
+                and release.get("commit")
+                and release.get("commit") == current_commit
+            )
         return releases
 
     def _fetch_releases(self, force: bool = False) -> list[dict[str, Any]]:
@@ -370,6 +403,7 @@ class UpdateManager:
                     "current": False,
                 }
             )
+        releases = self._normalize_releases(releases)
         self._mark_current(releases)
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
@@ -391,7 +425,7 @@ class UpdateManager:
             "release_url": str(manifest.get("release_url") or ""),
             "release_notes": manifest.get("release_notes", []),
             "installable": True,
-            "current": version == self.build.get("version", ""),
+            "current": version == self.build.get("version", "") and bool(manifest.get("commit")) and manifest.get("commit") == self.build.get("commit", ""),
         }
 
     def _manifest_base(self, tag: str) -> str:
@@ -462,6 +496,8 @@ class UpdateManager:
                 return self.status()
             self.phase = "checking"
             self.error = ""
+            self.manual_update_available = False
+            self.manual_release_url = ""
         try:
             if self.mode == "source":
                 if not self._source_repository():
@@ -541,12 +577,37 @@ class UpdateManager:
                 )
             # 其它情形（当前构建版本不是可解析的发布版本，例如本地/dev 的 git hash）
             # 无法确认 manifest 是否更新，为免把新构建降级成清单里的旧版本，保持不更新。
+            # 2.0.0 is a migration release and must be downloaded manually.
+            # Any release older than it is ignored entirely.
+            if self._is_manual_migration_version(str(manifest.get("version") or "")):
+                self.manual_update_available = True
+                self.manual_release_url = MANUAL_RELEASE_URL
+                update_available = False
+                manifest["manual_update"] = True
+                manifest["release_url"] = MANUAL_RELEASE_URL
+            elif not self._is_auto_update_version(str(manifest.get("version") or "")):
+                update_available = False
             manifest["update_available"] = update_available
+            # Once the manifest is authoritative, annotate matching release rows
+            # using its commit so republished same-version builds are not shown
+            # as the currently installed build.
+            for release in self.releases:
+                same_version = release.get("version") == self.build.get("version", "")
+                republished = (
+                    same_version
+                    and manifest.get("version") == self.build.get("version", "")
+                    and manifest.get("commit") != self.build.get("commit", "")
+                )
+                release["current"] = bool(same_version and not republished)
             with self.lock:
                 self.latest = manifest
-                if manifest.get("tag") == LATEST_TAG and not any(
-                    release.get("installable") and release.get("version") == manifest.get("version")
-                    for release in self.releases
+                if (
+                    manifest.get("tag") == LATEST_TAG
+                    and self._is_auto_update_version(str(manifest.get("version") or ""))
+                    and not any(
+                        release.get("installable") and release.get("version") == manifest.get("version")
+                        for release in self.releases
+                    )
                 ):
                     # 列表来自回退缓存或整体缺失：合成一条可安装的 latest 条目置于顶部，
                     # 保证下拉框仍能一键安装最新版；下次 API 成功后以真实列表整体替换。
@@ -679,6 +740,10 @@ Remove-Item -LiteralPath $Downloaded -Force -ErrorAction SilentlyContinue
             meta = next((release for release in self.releases if release["tag"] == target_tag), None)
             if not meta:
                 raise RuntimeError("目标版本不存在")
+            if not self._is_auto_update_version(str(meta.get("version") or "")):
+                if self._is_manual_migration_version(str(meta.get("version") or "")):
+                    raise RuntimeError(f"{MANUAL_RELEASE_VERSION[0]}.{MANUAL_RELEASE_VERSION[1]}.{MANUAL_RELEASE_VERSION[2]} 属于大版本更新，请前往 GitHub Release 手动下载：{MANUAL_RELEASE_URL}")
+                raise RuntimeError("该版本不支持自动更新")
             # target_tag 为合成条目 LATEST_TAG 时，_fetch_manifest_for_tag 会自动改走
             # releases/latest/download 静态直连（不访问 api.github.com），与 check() 兜底同入口。
             latest = self._fetch_manifest_for_tag(target_tag)

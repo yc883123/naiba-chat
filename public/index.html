@@ -612,9 +612,15 @@
             <div class="update-latest-row">
               <span>目标版本</span>
               <div class="update-latest-value">
-                <select id="updateVersionSelect" class="update-version-select" disabled>
+                <select id="updateVersionSelect" class="update-version-select update-version-native" disabled aria-hidden="true" tabindex="-1">
                   <option value="">尚未检查</option>
                 </select>
+                <div class="update-version-combobox" id="updateVersionCombobox" hidden>
+                  <button type="button" class="update-version-trigger" id="updateVersionTrigger" aria-haspopup="listbox" aria-expanded="false" disabled>
+                    <span id="updateVersionLabel">尚未检查</span><span aria-hidden="true">▾</span>
+                  </button>
+                  <div class="update-version-menu" id="updateVersionMenu" role="listbox" tabindex="-1" hidden></div>
+                </div>
               </div>
             </div>
             <details class="update-notes" id="updateNotes" hidden>

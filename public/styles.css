@@ -1302,6 +1302,23 @@ label input:focus, label select:focus, label textarea:focus { outline: 2px solid
   font-size: 13px;
   text-align: right;
 }
+.update-version-native { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.update-version-combobox { position: relative; width: min(300px, 100%); }
+.update-version-trigger {
+  width: 100%; min-height: 34px; display: inline-flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); color: var(--text); font: inherit; font-size: 13px; text-align: right; cursor: pointer;
+}
+.update-version-trigger:disabled { opacity: .6; cursor: default; }
+.update-version-trigger:focus-visible { outline: 2px solid rgba(var(--brand-500-rgb), .25); border-color: var(--accent); }
+.update-version-menu {
+  position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; right: 0; max-height: calc(20 * 34px);
+  overflow-y: auto; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); box-shadow: 0 8px 24px rgba(0,0,0,.28);
+}
+.update-version-menu[hidden] { display: none; }
+.update-version-option { min-height: 32px; display: flex; align-items: center; padding: 4px 8px; border-radius: var(--r-sm); color: var(--text); font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.update-version-option:hover, .update-version-option[aria-selected="true"] { background: rgba(var(--brand-500-rgb), .16); color: var(--accent); }
 .update-status p { margin: 0; padding: 12px; background: var(--surface); color: var(--muted); font-size: 13px; line-height: 1.5; }
 .update-actions { justify-content: flex-start; margin: 14px 0; }
 .toast {

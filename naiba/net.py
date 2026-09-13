@@ -9,7 +9,7 @@
 * 外部请求按「运行设置 → 代理」字段路由：
 
   - ``enabled=false``            -> 强制直连（忽略系统代理与环境变量）
-  - ``enabled=true, url 非空``    -> 使用手动代理地址
+  - ``enabled=true, url 非空``    -> 使用手动代理地址（仅支持 HTTP/HTTPS）
   - ``enabled=true, url 为空``    -> 按 ``use_system_fallback`` 决定：
                                     true 回退系统代理；false 则直连
   * 旧配置文件未含 ``proxy`` 字段时保持历史兼容行为（等效于走系统代理），
@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ipaddress
 import threading
+import urllib.error
 import urllib.request
 from typing import Any
 from urllib.parse import urlsplit
@@ -50,14 +51,14 @@ def _is_local_host(host: str) -> bool:
 
 
 def _normalize_url(raw: str) -> str:
-    """规范化用户填写的代理地址：http://x:port 或 x:port 都接受。"""
+    """规范化用户填写的代理地址，仅接受 HTTP/HTTPS。"""
     value = (raw or "").strip()
     if not value:
         return ""
     if "://" not in value:
         value = f"http://{value}"
     parts = urlsplit(value)
-    if not parts.scheme or parts.scheme not in {"http", "https", "socks4", "socks5"} or not parts.hostname:
+    if not parts.scheme or parts.scheme not in {"http", "https"} or not parts.hostname:
         raise ValueError(f"代理地址格式不正确：{raw}（示例：http://127.0.0.1:7890）")
     return value
 
@@ -72,29 +73,39 @@ class NetIO:
         self._manual_opener: urllib.request.OpenerDirector | None = None
         self._direct_opener: urllib.request.OpenerDirector | None = None
         self._system_opener: urllib.request.OpenerDirector | None = None
+        self._config_error: str = ""
 
     # ---- 配置与状态 ----
 
     def configure(self, proxy_settings: dict[str, Any] | None) -> None:
         """应用新的代理设置；传入 None 表示保持旧版“跟随系统代理”兼容行为。"""
         with self._lock:
+            # Every configuration update invalidates all opener instances. This
+            # includes system/direct openers whose handlers may capture stale
+            # environment state.
+            self._manual_opener = None
+            self._direct_opener = None
+            self._system_opener = None
+            self._config_error = ""
             if proxy_settings is None:
                 self._configured = None
-                self._manual_opener = None
                 return
             if not isinstance(proxy_settings, dict):
                 proxy_settings = {}
             enabled = bool(proxy_settings.get("enabled", False))
             try:
                 url = _normalize_url(str(proxy_settings.get("url") or ""))
-            except ValueError:
+            except ValueError as exc:
                 url = ""
+                self._config_error = str(exc)
             use_system_fallback = bool(proxy_settings.get("use_system_fallback", True))
             self._configured = {
                 "enabled": enabled,
                 "url": url,
                 "use_system_fallback": use_system_fallback,
             }
+            self._direct_opener = None
+            self._system_opener = None
             if url:
                 self._manual_opener = urllib.request.build_opener(
                     urllib.request.ProxyHandler({"http": url, "https": url})
@@ -106,43 +117,55 @@ class NetIO:
         """返回当前代理策略状态，供设置页与 API 测试展示“实际生效模式”。"""
         with self._lock:
             configured = self._configured
+            config_error = self._config_error
+        def finish(state: dict[str, Any]) -> dict[str, Any]:
+            if config_error:
+                state["error"] = config_error
+            return state
         if configured is None:
-            return {
+            return finish({
                 "enabled": False,
                 "url": "",
                 "source": "system",
                 "note": "旧配置兼容：未设置代理开关，按系统代理发送外部请求。",
-            }
+            })
         enabled = bool(configured["enabled"])
         url = configured["url"]
         use_system_fallback = bool(configured["use_system_fallback"])
         if not enabled:
-            return {
+            return finish({
                 "enabled": False,
                 "url": "",
                 "source": "direct",
                 "note": "代理已关闭：外部请求强制直连，忽略系统代理。",
-            }
+            })
+        if config_error:
+            return finish({
+                "enabled": enabled,
+                "url": "",
+                "source": "direct",
+                "note": "代理地址无效：仅支持 HTTP/HTTPS，当前请求强制直连。",
+            })
         if url:
-            return {
+            return finish({
                 "enabled": True,
                 "url": url,
                 "source": "manual",
                 "note": "外部请求使用手动代理。",
-            }
+            })
         if use_system_fallback:
-            return {
+            return finish({
                 "enabled": True,
                 "url": "",
                 "source": "system",
                 "note": "已开启代理但未填地址：按设置回退到系统代理。",
-            }
-        return {
+            })
+        return finish({
             "enabled": True,
             "url": "",
             "source": "direct",
             "note": "已开启代理但未填地址且未启用系统回退：当前外部请求直连。",
-        }
+        })
 
     # ---- 内部 opener 选择 ----
 
@@ -173,6 +196,18 @@ class NetIO:
             self._direct_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         return self._direct_opener
 
+    def _refresh_opener(self, host: str, local: bool) -> urllib.request.OpenerDirector:
+        """丢弃当前策略下的 opener 并创建新实例，用于一次受控重试。"""
+        with self._lock:
+            configured = self._configured
+            if local or (configured is not None and not configured.get("enabled")):
+                self._direct_opener = None
+            elif configured is None or configured.get("use_system_fallback"):
+                self._system_opener = None
+            elif configured.get("url"):
+                self._manual_opener = None
+        return self._opener_for(host, local)
+
     # ---- 统一入口 ----
 
     def open(
@@ -199,7 +234,19 @@ class NetIO:
             host = ""
         local = _is_local_host(host)
         opener = self._opener_for(host, local)
-        return opener.open(target, timeout=timeout)
+        try:
+            return opener.open(target, timeout=timeout)
+        except urllib.error.HTTPError:
+            # 服务端已返回明确 HTTP 状态时不重试，交由上层按状态分类。
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError):
+            # 更新清单/下载均为 GET；仅对幂等请求重建当前策略 opener 后
+            # 重试一次，避免对 POST 等有副作用请求重复提交。
+            method_name = getattr(target, "get_method", lambda: "GET")().upper()
+            if method_name not in {"GET", "HEAD", "OPTIONS"}:
+                raise
+            refreshed = self._refresh_opener(host, local)
+            return refreshed.open(target, timeout=timeout)
 
 
 # 模块级单例：核心进程内所有模块共用同一策略状态。
