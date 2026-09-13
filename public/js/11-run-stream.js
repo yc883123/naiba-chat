@@ -8,10 +8,15 @@ import { messageElement, scrollToBottom, setStickToBottom } from "./04-messages.
 import { loadTasks } from "./06-tasks-plans.js";
 import { createConversation, loadConversations, openConversation } from "./08-conversations.js";
 import { composerModelChoice, composerModelIsValidated, selectedProvider } from "./07-models-agents.js";
-import { renderPendingFiles } from "./10-upload.js";
+import { missingAttachmentPaths, renderPendingFiles } from "./10-upload.js";
 import { closeQuickMessagePanel, handleChatEvent, hideChoiceButtons, setBusy } from "./12-chat-input.js";
 import { hideSkillPopup, parseSkillReferences, renderInputMirror, resizeTextarea, stripSkillReferences } from "./13-skill-refs.js";
 import { hideFilePopup } from "./16-file-refs.js";
+
+// 发送前附件存在性校验的互斥标志（模块内私有，不对外共享）：
+// 校验要走一次本地 HTTP，await 期间连点发送不能被放过去。
+let attachmentPrecheckPending = false;
+
 export function clearRunReconnectTimers() {
   state.runReconnectTimers.forEach((timer) => window.clearTimeout(timer));
   state.runReconnectTimers.clear();
@@ -455,6 +460,29 @@ export async function sendChatMessage(textOverride = '', { skipContextWarning = 
         mode: 'send',
         onContinue: () => { void sendChatMessage(textOverride, { skipContextWarning: true }); },
       });
+      return;
+    }
+  }
+  // 附件落地校验（在清空草稿之前）：文件可能已被缓存清理——剔除丢失项、保留文字草稿，
+  // 明确提示重新上传，而不是把幽灵路径发给模型（模型只会回"未找到图片文件"）。
+  // 校验期间用互斥标志挡住连点（此处新增了 await，之前的守卫是同步无缝的）。
+  if (attachments.length) {
+    let missing = [];
+    if (attachmentPrecheckPending) return;
+    attachmentPrecheckPending = true;
+    try {
+      missing = await missingAttachmentPaths(attachments.map((item) => item.path));
+    } finally {
+      attachmentPrecheckPending = false;
+    }
+    if (missing.length) {
+      const missingSet = new Set(missing);
+      const names = state.pendingFiles
+        .filter((file) => missingSet.has(String(file.path || '')))
+        .map((file) => file.name);
+      state.pendingFiles = state.pendingFiles.filter((file) => !missingSet.has(String(file.path || '')));
+      renderPendingFiles();
+      toast(`附件文件已丢失（可能已被缓存清理）：${(names.length ? names : missing).join('、')}。已从待发送列表移除，请重新上传后再发送。`);
       return;
     }
   }

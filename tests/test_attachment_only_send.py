@@ -116,6 +116,8 @@ class SubmitChatAttachmentOnlyTests(unittest.TestCase):
             vision=_VisionStub(),
             tool_registry=_RegistryStub(),
             web_search=_SearchStub(),
+            # submit_chat 的附件落地校验（missing_cache_attachment）需要数据目录。
+            paths=SimpleNamespace(data_dir=root / "data"),
         )
         self.manager = ConversationRunManager(app)
         self.conversation = self.storage.create_conversation(model_name="test-model")
@@ -165,6 +167,35 @@ class SubmitChatAttachmentOnlyTests(unittest.TestCase):
             self._submit(
                 {"conversation_id": self.conversation["id"], "message": "你好", "attachments": {"path": "x"}}
             )
+
+    def test_missing_uploaded_attachment_rejected(self):
+        """宿主缓存树内的附件已丢失（被缓存清理）时明确拒绝发送。
+
+        起因（用户报障）：图片被自动清理删掉后消息照发，模型侧只会回"未找到图片文件"，
+        用户完全看不出原因；这里必须提前拦下并提示重新上传。
+        """
+        gone = Path(self.tmp.name) / "data" / "uploads" / "2026-09-13" / "naiba_chat_1_abc_gone.png"
+        with self.assertRaises(ValueError) as ctx:
+            self._submit(
+                {
+                    "conversation_id": self.conversation["id"],
+                    "message": "看看这张图",
+                    "attachments": [{"name": "gone.png", "path": str(gone)}],
+                }
+            )
+        self.assertIn("附件文件已丢失", str(ctx.exception))
+        self.assertIn("gone.png", str(ctx.exception))
+
+    def test_external_missing_attachment_still_accepted(self):
+        """外部路径（非宿主缓存树）不由宿主判定缺失：仍放行，交给工具层如实报错。"""
+        run = self._submit(
+            {
+                "conversation_id": self.conversation["id"],
+                "message": "看看这张图",
+                "attachments": [{"name": "外部.png", "path": "C:/tmp/不存在的外部图.png"}],
+            }
+        )
+        self.assertTrue(run.get("id"))
 
     def test_text_only_still_accepted(self):
         run = self._submit({"conversation_id": self.conversation["id"], "message": "你好"})

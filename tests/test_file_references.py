@@ -189,6 +189,8 @@ class SubmitChatFileReferenceTests(unittest.TestCase):
             vision=_VisionStub(),
             tool_registry=_RegistryStub(),
             web_search=_SearchStub(),
+            # submit_chat 的附件落地校验（missing_cache_attachment）需要数据目录。
+            paths=SimpleNamespace(data_dir=root / "data"),
         )
         self.manager = ConversationRunManager(app)
         self.conversation = self.storage.create_conversation(

@@ -29,6 +29,7 @@ from naiba.core.file_changes import file_changes_from_runs
 from naiba.core.history import build_model_history
 from naiba.core.tool_results import display_tool_run
 from naiba.run.stream import _RunEventSink, _safe_activity
+from naiba.storage.media import missing_cache_attachment
 
 VISION_ANALYZE_GUIDE = (
     "图片处理策略：需要了解附件/上下文中图片的内容时，调用 vision_analyze 工具并传入图片路径。"
@@ -183,6 +184,19 @@ class ConversationRunMixin:
             isinstance(item, dict) and str(item.get("path") or "").strip() for item in attachments
         ):
             raise ValueError("message 和 attachments 不能同时为空")
+        # 附件落地校验：宿主缓存树内的文件已被清理/删除时明确报错，不把幽灵路径喂给模型
+        # （用户报障：图片被清理后模型 vision_analyze 报"未找到图片文件"，用户侧看不出原因）。
+        # 只判定 uploads/generated（宿主缓存管理范围）；URL 与外部路径交给各自的读取方报错。
+        missing_uploads: list[str] = []
+        for item in attachments:
+            if not isinstance(item, dict):
+                continue
+            raw_path = str(item.get("path") or "").strip()
+            if missing_cache_attachment(self.app.paths.data_dir, raw_path):
+                missing_uploads.append(str(item.get("name") or raw_path).strip() or "附件")
+        if missing_uploads:
+            shown = "、".join(missing_uploads[:5]) + (" 等" if len(missing_uploads) > 5 else "")
+            raise ValueError(f"附件文件已丢失（可能已被缓存清理）：{shown}。请重新上传后再发送。")
 
         with self._submit_lock:
             conversation = self.app.storage.get_conversation(conversation_id)

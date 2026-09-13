@@ -104,7 +104,12 @@ export function openImageLightbox(largeUrl, sourceEl = null) {
     lightboxItems = [{ url, name: String(sourceEl?.getAttribute?.('alt') || '') }];
     lightboxIndex = 0;
   }
-  img.onerror = () => closeImageLightbox();
+  // 大图也不在磁盘上（例如被缓存清理后）：不能静默关闭——用户点了缩略图却什么都没发生，
+  // 只会以为"预览坏了"。明确告知文件已不存在（缩略图那侧另有降级为文件图标的兜底）。
+  img.onerror = () => {
+    closeImageLightbox();
+    toast('图片文件已不存在，可能已被缓存清理或移动');
+  };
   box.hidden = false;
   box.setAttribute('aria-hidden', 'false');
   renderLightboxFrame();

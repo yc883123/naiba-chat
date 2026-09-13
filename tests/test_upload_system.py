@@ -7,13 +7,16 @@ from pathlib import Path
 
 from naiba.storage.media import (
     IMAGE_CACHE_CLEAN_LIMIT,
+    UPLOAD_CLEAN_GRACE_SECONDS,
     UPLOAD_MAX_BYTES,
     _clean_uploads_cache,
     _fit_image_pixels,
     _process_uploaded_image,
     auto_clean_uploads,
     is_uploads_path,
+    missing_cache_attachment,
     remove_uploaded_file,
+    resolve_attachment_file,
     store_uploaded_file,
     upload_target_dir,
 )
@@ -128,9 +131,10 @@ class StoreUploadedFileTests(unittest.TestCase):
 
     def test_auto_clean_with_reference_guard(self) -> None:
         """B1：自动清理带引用保护——被引用的最旧组永久保留，只删未引用组。"""
+        import os
         from datetime import datetime, timedelta
 
-        # 旧组（被引用）与新组（未引用）
+        # 旧组（被引用）与新组（未引用，且已超出保护窗口）
         old_pdf = _small_pdf(b"OLD-REFERENCED")
         new_pdf = _small_pdf(b"NEW-UNREFERENCED")
         old_dir = upload_target_dir(self.data_dir, datetime.now() - timedelta(days=2))
@@ -141,6 +145,8 @@ class StoreUploadedFileTests(unittest.TestCase):
         new_dir.mkdir(parents=True, exist_ok=True)
         new_file = new_dir / "naiba_chat_new_unref.pdf"
         new_file.write_bytes(new_pdf)
+        outside_grace = (datetime.now() - timedelta(hours=1)).timestamp()
+        os.utime(new_file, (outside_grace, outside_grace))
 
         def checker(path: Path) -> bool:
             return path.name == old_file.name  # 旧组被"消息引用"
@@ -149,6 +155,95 @@ class StoreUploadedFileTests(unittest.TestCase):
         self.assertTrue(old_file.is_file(), "被引用的旧组不得被自动清理")
         self.assertFalse(new_file.exists(), "未引用组超限时应被删除")
         self.assertEqual(result["removed"], 1)
+
+    def test_auto_clean_keeps_recent_unreferenced_group(self) -> None:
+        """回归（用户报障）：被引用缓存本身超阈值时，刚落盘的未引用附件不得被自动清理。
+
+        起因：自动清理的"降到上限"目标不可达（被引用组永不扣减）时会退化成"删光所有
+        未引用组"，把用户刚上传、还在输入框待发（尚未落库、引用保护对它无效）的附件
+        当场删掉——表现为附件区破图 / 点击无法放大 / 模型 vision_analyze 报未找到图片文件。
+        """
+        import os
+        from datetime import datetime, timedelta
+
+        # 被引用的旧文件：体积意义上是"引用缓存本身已超阈值"的等价物（limit=1 必然超）
+        old_dir = upload_target_dir(self.data_dir, datetime.now() - timedelta(days=2))
+        old_dir.mkdir(parents=True, exist_ok=True)
+        old_file = old_dir / "naiba_chat_ref.pdf"
+        old_file.write_bytes(_small_pdf(b"REFERENCED"))
+        old_mtime = (datetime.now() - timedelta(days=2)).timestamp()
+        os.utime(old_file, (old_mtime, old_mtime))
+
+        # 刚落盘的待发附件（未被任何消息引用）
+        fresh = store_uploaded_file(_small_pdf(b"JUST-UPLOADED"), "刚上传.pdf", self.data_dir)
+        fresh_path = Path(fresh["path"])
+        self.assertTrue(fresh_path.is_file())
+
+        result = _clean_uploads_cache(
+            limit=1,
+            data_dir=self.data_dir,
+            referenced_checker=lambda path: path.name == old_file.name,
+        )
+        self.assertTrue(old_file.is_file(), "被引用的旧组不得被自动清理")
+        self.assertTrue(fresh_path.is_file(), "保护窗口内刚落盘的附件不得被自动清理删除")
+        self.assertEqual(result["removed"], 0)
+        self.assertEqual(result["skipped_recent"], 1)
+        self.assertEqual(result["skipped_protected"], 0)
+
+    def test_auto_clean_protect_paths_works_outside_grace_window(self) -> None:
+        """protect_paths（上传入口传入本次落盘文件）不受保护窗口限制。"""
+        import os
+        from datetime import datetime, timedelta
+
+        old_dir = upload_target_dir(self.data_dir, datetime.now() - timedelta(days=2))
+        old_dir.mkdir(parents=True, exist_ok=True)
+        old_file = old_dir / "naiba_chat_old_unref.pdf"
+        old_file.write_bytes(_small_pdf(b"OLD-UNREFERENCED"))
+        old_mtime = (datetime.now() - timedelta(days=2)).timestamp()
+        os.utime(old_file, (old_mtime, old_mtime))
+
+        fresh = store_uploaded_file(_small_pdf(b"FRESH"), "新传.pdf", self.data_dir)
+        fresh_path = Path(fresh["path"])
+
+        result = _clean_uploads_cache(
+            limit=1,
+            data_dir=self.data_dir,
+            referenced_checker=lambda path: False,
+            protect_paths=[fresh_path],
+            grace_seconds=0,
+        )
+        self.assertTrue(fresh_path.is_file(), "显式保护的本次上传文件不得被删除")
+        self.assertFalse(old_file.exists(), "其余超限的未引用组仍应被清理")
+        self.assertEqual(result["skipped_protected"], 1)
+        self.assertEqual(result["removed"], 1)
+
+    def test_missing_cache_attachment_only_covers_host_cache_trees(self) -> None:
+        """发送前附件校验：只判定宿主缓存树（uploads/generated）内的丢失文件。"""
+        store_uploaded_file(_small_pdf(), "在.pdf", self.data_dir)
+        gone = self.data_dir / "uploads" / "2026-09-13" / "naiba_chat_1_abc_gone.png"
+        self.assertTrue(missing_cache_attachment(self.data_dir, gone), "缓存树内已丢失 → 判定缺失")
+        self.assertTrue(
+            missing_cache_attachment(self.data_dir, self.data_dir / "generated" / "产物.png"),
+            "generated 同属宿主缓存树",
+        )
+        kept = next(p for p in (self.data_dir / "uploads").rglob("*") if p.is_file())
+        self.assertFalse(missing_cache_attachment(self.data_dir, kept), "缓存树内存在的文件不算缺失")
+        self.assertFalse(
+            missing_cache_attachment(self.data_dir, self.tmp / "工作区" / "没有.png"),
+            "外部路径（工作区/可移动盘）不由宿主缓存判定",
+        )
+        self.assertFalse(missing_cache_attachment(self.data_dir, "https://example.com/a.png"))
+        self.assertFalse(missing_cache_attachment(self.data_dir, ""))
+
+    def test_resolve_attachment_file_falls_back_to_uploads_name(self) -> None:
+        """数据目录迁移后旧绝对路径失效：按文件名在 uploads 树内兜底命中。"""
+        kept = store_uploaded_file(_small_pdf(b"MIGRATED"), "迁移.pdf", self.data_dir)
+        name = Path(kept["path"]).name
+        stale = self.tmp / "old_data" / "uploads" / "2026-01-01" / name
+        self.assertFalse(stale.is_file())
+        self.assertIsNone(resolve_attachment_file(self.data_dir, self.tmp / "old_data" / "不存在.pdf"))
+        self.assertIsNotNone(resolve_attachment_file(self.data_dir, stale))
+        self.assertFalse(missing_cache_attachment(self.data_dir, stale), "迁移后的旧路径能兜底命中就不算缺失")
 
     def test_manual_clean_without_checker_keeps_referenced_unaware(self) -> None:
         """手动清理（无 checker）保持按时间保留语义，不感知引用。"""
@@ -174,6 +269,8 @@ class StoreUploadedFileTests(unittest.TestCase):
 
     def test_upload_limit_constant_aligned(self) -> None:
         self.assertEqual(UPLOAD_MAX_BYTES, 80 * 1024 * 1024)
+        # 保护窗口：15 分钟（覆盖"上传→发送"与"工具运行中刚产出"两类场景）
+        self.assertEqual(UPLOAD_CLEAN_GRACE_SECONDS, 15 * 60)
 
     def test_clean_upload_cache_group_key_keeps_date_buckets(self) -> None:
         """分日目录下同名主图不得合并为一个清理组。"""
@@ -208,11 +305,18 @@ class StoreUploadedFileTests(unittest.TestCase):
     def test_auto_clean_trigger_only_over_limit(self) -> None:
         # 空目录不触发
         self.assertIsNone(auto_clean_uploads(self.data_dir, limit=1))
-        store_uploaded_file(_small_pdf(), "keep.pdf", self.data_dir)
-        # limit=0 必然超限：返回带 trigger 的清理结果
-        result = auto_clean_uploads(self.data_dir, limit=0)
+        stored = store_uploaded_file(_small_pdf(), "keep.pdf", self.data_dir)
+        # limit=0 必然超限：返回带 trigger 的清理结果（生产入口始终带引用保护 checker）
+        result = auto_clean_uploads(
+            self.data_dir,
+            limit=0,
+            referenced_checker=lambda path: False,
+            protect_paths=[stored["path"]],
+        )
         self.assertIsNotNone(result)
         self.assertEqual(result.get("trigger"), "auto")
+        # 回归：上传后触发的自动清理不得删掉本次刚落盘、仍在待发送列表里的附件
+        self.assertTrue(Path(stored["path"]).is_file())
 
 
 class UploadReferenceGuardTests(unittest.TestCase):

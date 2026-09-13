@@ -22,7 +22,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from naiba.core.media_types import IMAGE_PROCESS_EXTS
 from naiba.core.paths import path_within
@@ -40,6 +40,13 @@ THUMB_SOURCE_SUFFIXES = set(IMAGE_PROCESS_EXTS) | {".gif"}
 UPLOAD_MAX_BYTES = 80 * 1024 * 1024
 # 上传完成后的自动清理阈值：比手动清理（128MB）宽松，避免频繁误清用户近期引用。
 UPLOAD_AUTO_CLEAN_LIMIT = 256 * 1024 * 1024
+# 自动清理的保护窗口（秒）：最近这段时间内落盘/改动过的缓存组一律不参与自动删除。
+# 起因（用户报障：附件区破图 / 点击无法放大 / 模型 vision_analyze 报"未找到图片文件"）：
+# 被引用缓存（uploads + generated）本身已超阈值时，"降到上限"这个目标永远不可达，
+# 自动清理会退化成"删光所有未引用组"——其中就包括刚上传、还在输入框待发
+# （尚未落库，upload_path_referenced 必然为 False）的那个附件。
+# 窗口同时覆盖"工具刚产出、消息 metadata 还没写回"的临时态；手动清理不适用本窗口。
+UPLOAD_CLEAN_GRACE_SECONDS = 15 * 60
 # 上传目标文件名清洗（保留字母数字、点、横线、下划线、中文）。
 _UPLOAD_SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9._\-\u4e00-\u9fff]")
 
@@ -142,6 +149,40 @@ def _find_duplicate(uploads_root: Path, size: int, digest: str) -> Path | None:
     return None
 
 
+def resolve_attachment_file(data_dir: Path, raw_path: str | Path) -> Path | None:
+    """把附件记录里的本地路径解析为真实文件；不存在返回 None。
+
+    与 ``/api/file``（http.py ``_serve_local_file``）同口径：先按记录里的路径找，
+    失效时再按文件名在 ``data/uploads`` 下兜底（先根目录、再分日目录递归）——
+    数据目录迁移过的旧记录只有文件名仍然有效。只做存在性判断，不读内容。
+    """
+    text = str(raw_path or "").strip()
+    if not text:
+        return None
+    try:
+        candidate = Path(text).expanduser()
+        resolved = candidate.resolve()
+    except (OSError, ValueError):
+        return None
+    if resolved.is_file():
+        return resolved
+    name = candidate.name or resolved.name
+    if not name:
+        return None
+    uploads_root = (Path(data_dir) / "uploads").resolve()
+    direct = uploads_root / name
+    try:
+        if direct.is_file():
+            return direct
+        if uploads_root.is_dir():
+            for found in uploads_root.rglob(name):
+                if found.is_file():
+                    return found
+    except OSError:
+        return None
+    return None
+
+
 def is_uploads_path(data_dir: Path, raw_path: str | Path) -> bool:
     """raw_path 是否位于宿主 uploads 缓存树内（安全删除/清理前置校验）。"""
     try:
@@ -190,11 +231,14 @@ def auto_clean_uploads(
     data_dir: Path,
     limit: int = UPLOAD_AUTO_CLEAN_LIMIT,
     referenced_checker: Callable[[Path], bool] | None = None,
+    protect_paths: Iterable[str | Path] | None = None,
 ) -> dict[str, Any] | None:
     """上传后超限自动清理：仅超过 limit 时触发；默认带引用保护（B1）。
 
     referenced_checker 提供时只删未被引用的组（历史消息引用永久保留），
     未提供时退化为手动清理的按时间保留语义（调用方应始终提供）。
+    protect_paths 是本次调用必须无条件保留的路径（上传入口传本次刚落盘的主图/缩略图）——
+    与 ``UPLOAD_CLEAN_GRACE_SECONDS`` 保护窗口互为双保险。
     """
     try:
         total = _uploads_total_bytes(data_dir)
@@ -202,7 +246,12 @@ def auto_clean_uploads(
         return None
     if total <= limit:
         return None
-    result = _clean_uploads_cache(limit=limit, data_dir=data_dir, referenced_checker=referenced_checker)
+    result = _clean_uploads_cache(
+        limit=limit,
+        data_dir=data_dir,
+        referenced_checker=referenced_checker,
+        protect_paths=protect_paths,
+    )
     result["trigger"] = "auto"
     return result
 
@@ -217,6 +266,14 @@ def secrets_hex(nbytes: int) -> str:
 def _thumb_webp_path(main_path: Path) -> Path:
     """Given a cached main image path, derive the WebP thumbnail path."""
     return main_path.with_name(main_path.stem + "_thumb.webp")
+
+
+def _safe_resolve(path: Path) -> Path | None:
+    """尽力解析为绝对路径；失败返回 None（清理时的路径比较用，不抛错）。"""
+    try:
+        return path.expanduser().resolve()
+    except (OSError, ValueError):
+        return None
 
 
 def _fit_image_pixels(img: Any, max_pixels: int) -> Any:
@@ -338,6 +395,29 @@ def _image_cache_dirs(data_dir: Path) -> list[Path]:
     return [(data_dir / "uploads").resolve(), (data_dir / "generated").resolve()]
 
 
+def missing_cache_attachment(data_dir: Path, raw_path: str | Path) -> bool:
+    """宿主托管缓存（uploads / generated）里的附件是否已不在磁盘上。
+
+    只对**缓存树内**的路径判定，其余一律返回 False：URL 由 /api/file 代理；工作区文件、
+    可移动盘/网络盘上的文件不属于宿主缓存管理范围，瞬时读不到不该拦下用户发送
+    （交给工具层如实报错）。缓存树内的文件由清理机制管理，丢失即模型必然读不到
+    （vision_analyze 报"未找到图片文件"），必须在发送前拦下并提示重新上传。
+    """
+    text = str(raw_path or "").strip()
+    if not text or text.lower().startswith(("http://", "https://")):
+        return False
+    resolved = _safe_resolve(Path(text))
+    if resolved is None:
+        return False
+    try:
+        in_cache_tree = any(path_within(resolved, root) for root in _image_cache_dirs(Path(data_dir)))
+    except (OSError, ValueError):
+        return False
+    if not in_cache_tree:
+        return False
+    return resolve_attachment_file(data_dir, text) is None
+
+
 def _uploads_total_bytes(data_dir: Path) -> int:
     """Total size of all cached images (uploads + generated, main + thumbnails)."""
     total = 0
@@ -357,22 +437,27 @@ def _clean_uploads_cache(
     limit: int = IMAGE_CACHE_CLEAN_LIMIT,
     data_dir: Path | None = None,
     referenced_checker: Callable[[Path], bool] | None = None,
+    protect_paths: Iterable[str | Path] | None = None,
+    grace_seconds: int = UPLOAD_CLEAN_GRACE_SECONDS,
 ) -> dict[str, Any]:
     """清理旧图片缓存（uploads + generated）。
 
-    ``referenced_checker=None``（手动清理）：按组（主图+缩略图）× 时间戳从新到旧，
-    保留总大小不超过 limit 的最新的（旧行为）；
+    ``referenced_checker=None``（手动清理，设置页按钮）：按组（主图+缩略图）× 时间戳
+    从新到旧，保留总大小不超过 limit 的最新的（旧行为，**不感知引用、也不受保护窗口约束**）；
     ``referenced_checker`` 提供（自动清理 B1）：从最旧开始逐组删除**未被引用**的组
     （checker 返回 True=被消息/快照引用，永久保留），直到剩余 ≤ limit；引用文件
-    过多时允许超限（宁可缓存超限也不删用户历史引用的图）。
+    过多时允许超限（宁可缓存超限也不删用户历史引用的图）。自动清理另有两道保护：
+    - ``grace_seconds`` 保护窗口：最近落盘/改动的组一律不删（刚上传待发送、工具刚产出）；
+    - ``protect_paths``：本次必须无条件保留的具体路径（上传入口传刚落盘的文件）。
 
-    返回 {removed: 删除文件数, freed: 释放字节数, size: 清理后剩余字节数}。
+    返回 {removed: 删除文件数, freed: 释放字节数, size: 清理后剩余字节数,
+    skipped_recent: 因保护窗口跳过的组数, skipped_protected: 因 protect_paths 跳过的组数}。
     """
     if data_dir is None:
         raise ValueError("data_dir 必须显式传入")
     cache_dirs = [d for d in _image_cache_dirs(data_dir) if d.is_dir()]
     if not cache_dirs:
-        return {"removed": 0, "freed": 0, "size": 0}
+        return {"removed": 0, "freed": 0, "size": 0, "skipped_recent": 0, "skipped_protected": 0}
     # 以"主图 + 其缩略图"成组（主图名 X.ext 与其缩略图 X_thumb.webp 归为一组）。
     # 组键 = "目录名/相对路径"（相对 cache_dir，含分日子目录），
     # 避免不同日期/不同目录下同名前缀被合并（上传分日目录 2026-09 起）。
@@ -417,12 +502,31 @@ def _clean_uploads_cache(
 
     if referenced_checker is not None:
         # B1 自动清理：从最旧开始删未引用组，直到 ≤ limit；引用组永远保留。
+        # 保护窗口 + protect_paths 见函数文档：被引用缓存本身超 limit 时"降到上限"
+        # 不可达，没有这两道保护就会退化成"删光所有未引用组"（用户报障：刚上传、
+        # 还没发送的附件被当场删掉 → 附件区破图 / 点击无法放大 / 模型读不到图）。
+        protected: set[Path] = set()
+        for raw in protect_paths or ():
+            if not str(raw or "").strip():
+                continue
+            resolved_protect = _safe_resolve(Path(str(raw)))
+            if resolved_protect is not None:
+                protected.add(resolved_protect)
+        now_ts = int(time.time())
         remaining = sum(_group_size(paths) for _, _, paths in entries)
         removed = 0
         freed = 0
+        skipped_recent = 0
+        skipped_protected = 0
         for mtime, key, paths in sorted(entries, key=lambda item: item[0]):  # 旧 -> 新
             if remaining <= limit:
                 break
+            if protected and any(_safe_resolve(p) in protected for p in paths):
+                skipped_protected += 1
+                continue
+            if grace_seconds > 0 and (now_ts - mtime) < grace_seconds:
+                skipped_recent += 1
+                continue
             main_file = next(
                 (p for p in paths if not p.name.endswith("_thumb.webp")), paths[0]
             )
@@ -441,7 +545,13 @@ def _clean_uploads_cache(
                 except OSError:
                     continue
             remaining -= group_size
-        return {"removed": removed, "freed": freed, "size": _uploads_total_bytes(data_dir)}
+        return {
+            "removed": removed,
+            "freed": freed,
+            "size": _uploads_total_bytes(data_dir),
+            "skipped_recent": skipped_recent,
+            "skipped_protected": skipped_protected,
+        }
 
     kept_keys: set[str] = set()
     kept_size = 0
@@ -463,4 +573,11 @@ def _clean_uploads_cache(
                 freed += size
             except OSError:
                 continue
-    return {"removed": removed, "freed": freed, "size": _uploads_total_bytes(data_dir)}
+    # 手动清理不做保护（用户显式操作，语义即"按时间保留最短"）：跳过计数恒为 0。
+    return {
+        "removed": removed,
+        "freed": freed,
+        "size": _uploads_total_bytes(data_dir),
+        "skipped_recent": 0,
+        "skipped_protected": 0,
+    }

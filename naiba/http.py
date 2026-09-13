@@ -591,6 +591,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             self._json({"error": "上传接口已升级为 multipart 流式"}, HTTPStatus.BAD_REQUEST)
         elif path == "/api/uploads/delete":
             self._json(*self.app._delete_upload(body))
+        elif path == "/api/uploads/check":
+            self._json(*self.app.api_check_uploads(body))
         elif path == "/api/install/dir":
             self._install_dir(body)
         elif path == "/api/install/dir/remove":

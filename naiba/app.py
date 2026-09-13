@@ -50,7 +50,7 @@ from naiba.skills.install import (
 )
 from naiba.storage.media import (
     _clean_uploads_cache, _process_uploaded_image, _uploads_total_bytes, auto_clean_uploads,
-    is_uploads_path, remove_uploaded_file, store_uploaded_file,
+    is_uploads_path, missing_cache_attachment, remove_uploaded_file, store_uploaded_file,
 )
 from naiba.storage.avatars import read_agent_avatar, store_agent_avatar
 from naiba.storage.media_collect import MediaCollector
@@ -1300,6 +1300,9 @@ class NaibaChatApp:
                 self._paths.data_dir,
                 limit=auto_clean_mb * 1024 * 1024,
                 referenced_checker=self.storage.upload_path_referenced,
+                # 本次刚落盘的附件无条件保留：它此刻还没落库（引用保护对它无效），
+                # 只有保护窗口 + 这条显式保护能拦住"上传即被清理"。
+                protect_paths=[p for p in (result.get("path"), result.get("thumb_path")) if p],
             )
         return result, HTTPStatus.OK
 
@@ -1334,6 +1337,23 @@ class NaibaChatApp:
         except (OSError, ValueError) as exc:
             return {"error": str(exc)}, HTTPStatus.BAD_REQUEST
         return {"ok": True, "removed": bool(removed)}, HTTPStatus.OK
+
+    def api_check_uploads(self, body: dict[str, Any]) -> tuple[dict[str, Any], int]:
+        """发送前附件存在性校验（前端在提交前调用，避免丢草稿才发现附件没了）。
+
+        判定口径与 ``submit_chat`` 完全一致（``missing_cache_attachment``）：只查宿主
+        缓存树（uploads/generated）内已丢失的文件，URL 与外部路径不判缺失。
+        返回 {"missing": [丢失的原始路径, ...]}。
+        """
+        raw_paths = body.get("paths")
+        if not isinstance(raw_paths, list):
+            return {"error": "paths 必须是数组"}, HTTPStatus.BAD_REQUEST
+        data_dir = self._paths.data_dir
+        missing = [
+            str(raw) for raw in raw_paths
+            if missing_cache_attachment(data_dir, str(raw))
+        ]
+        return {"missing": missing}, HTTPStatus.OK
 
 
     def _finish_install(self, dest_raw: str, dest: Path, extra: dict[str, Any] | None = None) -> None:

@@ -3,7 +3,7 @@
 // 2026-09 上传系统优化：XHR multipart 流式上传（进度/取消/并发池/前置校验）。
 // ============================================================
 
-import { $, escapeHtml, state, toast } from "./01-core.js";
+import { $, api, escapeHtml, state, toast } from "./01-core.js";
 import { attachmentThumbUrl, fileUrl, mediaKind, updateSendButtonState } from "./03-media.js";
 
 // 与服务端 UPLOAD_MAX_BYTES 一致的前置校验上限（超限直接拦截，不发起请求）。
@@ -90,6 +90,47 @@ export function readAsDataUrl(file) {
 
 // 非图片附件的占位图标（与图片缩略图同尺寸，保证整列左缘对齐）。
 const FILE_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"></path><path d="M14 3v5h5"></path></svg>';
+
+// 缩略图加载失败兜底（两级，与消息气泡的 .thumbnail → 主图 同策略）：
+//   ① 缩略图不在但主图还在 → 换成主图（`_thumb.webp` 可能从未生成或已被单独清掉）；
+//   ② 主图也没了（被缓存清理/移动/删除）→ 降级为文件占位图标并摘掉失效的
+//      data-large-url——否则留在那里的破图既误导用户，点击还会打开一个必然 404 的灯箱。
+// 用 document 捕获阶段监听：renderPendingFiles 每次整体重绘 innerHTML，挂在容器上会随重绘丢失。
+document.addEventListener('error', (event) => {
+  const img = event.target;
+  if (!(img && img.classList?.contains('pending-thumb'))) return;
+  const large = String(img.getAttribute('data-large-url') || '');
+  if (large && img.getAttribute('src') !== large) {
+    img.dataset.fallback = '1';
+    img.src = large;
+    return;
+  }
+  const icon = document.createElement('span');
+  icon.className = 'pending-thumb pending-thumb-file';
+  icon.setAttribute('aria-hidden', 'true');
+  icon.title = '文件已不存在（可能已被缓存清理）';
+  icon.innerHTML = FILE_ICON;
+  img.replaceWith(icon);
+}, true);
+
+// 发送前附件落地校验（服务端 /api/uploads/check 同一口径）：返回已丢失的本地路径。
+// 起因：附件可能已被缓存清理（被引用缓存超阈值时的自动清理曾误删刚落盘的待发附件），
+// 提交前先问一次，免得把幽灵路径喂给模型（模型只会回"未找到图片文件"，用户看不出原因）。
+// 校验本身失败（网络/接口异常）不阻断发送——服务端提交时还会再拦一次。
+export async function missingAttachmentPaths(paths = []) {
+  const local = [...new Set(
+    (paths || [])
+      .map((item) => String(item || '').trim())
+      .filter((item) => item && !/^https?:\/\//i.test(item)),
+  )];
+  if (!local.length) return [];
+  try {
+    const result = await api('/api/uploads/check', { method: 'POST', body: { paths: local } });
+    return Array.isArray(result?.missing) ? result.missing : [];
+  } catch (_) {
+    return [];
+  }
+}
 
 // 待发送附件：输入框上方的**竖直列表**（固定高度、可滚动、文件名截断、图片带预览）。
 // 此前是横向 chip 条，文件名一长就一屏显示不全、还要横向拖滚动条。
